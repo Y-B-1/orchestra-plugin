@@ -9,6 +9,7 @@ import json
 import os
 import math
 import shlex
+import shutil
 import signal
 from pathlib import Path
 import subprocess
@@ -555,6 +556,14 @@ class Engine:
         decision = classify_command(shlex.join(release['argv']))
         if decision.action == 'deny':
             raise EngineError('Forbidden release command: ' + decision.reason)
+        if decision.category == 'gitpush':
+            command = release['argv'][0]
+            if '/' in command and not Path(command).is_absolute():
+                command = str(self.repo / command)
+            executable, engine_git = shutil.which(command), shutil.which('git')
+            if (not executable or not engine_git or Path(executable).resolve() != Path(engine_git).resolve()
+                    or len(release['argv']) != 4 or release['argv'][1:2] != ['push']):
+                raise EngineError('Known Git release needs exactly engine Git, push, remote and refspec')
         if decision.category == 'gitpush' and (decision.action != 'release'
                 or decision.remote != remote or decision.target != target):
             raise EngineError('Git release command destination differs from authorized target')

@@ -644,6 +644,58 @@ class FinalBlockerTests(EngineFixture):
         self.record('replacement', ['a'], categories=['security'])
         self.engine.accept('main', self.lease, 'a')
 
+    def test_known_git_release_rejects_wrappers_and_context_redirection(self):
+        other = self.root / 'other-repo'
+        subprocess.check_call(['git', 'clone', '-q', str(self.repo), str(other)])
+        push = ['git', 'push', 'authorized', 'HEAD:main']
+        recipes = [
+            ['env', '-C', str(other), *push],
+            ['env', '--chdir', str(other), *push],
+            ['env', 'GIT_DIR=' + str(other / '.git'), *push],
+            ['env', 'GIT_WORK_TREE=' + str(other), *push],
+            ['GIT_DIR=' + str(other / '.git'), *push],
+            ['env', *push],
+            ['sh', '-c', 'git push authorized HEAD:main'],
+            ['git', '-c', 'core.worktree=' + str(other), *push[1:]],
+            ['git', 'push', '--repo=' + str(other), 'authorized', 'HEAD:main'],
+            ['git', 'push', '--repo', str(other), 'authorized', 'HEAD:main'],
+        ]
+        for recipe in recipes:
+            with self.subTest(recipe=recipe):
+                (self.root / 'release' / 'state.json').unlink(missing_ok=True)
+                self.release_setup(recipe)
+                self.record('final', [], final=True)
+                with self.assertRaises(EngineError):
+                    self.engine.release_permit('main', self.lease, 'authorized', 'main')
+                self.engine.interrupt('main', self.lease)
+                self.engine.state_path.unlink()
+
+    def test_known_git_release_accepts_only_engine_git_executable(self):
+        import shutil
+        git = str(pathlib.Path(shutil.which('git')).resolve())
+        remote = self.root / 'remote.git'
+        subprocess.run(['git', 'init', '--bare', '-q', str(remote)], check=True, capture_output=True)
+        self.git('remote', 'add', 'authorized', str(remote))
+        alternate = self.root / 'alternate' / 'git'
+        alternate.parent.mkdir()
+        alternate.write_text('#!/bin/sh\nexit 0\n')
+        alternate.chmod(0o755)
+        for executable in ['git', git, str(alternate)]:
+            with self.subTest(executable=executable):
+                self.release_setup([executable, 'push', 'authorized', 'HEAD:main'])
+                self.record('final', [], final=True)
+                if executable == str(alternate):
+                    with self.assertRaises(EngineError):
+                        self.engine.release_permit('main', self.lease, 'authorized', 'main')
+                else:
+                    permit = self.engine.release_permit('main', self.lease, 'authorized', 'main')
+                    self.assertEqual(permit, self.engine.check_release('authorized', 'main'))
+                    subprocess.run(self.engine.policy['release']['argv'], cwd=self.repo, check=True, capture_output=True)
+                    pushed = subprocess.check_output(['git', '--git-dir', str(remote), 'rev-parse', 'refs/heads/main'], text=True).strip()
+                    self.assertEqual(self.git('rev-parse', 'HEAD'), pushed)
+                self.engine.interrupt('main', self.lease)
+                self.engine.state_path.unlink()
+
     def test_public_lease_validation(self):
         self.engine.validate_lease('main', self.lease)
         for actor, lease in [('worker', self.lease), ('main', 'stale')]:
