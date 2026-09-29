@@ -1,0 +1,25 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "orchestra",
+  "version": "1.0.0",
+  "description": "Coordinate independent coding agents with explicit ownership, evidence and release checks.",
+  "extensions": {
+    "com.openai": {
+      "hooks": "./hooks/codex.json",
+      "interface": {
+        "displayName": "Orchestra",
+        "shortDescription": "Parallel agent orchestration with checked evidence",
+        "developerName": "Orchestra contributors",
+        "category": "Productivity",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "websiteURL": "https://github.com/Y-B-1/orchestra",
+        "defaultPrompt": [
+          "Use Orchestra to route this request and dispatch independent work."
+        ]
+      }
+    }
+  }
+}

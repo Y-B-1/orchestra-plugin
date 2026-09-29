@@ -1,0 +1,18 @@
+{
+  "name": "orchestra-distribution",
+  "owner": {
+    "name": "Orchestra contributors"
+  },
+  "plugins": [
+    {
+      "name": "orchestra",
+      "source": "./plugins/orchestra",
+      "description": "Coordinate independent coding agents with explicit ownership, evidence and release checks.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Orchestra contributors"
+      }
+    }
+  ],
+  "description": "Portable parallel coding-agent orchestration for Codex and Claude Code."
+}
