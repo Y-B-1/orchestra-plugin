@@ -479,14 +479,19 @@ class Engine:
             raise EngineError('Release needs a clean working tree')
         if argv is not None and argv != release['argv']:
             raise EngineError('Release command differs from configured command')
+        return self._completion_evidence(state, require_review=True, require_checks=True)
+
+    def _completion_evidence(self, state, require_review=False, require_checks=False):
         if any(t['state'] != 'accepted' for t in state['tasks'].values()):
             raise EngineError('All tasks must be accepted')
         artifact = self.artifact()
         categories = set()
         for review in state['reviews']:
-            if review['final'] and not review.get('findings') and review['artifact'] == artifact and self._intact(review):
+            if (review['final'] and not review.get('findings') and review['artifact'] == artifact
+                    and set(review['tasks']) == set(state['tasks']) and self._intact(review)):
                 categories.update(review['categories'])
-        if not set(self.policy['required_review_categories']) <= categories:
+        required_categories = set(CATEGORIES) | set(self.policy['required_review_categories'])
+        if (require_review or state['tasks']) and not required_categories <= categories:
             raise EngineError('Current final review coverage is incomplete')
         checks = list(self.policy['required_checks'])
         scanner = self.policy['secret_scan']
@@ -494,17 +499,33 @@ class Engine:
             if not scanner.get('argv'):
                 raise EngineError('Required secret scanner is unavailable')
             checks.append(dict(name='secret-scan', argv=scanner['argv']))
-        if not checks:
+        if require_checks and not checks:
             raise EngineError('Release needs configured required checks')
         for check in checks:
             name = check['name'] if isinstance(check, dict) else check
             expected = check.get('argv') if isinstance(check, dict) else self.policy.get('check_commands', {}).get(name)
             if not expected:
-                raise EngineError('Required release gate needs configured argv: ' + name)
+                raise EngineError('Required gate needs configured argv: ' + name)
             matching = [g for g in state['gates'] if g['name'] == name and g['argv'] == expected]
             if not matching or not matching[-1]['passed'] or matching[-1]['artifact'] != artifact or not self._intact(matching[-1]):
                 raise EngineError('Required gate is missing, failed, altered or stale: ' + name)
         return artifact
+
+    def check_completion(self, actor, lease):
+        """Check completion evidence without changing the active coordinator session."""
+        with self._state(False) as state:
+            self._lease(state, actor, lease)
+            return self._completion_evidence(state)
+
+    def close_session(self, actor, lease):
+        """Check and close under one lock, keeping completion distinct from interruption."""
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            artifact = self._completion_evidence(state)
+            state['session'].update(active=False, outcome='completed')
+            state['permits'] = []
+            state['autonomy'] = None
+            return artifact
 
     def release_permit(self, actor, lease, remote, target, action='release'):
         with self._state() as state:

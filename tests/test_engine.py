@@ -304,5 +304,66 @@ class IntegrationRepairTests(EngineFixture):
             engine.run_secret_scan('main', lease)
 
 
+class CompletionTests(EngineFixture):
+    def test_finish_needs_final_current_review_and_configured_gates(self):
+        from orchestra_core.engine import CATEGORIES
+        command = [sys.executable, '-c', 'print("checked")']
+        self.engine = Engine(self.root / 'completion', self.repo,
+                             dict(required_checks=[dict(name='unit', argv=command)],
+                                  secret_scan=dict(required=True, argv=command)))
+        self.lease = self.engine.open_session('main')
+        self.task(role='investigator', mode='code')
+        with self.assertRaises(EngineError):
+            self.engine.close_session('main', self.lease)
+        token = self.engine.dispatch('main', self.lease, 'a', 'worker')
+        self.engine.report('worker', token, 'checked')
+        self.engine.accept('main', self.lease, 'a')
+        with self.assertRaisesRegex(EngineError, 'final review'):
+            self.engine.close_session('main', self.lease)
+        report = self.root / 'final.json'
+        self.review(report, categories=CATEGORIES, tasks=['a'], final=True)
+        self.engine.record_review('main', self.lease, 'reviewer', report, CATEGORIES, ['a'], final=True)
+        with self.assertRaisesRegex(EngineError, 'unit'):
+            self.engine.check_completion('main', self.lease)
+        self.engine.run_gate('main', self.lease, 'unit', command)
+        with self.assertRaisesRegex(EngineError, 'secret-scan'):
+            self.engine.close_session('main', self.lease)
+        self.engine.run_secret_scan('main', self.lease)
+        before = self.engine.state_path.read_bytes()
+        self.engine.check_completion('main', self.lease)
+        self.assertEqual(before, self.engine.state_path.read_bytes())
+        report.write_text('altered')
+        with self.assertRaisesRegex(EngineError, 'final review'):
+            self.engine.close_session('main', self.lease)
+        self.assertTrue(self.engine.status()['session']['active'])
+        self.review(report, categories=CATEGORIES, tasks=['a'], final=True)
+        self.engine.close_session('main', self.lease)
+        state = self.engine.status()
+        self.assertFalse(state['session']['active'])
+        self.assertEqual('completed', state['session']['outcome'])
+        self.assertEqual([], state['permits'])
+        self.assertIsNone(state['autonomy'])
+
+    def test_finish_without_configured_checks_still_needs_final_review(self):
+        from orchestra_core.engine import CATEGORIES
+        self.task(role='investigator', mode='code')
+        token = self.engine.dispatch('main', self.lease, 'a', 'worker')
+        self.engine.report('worker', token, 'checked')
+        self.engine.accept('main', self.lease, 'a')
+        with self.assertRaises(EngineError):
+            self.engine.check_completion('main', self.lease)
+        report = self.root / 'final.json'
+        self.review(report, categories=CATEGORIES, tasks=['a'], final=True)
+        self.engine.record_review('main', self.lease, 'reviewer', report, CATEGORIES, ['a'], final=True)
+        self.engine.close_session('main', self.lease)
+
+    def test_empty_run_can_close_and_interrupt_is_distinct(self):
+        self.engine.close_session('main', self.lease)
+        self.assertEqual('completed', self.engine.status()['session']['outcome'])
+        lease = self.engine.open_session('main')
+        self.engine.interrupt('main', lease)
+        self.assertNotEqual('completed', self.engine.status()['session'].get('outcome'))
+
+
 if __name__ == '__main__':
     unittest.main()
