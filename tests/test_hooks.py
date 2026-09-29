@@ -37,6 +37,34 @@ class GuardsTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).action, 'deny')
 
+    def test_grouped_wrapper_options(self):
+        for command in ['sudo -nu root git reset --hard',
+                        'sudo -nuroot git reset --hard',
+                        'sudo -nEu root git reset --hard',
+                        'env -iS "git reset --hard"',
+                        'env -iS"git reset --hard"',
+                        'env -iugone git reset --hard']:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).action, 'deny')
+        for command in ['sudo -nu root git commit -m "-a"',
+                        'env -iS "echo git reset --hard"',
+                        "echo 'env -iS git reset --hard'"]:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).action, 'allow')
+
+    def test_push_source_metadata(self):
+        for refspec,source,target in [('main','main','main'), ('HEAD:main','HEAD','main'),
+                                      ('topic:refs/heads/main','topic','main'),
+                                      ('HEAD~1:main','HEAD~1','main')]:
+            with self.subTest(refspec=refspec):
+                decision=classify_command('git push origin '+refspec)
+                self.assertEqual((decision.source,decision.target),(source,target))
+        self.assertEqual(classify_command('sudo -nu root git push origin HEAD:main').source,'HEAD')
+        self.assertIsNone(classify_command('git push origin').source)
+        self.assertIsNone(classify_command('git -C elsewhere push origin HEAD:main').source)
+        self.assertIsNone(classify_command('echo "git push origin HEAD:main"').source)
+        self.assertEqual(classify_command('git push origin HEAD:main:other').action,'deny')
+
     def test_semantic_arguments(self):
         for command in ['git add src/a.py', 'git commit -m "--all --dry-run"',
                         'echo "git reset --hard"', "bash --norc -c 'echo safe'",

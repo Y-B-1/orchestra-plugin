@@ -13,6 +13,7 @@ class Decision:
     remote: str | None = None
     target: str | None = None
     argv: tuple[str, ...] = ()
+    source: str | None = None
 
 
 def _deny(reason, category='destructiveGit'):
@@ -71,14 +72,23 @@ def _unwrap(words):
                 option = words.pop(0)
                 if option == '--':
                     break
-                if wrapper == 'env' and option.startswith('--split-string='):
-                    words = shlex.split(option.split('=', 1)[1]) + words
-                    break
-                if option in _WRAPPER_VALUES[wrapper]:
-                    if not words:
-                        raise ValueError('Missing wrapper option value')
-                    value = words.pop(0)
-                    if wrapper == 'env' and option in {'-S', '--split-string'}:
+                value = None
+                value_option = option
+                if option.startswith('--') and '=' in option:
+                    value_option, value = option.split('=', 1)
+                elif option.startswith('-') and not option.startswith('--'):
+                    # A value-taking short flag ends the cluster; its suffix is its value.
+                    for i, char in enumerate(option[1:], 1):
+                        if '-' + char in _WRAPPER_VALUES[wrapper]:
+                            value_option = '-' + char
+                            value = option[i + 1:] or None
+                            break
+                if value_option in _WRAPPER_VALUES[wrapper]:
+                    if value is None:
+                        if not words:
+                            raise ValueError('Missing wrapper option value')
+                        value = words.pop(0)
+                    if wrapper == 'env' and value_option in {'-S', '--split-string'}:
                         words = shlex.split(value) + words
                         break
             if wrapper == 'timeout' and words:
@@ -167,15 +177,16 @@ def _git(words):
         if len(positional) > 2 or any(x in flags for x in {'--all', '--tags', '--follow-tags', '--delete', '--prune'}) or 'd' in short:
             return _deny('Push needs one explicit remote and refspec', 'release')
         remote, target = (positional + [None, None])[:2]
+        source = target.split(':', 1)[0] if target else None
         if target:
-            if target.startswith(':') or '*' in target:
+            if target.startswith(':') or '*' in target or target.count(':') > 1:
                 return _deny('Push needs one non-deleting refspec', 'release')
             target = target.split(':')[-1].removeprefix('refs/heads/')
         if changed_repo:
-            remote = target = None  # Native cwd cannot attest a different Git repository.
+            remote = target = source = None  # Native cwd cannot attest a different Git repository.
         if dry_run:
-            return Decision('allow', 'Dry-run push does not release', 'gitpush', remote, target, tuple(words))
-        return Decision('release', 'Push needs an exact current release permit', 'gitpush', remote, target, tuple(words))
+            return Decision('allow', 'Dry-run push does not release', 'gitpush', remote, target, tuple(words), source)
+        return Decision('release', 'Push needs an exact current release permit', 'gitpush', remote, target, tuple(words), source)
     return Decision()
 
 
