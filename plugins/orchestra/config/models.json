@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "codex": {
+    "orchestrator": {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    "investigator": {
+      "model": "gpt-6.1-sol",
+      "effort": "medium",
+      "presets": {
+        "code": {
+          "model": "gpt-6.1-sol",
+          "effort": "low"
+        },
+        "docs": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        }
+      }
+    },
+    "founder-mind": {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    "designer-planner": {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    "red-teamer": {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    "builder": {
+      "model": "gpt-6.1-sol",
+      "effort": "medium",
+      "presets": {
+        "implementation": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "frontend": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "sensitive": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "mechanical": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "repair": {
+          "model": "gpt-6-astra",
+          "effort": "medium"
+        }
+      }
+    },
+    "code-reviewer": {
+      "model": "gpt-6-astra",
+      "effort": "high",
+      "presets": {
+        "checkpoint": {
+          "model": "gpt-6-astra",
+          "effort": "medium"
+        },
+        "final": {
+          "model": "gpt-6-astra",
+          "effort": "high"
+        }
+      }
+    },
+    "auditor": {
+      "model": "gpt-6-astra",
+      "effort": "high"
+    },
+    "gatekeeper": {
+      "model": "gpt-6.1-sol",
+      "effort": "medium"
+    },
+    "janitor": {
+      "model": "gpt-6.1-sol",
+      "effort": "medium"
+    },
+    "releaser": {
+      "model": "gpt-6.1-sol",
+      "effort": "medium"
+    }
+  },
+  "claude": {
+    "orchestrator": {
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "investigator": {
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "presets": {
+        "code": {
+          "model": "claude-sonnet-5",
+          "effort": "low"
+        },
+        "docs": {
+          "model": "claude-sonnet-5",
+          "effort": "medium"
+        }
+      }
+    },
+    "founder-mind": {
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "designer-planner": {
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "red-teamer": {
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "builder": {
+      "model": "claude-sonnet-5",
+      "effort": "medium",
+      "presets": {
+        "implementation": {
+          "model": "claude-sonnet-5",
+          "effort": "medium"
+        },
+        "frontend": {
+          "model": "claude-sonnet-5",
+          "effort": "medium"
+        },
+        "sensitive": {
+          "model": "claude-sonnet-5",
+          "effort": "medium"
+        },
+        "mechanical": {
+          "model": "claude-sonnet-5",
+          "effort": "medium"
+        },
+        "repair": {
+          "model": "claude-opus-5-5",
+          "effort": "medium"
+        }
+      }
+    },
+    "code-reviewer": {
+      "model": "claude-opus-5-5",
+      "effort": "high",
+      "presets": {
+        "checkpoint": {
+          "model": "claude-opus-5-5",
+          "effort": "medium"
+        },
+        "final": {
+          "model": "claude-opus-5-5",
+          "effort": "high"
+        }
+      }
+    },
+    "auditor": {
+      "model": "claude-opus-5-5",
+      "effort": "high"
+    },
+    "gatekeeper": {
+      "model": "claude-sonnet-5",
+      "effort": "medium"
+    },
+    "janitor": {
+      "model": "claude-sonnet-5",
+      "effort": "medium"
+    },
+    "releaser": {
+      "model": "claude-sonnet-5",
+      "effort": "medium"
+    }
+  }
+}

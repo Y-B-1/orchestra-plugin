@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "roles": [
+    {
+      "id": "orchestrator",
+      "description": "Main coordinator owns routing, state, reservations, dispatch and integration.",
+      "modes": [
+        "main"
+      ],
+      "prompt": "Read SKILL.md and references/coordination.md. Use references/briefs.md for every assignment. Read phase methods only when needed. Check actual artifacts and evidence before acceptance; do not infer autonomy or release permission.",
+      "methods": [
+        "references/coordination.md",
+        "references/briefs.md"
+      ]
+    },
+    {
+      "id": "investigator",
+      "description": "Read-only source discovery or current primary-source research.",
+      "modes": [
+        "code",
+        "docs"
+      ],
+      "prompt": "Use references/investigation.md for assigned code or docs mode. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/investigation.md"
+      ]
+    },
+    {
+      "id": "founder-mind",
+      "description": "Product depth, researched references, user simulation and shipped-surface audit.",
+      "modes": [
+        "design",
+        "audit"
+      ],
+      "prompt": "Use references/founder.md for the assigned design dossier or shipped-surface audit. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/founder.md"
+      ]
+    },
+    {
+      "id": "designer-planner",
+      "description": "Separate design and planning phases and artifacts.",
+      "modes": [
+        "design",
+        "plan"
+      ],
+      "prompt": "In design mode read references/design.md; in plan mode read references/planning.md. Do not settle product decisions during planning. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/design.md",
+        "references/planning.md"
+      ]
+    },
+    {
+      "id": "red-teamer",
+      "description": "Independent requirements, feasibility, scope or judge challenge.",
+      "modes": [
+        "requirements",
+        "feasibility",
+        "scope",
+        "judge"
+      ],
+      "prompt": "Use references/red-team.md for the assigned lens. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/red-team.md"
+      ]
+    },
+    {
+      "id": "builder",
+      "description": "Bounded implementation with checked-findings repair escalation.",
+      "modes": [
+        "implementation",
+        "frontend",
+        "sensitive",
+        "mechanical",
+        "repair"
+      ],
+      "prompt": "Use references/building.md. Repair mode needs independently checked coding findings; implementation is the first attempt. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/building.md"
+      ]
+    },
+    {
+      "id": "code-reviewer",
+      "description": "Independent exact-diff checkpoint or inclusive final integration review.",
+      "modes": [
+        "checkpoint",
+        "final"
+      ],
+      "prompt": "Use references/review.md. Final mode always covers all categories including security, reuse, simplification, efficiency and layer placement. Never fix reviewed code. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/review.md"
+      ]
+    },
+    {
+      "id": "auditor",
+      "description": "Independent conformance on one named axis.",
+      "modes": [
+        "spec",
+        "standards",
+        "ledger"
+      ],
+      "prompt": "Use references/audit.md only for the named axis; keep conformance separate from code-diff review. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/audit.md"
+      ]
+    },
+    {
+      "id": "gatekeeper",
+      "description": "Run named checks and report actual exits at an exact artifact.",
+      "modes": [
+        "checks"
+      ],
+      "prompt": "Use references/gates.md; never fix code or invent pass evidence. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/gates.md"
+      ]
+    },
+    {
+      "id": "janitor",
+      "description": "Inspect hygiene and preserve unfinished work before proposing cleanup.",
+      "modes": [
+        "hygiene"
+      ],
+      "prompt": "Use the janitor section of references/closeout.md. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/closeout.md"
+      ]
+    },
+    {
+      "id": "releaser",
+      "description": "Execute explicitly project-authorized release at a checked artifact.",
+      "modes": [
+        "release"
+      ],
+      "prompt": "Use the releaser section of references/closeout.md. Release is disabled without configured authorization, exact target, commands and checks. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "methods": [
+        "references/briefs.md",
+        "references/closeout.md"
+      ]
+    }
+  ]
+}
