@@ -6,6 +6,8 @@ import json
 import os
 from pathlib import Path
 import shlex
+import signal
+import math
 import subprocess
 import sys
 import uuid
@@ -156,21 +158,40 @@ def execute(args):
     if args.command=='permit':
         return engine.release_permit(args.actor,args.lease,args.remote,args.target),0
     if args.command=='release':
+        engine.validate_lease(args.actor,args.lease)
         argv = engine.policy['release']['argv']
         engine.check_release(args.remote,args.target,argv=argv)
         # Reject destructive forms even when an operator accidentally configures one.
         if classify_command(shlex.join(argv)).action=='deny':
             raise EngineError('Configured release command violates the shared guard')
+        timeout=engine.policy.get('release_timeout_seconds',600)
+        if isinstance(timeout,bool) or not isinstance(timeout,(int,float)) or not math.isfinite(timeout) or timeout<=0:
+            raise EngineError('Release timeout must be positive and finite')
         before=engine.artifact()
         log=state/('release-'+uuid.uuid4().hex+'.log')
         with log.open('xb') as stream:
             try:
-                result=subprocess.run(argv,cwd=repo,stdout=stream,stderr=subprocess.STDOUT,check=False,
-                                      timeout=engine.policy.get('release_timeout_seconds',600))
-                code=result.returncode
+                engine.validate_lease(args.actor,args.lease)
+                engine.check_release(args.remote,args.target,argv=argv)
+                process=subprocess.Popen(argv,cwd=repo,stdout=stream,stderr=subprocess.STDOUT,
+                                         start_new_session=True)
+                try:
+                    code=process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid,signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait()
+                    raise
             except subprocess.TimeoutExpired:
                 code=124
                 stream.write(b'Release timed out; inspect remote state before any retry.\n')
+            except OSError as exc:
+                code=127
+                stream.write(str(exc).encode())
+            stream.flush()
+            os.fsync(stream.fileno())
         import hashlib
         receipt={'action':'release','argv':argv,'exit_code':code,'artifact':before,
                  'after':engine.artifact(),'log':str(log),'sha256':hashlib.sha256(log.read_bytes()).hexdigest(),

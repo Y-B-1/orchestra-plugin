@@ -38,19 +38,42 @@ def _segments(command):
     yield command[start:]
 
 
+# Each wrapper has different flag/value rules (sudo -n has no value; nice -n does).
+_WRAPPER_VALUES = {
+    'exec': {'-a'}, 'command': set(), 'builtin': set(), 'nohup': set(),
+    'env': {'-u', '--unset', '-C', '--chdir', '-S', '--split-string'},
+    'sudo': {'-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt',
+             '-C', '--close-from', '-T', '--command-timeout', '-R', '--chroot',
+             '-D', '--chdir', '-r', '--role', '-t', '--type'},
+    'nice': {'-n', '--adjustment'},
+    'timeout': {'-s', '--signal', '-k', '--kill-after'},
+    'time': {'-f', '--format', '-o', '--output'},
+}
+
+
 def _unwrap(words):
     while words:
         name = PurePosixPath(words[0]).name
         if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]):
             words = words[1:]
-        elif name in {'exec', 'command', 'nohup', 'env', 'sudo', 'nice', 'timeout'}:
+        elif name in _WRAPPER_VALUES:
             wrapper = name
             words = words[1:]
             while words and (words[0].startswith('-') or
                              re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0])):
                 option = words.pop(0)
-                if option in {'-u', '--unset', '-C', '--chdir', '-n', '-s', '--signal', '-k', '--kill-after'} and words:
-                    words.pop(0)
+                if option == '--':
+                    break
+                if wrapper == 'env' and option.startswith('--split-string='):
+                    words = shlex.split(option.split('=', 1)[1]) + words
+                    break
+                if option in _WRAPPER_VALUES[wrapper]:
+                    if not words:
+                        raise ValueError('Missing wrapper option value')
+                    value = words.pop(0)
+                    if wrapper == 'env' and option in {'-S', '--split-string'}:
+                        words = shlex.split(value) + words
+                        break
             if wrapper == 'timeout' and words:
                 words.pop(0)
         else:
@@ -58,12 +81,28 @@ def _unwrap(words):
     return words
 
 
+def _shell_payload(words):
+    """Return the literal -c argument, ignoring long flags and option values."""
+    i = 1
+    while i < len(words):
+        token = words[i]
+        if token == '--' or not token.startswith(('-', '+')):
+            return None
+        if token in {'-o', '+o', '-O', '+O', '--rcfile', '--init-file'}:
+            i += 2
+            continue
+        if re.fullmatch(r'-[A-Za-z]+', token) and 'c' in token[1:]:
+            return words[i + 1] if i + 1 < len(words) else ''
+        i += 1
+    return None
+
+
 def _git(words):
     args = words[1:]
     changed_repo = False
     while args and args[0].startswith('-'):
         opt = args.pop(0)
-        if opt in {'-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env'}:
+        if opt in {'-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env', '--exec-path', '--super-prefix', '--attr-source'}:
             if not args:
                 return _deny('Malformed Git global option', 'malformed')
             args.pop(0)
@@ -116,14 +155,19 @@ def _git(words):
     if verb == 'push':
         if any(x.startswith('--force') or x == '--mirror' for x in flags) or 'f' in short or any(x.startswith('+') for x in args):
             return _deny('Force push rewrites remote history')
-        if '--dry-run' in flags or 'n' in short:
-            return Decision()
+        dry_run = '--dry-run' in flags or 'n' in short
         positional = [x for x in options if not x.startswith('-')]
+        if len(positional) > 2 or any(x in flags for x in {'--all', '--tags', '--follow-tags', '--delete', '--prune'}) or 'd' in short:
+            return _deny('Push needs one explicit remote and refspec', 'release')
         remote, target = (positional + [None, None])[:2]
         if target:
+            if target.startswith(':') or '*' in target:
+                return _deny('Push needs one non-deleting refspec', 'release')
             target = target.split(':')[-1].removeprefix('refs/heads/')
         if changed_repo:
             remote = target = None  # Native cwd cannot attest a different Git repository.
+        if dry_run:
+            return Decision('allow', 'Dry-run push does not release', 'gitpush', remote, target, tuple(words))
         return Decision('release', 'Push needs an exact current release permit', 'gitpush', remote, target, tuple(words))
     return Decision()
 
@@ -140,9 +184,11 @@ def classify_command(command: str, _depth=0) -> Decision:
             if not words:
                 continue
             name = PurePosixPath(words[0]).name
-            if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'} and any(x.startswith('-') and 'c' in x[1:] for x in words[1:]):
-                idx = next(i for i, x in enumerate(words[1:], 1) if x.startswith('-') and 'c' in x[1:])
-                decision = classify_command(words[idx + 1] if idx + 1 < len(words) else '', _depth + 1)
+            if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'}:
+                payload = _shell_payload(words)
+                decision = classify_command(payload, _depth + 1) if payload is not None else Decision()
+            elif name == 'eval':
+                decision = classify_command(' '.join(words[1:]), _depth + 1)
             elif name == 'git':
                 decision = _git(words)
             elif ((name == 'gh' and words[1:3] in [['pr', 'merge'], ['release', 'create']]) or
@@ -160,6 +206,8 @@ def classify_command(command: str, _depth=0) -> Decision:
                 if len(segments) != 1 or result.action == 'release':
                     return _deny('Execute release actions separately', 'release')
                 result = decision
+            elif decision.category and result.action != 'release':
+                result = replace(decision, argv=tuple(original))
     except ValueError:
         return _deny('Malformed shell quoting', 'malformed')
     return result

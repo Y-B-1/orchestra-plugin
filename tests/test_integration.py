@@ -61,6 +61,55 @@ class WorkflowIntegration(unittest.TestCase):
                           verdict='CLEAN',final=final,summary=summary,artifact=artifact))
         self.cli('review',str(p),lease=True)
 
+    def configure_local_release(self, argv, timeout=2):
+        self.cli('interrupt', lease=True)
+        policy=json.loads(self.policy.read_text())
+        policy['release']['argv']=argv
+        policy['release_timeout_seconds']=timeout
+        self.policy.write_text(json.dumps(policy))
+        self.lease=self.cli('start','--new-run','--policy',str(self.policy))[1]['lease']
+        self.cli('gate','fixture','--',*self.check,lease=True)
+        self.review([],True)
+        self.cli('permit','fixture-remote','main',lease=True)
+
+    def release_process(self, actor='main', lease=None):
+        return subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--state',str(self.state),
+                               '--actor',actor,'--lease',lease or self.lease,
+                               'release','fixture-remote','main'],capture_output=True,text=True,timeout=10)
+
+    def test_release_rejects_wrong_actor_and_stale_lease_before_execution(self):
+        flag=self.root/'release executed'
+        self.configure_local_release([sys.executable,'-c',f'from pathlib import Path; Path({str(flag)!r}).touch()'])
+        for actor,lease in [('worker',self.lease),('main','stale-lease')]:
+            with self.subTest(actor=actor):
+                result=self.release_process(actor,lease)
+                self.assertEqual(result.returncode,2,result.stdout+result.stderr)
+                self.assertFalse(flag.exists())
+                self.assertEqual(list(self.state.glob('release-*.log')),[])
+
+    def test_release_timeout_kills_descendants(self):
+        flag=self.root/'descendant survived'
+        started=self.root/'descendant started'
+        child=f"import time; from pathlib import Path; Path({str(started)!r}).touch(); time.sleep(1); Path({str(flag)!r}).touch()"
+        parent=f"import subprocess, sys, time; subprocess.Popen([sys.executable, '-c', {child!r}]); time.sleep(5)"
+        self.configure_local_release([sys.executable,'-c',parent],timeout=0.5)
+        result=self.release_process()
+        self.assertEqual(result.returncode,1,result.stderr)
+        self.assertEqual(json.loads(result.stdout)['exit_code'],124)
+        import time
+        self.assertTrue(started.exists(),'Release must start the child before the timeout')
+        time.sleep(1.2)
+        self.assertFalse(flag.exists(),'Timed out release left a running child')
+
+    def test_release_spawn_failure_has_actual_exit_receipt(self):
+        self.configure_local_release([str(self.root/'missing-executable')])
+        result=self.release_process()
+        self.assertEqual(result.returncode,1,result.stderr)
+        receipt=json.loads(result.stdout)
+        self.assertEqual(receipt['exit_code'],127)
+        self.assertIn('No such file',Path(receipt['log']).read_text())
+        self.assertEqual(len(list(self.state.glob('release-receipt-*.json'))),1)
+
     def test_local_release_and_repeated_run(self):
         for ident,file in [('B1','one.txt'),('B2','two.txt')]:
             task=dict(id=ident,role='builder',mode='implementation',inputs=['fixture outcome'],acceptance=['fixture check'],

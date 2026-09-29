@@ -22,6 +22,13 @@ class GuardsTest(unittest.TestCase):
             'git add -A', 'git add .', 'git add -u src', 'git commit -am done',
             'exec env X=1 git -C "a b" -c color.ui=never reset --hard',
             'true && git clean -f', "sh -c 'git reset --hard'", 'git push --force origin main', 'git clean -f -e "--dry-run"',
+            'sudo -n git reset --hard', "env --split-string='git reset --hard'",
+            "env -S 'git reset --hard'", "bash -s -c 'git reset --hard'", "bash --norc -c 'git reset --hard'",
+            "bash -O extglob -lc 'git reset --hard'",
+            'nice -n 5 git reset --hard', 'timeout -s TERM 5 git reset --hard',
+            'time git reset --hard', 'time -p git reset --hard',
+            "builtin eval 'git reset --hard'", 'command -p git reset --hard', 'builtin command git reset --hard',
+            "eval 'git reset --hard'", 'git --exec-path /tmp reset --hard',
             'git reset --hard=HEAD', 'cd other && git push origin main', 'git branch --delete --force topic',
         ]:
             with self.subTest(command=command):
@@ -29,7 +36,8 @@ class GuardsTest(unittest.TestCase):
 
     def test_semantic_arguments(self):
         for command in ['git add src/a.py', 'git commit -m "--all --dry-run"',
-                        'echo "git reset --hard"', 'git log --oneline',
+                        'echo "git reset --hard"', "bash --norc -c 'echo safe'",
+                        "sudo -n git commit -m '-a'", "bash -c 'git commit -m \"-a\"'", 'git log --oneline',
                         'git clean --dry-run', 'git push --dry-run origin main',
                         'git checkout feature', 'git add -- -A', 'echo ";"', 'wrangler dev']:
             with self.subTest(command=command):
@@ -45,8 +53,19 @@ class GuardsTest(unittest.TestCase):
         self.assertEqual(classify_command('git push -o \"--force\" origin main').action, 'release')
         decision = classify_command('git push origin HEAD:main')
         self.assertEqual((decision.remote, decision.target), ('origin', 'main'))
+        dry_run = classify_command('git push --dry-run origin main')
+        self.assertEqual((dry_run.action, dry_run.category, dry_run.remote, dry_run.target),
+                         ('allow', 'gitpush', 'origin', 'main'))
         self.assertEqual(classify_command('env --chdir=other git push origin main').argv[0], 'env')
         self.assertEqual(classify_command("sh -c 'git push origin main'").argv[0], 'sh')
+
+    def test_push_requires_one_destination(self):
+        for command in ['git push origin main side', 'git push --all origin',
+                        'git push --tags origin', 'git push --delete origin main',
+                        'git push origin :main', "git push origin 'refs/heads/*:refs/heads/*'",
+                        'git push --follow-tags origin main']:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).action, 'deny')
 
     def test_malformed(self):
         self.assertEqual(classify_command("git 'reset").action, 'deny')
