@@ -590,6 +590,60 @@ class FinalBlockerTests(EngineFixture):
                 # Each recipe has a different policy and needs separate durable state.
                 self.engine.state_path.unlink()
 
+    def test_git_release_source_must_be_reviewed_head(self):
+        self.git('branch', 'unchecked')
+        (self.repo / 'a').write_text('reviewed current commit')
+        self.git('add', 'a')
+        self.git('commit', '-qm', 'reviewed commit')
+        self.release_setup(['git', 'push', 'authorized', 'unchecked:main'])
+        self.record('final', [], final=True)
+        with self.assertRaises(EngineError):
+            self.engine.release_permit('main', self.lease, 'authorized', 'main')
+
+    def test_git_release_rechecks_source_after_permit(self):
+        old = self.git('rev-parse', 'HEAD')
+        (self.repo / 'a').write_text('reviewed current commit')
+        self.git('add', 'a')
+        self.git('commit', '-qm', 'reviewed commit')
+        self.git('branch', 'candidate')
+        self.release_setup(['git', 'push', 'authorized', 'candidate:main'])
+        self.record('final', [], final=True)
+        permit = self.engine.release_permit('main', self.lease, 'authorized', 'main')
+        self.assertEqual(permit, self.engine.check_release('authorized', 'main'))
+        self.git('update-ref', 'refs/heads/candidate', old)
+        with self.assertRaises(EngineError):
+            self.engine.check_release('authorized', 'main')
+
+    def test_altered_latest_final_review_cannot_restore_older_approval(self):
+        self.release_setup()
+        self.record('old-clean', [], final=True)
+        self.engine.release_permit('main', self.lease, 'authorized', 'main')
+        for field in ['source', 'path']:
+            for findings in [['new blocker'], []]:
+                with self.subTest(field=field, findings=findings):
+                    latest = self.record('latest-' + field, [], categories=['security'],
+                                         findings=findings, final=True)
+                    pathlib.Path(latest[field]).write_text('altered evidence')
+                    for check in [lambda: self.engine.check_completion('main', self.lease),
+                                  lambda: self.engine.check_release('authorized', 'main'),
+                                  lambda: self.engine.release_permit('main', self.lease, 'authorized', 'main')]:
+                        with self.assertRaises(EngineError):
+                            check()
+                    self.record('replacement-' + field, [], categories=['security'], final=True)
+                    self.engine.check_release('authorized', 'main')
+
+    def test_altered_latest_checkpoint_cannot_restore_older_approval(self):
+        self.task()
+        token = self.engine.dispatch('main', self.lease, 'a', 'worker')
+        self.engine.report('worker', token, 'done')
+        self.record('old-clean', ['a'])
+        latest = self.record('latest-blocked', ['a'], categories=['security'], findings=['unsafe'])
+        pathlib.Path(latest['source']).unlink()
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'a')
+        self.record('replacement', ['a'], categories=['security'])
+        self.engine.accept('main', self.lease, 'a')
+
     def test_public_lease_validation(self):
         self.engine.validate_lease('main', self.lease)
         for actor, lease in [('worker', self.lease), ('main', 'stale')]:

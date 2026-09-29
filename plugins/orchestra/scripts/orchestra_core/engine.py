@@ -463,11 +463,11 @@ class Engine:
             return copy.deepcopy(receipt)
 
     def _review_verdicts(self, state, artifact, task_id=None, final=False):
-        """Newest intact relevant verdict wins independently for each category."""
+        """Newest relevant verdict wins; altered evidence cannot restore an older verdict."""
         verdicts = {}
         since = state['tasks'][task_id].get('review_since', 0) if task_id is not None else 0
         for review in state['reviews'][since:]:
-            if review['artifact'] != artifact or not self._intact(review):
+            if review['artifact'] != artifact:
                 continue
             if task_id is not None and task_id not in review['tasks']:
                 continue
@@ -475,6 +475,9 @@ class Engine:
                 continue
             for category in review['categories']:
                 verdicts[category] = review
+        if any(not self._intact(review) for review in verdicts.values()):
+            kind = 'final' if final else 'task'
+            raise EngineError('Current ' + kind + ' review evidence is missing or altered')
         return verdicts
 
     def accept(self, actor, lease, task_id):
@@ -559,7 +562,15 @@ class Engine:
             raise EngineError('Release needs a clean working tree')
         if argv is not None and argv != release['argv']:
             raise EngineError('Release command differs from configured command')
-        return self._completion_evidence(state, require_review=True, require_checks=True, for_release=True)
+        artifact = self._completion_evidence(state, require_review=True, require_checks=True, for_release=True)
+        if decision.category == 'gitpush':
+            if not decision.source:
+                raise EngineError('Git release command needs an explicit source')
+            source = self._git('rev-parse', '--verify', '--end-of-options',
+                               decision.source + '^{commit}').decode().strip()
+            if source != artifact['head']:
+                raise EngineError('Git release source differs from the reviewed HEAD')
+        return artifact
 
     @staticmethod
     def _pre_release_ids(state):
