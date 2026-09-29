@@ -4,13 +4,14 @@
 
 | Check | Result |
 | --- | --- |
-| Python 3.11 unit/integration suite | 76 tests pass |
+| Python 3.11 unit/integration suite | 82 tests pass |
 | Canonical native profile drift | 27 generated files match: 13 Codex, 14 Claude |
 | Skill Creator frontmatter check | Pass |
 | Claude plugin manifest, strict | Pass, no warnings |
 | Claude marketplace manifest, strict | Pass, no warnings |
 | Codex marketplace add/install/list/remove, isolated CODEX_HOME | All exit 0; correct plugin ID/version discovered |
 | Bundled Codex CLI 0.159.0 model smoke, isolated configuration | Sol medium returns the requested response, exit 0 |
+| Native named custom worker round trip, Codex CLI 0.159.0 | Sol medium delegates to installed orchestra_investigator_code; Luna high returns the correct fixture finding, exit 0; session records show both model/effort settings |
 | Claude marketplace add/install/list/uninstall/remove, isolated configuration | All exit 0; correct plugin ID/version discovered |
 | User profile install/update/uninstall | Pass; unrelated files preserved; collisions and symlinked locations rejected |
 | Paths with spaces | Native installation, hooks and local release pass |
@@ -26,6 +27,8 @@ The suite includes actual subprocess commands, locking/concurrency, schema rejec
 ## Native limits observed
 
 Codex CLI 0.158.0 accepted native packaging and installation but rejected an authenticated gpt-6.1-sol request with HTTP 400. The desktop-bundled CLI 0.159.0 subsequently ran that model at medium successfully using isolated configuration. Use a current compatible client; metadata installation alone does not prove account/model availability. The matrix reflects the user's latest Sol-first choice, with Astra medium only for red team/checked repair and Luna high for bounded discovery/hygiene.
+
+The first native custom-worker check timed out at 55 seconds after loading Luna high. A second check allowed 150 seconds and completed successfully: the named worker read one fixture file and returned the correct cited finding. Native turn records show Sol medium and Luna high. This proves profile discovery and that bounded round trip; it is not a benchmark, a successful Claude model session or proof of trusted startup hooks. Temporary authentication copies were removed; global credentials were unchanged.
 
 Claude Code 2.1.284 accepted packaging and installation. A live print-mode attempt failed before model execution because its OAuth session expired and could not refresh. Authentication needs renewal before live model testing. No login or global credential change was performed.
 
