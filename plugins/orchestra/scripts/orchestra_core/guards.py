@@ -32,6 +32,10 @@ def _segments(command):
                 quote = None
         elif char in "\"'":
             quote = char
+        elif char == '&' and ((i and command[i - 1] in '<>') or command[i + 1:i + 2] == '>'):
+            continue  # Descriptor duplication and Bash's combined redirect are not control operators.
+        elif char == '|' and i and command[i - 1] == '>':
+            continue
         elif char in ';|&()\n':
             yield command[start:i]
             start = i + 1
@@ -54,7 +58,10 @@ _WRAPPER_VALUES = {
 def _unwrap(words):
     while words:
         name = PurePosixPath(words[0]).name
-        if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]):
+        redirect = re.fullmatch(r'(?:[0-9]*(?:>&|<&|>>|>\||<>|>|<)|&>>?)(.*)', words[0])
+        if redirect:
+            words = words[1:] if redirect.group(1) else words[2:]
+        elif re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]):
             words = words[1:]
         elif name in _WRAPPER_VALUES:
             wrapper = name
