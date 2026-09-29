@@ -71,6 +71,26 @@ class InstallTests(unittest.TestCase):
             profiles.uninstall(self.home)
         self.assertEqual(other.read_bytes(), original)
 
+    def test_symlinked_install_locations_reject_before_writes(self):
+        for relative in ['', 'agents', 'orchestra', 'orchestra/profiles-receipt.json', 'orchestra/profiles.lock']:
+            for operation in [profiles.install, profiles.uninstall]:
+                with self.subTest(relative=relative, operation=operation.__name__), tempfile.TemporaryDirectory() as directory:
+                    home = Path(directory) / 'home'
+                    other = Path(directory) / 'unrelated'
+                    other.mkdir()
+                    link = home / relative if relative else home
+                    link.parent.mkdir(parents=True, exist_ok=True)
+                    destination = other
+                    if relative.endswith(('.json', '.lock')):
+                        destination = other / 'file'
+                        destination.write_text('{"schema_version":1,"files":{}}')
+                    link.symlink_to(destination)
+                    before = sorted((str(p.relative_to(other)), p.read_bytes() if p.is_file() else None) for p in other.rglob('*'))
+                    with self.assertRaises(ValueError):
+                        operation(self.root, home) if operation is profiles.install else operation(home)
+                    after = sorted((str(p.relative_to(other)), p.read_bytes() if p.is_file() else None) for p in other.rglob('*'))
+                    self.assertEqual(before, after)
+
 
 class NativeTests(unittest.TestCase):
     def test_generated_assets_match_and_profiles_pin_settings(self):

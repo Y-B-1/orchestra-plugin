@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import subprocess
 
 from .guards import classify_command
 
@@ -51,7 +52,7 @@ def _protected(path, cwd, state_dir):
         if harness in parts:
             tail = parts[parts.index(harness) + 1:]
             if tail and (tail[0] in {'hooks.json', 'config.toml', 'settings.json'} or
-                         (tail[0] == 'agents' and any(x.startswith('orchestra-') for x in tail[1:]))):
+                         (tail[0] == 'agents' and any(x.startswith(('orchestra-', 'orchestra_')) for x in tail[1:]))):
                 return True
     return False
 
@@ -77,8 +78,10 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
         return _deny('Malformed hook payload', True) if event == 'PreToolUse' else HookResult({})
     if event == 'SessionStart':
         # Native agent_type, where supplied, is a routing hint, never authentication.
-        worker = bool(payload.get('agent_type')) or os.environ.get('ORCHESTRA_ROLE', 'main') != 'main'
-        context = WORKER_CONTEXT if worker else CONTEXT
+        agent_type = payload.get('agent_type')
+        worker = (bool(agent_type) and agent_type not in ('orchestra:orchestrator', 'orchestra_orchestrator', 'orchestra-orchestrator')) or os.environ.get('ORCHESTRA_ROLE', 'main') != 'main'
+        skill = Path(__file__).resolve().parents[2] / 'skills/orchestra/SKILL.md'
+        context = WORKER_CONTEXT if worker else CONTEXT + ' Skill: ' + str(skill)
         return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': context}})
     if event == 'SubagentStart':
         return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': WORKER_CONTEXT}})
@@ -92,7 +95,7 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
                 return HookResult({'systemMessage': 'Orchestra interruption could not be recorded: ' + str(exc)})
         return HookResult({})
     if event == 'Stop':
-        if payload.get('stop_hook_active') or engine is None:
+        if engine is None:
             return HookResult({})
         try:
             reason = engine.hook_stop()
@@ -154,11 +157,16 @@ def main(argv=None):
         payload = None
     state_dir = os.environ.get('ORCHESTRA_STATE_DIR')
     engine = None
-    if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and state_dir and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
+    if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         try:
-            from .engine import Engine
-            engine = Engine(state_dir, payload['cwd'])
-        except (ImportError, OSError, ValueError, RuntimeError):
+            from .paths import repository, state_location, load_policy
+            repo = repository(payload['cwd'])
+            state_dir = state_location(repo)
+            # Discovery is read-only. Construct the engine only for an existing run.
+            if (state_dir / 'state.json').is_file():
+                from .engine import Engine
+                engine = Engine(state_dir, repo, policy=load_policy(state_dir))
+        except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
     result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine)
     print(json.dumps(result.output))

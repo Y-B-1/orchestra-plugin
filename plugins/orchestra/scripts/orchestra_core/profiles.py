@@ -26,9 +26,20 @@ def atomic(path, data):
             os.unlink(temporary)
 
 
+def check_locations(home):
+    # Check before resolving: resolve() would hide a redirected home directory.
+    home = Path(home).expanduser().absolute()
+    for path in [home, home / 'agents', home / 'orchestra',
+                 home / 'orchestra/profiles-receipt.json', home / 'orchestra/profiles.lock']:
+        if path.is_symlink():
+            raise ValueError(f'Installation location is a symlink: {path}')
+    return home
+
+
 @contextmanager
 def receipt_lock(home):
-    directory = Path(home) / 'orchestra'
+    home = check_locations(home)
+    directory = home / 'orchestra'
     directory.mkdir(parents=True, exist_ok=True)
     with (directory / 'profiles.lock').open('a') as stream:
         fcntl.flock(stream, fcntl.LOCK_EX)
@@ -59,7 +70,7 @@ def check_owned(home, receipt):
 
 
 def install(root, home):
-    root, home = Path(root).resolve(), Path(home).expanduser().resolve()
+    root, home = Path(root).resolve(), check_locations(home)
     with receipt_lock(home) as receipt_path:
         receipt = read_receipt(receipt_path)
         check_owned(home, receipt)
@@ -86,7 +97,7 @@ def install(root, home):
 
 
 def uninstall(home):
-    home = Path(home).expanduser().resolve()
+    home = check_locations(home)
     with receipt_lock(home) as receipt_path:
         receipt = read_receipt(receipt_path)
         check_owned(home, receipt)

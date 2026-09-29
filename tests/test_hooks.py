@@ -1,4 +1,6 @@
 import json
+import io
+import types
 import os
 from pathlib import Path
 import subprocess
@@ -9,7 +11,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
 from orchestra_core.guards import classify_command
-from orchestra_core.hooks import handle_event
+from orchestra_core.hooks import handle_event, main
 
 
 class GuardsTest(unittest.TestCase):
@@ -125,6 +127,56 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(handle_event('Stop', {}, engine=engine).output['decision'], 'block')
         engine.hook_stop.side_effect = ValueError('corrupt')
         self.assertEqual(handle_event('Stop', {}, engine=engine).output, {})
+
+    def test_native_main_preserves_bad_json_exit(self):
+        script = Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts/orchestra_hook.py'
+        result = subprocess.run([sys.executable, str(script), 'PreToolUse'],
+                                input='{', text=True, capture_output=True)
+        self.assertEqual(result.returncode, 2)
+
+    def test_main_uses_existing_repository_state_and_policy(self):
+        from orchestra_core.paths import state_location
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {'XDG_STATE_HOME': directory}):
+            repo = Path(directory) / 'repo'
+            repo.mkdir()
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            nested = repo / 'nested'
+            nested.mkdir()
+            state = state_location(repo)
+            state.mkdir(parents=True)
+            (state / 'state.json').write_text('{}')
+            policy = {'schema_version': 1, 'release': {'remote': 'origin'}}
+            (state / 'policy.json').write_text(json.dumps(policy))
+            constructor = mock.Mock()
+            constructor.return_value.check_release.return_value = {'id': 'permit'}
+            payload = {'cwd': str(nested), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin main'}}
+            with mock.patch.dict(sys.modules, {'orchestra_core.engine': types.SimpleNamespace(Engine=constructor)}), mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+                self.assertEqual(main(['PreToolUse']), 0)
+                self.assertEqual(json.loads(output.getvalue()), {})
+            constructor.assert_called_once_with(state, repo.resolve(), policy=policy)
+
+    def test_main_without_run_creates_no_state(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': str(Path(directory) / 'absent')}):
+            constructor = mock.Mock()
+            with mock.patch.dict(sys.modules, {'orchestra_core.engine': types.SimpleNamespace(Engine=constructor)}), mock.patch('sys.stdin', io.StringIO(json.dumps({'cwd': str(Path.cwd()), 'tool_name': 'read_file', 'tool_input': {}}))), mock.patch('sys.stdout', new_callable=io.StringIO):
+                main(['PreToolUse'])
+            constructor.assert_not_called()
+            self.assertFalse((Path(directory) / 'absent').exists())
+
+    def test_orchestrator_identity_and_skill_path(self):
+        result = handle_event('SessionStart', {'agent_type': 'orchestra:orchestrator'})
+        context = result.output['hookSpecificOutput']['additionalContext']
+        self.assertIn('main coordinator', context)
+        self.assertIn(str(Path(__file__).resolve().parents[1] / 'plugins/orchestra/skills/orchestra/SKILL.md'), context)
+
+    def test_underscore_profile_protected(self):
+        self.assertEqual(self.pre('Write', {'file_path': '.codex/agents/orchestra_builder.toml'}).output['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_stop_continues_until_engine_cap(self):
+        engine = mock.Mock()
+        engine.hook_stop.side_effect = ['bounded continuation', None]
+        self.assertEqual(handle_event('Stop', {'stop_hook_active': True}, engine=engine).output['decision'], 'block')
+        self.assertEqual(handle_event('Stop', {'stop_hook_active': True}, engine=engine).output, {})
 
     def test_cli_bad_json(self):
         result = subprocess.run([sys.executable, '-m', 'orchestra_core.hooks', 'PreToolUse'],
