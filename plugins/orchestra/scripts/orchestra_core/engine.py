@@ -67,8 +67,9 @@ class Engine:
     def __init__(self, state_dir, repo, policy=None):
         self.repo = Path(repo).resolve()
         self.state_dir = Path(state_dir).resolve()
-        if self.state_dir == self.repo or self.repo in self.state_dir.parents:
-            raise EngineError('Run state must live outside the repository')
+        for protected in (self.repo, PACKAGE_ROOT.resolve()):
+            if self.state_dir == protected or protected in self.state_dir.parents:
+                raise EngineError('Run state must live outside the repository and immutable plugin root')
         self.policy = copy.deepcopy(DEFAULT)
         if policy:
             self.policy.update(copy.deepcopy(policy))
@@ -189,7 +190,7 @@ class Engine:
                 or any(not isinstance(session.get(k), str) or not session[k] for k in ('actor', 'lease'))):
             raise EngineError('Invalid session state')
         for name, task in state['tasks'].items():
-            if not isinstance(task, dict) or task.get('id') != name or task.get('state') not in ('queued', 'running', 'reported', 'accepted'):
+            if not isinstance(task, dict) or task.get('id') != name or task.get('state') not in ('queued', 'running', 'reported', 'repairing', 'accepted'):
                 raise EngineError('Invalid task state')
             for key in ('role', 'mode'):
                 if not isinstance(task.get(key), str):
@@ -239,6 +240,11 @@ class Engine:
         if not session or not session['active'] or session['actor'] != actor or session['lease'] != lease:
             raise EngineError('Invalid or interrupted coordinator lease')
 
+    def validate_lease(self, actor, lease):
+        """Check coordinator consistency; caller identifiers are not authentication."""
+        with self._state(False) as state:
+            self._lease(state, actor, lease)
+
     def open_session(self, actor):
         if not isinstance(actor, str) or not actor.strip():
             raise EngineError('Missing coordinator')
@@ -248,7 +254,7 @@ class Engine:
             lease = uuid.uuid4().hex
             state['session'] = dict(actor=actor, lease=lease, active=True)
             for task in state['tasks'].values():
-                if task['state'] in ('running', 'reported'):
+                if task['state'] == 'running':
                     task['state'] = 'queued'
                     task.pop('assignment', None)
                     task.pop('report', None)
@@ -272,6 +278,8 @@ class Engine:
             if task['id'] in state['tasks']:
                 raise EngineError('Duplicate task')
             self._check_contract(task)
+            if task['role'] == 'releaser' and any(t['role'] == 'releaser' for t in state['tasks'].values()):
+                raise EngineError('A run supports one terminal releaser task')
             for key in ('inputs', 'acceptance', 'files', 'resources', 'dependencies'):
                 values = task.get(key)
                 if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
@@ -282,6 +290,8 @@ class Engine:
                     raise EngineError('Duplicate ' + key)
             for name in task['files']:
                 p = Path(name)
+                if any(char in name for char in '*?[]'):
+                    raise EngineError('File ownership needs explicit paths, not globs')
                 if p.is_absolute() or '..' in p.parts or not p.parts or p.parts[0] == '.git':
                     raise EngineError('File ownership must stay inside repository')
                 resolved = (self.repo / p).resolve()
@@ -289,13 +299,37 @@ class Engine:
                     raise EngineError('File ownership escapes repository')
             if any(dep not in state['tasks'] for dep in task['dependencies']):
                 raise EngineError('Unknown dependency or cycle')
+            review_of = task.get('review_of', [])
+            if (not isinstance(review_of, list)
+                    or any(not isinstance(i, str) or i not in state['tasks'] for i in review_of)
+                    or len(review_of) != len(set(review_of))):
+                raise EngineError('Review targets must name existing tasks')
+            if review_of and task['role'] not in ('code-reviewer', 'auditor', 'red-teamer'):
+                raise EngineError('Only independent review roles can use review_of')
+            if set(review_of) & set(task['dependencies']):
+                raise EngineError('Use review_of instead of an accepted dependency for reviewed work')
             if task['role'] == 'builder' and task['mode'] == 'repair':
                 repair_of = task.get('repair_of')
                 if repair_of not in state['tasks'] or state['tasks'][repair_of]['role'] != 'builder':
                     raise EngineError('Repair needs a specific earlier builder task')
-                if not any(r.get('findings') and self._intact(r) and r['artifact'] == self.artifact() and repair_of in r['tasks']
-                           for r in state['reviews']):
+                original = state['tasks'][repair_of]
+                if original['state'] not in ('reported', 'accepted') or original.get('repaired_by'):
+                    raise EngineError('Repair needs a reported builder without an existing repair')
+                if repair_of in task['dependencies']:
+                    raise EngineError('repair_of replaces an accepted dependency on the original')
+                verdicts = self._review_verdicts(state, self.artifact(), task_id=repair_of)
+                if not any(r['findings'] for r in verdicts.values()):
                     raise EngineError('Repair needs earlier checked coding findings')
+                # Suspend the whole chain atomically. Reports and workers remain as history,
+                # but none of those old assignments reserve capacity or writable files.
+                original['repaired_by'] = task['id']
+                ancestor = original
+                while True:
+                    ancestor['state'] = 'repairing'
+                    ancestor['review_since'] = len(state['reviews'])
+                    if not ancestor.get('repair_of'):
+                        break
+                    ancestor = state['tasks'][ancestor['repair_of']]
             # Dependencies refer only to existing immutable cards, making cycles impossible.
             task['state'] = 'queued'
             state['tasks'][task['id']] = task
@@ -307,13 +341,33 @@ class Engine:
         return any(x == y or x in y.parents or y in x.parents
                    for x in map(Path, a['files']) for y in map(Path, b['files']))
 
+    @staticmethod
+    def _read_review(task):
+        return bool(task.get('review_of')) and task['role'] in ('code-reviewer', 'auditor', 'red-teamer')
+
+    @staticmethod
+    def _reservation(task, state):
+        files, resources = set(task['files']), set(task['resources'])
+        while task.get('repair_of'):
+            task = state['tasks'][task['repair_of']]
+            files.update(task['files'])
+            resources.update(task['resources'])
+        return dict(files=list(files), resources=list(resources))
+
     def _ready(self, state):
-        occupied = [t for t in state['tasks'].values() if t['state'] in ('running', 'reported')]
-        if len(occupied) >= self.policy['max_workers']:
+        occupied = [t for t in state['tasks'].values() if t['state'] == 'running'
+                    or (t['state'] == 'reported' and not self._read_review(t))
+                    or (t['state'] == 'queued' and t.get('repair_of'))]
+        if sum(t['state'] == 'running' for t in occupied) >= self.policy['max_workers']:
             return []
         return [t['id'] for t in state['tasks'].values() if t['state'] == 'queued'
                 and all(state['tasks'][d]['state'] == 'accepted' for d in t['dependencies'])
-                and not any(self._collides(t, other) for other in occupied)]
+                and all(state['tasks'][d]['state'] in ('reported', 'accepted') for d in t.get('review_of', []))
+                and not any(other['id'] != t['id']
+                            and self._collides(self._reservation(t, state), self._reservation(other, state))
+                            and not (other['id'] in t.get('review_of', []) and other['state'] == 'reported'
+                                     and not set(t['resources']) & set(other['resources']))
+                            for other in occupied)]
 
     def ready(self, actor, lease):
         with self._state(False) as state:
@@ -343,6 +397,10 @@ class Engine:
                 raise EngineError('Invalid assignment')
             self._lease(state, state['session']['actor'], task['lease'])
             task.update(state='reported', report=report, report_artifact=self.artifact())
+            ancestor = task
+            while ancestor.get('repair_of'):
+                ancestor = state['tasks'][ancestor['repair_of']]
+                ancestor['state'] = 'reported'
 
     def _snapshot(self, path, kind):
         path = Path(path).resolve()
@@ -380,10 +438,10 @@ class Engine:
                 raise EngineError('Checkpoint review needs task coverage')
             if any(i not in state['tasks'] for i in ids):
                 raise EngineError('Unknown reviewed task')
-            if final and (len(ids) != len(set(ids)) or set(ids) != set(state['tasks'])):
+            if final and (len(ids) != len(set(ids)) or set(ids) not in (set(state['tasks']), self._pre_release_ids(state))):
                 raise EngineError('Final review must explicitly cover every task')
-            covered = list(state['tasks'].values()) if final else [state['tasks'][i] for i in ids]
-            if any(t.get('worker') == reviewer for t in covered):
+            covered = [state['tasks'][i] for i in ids]
+            if any(t.get('worker') == reviewer and not self._read_review(t) for t in covered):
                 raise EngineError('Worker cannot review own artifact')
             if any(t['state'] not in ('reported', 'accepted') for t in covered):
                 raise EngineError('Review covers incomplete work')
@@ -404,6 +462,21 @@ class Engine:
             state['reviews'].append(receipt)
             return copy.deepcopy(receipt)
 
+    def _review_verdicts(self, state, artifact, task_id=None, final=False):
+        """Newest intact relevant verdict wins independently for each category."""
+        verdicts = {}
+        since = state['tasks'][task_id].get('review_since', 0) if task_id is not None else 0
+        for review in state['reviews'][since:]:
+            if review['artifact'] != artifact or not self._intact(review):
+                continue
+            if task_id is not None and task_id not in review['tasks']:
+                continue
+            if final and (not review['final'] or not self._pre_release_ids(state) <= set(review['tasks'])):
+                continue
+            for category in review['categories']:
+                verdicts[category] = review
+        return verdicts
+
     def accept(self, actor, lease, task_id):
         with self._state() as state:
             self._lease(state, actor, lease)
@@ -411,10 +484,14 @@ class Engine:
             if not task or task['state'] != 'reported':
                 raise EngineError('Task has no reported result')
             artifact = self.artifact()
-            if task.get('review_required', task['role'] == 'builder') and not any(task_id in r['tasks'] and not r.get('findings') and r['artifact'] == artifact and self._intact(r)
-                       for r in state['reviews']):
+            verdicts = self._review_verdicts(state, artifact, task_id=task_id)
+            if any(r['findings'] for r in verdicts.values()):
+                raise EngineError('Task has current review findings')
+            if task.get('repaired_by') and state['tasks'][task['repaired_by']]['state'] != 'accepted':
+                raise EngineError('Task repair must be accepted first')
+            if (task['role'] == 'builder' or task.get('review_required', False)) and not verdicts:
                 raise EngineError('Task needs current independent review')
-            if not task.get('review_required', task['role'] == 'builder') and task['report_artifact'] != artifact:
+            if not (task['role'] == 'builder' or task.get('review_required', False)) and task['report_artifact'] != artifact:
                 raise EngineError('Reported artifact is stale')
             task['state'] = 'accepted'
 
@@ -475,21 +552,36 @@ class Engine:
         decision = classify_command(shlex.join(release['argv']))
         if decision.action == 'deny':
             raise EngineError('Forbidden release command: ' + decision.reason)
+        if decision.category == 'gitpush' and (decision.action != 'release'
+                or decision.remote != remote or decision.target != target):
+            raise EngineError('Git release command destination differs from authorized target')
         if self._git('status', '--porcelain=v1', '--untracked-files=all').strip():
             raise EngineError('Release needs a clean working tree')
         if argv is not None and argv != release['argv']:
             raise EngineError('Release command differs from configured command')
-        return self._completion_evidence(state, require_review=True, require_checks=True)
+        return self._completion_evidence(state, require_review=True, require_checks=True, for_release=True)
 
-    def _completion_evidence(self, state, require_review=False, require_checks=False):
-        if any(t['state'] != 'accepted' for t in state['tasks'].values()):
+    @staticmethod
+    def _pre_release_ids(state):
+        return {t['id'] for t in state['tasks'].values()
+                if not (t['role'] == 'releaser' and t['mode'] == 'release')}
+
+    def _completion_evidence(self, state, require_review=False, require_checks=False, for_release=False):
+        if for_release:
+            releasers = [t for t in state['tasks'].values() if t['role'] == 'releaser']
+            if releasers and (len(releasers) != 1 or releasers[0]['state'] != 'running'):
+                raise EngineError('The terminal releaser task must be running')
+        required_ids = self._pre_release_ids(state) if for_release else set(state['tasks'])
+        if any(state['tasks'][i]['state'] != 'accepted' for i in required_ids):
             raise EngineError('All tasks must be accepted')
         artifact = self.artifact()
-        categories = set()
-        for review in state['reviews']:
-            if (review['final'] and not review.get('findings') and review['artifact'] == artifact
-                    and set(review['tasks']) == set(state['tasks']) and self._intact(review)):
-                categories.update(review['categories'])
+        verdicts = self._review_verdicts(state, artifact, final=True)
+        categories = {category for category, review in verdicts.items() if not review['findings']}
+        if any(review['findings'] for review in verdicts.values()):
+            raise EngineError('Current final review has findings')
+        for task_id in state['tasks']:
+            if any(r['findings'] for r in self._review_verdicts(state, artifact, task_id=task_id).values()):
+                raise EngineError('Current task review has findings: ' + task_id)
         required_categories = set(CATEGORIES) | set(self.policy['required_review_categories'])
         if (require_review or state['tasks']) and not required_categories <= categories:
             raise EngineError('Current final review coverage is incomplete')

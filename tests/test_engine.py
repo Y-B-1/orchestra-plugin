@@ -365,5 +365,240 @@ class CompletionTests(EngineFixture):
         self.assertNotEqual('completed', self.engine.status()['session'].get('outcome'))
 
 
+class FinalBlockerTests(EngineFixture):
+    def record(self, name, tasks, categories=None, findings=None, final=False):
+        from orchestra_core.engine import CATEGORIES
+        categories = categories or CATEGORIES
+        path = self.root / (name + '.json')
+        self.review(path, reviewer=name, tasks=tasks, categories=categories, findings=findings, final=final)
+        return self.engine.record_review('main', self.lease, name, path, categories,
+                                         tasks, final=final, findings=findings)
+
+    def release_setup(self, argv=None):
+        command = [sys.executable, '-c', 'print("checked")']
+        self.engine = Engine(self.root / 'release', self.repo, dict(
+            max_workers=1, required_checks=[dict(name='unit', argv=command)],
+            release=dict(enabled=True, authorization='user', remote='authorized', target='main',
+                         argv=argv or ['git', 'push', 'authorized', 'HEAD:main'])))
+        self.lease = self.engine.open_session('main')
+        self.engine.run_gate('main', self.lease, 'unit', command)
+
+    def test_repair_transfers_reservations_and_retains_history(self):
+        self.release_setup()
+        self.task('B1', files=['a'])
+        self.task('D1', files=['d'], dependencies=['B1'], role='investigator', mode='code')
+        token = self.engine.dispatch('main', self.lease, 'B1', 'first-builder')
+        self.engine.report('first-builder', token, 'Original result')
+        self.record('blocked', ['B1'], findings=['Incorrect empty input'])
+        self.task('R1', mode='repair', repair_of='B1', files=['a'])
+        self.assertEqual(['R1'], self.engine.ready('main', self.lease))
+        repair_token = self.engine.dispatch('main', self.lease, 'R1', 'repair-builder')
+        with self.assertRaises(EngineError):
+            self.engine.report('first-builder', token, 'late original report')
+        self.engine.report('repair-builder', repair_token, 'Repaired behavior')
+        self.record('clean', ['B1', 'R1'])
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'B1')
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
+        state = self.engine.status()
+        self.assertEqual('Original result', state['tasks']['B1']['report'])
+        self.assertEqual('first-builder', state['tasks']['B1']['worker'])
+        self.assertEqual(['Incorrect empty input'], state['reviews'][0]['findings'])
+        self.assertEqual(['D1'], self.engine.ready('main', self.lease))
+        token = self.engine.dispatch('main', self.lease, 'D1', 'investigator')
+        self.engine.report('investigator', token, 'Dependent completed')
+        self.engine.accept('main', self.lease, 'D1')
+        self.record('final', ['B1', 'R1', 'D1'], final=True)
+        self.engine.release_permit('main', self.lease, 'authorized', 'main')
+
+    def test_latest_final_blocked_revokes_old_clean_and_permit(self):
+        self.release_setup()
+        self.record('clean-final', [], final=True)
+        self.engine.release_permit('main', self.lease, 'authorized', 'main')
+        self.record('blocked-final', [], categories=['security'], findings=['Credential leak'], final=True)
+        with self.assertRaises(EngineError):
+            self.engine.check_completion('main', self.lease)
+        with self.assertRaises(EngineError):
+            self.engine.check_release('authorized', 'main')
+        self.record('unrelated-final', [], categories=['tests'], final=True)
+        with self.assertRaises(EngineError):
+            self.engine.release_permit('main', self.lease, 'authorized', 'main')
+        self.record('resolved-final', [], categories=['security'], final=True)
+        self.engine.release_permit('main', self.lease, 'authorized', 'main')
+
+    def test_latest_checkpoint_blocked_prevents_accept_and_completion(self):
+        self.task()
+        token = self.engine.dispatch('main', self.lease, 'a', 'worker')
+        self.engine.report('worker', token, 'done')
+        self.record('clean', ['a'])
+        self.record('blocked', ['a'], categories=['security'], findings=['unsafe'])
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'a')
+        self.record('resolved', ['a'], categories=['security'])
+        self.engine.accept('main', self.lease, 'a')
+        self.record('final', ['a'], final=True)
+        self.record('later-checkpoint', ['a'], categories=['tests'], findings=['failing'])
+        with self.assertRaises(EngineError):
+            self.engine.check_completion('main', self.lease)
+
+    def test_state_cannot_be_inside_plugin_or_via_symlink(self):
+        from unittest.mock import patch
+        package = self.root / 'plugin'
+        package.mkdir()
+        alias = self.root / 'alias'
+        alias.symlink_to(package, target_is_directory=True)
+        from orchestra_core.engine import _contracts
+        contracts = _contracts()
+        with patch('orchestra_core.engine.PACKAGE_ROOT', package), patch('orchestra_core.engine._contracts', return_value=contracts):
+            for path in [package / 'state', alias / 'nested' / 'state', package]:
+                with self.assertRaises(EngineError):
+                    Engine(path, self.repo)
+        self.assertEqual([], list(package.iterdir()))
+
+    def test_release_rejects_known_git_destination_mismatch(self):
+        self.release_setup(['git', 'push', 'authorized', 'HEAD:other'])
+        self.record('final', [], final=True)
+        with self.assertRaises(EngineError):
+            self.engine.release_permit('main', self.lease, 'authorized', 'main')
+
+    def test_review_card_uses_reported_work_without_consuming_writer_capacity(self):
+        self.release_setup()
+        self.task('B1', files=['a'])
+        self.task('V1', role='code-reviewer', mode='checkpoint', files=['a'], review_of=['B1'])
+        self.assertEqual(['B1'], self.engine.ready('main', self.lease))
+        token = self.engine.dispatch('main', self.lease, 'B1', 'builder')
+        self.engine.report('builder', token, 'Built')
+        self.assertEqual(['V1'], self.engine.ready('main', self.lease))
+        token = self.engine.dispatch('main', self.lease, 'V1', 'review-worker')
+        self.engine.report('review-worker', token, 'Reviewed builder output')
+        self.record('review-worker', ['B1'])
+        self.engine.accept('main', self.lease, 'V1')
+        self.engine.accept('main', self.lease, 'B1')
+        self.record('review-worker', ['B1', 'V1'], final=True)
+        self.engine.check_completion('main', self.lease)
+
+    def test_second_repair_suspends_entire_same_file_chain(self):
+        self.release_setup()
+        self.task('B1', files=['a'])
+        token = self.engine.dispatch('main', self.lease, 'B1', 'worker1')
+        self.engine.report('worker1', token, 'First implementation')
+        self.record('blocked1', ['B1'], findings=['bug1'])
+        self.task('R1', mode='repair', repair_of='B1', files=['a'])
+        token = self.engine.dispatch('main', self.lease, 'R1', 'worker2')
+        self.engine.report('worker2', token, 'First repair')
+        self.record('blocked2', ['B1', 'R1'], findings=['bug2'])
+        self.task('R2', mode='repair', repair_of='R1', files=['a'])
+        self.assertEqual(['R2'], self.engine.ready('main', self.lease))
+        token = self.engine.dispatch('main', self.lease, 'R2', 'worker3')
+        self.engine.report('worker3', token, 'Second repair')
+        self.record('clean2', ['R1', 'R2'])
+        for name in ['R2', 'R1']:
+            self.engine.accept('main', self.lease, name)
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'B1')
+        self.record('fresh-original', ['B1'])
+        self.engine.accept('main', self.lease, 'B1')
+        self.assertTrue(all(t['state'] == 'accepted' for t in self.engine.status()['tasks'].values()))
+
+    def test_review_targets_reject_wrong_role_and_dependency_cycle(self):
+        self.task('B1')
+        for values in [dict(review_of=['missing']), dict(review_of=['B1']),
+                       dict(role='code-reviewer', mode='checkpoint', review_of=['B1'], dependencies=['B1']),
+                       dict(role='code-reviewer', mode='checkpoint', review_of=[{}])]:
+            with self.assertRaises(EngineError):
+                self.task('invalid', **values)
+
+    def test_builder_cannot_disable_independent_review(self):
+        self.task(review_required=False)
+        token = self.engine.dispatch('main', self.lease, 'a', 'worker')
+        self.engine.report('worker', token, 'done')
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_repair_survives_interrupt_and_preserves_original_reservation(self):
+        self.release_setup()
+        self.task('B1', files=['a'])
+        token = self.engine.dispatch('main', self.lease, 'B1', 'builder')
+        self.engine.report('builder', token, 'Original result')
+        self.record('blocked', ['B1'], findings=['bug'])
+        self.task('R1', mode='repair', repair_of='B1', files=['a'])
+        self.task('outsider', files=['a'])
+        self.assertEqual(['R1'], self.engine.ready('main', self.lease))
+        token = self.engine.dispatch('main', self.lease, 'R1', 'repairer')
+        self.engine.interrupt('main', self.lease)
+        self.lease = self.engine.open_session('main')
+        self.assertEqual(['R1'], self.engine.ready('main', self.lease))
+        token = self.engine.dispatch('main', self.lease, 'R1', 'repairer2')
+        self.engine.report('repairer2', token, 'Repair result')
+        self.engine.interrupt('main', self.lease)
+        self.lease = self.engine.open_session('main')
+        self.record('clean', ['B1', 'R1'])
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
+        self.assertEqual(['outsider'], self.engine.ready('main', self.lease))
+
+    def test_releaser_card_runs_after_pre_release_review_then_closes(self):
+        self.release_setup()
+        self.task('B1', files=['a'])
+        self.task('L1', role='releaser', mode='release', files=[], dependencies=['B1'])
+        token = self.engine.dispatch('main', self.lease, 'B1', 'builder')
+        self.engine.report('builder', token, 'Built')
+        self.record('checkpoint', ['B1'])
+        self.engine.accept('main', self.lease, 'B1')
+        self.record('final', ['B1'], final=True)
+        with self.assertRaises(EngineError):
+            self.engine.release_permit('main', self.lease, 'authorized', 'main')
+        with self.assertRaises(EngineError):
+            self.task('L2', role='releaser', mode='release', files=[])
+        token = self.engine.dispatch('main', self.lease, 'L1', 'release-worker')
+        permit = self.engine.release_permit('main', self.lease, 'authorized', 'main')
+        self.assertEqual(permit, self.engine.check_release('authorized', 'main'))
+        with self.assertRaises(EngineError):
+            self.engine.check_completion('main', self.lease)
+        self.engine.report('release-worker', token, 'Release command completed; observed remote evidence attached')
+        self.engine.accept('main', self.lease, 'L1')
+        self.engine.close_session('main', self.lease)
+
+    def test_release_exemption_never_skips_queued_builder(self):
+        self.release_setup()
+        self.task('B1', files=['a'])
+        self.task('L1', role='releaser', mode='release', files=[])
+        with self.assertRaises(EngineError):
+            self.record('too-early', ['B1'], final=True)
+        with self.assertRaises(EngineError):
+            self.engine.release_permit('main', self.lease, 'authorized', 'main')
+
+    def test_ownership_rejects_globs(self):
+        for path in ['src/**', 'file?.py', 'src/[ab].py']:
+            with self.assertRaises(EngineError):
+                self.task(files=[path])
+
+    def test_git_release_rejects_dry_run_multiple_and_unknown_destinations(self):
+        for argv in [
+            ['git', 'push', '--dry-run', 'authorized', 'HEAD:main'],
+            ['git', 'push', 'authorized', 'HEAD:main', 'HEAD:other'],
+            ['git', '-C', str(self.repo), 'push', 'authorized', 'HEAD:main'],
+            ['git', 'push', 'other-remote', 'HEAD:main'],
+        ]:
+            with self.subTest(argv=argv):
+                self.release_setup(argv)
+                self.record('final-' + str(len(argv)), [], final=True)
+                with self.assertRaises(EngineError):
+                    self.engine.release_permit('main', self.lease, 'authorized', 'main')
+                self.engine.interrupt('main', self.lease)
+                # Each recipe has a different policy and needs separate durable state.
+                self.engine.state_path.unlink()
+
+    def test_public_lease_validation(self):
+        self.engine.validate_lease('main', self.lease)
+        for actor, lease in [('worker', self.lease), ('main', 'stale')]:
+            with self.assertRaises(EngineError):
+                self.engine.validate_lease(actor, lease)
+        self.engine.interrupt('main', self.lease)
+        with self.assertRaises(EngineError):
+            self.engine.validate_lease('main', self.lease)
+
+
 if __name__ == '__main__':
     unittest.main()
