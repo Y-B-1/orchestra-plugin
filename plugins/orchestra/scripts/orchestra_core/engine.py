@@ -1,0 +1,439 @@
+"""Durable workflow consistency checks, not a hostile-worker security boundary."""
+from __future__ import annotations
+
+import contextlib
+import copy
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import uuid
+
+
+class EngineError(ValueError):
+    pass
+
+
+CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
+MODES = {
+    'investigator': ['code', 'docs'], 'founder-mind': ['default'],
+    'designer-planner': ['design', 'plan'], 'red-teamer': ['default'],
+    'builder': ['implementation', 'frontend', 'sensitive', 'mechanical', 'repair'],
+    'code-reviewer': ['checkpoint', 'final'], 'auditor': ['spec', 'standards', 'ledger'],
+    'gatekeeper': ['default'], 'janitor': ['default'], 'releaser': ['default'],
+}
+DEFAULT = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
+               release=dict(enabled=False, remote=None, target=None, argv=[]))
+
+
+def _hash(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def _digest(value):
+    return _hash(json.dumps(value, sort_keys=True, separators=(',', ':')).encode())
+
+
+class Engine:
+    def __init__(self, state_dir, repo, policy=None):
+        self.repo = Path(repo).resolve()
+        self.state_dir = Path(state_dir).resolve()
+        if self.state_dir == self.repo or self.repo in self.state_dir.parents:
+            raise EngineError('Run state must live outside the repository')
+        self.policy = copy.deepcopy(DEFAULT)
+        if policy:
+            self.policy.update(copy.deepcopy(policy))
+        if not isinstance(self.policy['max_workers'], int) or self.policy['max_workers'] < 1:
+            raise EngineError('Invalid worker capacity')
+        self.policy_hash = _digest(self.policy)
+        self._git('rev-parse', '--show-toplevel')
+        if Path(self._git('rev-parse', '--show-toplevel').decode().strip()).resolve() != self.repo:
+            raise EngineError('repo must name repository root')
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        self.state_path = self.state_dir / 'state.json'
+
+    def _git(self, *args):
+        try:
+            return subprocess.check_output(['git', '-C', str(self.repo), *args], stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as exc:
+            raise EngineError(exc.stderr.decode(errors='replace')) from exc
+
+    def artifact(self):
+        # Hash every tracked and untracked nonignored entry. Index and status are also bound.
+        names = self._git('ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')
+        entries = []
+        for raw in sorted(set(names) - {b''}):
+            path = self.repo / os.fsdecode(raw)
+            if path.is_symlink():
+                value = ['symlink', os.readlink(path)]
+            elif path.is_file():
+                value = ['file', path.stat().st_mode & 0o777, _hash(path.read_bytes())]
+            elif path.is_dir():
+                # Gitlinks need their nested HEAD, dirty state and contents bound too.
+                value = ['directory', self._directory_hash(path)]
+            else:
+                value = ['missing']
+            entries.append([os.fsdecode(raw), value])
+        common = Path(self._git('rev-parse', '--git-common-dir').decode().strip())
+        if not common.is_absolute():
+            common = self.repo / common
+        return dict(repo=str(self.repo), identity=str(common.resolve()),
+                    head=self._git('rev-parse', 'HEAD').decode().strip(),
+                    tree=self._git('rev-parse', 'HEAD^{tree}').decode().strip(),
+                    fingerprint=_digest(entries),
+                    index=_hash(self._git('ls-files', '--stage', '-z')),
+                    status=_hash(self._git('status', '--porcelain=v1', '-z', '--untracked-files=all')),
+                    policy=self.policy_hash)
+
+    @staticmethod
+    def _directory_hash(path):
+        entries = []
+        for child in sorted(path.rglob('*')):
+            if '.git' in child.relative_to(path).parts:
+                continue
+            if child.is_symlink():
+                entries.append([str(child.relative_to(path)), 'link', os.readlink(child)])
+            elif child.is_file():
+                entries.append([str(child.relative_to(path)), _hash(child.read_bytes())])
+        return _digest(entries)
+
+    @contextlib.contextmanager
+    def _state(self, write=True):
+        with (self.state_dir / 'state.lock').open('a+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+            if self.state_path.exists():
+                state = json.loads(self.state_path.read_text())
+                if state['repo'] != str(self.repo) or state['policy'] != self.policy_hash:
+                    raise EngineError('Repository or policy changed; start a new run')
+            else:
+                state = dict(version=1, repo=str(self.repo), policy=self.policy_hash,
+                             session=None, tasks={}, reviews=[], gates=[], permits=[], autonomy=None)
+            yield state
+            if write:
+                fd, name = tempfile.mkstemp(dir=self.state_dir, prefix='.state-')
+                try:
+                    with os.fdopen(fd, 'w') as out:
+                        json.dump(state, out, sort_keys=True, indent=2)
+                        out.flush()
+                        os.fsync(out.fileno())
+                    os.replace(name, self.state_path)
+                    directory = os.open(self.state_dir, os.O_RDONLY)
+                    try:
+                        os.fsync(directory)
+                    finally:
+                        os.close(directory)
+                finally:
+                    if os.path.exists(name):
+                        os.unlink(name)
+
+    def status(self):
+        with self._state(False) as state:
+            return copy.deepcopy(state)
+
+    @staticmethod
+    def _lease(state, actor, lease):
+        session = state['session']
+        if not session or not session['active'] or session['actor'] != actor or session['lease'] != lease:
+            raise EngineError('Invalid or interrupted coordinator lease')
+
+    def open_session(self, actor):
+        if not isinstance(actor, str) or not actor.strip():
+            raise EngineError('Missing coordinator')
+        with self._state() as state:
+            if state['session'] and state['session']['active']:
+                raise EngineError('A coordinator session is already active')
+            lease = uuid.uuid4().hex
+            state['session'] = dict(actor=actor, lease=lease, active=True)
+            for task in state['tasks'].values():
+                if task['state'] in ('running', 'reported'):
+                    task['state'] = 'queued'
+                    task.pop('assignment', None)
+                    task.pop('report', None)
+            state['permits'] = []
+            return lease
+
+    def interrupt(self, actor, lease):
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            state['session']['active'] = False
+            state['permits'] = []
+            state['autonomy'] = None
+
+    def add_task(self, actor, lease, task):
+        task = copy.deepcopy(task)
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            for key in ('id', 'role', 'mode'):
+                if not isinstance(task.get(key), str) or not task[key].strip():
+                    raise EngineError('Missing task ' + key)
+            if task['id'] in state['tasks']:
+                raise EngineError('Duplicate task')
+            if task['mode'] not in MODES.get(task['role'], []):
+                raise EngineError('Unavailable role or mode')
+            for key in ('inputs', 'acceptance', 'files', 'resources', 'dependencies'):
+                values = task.get(key)
+                if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
+                    raise EngineError('Invalid task ' + key)
+                if key in ('inputs', 'acceptance') and not values:
+                    raise EngineError('Empty task ' + key)
+                if len(values) != len(set(values)):
+                    raise EngineError('Duplicate ' + key)
+            for name in task['files']:
+                p = Path(name)
+                if p.is_absolute() or '..' in p.parts or not p.parts or p.parts[0] == '.git':
+                    raise EngineError('File ownership must stay inside repository')
+                resolved = (self.repo / p).resolve()
+                if self.repo not in resolved.parents:
+                    raise EngineError('File ownership escapes repository')
+            if any(dep not in state['tasks'] for dep in task['dependencies']):
+                raise EngineError('Unknown dependency or cycle')
+            if task['role'] == 'builder' and task['mode'] == 'repair':
+                repair_of = task.get('repair_of')
+                if repair_of not in state['tasks'] or state['tasks'][repair_of]['role'] != 'builder':
+                    raise EngineError('Repair needs a specific earlier builder task')
+                if not any(r.get('findings') and self._intact(r) and repair_of in r['tasks']
+                           for r in state['reviews']):
+                    raise EngineError('Repair needs earlier checked coding findings')
+            # Dependencies refer only to existing immutable cards, making cycles impossible.
+            task['state'] = 'queued'
+            state['tasks'][task['id']] = task
+
+    @staticmethod
+    def _collides(a, b):
+        if set(a['resources']) & set(b['resources']):
+            return True
+        return any(x == y or x in y.parents or y in x.parents
+                   for x in map(Path, a['files']) for y in map(Path, b['files']))
+
+    def _ready(self, state):
+        occupied = [t for t in state['tasks'].values() if t['state'] in ('running', 'reported')]
+        if len(occupied) >= self.policy['max_workers']:
+            return []
+        return [t['id'] for t in state['tasks'].values() if t['state'] == 'queued'
+                and all(state['tasks'][d]['state'] == 'accepted' for d in t['dependencies'])
+                and not any(self._collides(t, other) for other in occupied)]
+
+    def ready(self, actor, lease):
+        with self._state(False) as state:
+            self._lease(state, actor, lease)
+            return self._ready(state)
+
+    def dispatch(self, actor, lease, task_id, worker):
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            if not isinstance(worker, str) or not worker.strip() or worker == actor:
+                raise EngineError('Worker must differ from coordinator')
+            if any(t.get('worker') == worker and t['state'] in ('running', 'reported') for t in state['tasks'].values()):
+                raise EngineError('Worker is already reserved')
+            if task_id not in self._ready(state):
+                raise EngineError('Task is not ready or capacity is exhausted')
+            token = uuid.uuid4().hex
+            state['tasks'][task_id].update(state='running', worker=worker, assignment=token, lease=lease)
+            return token
+
+    def report(self, worker, token, report):
+        if not isinstance(report, str) or not report.strip():
+            raise EngineError('Empty worker report')
+        with self._state() as state:
+            task = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
+            if not task or task['state'] != 'running' or task['worker'] != worker:
+                raise EngineError('Invalid assignment')
+            self._lease(state, state['session']['actor'], task['lease'])
+            task.update(state='reported', report=report, report_artifact=self.artifact())
+
+    def _snapshot(self, path, kind):
+        path = Path(path).resolve()
+        if not path.is_file() or not path.read_bytes().strip():
+            raise EngineError('Evidence report must be a nonempty file')
+        data = path.read_bytes()
+        target = self.state_dir / (kind + '-' + uuid.uuid4().hex)
+        with target.open('xb') as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        return dict(source=str(path), path=str(target), sha256=_hash(data))
+
+    @staticmethod
+    def _intact(receipt):
+        for key in ('path', 'source'):
+            if key in receipt:
+                p = Path(receipt[key])
+                if not p.is_file() or _hash(p.read_bytes()) != receipt['sha256']:
+                    return False
+        return True
+
+    def record_review(self, actor, lease, reviewer, report_path, categories, task_ids=None, final=False, findings=None):
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            ids = list(task_ids or [])
+            findings = findings or []
+            if not isinstance(findings, list) or any(not isinstance(f, str) or not f.strip() for f in findings):
+                raise EngineError('Invalid review findings')
+            if not isinstance(reviewer, str) or not reviewer.strip() or reviewer == actor:
+                raise EngineError('Review must be independent of coordinator')
+            if not isinstance(categories, list) or not categories or not set(categories) <= set(CATEGORIES):
+                raise EngineError('Invalid review categories')
+            if not final and not ids:
+                raise EngineError('Checkpoint review needs task coverage')
+            if any(i not in state['tasks'] for i in ids):
+                raise EngineError('Unknown reviewed task')
+            covered = list(state['tasks'].values()) if final else [state['tasks'][i] for i in ids]
+            if any(t.get('worker') == reviewer for t in covered):
+                raise EngineError('Worker cannot review own artifact')
+            if any(t['state'] not in ('reported', 'accepted') for t in covered):
+                raise EngineError('Review covers incomplete work')
+            artifact = self.artifact()
+            try:
+                body = json.loads(Path(report_path).read_text())
+            except (ValueError, OSError) as exc:
+                raise EngineError('Review report must be structured JSON') from exc
+            expected = dict(reviewer=reviewer, categories=categories, tasks=ids, findings=findings,
+                            verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact, final=bool(final))
+            if not isinstance(body, dict) or any(body.get(k) != v for k, v in expected.items()):
+                raise EngineError('Review report metadata, verdict or artifact does not match')
+            if not isinstance(body.get('summary'), str) or not body['summary'].strip():
+                raise EngineError('Review needs a nonempty semantic summary')
+            evidence = self._snapshot(report_path, 'review')
+            receipt = dict(id=uuid.uuid4().hex, reviewer=reviewer, categories=categories,
+                           tasks=ids, final=bool(final), findings=findings, artifact=artifact, action='review', **evidence)
+            state['reviews'].append(receipt)
+            return copy.deepcopy(receipt)
+
+    def accept(self, actor, lease, task_id):
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = state['tasks'].get(task_id)
+            if not task or task['state'] != 'reported':
+                raise EngineError('Task has no reported result')
+            artifact = self.artifact()
+            if task.get('review_required', task['role'] == 'builder') and not any(task_id in r['tasks'] and not r.get('findings') and r['artifact'] == artifact and self._intact(r)
+                       for r in state['reviews']):
+                raise EngineError('Task needs current independent review')
+            if not task.get('review_required', task['role'] == 'builder') and task['report_artifact'] != artifact:
+                raise EngineError('Reported artifact is stale')
+            task['state'] = 'accepted'
+
+    def run_gate(self, actor, lease, name, argv):
+        if not isinstance(argv, list) or not argv or any(not isinstance(a, str) or not a or '\0' in a for a in argv):
+            raise EngineError('Gate needs an argv list')
+        with self._state(False) as state:
+            self._lease(state, actor, lease)
+        before = self.artifact()
+        log = self.state_dir / ('gate-' + uuid.uuid4().hex + '.log')
+        with log.open('xb') as out:
+            try:
+                result = subprocess.run(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT, check=False)
+                code = result.returncode
+            except OSError as exc:
+                out.write(str(exc).encode())
+                code = 127
+            out.flush()
+            os.fsync(out.fileno())
+        after = self.artifact()
+        receipt = dict(id=uuid.uuid4().hex, name=name, argv=argv, exit_code=code,
+                       artifact=before, after=after, action='gate', path=str(log),
+                       sha256=_hash(log.read_bytes()), passed=code == 0 and before == after)
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            state['gates'].append(receipt)
+        return receipt
+
+    def _release_evidence(self, state, remote, target, action, argv=None):
+        release = self.policy['release']
+        if (action != 'release' or not release.get('enabled') or not release.get('authorization')
+                or not release.get('argv') or release.get('remote') != remote or release.get('target') != target):
+            raise EngineError('Release is disabled or target is unauthorized')
+        if argv is not None and argv != release['argv']:
+            raise EngineError('Release command differs from configured command')
+        if any(t['state'] != 'accepted' for t in state['tasks'].values()):
+            raise EngineError('All tasks must be accepted')
+        artifact = self.artifact()
+        categories = set()
+        for review in state['reviews']:
+            if review['final'] and not review.get('findings') and review['artifact'] == artifact and self._intact(review):
+                categories.update(review['categories'])
+        if not set(self.policy['required_review_categories']) <= categories:
+            raise EngineError('Current final review coverage is incomplete')
+        checks = self.policy['required_checks']
+        if not checks:
+            raise EngineError('Release needs configured required checks')
+        for check in checks:
+            name = check['name'] if isinstance(check, dict) else check
+            expected = check.get('argv') if isinstance(check, dict) else self.policy.get('check_commands', {}).get(name)
+            if not expected:
+                raise EngineError('Required release gate needs configured argv: ' + name)
+            matching = [g for g in state['gates'] if g['name'] == name and g['argv'] == expected]
+            if not matching or not matching[-1]['passed'] or matching[-1]['artifact'] != artifact or not self._intact(matching[-1]):
+                raise EngineError('Required gate is missing, failed, altered or stale: ' + name)
+        return artifact
+
+    def release_permit(self, actor, lease, remote, target, action='release'):
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            artifact = self._release_evidence(state, remote, target, action)
+            permit = dict(id=uuid.uuid4().hex, action=action, remote=remote, target=target,
+                          argv=self.policy['release']['argv'], artifact=artifact, lease=lease)
+            state['permits'].append(permit)
+            return copy.deepcopy(permit)
+
+    def check_release(self, remote, target, action='release', argv=None):
+        with self._state(False) as state:
+            session = state['session']
+            if not session or not session['active']:
+                raise EngineError('No active release session')
+            artifact = self._release_evidence(state, remote, target, action, argv)
+            for permit in reversed(state['permits']):
+                if (permit['artifact'] == artifact and permit['remote'] == remote and permit['target'] == target
+                        and permit['action'] == action and permit['lease'] == session['lease']):
+                    return copy.deepcopy(permit)
+            raise EngineError('No current explicit release permit')
+
+    def enable_autonomy(self, actor, lease, ledger_path, max_passes, max_stalls):
+        if (not all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in (max_passes, max_stalls))
+                or max_passes > 20 or max_stalls > 2):
+            raise EngineError('Autonomy needs explicit positive caps')
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            state['autonomy'] = dict(ledger=self._snapshot(ledger_path, 'ledger'), max_passes=max_passes,
+                                     max_stalls=max_stalls, passes=0, stalls=0, active=True, progress=self._progress(state))
+
+    def autonomy_step(self, actor, lease, progress):
+        if not isinstance(progress, bool):
+            raise EngineError('Progress must be boolean')
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            ledger = state['autonomy']
+            if not ledger or not ledger['active'] or not self._intact(ledger['ledger']):
+                raise EngineError('No active intact autonomy ledger')
+            ledger['passes'] += 1
+            ledger['stalls'] = 0 if progress else ledger['stalls'] + 1
+            ledger['active'] = ledger['passes'] < ledger['max_passes'] and ledger['stalls'] < ledger['max_stalls']
+            return copy.deepcopy(ledger)
+
+    def _progress(self, state):
+        return _digest(dict(accepted=sorted(t['id'] for t in state['tasks'].values()
+                                            if t['state'] == 'accepted'),
+                            artifact=self.artifact(),
+                            gates=sorted({(g['name'], g['sha256']) for g in state['gates']
+                                          if g['passed'] and self._intact(g)})))
+
+    def hook_stop(self):
+        """Consume explicit bounded continuation; caller identifiers do not authenticate."""
+        with self._state() as state:
+            session = state['session']
+            ledger = state['autonomy']
+            if (not session or not session['active'] or not ledger or not ledger['active']
+                    or not self._intact(ledger['ledger'])
+                    or not any(t['state'] != 'accepted' for t in state['tasks'].values())):
+                return None
+            progress = self._progress(state)
+            ledger['passes'] += 1
+            ledger['stalls'] = 0 if ledger['progress'] != progress else ledger['stalls'] + 1
+            ledger['progress'] = progress
+            ledger['active'] = ledger['passes'] < ledger['max_passes'] and ledger['stalls'] < ledger['max_stalls']
+            if not ledger['active']:
+                return None
+            return 'Continue the explicitly armed workflow within its ledger; check ready cards and evidence.'
