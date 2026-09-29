@@ -19,16 +19,21 @@ def generated(root=ROOT):
         instructions += '\n\nPlugin root: __ORCHESTRA_ROOT__. Read only the references relevant to your assignment. '
         instructions += 'Your launch brief must name mode, objective, ownership, prerequisites and acceptance checks.'
         matrix = models['claude'][role['id']]
-        front = ['---', f"name: {role['id']}", f"description: {json.dumps(role['description'])}",
-                 f"model: {matrix['model']}", f"effort: {matrix['effort']}"]
-        if role['id'] != 'orchestrator':
-            front.append('disallowedTools: Agent')
-        front += ['---', '', instructions.replace('__ORCHESTRA_ROOT__', '${CLAUDE_PLUGIN_ROOT}')]
-        output[f"agents/{role['id']}.md"] = '\n'.join(front) + '\n'
+        variants = {'default': matrix, **{name: values for name,values in matrix.get('presets', {}).items()
+                                        if (values['model'],values['effort']) != (matrix['model'],matrix['effort'])}}
+        for preset, values in variants.items():
+            name = role['id'] if preset=='default' else role['id']+'-'+preset
+            front = ['---', f'name: {name}', f"description: {json.dumps(role['description'])}",
+                     f"model: {values['model']}", f"effort: {values['effort']}"]
+            if role['id'] != 'orchestrator':
+                front.append('disallowedTools: Agent')
+            front += ['---', '', instructions.replace('__ORCHESTRA_ROOT__', '${CLAUDE_PLUGIN_ROOT}')]
+            output[f'agents/{name}.md'] = '\n'.join(front) + '\n'
         if role['id'] == 'orchestrator':
             continue
         matrix = models['codex'][role['id']]
-        variants = {'default': matrix, **matrix.get('presets', {})}
+        variants = {'default': matrix, **{name: values for name,values in matrix.get('presets', {}).items()
+                                        if (values['model'],values['effort']) != (matrix['model'],matrix['effort'])}}
         for preset, values in variants.items():
             name = 'orchestra_' + role['id'].replace('-', '_')
             if preset != 'default':

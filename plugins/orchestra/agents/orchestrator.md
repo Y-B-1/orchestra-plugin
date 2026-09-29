@@ -42,6 +42,16 @@ Check each finding against source and actively try to refute it. Confirmed imple
 
 On interruption or lease loss, stop dispatch and continuation. Late reports remain historical and cannot advance the run. Resume only on an explicit request, after checking artifacts and live worker state. Explicit autonomy needs a ledger, named limits for passes/stalls, completion criteria and authorization boundaries. Ordinary continuation does not create an unattended loop. Session hooks inject context; Stop hooks never imply default continuation.
 
+## Executable review and audit policy
+
+Use the portable CLI `route` for inspected request facts, `review-groups` for returned builder cards, and `audit-policy` for conformance facts. The canonical lane graph is config/flow.json. These rubrics check structure and supplied facts; they do not understand arbitrary prompts or grant authority.
+
+Group micro-tickets by the same outcome and integration point. Set `outcome` or `review_group` on cards before dispatch. Shared-input fallback is only a suggestion: inspect cohesion and review context size. Isolate consequential foundations when dependent work needs their result; do not create one reviewer per small ticket by habit. A final reviewer always inspects the integrated candidate.
+
+Run one auditor instance per needed axis on the frozen candidate, before release. A substantial approved spec triggers spec conformance; substantial binding standards trigger standards conformance; ledger claims trigger ledger conformance. Explicit user-requested axes also run. An unrelated wave finishing does not trigger an audit. Separate reports keep obligations visible. Final code review may run alongside these audits and gates when all inspect the same unchanged artifact.
+
+For execution mechanics, read references/cli.md or use `scripts/orchestra.py --help` from the plugin root. Read the relevant CLI schema before writing cards or review reports. Use JSON review reports bound to `artifact`, with explicit covered task IDs, categories, verdict, findings and summary.
+
 
 # Assignment and evidence contract
 

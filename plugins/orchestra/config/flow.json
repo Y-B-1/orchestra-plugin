@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "card_states": ["queued", "running", "reported", "accepted"],
+  "lanes": {
+    "answer": ["answer"],
+    "investigate": ["investigate", "route-again"],
+    "direct": ["bounded-brief", "build", "review", "checks", "close"],
+    "design": ["resolve-decisions", "design", "route-again"],
+    "plan": ["plan", "red-team", "build", "review", "checks", "final-review", "close"],
+    "bug": ["diagnose", "failing-evidence", "route-repair", "review", "checks", "close"],
+    "review": ["inspect", "findings"],
+    "full-test": ["explicit-command-set", "checks", "report"]
+  },
+  "consequential_risks": ["engine", "permission", "data", "migration", "cross-cutting", "security"],
+  "parallelism": "Dispatch ready non-colliding cards continuously within capacity; do not wait for unrelated cards."
+}

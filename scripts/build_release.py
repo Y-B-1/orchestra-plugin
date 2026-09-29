@@ -26,7 +26,7 @@ def build(out):
         if path.is_symlink():
             raise ValueError(f'Distribution symlinks are unsupported: {relative}')
         data = path.read_bytes()
-        if re.search(rb'/Users/[^/\s]+/|gh[op]_[A-Za-z0-9]{20,}|sk-ant-api[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----', data):
+        if re.search(rb'/' + rb'Users/[^/\s]+/|gh[op]_[A-Za-z0-9]{20,}|sk-ant-api[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----', data):
             raise ValueError(f'Private content candidate: {relative}')
         paths.append((relative,data))
     tar_path = out / (name + '.tar.gz')

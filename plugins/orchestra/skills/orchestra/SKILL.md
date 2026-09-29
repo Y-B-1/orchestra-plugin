@@ -18,6 +18,7 @@ Start by reading applicable project instructions and current repository state. I
 - Implementation or checked repair: [building](references/building.md).
 - Exact-diff checkpoint and inclusive final review: [review](references/review.md).
 - Separate spec, standards or ledger conformance: [audit](references/audit.md).
+- Run commands and task/review schemas: [CLI](references/cli.md).
 - Command checks: [gates](references/gates.md).
 - Preservation and project-authorized release: [closeout](references/closeout.md).
 

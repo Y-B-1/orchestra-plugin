@@ -14,6 +14,7 @@ from orchestra_core.engine import Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import load_policy, repository, state_location
 from orchestra_core.profiles import atomic, install, uninstall
+from orchestra_core.routing import route, review_groups, audit_axes
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -32,7 +33,7 @@ def parser():
     start = sub.add_parser('start')
     start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
-    for name in ['status','artifact','ready','board','interrupt','finish']:
+    for name in ['status','artifact','ready','board','review-groups','interrupt','finish','scan']:
         sub.add_parser(name)
     add = sub.add_parser('add')
     add.add_argument('task', help='Task JSON path')
@@ -63,6 +64,10 @@ def parser():
         profile.add_argument('--codex-home',default=os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
     route = sub.add_parser('classify')
     route.add_argument('shell_command')
+    lane = sub.add_parser('route')
+    lane.add_argument('facts',help='Facts JSON path; coordinator checks facts against source')
+    audit = sub.add_parser('audit-policy')
+    audit.add_argument('facts',help='Audit trigger facts JSON path')
     return p
 
 
@@ -87,6 +92,10 @@ def execute(args):
         return uninstall(args.codex_home),0
     if args.command == 'classify':
         return classify_command(args.shell_command).__dict__,0
+    if args.command == 'route':
+        return route(read_json(args.facts)),0
+    if args.command == 'audit-policy':
+        return audit_axes(read_json(args.facts)),0
     repo = repository(args.repo)
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
     policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
@@ -108,6 +117,8 @@ def execute(args):
         for card in cards:
             board.setdefault(card['role'],{}).setdefault(card['state'],[]).append(card['id'])
         return board,0
+    if args.command=='review-groups':
+        return review_groups(list(engine.status()['tasks'].values())),0
     if args.command=='report':
         engine.report(args.worker,args.token,Path(args.report).read_text())
         return {'reported':args.token},0
@@ -116,9 +127,10 @@ def execute(args):
     if args.command=='ready':
         return {'ready':engine.ready(args.actor,args.lease)},0
     if args.command in ['interrupt','finish']:
-        if args.command=='finish' and any(t['state']!='accepted' for t in engine.status()['tasks'].values()):
-            raise EngineError('Finish needs all cards accepted; use interrupt to stop incomplete work')
-        engine.interrupt(args.actor,args.lease)
+        if args.command=='finish':
+            engine.close_session(args.actor,args.lease)
+        else:
+            engine.interrupt(args.actor,args.lease)
         return {'session':args.command,'state':str(state)},0
     if args.command=='add':
         engine.add_task(args.actor,args.lease,read_json(args.task))
@@ -138,6 +150,9 @@ def execute(args):
         argv = args.argv[1:] if args.argv[:1]==['--'] else args.argv
         result = engine.run_gate(args.actor,args.lease,args.name,argv)
         return result,0 if result['passed'] else 1
+    if args.command=='scan':
+        result=engine.run_secret_scan(args.actor,args.lease)
+        return result,0 if result.get('passed') or result.get('unavailable') else 1
     if args.command=='permit':
         return engine.release_permit(args.actor,args.lease,args.remote,args.target),0
     if args.command=='release':

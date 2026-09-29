@@ -13,7 +13,7 @@
       "Read",
       "Write"
     ],
-    "websiteURL": "https://github.com/Y-B-1/orchestra",
+    "websiteURL": "https://github.com/Y-B-1/orchestra-plugin",
     "defaultPrompt": [
       "Use Orchestra to route this request and dispatch independent work."
     ]

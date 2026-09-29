@@ -1,0 +1,56 @@
+# Comparison with the audited Claude Code setup
+
+Reference: the embedded DevOps Orchestra at commit `fd140bd32df441db36b1f70bd2d506a8582958f9`, plus portable Orchestra 0.5.0 at `82fe61fd644bb0d55965be8aa6da0bdee4721784`. Inspection was read-only. Private snapshots, project paths, product state and credentials are excluded from this distribution.
+
+The source contains 14 Claude worker bodies, 17 generated Codex profiles and 31 flow states. The new package preserves responsibilities through ten worker contracts plus the main. Count reductions combine equivalent scopes, not independent perspectives.
+
+| Source responsibilities | New contract | Preserved distinction |
+| --- | --- | --- |
+| scout + researcher | investigator code/docs | Source facts vs current primary-source research |
+| founder-mind | founder-mind design/audit | Depth ladder, researched references, real-user simulation, shipped quality |
+| architect + planner | designer-planner design/plan | Approved design precedes executable ownership and dependency plan |
+| red-teamer | red-teamer named lens | Independent challenge, no self-approval |
+| builder + builder-max + runtime lanes | builder presets | First attempt vs checked-findings repair |
+| reviewer + pr-reviewer | code-reviewer checkpoint/final | Foundation/group inspection vs full integration |
+| auditor | auditor spec/standards/ledger | Separate reports, omissions beyond changed code |
+| gatekeeper | gatekeeper + checked command runner | Actual commands/exits, no fixes or inferred passes |
+| janitor | janitor + main lifecycle | Owned hygiene and preservation before removal |
+| releaser | releaser + checked release runner | Explicit target authority and live-result inspection |
+
+Domain vocabulary lives in the designer-planner method and project context. There is no additional domain worker in the 14 inspected source bodies. The generator is deterministic packaging code, not a runtime agent.
+
+## Every source flow state
+
+| Source states | Portable home or deliberate change |
+| --- | --- |
+| intake | `route` rubric and coordinator fact inspection |
+| trivial.inline | answer/direct lane, proportionate proof |
+| small.design, small.build, small.close | bounded brief, builder group review, checks, close |
+| design.recon, design.frontier | investigator and decision rounds |
+| design.approaches, design.spec, design.gate | founder/design dossier, settled spec, independent challenge |
+| plan.pickup, plan.recon, plan.draft, plan.redteam | approved inputs, ownership graph, red-team findings loop |
+| execute.setup, execute.ticket-loop | external run state, reservations, continuous ready scheduling |
+| execute.review | reported-card review groups; early consequential foundations |
+| execute.integrate, execute.wave-close | coordinator integration; no unrelated wave barrier |
+| gates.fast | configured argv runner, logs, actual exit and exact artifact |
+| review.pr | inclusive final code review with all categories |
+| audit.decide, audit.run | deterministic axis rubric; independent needed axes on frozen candidate |
+| release.merge, release.deploy | disabled-by-default exact project-authorized release recipe |
+| release.rollback | excluded automatic rollback; needs separate explicit authority |
+| fullsuite.run | explicit owner-command full-test lane |
+| bug.feedback-loop | diagnosis and failing evidence before scoped repair |
+| cleanup.final | run-owned hygiene, named-branch preservation, main removal |
+| terminal.done | accepted obligations plus completion evidence |
+| autonomy.loop | explicit intact ledger, bounded passes/stalls, interruption wins |
+
+## Hook and instruction changes
+
+The source registers 23 Claude, 16 Codex and 13 Cursor handlers, counting repeated handler entries. The package has five Codex and four Claude event handlers. Fewer handlers share one implementation; counts alone do not prove equivalent enforcement.
+
+Preserved: explicit staging, destructive Git guards, independent review, honest exits, context in worker briefs, no worker fan-out, evidence before release, bounded explicit autonomy, careful cleanup. Strengthened: full hashes, dirty-tree and policy binding, immutable report/log hashes, explicit final task coverage, exact configured commands, malformed input rejection, role/method consistency.
+
+Changed: isolated concurrent writers replace conflicting shared-index rules; micro-tickets share outcome reviews; auditor axes follow concrete gaps rather than fixed wave rituals. Repair escalates after the first checked coding findings, resolving the source's contradictory round-four text. Final review always covers security, reuse, simplification, efficiency and layer placement; a focused lens cannot remove that coverage.
+
+Excluded: startup charter repair, product-specific paths/ports/DB/remote grants, old model switch guards, Cursor orchestration, relays, automatic rollback, stale pipeline assumptions and absent-scanner pass claims. No Charge dependency or copied Charge skill is distributed.
+
+The comparison preserves intent where native mechanics differ. Codex standalone custom agents need one user-level profile installation; Claude discovers package agents natively. Hooks and caller identifiers are workflow controls, not malicious-agent isolation. Native trust and runtime activation are separate checks.
