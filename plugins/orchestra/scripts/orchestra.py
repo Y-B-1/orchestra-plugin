@@ -1,0 +1,183 @@
+#!/usr/bin/env python3
+"""Portable Orchestra CLI. Each command prints a JSON receipt."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import uuid
+
+from orchestra_core.engine import Engine, EngineError
+from orchestra_core.guards import classify_command
+from orchestra_core.paths import load_policy, repository, state_location
+from orchestra_core.profiles import atomic, install, uninstall
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def read_json(path):
+    return json.loads(Path(path).read_text())
+
+
+def parser():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--repo', default=os.getcwd())
+    p.add_argument('--state', help='External run directory; defaults to user state for this repository')
+    p.add_argument('--actor', default='main', help='Workflow identity, not an authenticated principal')
+    p.add_argument('--lease', help='Coordinator lease returned by start')
+    sub = p.add_subparsers(dest='command', required=True)
+    start = sub.add_parser('start')
+    start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
+    start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
+    for name in ['status','artifact','ready','board','interrupt','finish']:
+        sub.add_parser(name)
+    add = sub.add_parser('add')
+    add.add_argument('task', help='Task JSON path')
+    dispatch = sub.add_parser('dispatch')
+    dispatch.add_argument('task_id')
+    dispatch.add_argument('worker')
+    report = sub.add_parser('report')
+    report.add_argument('worker')
+    report.add_argument('token')
+    report.add_argument('report', help='Nonempty result file')
+    accept = sub.add_parser('accept')
+    accept.add_argument('task_id')
+    review = sub.add_parser('review')
+    review.add_argument('report', help='Structured review JSON path')
+    gate = sub.add_parser('gate')
+    gate.add_argument('name')
+    gate.add_argument('argv', nargs=argparse.REMAINDER)
+    for name in ['permit','release']:
+        action = sub.add_parser(name)
+        action.add_argument('remote')
+        action.add_argument('target')
+    autonomy = sub.add_parser('autonomy')
+    autonomy.add_argument('ledger')
+    autonomy.add_argument('--max-passes',type=int,required=True)
+    autonomy.add_argument('--max-stalls',type=int,required=True)
+    for name in ['install-profiles','uninstall-profiles']:
+        profile = sub.add_parser(name)
+        profile.add_argument('--codex-home',default=os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
+    route = sub.add_parser('classify')
+    route.add_argument('shell_command')
+    return p
+
+
+def archive_inactive(state):
+    with (state/'state.lock').open('a') as stream:
+        fcntl.flock(stream,fcntl.LOCK_EX)
+        source = state/'state.json'
+        if not source.exists():
+            return
+        old = read_json(source)
+        if old.get('session',{}).get('active'):
+            raise EngineError('Stop or finish the active run before starting another')
+        archive = {'state':old,'policy':load_policy(state)}
+        atomic(state/'history'/('run-'+uuid.uuid4().hex+'.json'),json.dumps(archive,indent=2).encode())
+        source.unlink()  # Receipts and logs remain at their existing immutable paths.
+
+
+def execute(args):
+    if args.command == 'install-profiles':
+        return install(ROOT,args.codex_home),0
+    if args.command == 'uninstall-profiles':
+        return uninstall(args.codex_home),0
+    if args.command == 'classify':
+        return classify_command(args.shell_command).__dict__,0
+    repo = repository(args.repo)
+    state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
+    policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
+    engine = Engine(state,repo,policy)
+    if args.command=='start':
+        if args.new_run:
+            archive_inactive(state)
+        lease = engine.open_session(args.actor)
+        if args.policy:
+            atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
+        return {'lease':lease,'state':str(state),'repo':str(repo)},0
+    if args.command=='status':
+        return engine.status(),0
+    if args.command=='artifact':
+        return engine.artifact(),0
+    if args.command=='board':
+        cards = engine.status()['tasks'].values()
+        board = {}
+        for card in cards:
+            board.setdefault(card['role'],{}).setdefault(card['state'],[]).append(card['id'])
+        return board,0
+    if args.command=='report':
+        engine.report(args.worker,args.token,Path(args.report).read_text())
+        return {'reported':args.token},0
+    if not args.lease:
+        raise EngineError('Supply --lease from start for coordinator actions')
+    if args.command=='ready':
+        return {'ready':engine.ready(args.actor,args.lease)},0
+    if args.command in ['interrupt','finish']:
+        if args.command=='finish' and any(t['state']!='accepted' for t in engine.status()['tasks'].values()):
+            raise EngineError('Finish needs all cards accepted; use interrupt to stop incomplete work')
+        engine.interrupt(args.actor,args.lease)
+        return {'session':args.command,'state':str(state)},0
+    if args.command=='add':
+        engine.add_task(args.actor,args.lease,read_json(args.task))
+        return {'added':read_json(args.task)['id']},0
+    if args.command=='dispatch':
+        token = engine.dispatch(args.actor,args.lease,args.task_id,args.worker)
+        return {'assignment':token,'task':args.task_id,'worker':args.worker},0
+    if args.command=='accept':
+        engine.accept(args.actor,args.lease,args.task_id)
+        return {'accepted':args.task_id},0
+    if args.command=='review':
+        review = read_json(args.report)
+        result = engine.record_review(args.actor,args.lease,review['reviewer'],args.report,
+                                     review['categories'],review['tasks'],review['final'],review['findings'])
+        return result,0
+    if args.command=='gate':
+        argv = args.argv[1:] if args.argv[:1]==['--'] else args.argv
+        result = engine.run_gate(args.actor,args.lease,args.name,argv)
+        return result,0 if result['passed'] else 1
+    if args.command=='permit':
+        return engine.release_permit(args.actor,args.lease,args.remote,args.target),0
+    if args.command=='release':
+        argv = engine.policy['release']['argv']
+        engine.check_release(args.remote,args.target,argv=argv)
+        # Reject destructive forms even when an operator accidentally configures one.
+        if classify_command(shlex.join(argv)).action=='deny':
+            raise EngineError('Configured release command violates the shared guard')
+        before=engine.artifact()
+        log=state/('release-'+uuid.uuid4().hex+'.log')
+        with log.open('xb') as stream:
+            try:
+                result=subprocess.run(argv,cwd=repo,stdout=stream,stderr=subprocess.STDOUT,check=False,
+                                      timeout=engine.policy.get('release_timeout_seconds',600))
+                code=result.returncode
+            except subprocess.TimeoutExpired:
+                code=124
+                stream.write(b'Release timed out; inspect remote state before any retry.\n')
+        import hashlib
+        receipt={'action':'release','argv':argv,'exit_code':code,'artifact':before,
+                 'after':engine.artifact(),'log':str(log),'sha256':hashlib.sha256(log.read_bytes()).hexdigest(),
+                 'remote':args.remote,'target':args.target}
+        atomic(state/('release-receipt-'+uuid.uuid4().hex+'.json'),json.dumps(receipt,indent=2).encode())
+        return receipt,0 if code==0 else 1
+    if args.command=='autonomy':
+        engine.enable_autonomy(args.actor,args.lease,args.ledger,args.max_passes,args.max_stalls)
+        return {'autonomy':'armed','caps':[args.max_passes,args.max_stalls]},0
+    raise EngineError('Unsupported command')
+
+
+def main(argv=None):
+    args=parser().parse_args(argv)
+    try:
+        result,code=execute(args)
+    except (EngineError,ValueError,OSError,KeyError,subprocess.SubprocessError) as exc:
+        print(json.dumps({'error':str(exc)}),file=sys.stderr)
+        return 2
+    print(json.dumps(result,indent=2))
+    return code
+
+
+if __name__=='__main__':
+    sys.exit(main())
