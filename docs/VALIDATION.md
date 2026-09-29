@@ -4,7 +4,7 @@
 
 | Check | Result |
 | --- | --- |
-| Python 3.11 unit/integration suite | 84 tests pass |
+| Python 3.11 unit/integration suite | 89 tests pass (1.0.1 refresh) |
 | Canonical native profile drift | 27 generated files match: 13 Codex, 14 Claude |
 | Skill Creator frontmatter check | Pass |
 | Claude plugin manifest, strict | Pass, no warnings |
@@ -27,7 +27,7 @@ The suite includes actual subprocess commands, locking/concurrency, schema rejec
 
 ## Native limits observed
 
-Codex CLI 0.158.0 accepted native packaging and installation but rejected an authenticated gpt-6.1-sol request with HTTP 400. The desktop-bundled CLI 0.159.0 subsequently ran that model at medium successfully using isolated configuration. Use a current compatible client; metadata installation alone does not prove account/model availability. The matrix reflects the user's latest Sol-first choice, with Astra medium only for red team/checked repair and Luna high for bounded discovery/hygiene.
+Codex CLI 0.158.0 accepted native packaging and installation but rejected an authenticated gpt-6.1-sol request with HTTP 400. The desktop-bundled CLI 0.159.0 subsequently ran that model at medium successfully using isolated configuration. Use a current compatible client; metadata installation alone does not prove account/model availability. The 2026-09-30 matrix uses only Sol and Luna; red team/checked repair use Sol high and bounded discovery/hygiene use Luna high.
 
 The first native custom-worker check timed out at 55 seconds after loading Luna high. A second check allowed 150 seconds and completed successfully: the named worker read one fixture file and returned the correct cited finding. Native turn records show Sol medium and Luna high. This proves profile discovery and that bounded round trip; it is not a benchmark, a successful Claude model session or proof of trusted startup hooks. Temporary authentication copies were removed; global credentials were unchanged.
 
@@ -40,3 +40,9 @@ Claude's validator accepts manifest JSON paths and supported directories. Passin
 Other harness adapters, native Windows, production releases and deployed-system checks are outside this validation. GitHub distribution is separate from universal public-directory approval. Shell guards do not interpret arbitrary scripts, stdin, aliases or authenticate worker identities.
 
 Final independent review and the checked candidate hash are recorded in BUILD-LEDGER.md. Native authentication or trust limitations do not become green evidence.
+
+## 1.0.1 refresh
+
+Inline assignments share worker ownership, dependency, capacity, lease and independent review checks. Codex uses only Sol/Luna; checked repair and red team use Sol high.
+
+Native Codex 0.159.0 hook discovery reproduced zero Orchestra hooks with the portable root manifest. Its native compatibility-only package returns all five events exactly once as untrusted. The Codex catalog now selects a generated copy of the canonical runtime that omits only unsupported/Claude packaging files. The canonical portable manifest remains schema-valid; Claude keeps its separate definition. The generator and parity test check every copied byte. No trust record changed.

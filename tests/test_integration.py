@@ -140,6 +140,18 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertEqual(len(list((self.state/'history').glob('*.json'))),1)
         self.assertEqual(self.git('status','--porcelain'),'')
 
+    def test_inline_card_uses_main_actor_and_independent_review(self):
+        task=dict(id='INLINE',role='builder',mode='implementation',inputs=['fixture'],
+                  acceptance=['fixture check'],files=['fixture.txt'],resources=[],dependencies=[])
+        self.cli('add',str(self.write('inline.json',task)),lease=True)
+        result=self.cli('inline','INLINE',lease=True)[1]
+        self.assertEqual(result['executor'],'main')
+        self.assertTrue(result['inline'])
+        self.cli('report','main',result['token'],str(self.write('inline.txt','Inspected fixture source.')))
+        self.cli('accept','INLINE',lease=True,expected=2)
+        self.review(['INLINE'])
+        self.cli('accept','INLINE',lease=True)
+
     def test_dirty_candidate_invalidates_review_and_permit(self):
         task=dict(id='I',role='investigator',mode='code',inputs=['fixture'],acceptance=['inspect'],files=[],resources=[],dependencies=[])
         self.cli('add',str(self.write('I.json',task)),lease=True)

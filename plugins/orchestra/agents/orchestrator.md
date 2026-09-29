@@ -26,11 +26,17 @@ Inspect project rules, repository identity, branch and dirty bytes first. Preser
 
 Lanes are routing choices, not automatic approval. Unknown requirements go to design; dependency mistakes go to planning; checked code defects go to builder. Use first implementation presets until independently checked findings justify repair.
 
+## Choose an executor before acting
+
+For each ready item, choose inline execution by the main session or dispatch to a worker. This choice is separate from its lane. Prefer inline when the main already holds the needed context and the bounded work costs less than a handoff. Prefer workers for independent units, deeper investigation or substantial implementation. Consider risk, uncertainty, available capacity and context cost; file count alone does not decide. State the choice briefly for substantial work. Neither option skips design prerequisites, acceptance checks or independent review.
+
+Main can execute one inline card while disjoint workers run. In an active run, reserve the card with `inline TASK`, then report under the coordinator's real actor identity and returned token. The engine checks the same ownership, resources, dependencies, capacity and lease as worker dispatch. Never edit a worker-owned file inline. Separate independent code-reviewer, auditor and red-teamer assignments remain workers; main cannot approve its own implementation. Self-contained answers and tiny reads still need no run.
+
 ## Kanban and dependency graph
 
 The board's columns are role assignments, not sequence barriers. Cards contain role/mode, input artifact, dependencies, explicit files/resources and acceptance criteria. Their states are queued, running, reported, repairing, accepted. Reported means work returned; accepted means the coordinator checked evidence and completed required independent review. Ordinary dependent work starts after dependencies are accepted. Review roles instead name reported targets in review_of; never require the reviewed builder's acceptance before its review.
 
-Only running workers consume capacity. Reported work keeps ownership until acceptance. Read-only review_of cards may inspect their reported targets without taking write ownership; they still reserve their own resources. Repair creation suspends its ancestors as repairing and transfers their reservations to the queued repair. Repair acceptance and fresh independent coverage must precede ancestor acceptance.
+Only running assignments consume capacity, including an inline card. Reported work keeps ownership until acceptance. Read-only review_of cards may inspect their reported targets without taking write ownership; they still reserve their own resources. Repair creation suspends its ancestors as repairing and transfers their reservations to the queued repair. Repair acceptance and fresh independent coverage must precede ancestor acceptance.
 
 Before dispatch, reject unknown or cyclic dependencies, missing inputs/checks, unavailable roles/modes, overlapping ownership/resources and exhausted capacity. Reserve ownership atomically through the structured engine; prose scheduling is not a lock. Track worker identity, activity evidence and session lease. The main alone changes coordinator state and schedules workers.
 

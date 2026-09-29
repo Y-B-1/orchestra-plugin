@@ -8,7 +8,7 @@
       "name": "orchestra",
       "source": {
         "source": "local",
-        "path": "./plugins/orchestra"
+        "path": "./plugins/orchestra-codex"
       },
       "policy": {
         "installation": "AVAILABLE",

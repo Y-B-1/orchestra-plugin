@@ -6,7 +6,7 @@ The role count does not limit useful concurrency. Multiple instances of the same
 
 ## Install
 
-Prerequisites: Python 3.11 or later, Git, and a supported Codex or Claude Code client. Native checks used Codex CLI 0.158.0 and Claude Code 2.1.284. Windows is not supported by the POSIX locking core; use WSL. Other harnesses can use the portable CLI and contracts but need their own native adapter.
+Prerequisites: Python 3.11 or later, Git, and a supported Codex or Claude Code client. Native checks used Codex CLI 0.159.0 and Claude Code 2.1.284. Windows is not supported by the POSIX locking core; use WSL. Other harnesses can use the portable CLI and contracts but need their own native adapter.
 
 Codex:
 
@@ -16,6 +16,8 @@ codex plugin add orchestra@orchestra-distribution
 git clone https://github.com/Y-B-1/orchestra-plugin.git
 python3.11 orchestra-plugin/plugins/orchestra/scripts/orchestra.py install-profiles
 ```
+
+Codex installs the generated native package; Claude installs the canonical package. The generator checks both against the same source.
 
 The last command installs namespaced worker profiles once in the user configuration. Plugin installation alone does not discover plugin-local Codex agent files. The installer preserves unrelated profiles and records file hashes. Rerun after updates. Keep the clone while profiles refer to its method paths.
 

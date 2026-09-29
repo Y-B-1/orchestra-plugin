@@ -48,6 +48,42 @@ def generated(root=ROOT):
     return output
 
 
+
+def codex_package(root=ROOT, profiles=None):
+    """Derive a legacy-native package without the unsupported portable root manifest."""
+    profiles = generated(root) if profiles is None else profiles
+    output = {}
+    for path in root.rglob('*'):
+        relative = path.relative_to(root).as_posix()
+        if not path.is_file() or path.is_symlink():
+            continue
+        if ('__pycache__' in path.parts or path.name == '.DS_Store' or
+            relative == 'plugin.json' or relative.startswith(('agents/', '.claude-plugin/')) or
+            relative in {'hooks/claude.json', 'scripts/generate.py'}):
+            continue
+        output[relative] = profiles[relative].encode() if relative in profiles else path.read_bytes()
+    return output
+
+
+def sync_codex_package(check, profiles):
+    target = ROOT.parent / 'orchestra-codex'
+    expected = codex_package(profiles=profiles)
+    actual = {p.relative_to(target).as_posix() for p in target.rglob('*') if p.is_file()}
+    stale = actual - set(expected)
+    mismatch = {name for name, data in expected.items()
+                if not (target/name).is_file() or (target/name).read_bytes() != data}
+    if check and (stale or mismatch):
+        raise ValueError('Native Codex package drift: ' + ', '.join(sorted(stale | mismatch)))
+    if not check:
+        for name in stale:
+            (target/name).unlink()
+        for name, data in expected.items():
+            path = target/name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(data)
+    return len(expected)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true')
@@ -68,6 +104,8 @@ def main():
             path = ROOT / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
+    package_count = sync_codex_package(args.check, expected)
+    print(f'{package_count} Codex package files checked' if args.check else f'{package_count} Codex package files generated')
     print(f'{len(expected)} native profiles checked' if args.check else f'{len(expected)} native profiles generated')
 
 

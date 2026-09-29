@@ -98,34 +98,43 @@ class NativeTests(unittest.TestCase):
             self.assertEqual((PLUGIN / name).read_text(), content, name)
             if name.endswith('.toml'):
                 data = tomllib.loads(content)
-                self.assertIn(data['model'], ['gpt-6-astra','gpt-6.1-sol','gpt-6-luna'])
+                self.assertIn(data['model'], ['gpt-6.1-sol','gpt-6-luna'])
                 self.assertIn(data['model_reasoning_effort'], ['low','medium','high'])
                 self.assertFalse(data['agents']['enabled'])
 
     def test_codex_cost_policy_limits_frontier_and_small_model_assignments(self):
         matrix = json.loads((PLUGIN / 'config/models.json').read_text())['codex']
-        frontier = []
         small = []
         for role, values in matrix.items():
             for preset, selection in [('default', values), *values.get('presets', {}).items()]:
-                if selection['model'] == 'gpt-6-astra':
-                    frontier.append((role, preset))
-                    self.assertEqual(selection['effort'], 'medium')
+                self.assertIn(selection['model'], ['gpt-6.1-sol', 'gpt-6-luna'])
                 if selection['model'] == 'gpt-6-luna':
                     small.append((role, preset))
                     self.assertEqual(selection['effort'], 'high')
-        self.assertEqual(frontier, [('red-teamer', 'default'), ('builder', 'repair')])
+        self.assertEqual(matrix['red-teamer']['model'], 'gpt-6.1-sol')
+        self.assertEqual(matrix['builder']['presets']['repair'], {'model': 'gpt-6.1-sol', 'effort': 'high'})
         self.assertEqual(small, [('investigator', 'code'), ('janitor', 'default')])
+
+    def test_codex_package_matches_canonical_runtime(self):
+        package = ROOT/'plugins/orchestra-codex'
+        self.assertFalse((package/'plugin.json').exists())
+        for name, data in generate.codex_package().items():
+            self.assertEqual((package/name).read_bytes(), data, name)
+        self.assertEqual(generate.sync_codex_package(True, generate.generated()), len(generate.codex_package()))
 
     def test_separate_hook_definitions_and_contained_catalogs(self):
         root = json.loads((PLUGIN / 'plugin.json').read_text())
         claude = json.loads((PLUGIN / '.claude-plugin/plugin.json').read_text())
         self.assertNotEqual(root['extensions']['com.openai']['hooks'], claude['hooks'])
         self.assertFalse((PLUGIN / 'hooks/hooks.json').exists())
+        self.assertNotIn('hooks', root)
+        compat = json.loads((PLUGIN / '.codex-plugin/plugin.json').read_text())
+        self.assertEqual({root['version'], claude['version'], compat['version']}, {'1.0.1'})
         for path in [ROOT/'.agents/plugins/marketplace.json', ROOT/'.claude-plugin/marketplace.json']:
             source = json.loads(path.read_text())['plugins'][0]['source']
             relative = source['path'] if isinstance(source, dict) else source
-            self.assertEqual((ROOT/relative).resolve(), PLUGIN.resolve())
+            expected = ROOT/'plugins/orchestra-codex' if '.agents/' in str(path) else PLUGIN
+            self.assertEqual((ROOT/relative).resolve(), expected.resolve())
 
 
 if __name__ == '__main__':

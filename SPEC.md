@@ -8,7 +8,7 @@ One installable plugin source for Codex and Claude Code, with a reusable core fo
 
 Main orchestrator plus ten workers: investigator, founder-mind, designer-planner, red-teamer, builder, code-reviewer, auditor, gatekeeper, janitor, releaser. Investigator has code/docs modes; designer-planner has design/plan modes; builder has implementation/frontend/sensitive/mechanical/repair presets; code-reviewer has checkpoint/final modes; auditor has spec/standards/ledger modes. Founder-mind preserves product depth, researched references, user simulation and shipped-surface audit. All workers return evidence and never own coordinator state or fan-out.
 
-Codex model matrix: main, founder, designer-planner, final reviewer and auditor gpt-6.1-sol high; checkpoint reviewer, first builder, gatekeeper, releaser and docs investigator gpt-6.1-sol medium; code discovery and janitor gpt-6-luna high; red team and checked builder repair gpt-6-astra medium. Astra never exceeds medium. Claude uses its own native matrix. No cross-provider model names, Luna builds or parallel-effort inflation. Main model remains a user choice.
+Codex model matrix: main, founder, designer-planner, final reviewer and auditor gpt-6.1-sol high; checkpoint reviewer, first builder, gatekeeper, releaser and docs investigator gpt-6.1-sol medium; code discovery and janitor gpt-6-luna high; red team and checked builder repair gpt-6.1-sol high. Only Sol and Luna run in Codex. Claude uses its own native matrix. No cross-provider model names, Luna builds or parallel-effort inflation. Main model remains a user choice.
 
 ## Routing and scheduling
 

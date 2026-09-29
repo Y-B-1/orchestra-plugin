@@ -1,6 +1,6 @@
 # Model selection evidence — 2026-09-30
 
-The Codex matrix prioritizes gpt-6.1-sol. Only red team and checked builder repair use Astra, capped at medium. Luna performs bounded read-only discovery and hygiene at high. The main client retains control of its own model.
+The Codex matrix prioritizes gpt-6.1-sol. The 1.0.1 update uses Sol high for red team and checked builder repair, with no Astra. Luna performs bounded read-only discovery and hygiene at high. The main client retains control of its own model.
 
 ## Primary sources
 
@@ -10,6 +10,6 @@ The Codex matrix prioritizes gpt-6.1-sol. Only red team and checked builder repa
 
 ## Selection and limits
 
-Luna high follows the user's quality preference while preserving bounded responsibilities. Sol handles architecture, external research, builds, approval, gates and release. Astra is a narrow independent challenge/repair valve. This is a reasoned default, not a measured winner on private project tasks. Test representative source-finding and cleanup scenarios before broadening Luna's role. Refresh this evidence when the host catalog, pricing or assignment changes.
+Luna high follows the user's quality preference while preserving bounded responsibilities. Sol handles architecture, external research, builds, approval, gates and release. Sol high provides independent challenge and checked repair. This is a reasoned default, not a measured winner on private project tasks. Test representative source-finding and cleanup scenarios before broadening Luna's role. Refresh this evidence when the host catalog, pricing or assignment changes.
 
 The current desktop catalog supports Luna high/xhigh, Sol high and Astra medium. Host support does not establish availability for a separate CLI/account. No model benchmark or price changes role authority, ownership or evidence requirements.

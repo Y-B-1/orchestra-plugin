@@ -16,7 +16,7 @@ The main orchestrator plus ten worker roles use config/roles.json as their canon
 | janitor | hygiene | Preservation and cleanup proposal |
 | releaser | release | Configured authorized commands, exact target and current evidence |
 
-Codex prioritizes gpt-6.1-sol: high for broad judgment, medium for checkpoint review, first implementation, operations and docs research. Only red team and checked repair use gpt-6-astra, capped at medium. Bounded code discovery and read-only hygiene proposals use gpt-6-luna high. Claude retains its native Opus/Sonnet matrix. See docs/models.md for exact settings and availability limits. Do not silently substitute a different provider's model. The main session model remains the user's choice. Parallel work never raises effort. Settings stay fixed for an assignment.
+Codex uses only gpt-6.1-sol and gpt-6-luna: Sol high for broad judgment, red team and checked repair; Sol medium for checkpoint review, first implementation, operations and docs research. Bounded code discovery and read-only hygiene proposals use Luna high. Claude retains its native Opus/Sonnet matrix. See docs/models.md for exact settings and availability limits. Do not silently substitute a different provider's model. The main session model remains the user's choice. Parallel work never raises effort. Settings stay fixed for an assignment.
 
 Workers do not fan out, mutate coordinator state or acquire release permission through their role name. Releaser authority comes only from configured project authorization and an explicit bounded assignment. A CLEAN review adds no permission. Installer receipts and enabled/trusted native hooks govern profile discovery and session context; skill installation alone cannot guarantee either.
 

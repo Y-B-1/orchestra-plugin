@@ -44,6 +44,33 @@ class EngineFixture(unittest.TestCase):
 
 
 class EngineTests(EngineFixture):
+    def test_inline_and_worker_execution_share_ownership_and_independent_review(self):
+        self.task('inline')
+        self.task('parallel')
+        self.task('collision', files=['inline'])
+        token = self.engine.start_inline('main', self.lease, 'inline')
+        self.engine.dispatch('main', self.lease, 'parallel', 'worker')
+        with self.assertRaises(EngineError):
+            self.engine.dispatch('main', self.lease, 'collision', 'other')
+        self.engine.report('main', token, 'Inline implementation checked')
+        self.assertTrue(self.engine.status()['tasks']['inline']['inline'])
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'inline')
+        report = self.root / 'inline-review.json'
+        self.review(report, tasks=['inline'])
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['inline'])
+        self.engine.accept('main', self.lease, 'inline')
+
+    def test_inline_cannot_replace_independent_review_or_survive_interruption(self):
+        self.task('review', role='code-reviewer', mode='final')
+        with self.assertRaises(EngineError):
+            self.engine.start_inline('main', self.lease, 'review')
+        self.task('inline')
+        token = self.engine.start_inline('main', self.lease, 'inline')
+        self.engine.interrupt('main', self.lease)
+        with self.assertRaises(EngineError):
+            self.engine.report('main', token, 'Late inline result')
+
     def test_invalid_tasks_and_capacity(self):
         for kw in [dict(role='unknown'), dict(mode='unknown'), dict(acceptance=[]), dict(files=['../escape']), dict(dependencies=['missing'])]:
             with self.assertRaises(EngineError):

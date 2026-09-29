@@ -4,6 +4,7 @@ import argparse
 import gzip
 import hashlib
 import io
+import json
 import re
 from pathlib import Path
 import subprocess
@@ -19,7 +20,8 @@ def build(out):
     files = subprocess.check_output(['git','ls-files','-z'], cwd=ROOT).decode().split('\0')
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    name = 'orchestra-1.0.0'
+    version = json.loads((ROOT/'plugins/orchestra/plugin.json').read_text())['version']
+    name = 'orchestra-' + version
     paths = []
     for relative in filter(None, files):
         path = ROOT / relative

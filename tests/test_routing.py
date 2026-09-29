@@ -21,6 +21,16 @@ class RoutingTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 route({**self.facts(),**changes})
 
+    def test_execution_choice_preserves_lane_and_exposes_both_options(self):
+        for execution in ['inline', 'worker']:
+            result = route({**self.facts(), 'execution': execution})
+            self.assertEqual(result['lane'], 'direct')
+            self.assertEqual(result['execution'], execution)
+            self.assertEqual(result['execution_options'], ['inline', 'worker'])
+        self.assertEqual(route(self.facts())['execution'], 'decide')
+        with self.assertRaises(ValueError):
+            route({**self.facts(), 'execution': 'automatic'})
+
     def test_microtickets_share_review_and_foundation_is_early(self):
         task=dict(role='builder',state='reported',mode='implementation',inputs=['spec'],dependencies=[],outcome='settings')
         cards=[dict(task,id='B1'),dict(task,id='B2'),dict(task,id='B3',mode='sensitive'),dict(task,id='B4',dependencies=['B3'])]
