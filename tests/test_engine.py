@@ -203,6 +203,106 @@ class MoreEngineTests(EngineFixture):
             list(pool.map(lambda n: self.task('task-' + str(n)), range(12)))
         self.assertEqual(12, len(self.engine.status()['tasks']))
 
+class IntegrationRepairTests(EngineFixture):
+    def test_canonical_modes(self):
+        for role, mode in [('founder-mind', 'audit'), ('red-teamer', 'scope'), ('gatekeeper', 'checks'), ('janitor', 'hygiene'), ('releaser', 'release')]:
+            self.task(role, role=role, mode=mode)
+            self.engine.dispatch('main', self.lease, role, role + '-worker')
+        with self.assertRaises(EngineError):
+            self.task('old-mode', role='gatekeeper', mode='default')
+
+    def test_gate_guard_and_timeout(self):
+        for argv in [['git', 'reset', '--hard'], ['git', 'push', 'origin', 'main'], ['bash', '-c', 'git stash']]:
+            with self.assertRaises(EngineError):
+                self.engine.run_gate('main', self.lease, 'unsafe', argv)
+        engine = Engine(self.root / 'bounded', self.repo, {'gate_timeout_seconds': 0.05})
+        lease = engine.open_session('main')
+        receipt = engine.run_gate('main', lease, 'hang', [sys.executable, '-c', 'import time; time.sleep(10)'])
+        self.assertEqual(124, receipt['exit_code'])
+        self.assertFalse(receipt['passed'])
+
+    def test_bad_state_is_engine_error(self):
+        for value in [[], {}, {'repo': str(self.repo)}, {'version': 1, 'repo': str(self.repo), 'policy': self.engine.policy_hash, 'tasks': []}]:
+            self.engine.state_path.write_text(json.dumps(value))
+            with self.assertRaises(EngineError):
+                self.engine.status()
+        self.engine.state_path.write_text('{')
+        with self.assertRaises(EngineError):
+            self.engine.status()
+
+    def test_final_review_requires_explicit_task_coverage(self):
+        self.task(role='investigator', mode='code')
+        token = self.engine.dispatch('main', self.lease, 'a', 'worker')
+        self.engine.report('worker', token, 'checked')
+        self.engine.accept('main', self.lease, 'a')
+        report = self.root / 'final.json'
+        self.review(report, final=True)
+        with self.assertRaises(EngineError):
+            self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], final=True)
+
+    def test_method_missing_and_changed_contract_invalidates_run(self):
+        from unittest.mock import patch
+        import shutil
+        package = self.root / 'package'
+        source = pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra'
+        shutil.copytree(source, package)
+        with patch('orchestra_core.engine.PACKAGE_ROOT', package):
+            engine = Engine(self.root / 'contracts', self.repo)
+            lease = engine.open_session('main')
+            task = dict(id='a', role='builder', mode='implementation', inputs=['https://example.com'], acceptance=['done'], files=['a'], resources=[], dependencies=[])
+            engine.add_task('main', lease, task)
+            method = package / 'skills/orchestra/references/building.md'
+            method.write_text(method.read_text() + '\nNew binding rule.\n')
+            with self.assertRaises(EngineError):
+                engine.dispatch('main', lease, 'a', 'worker')
+            with self.assertRaises(EngineError):
+                Engine(self.root / 'contracts', self.repo).status()
+            method.unlink()
+            with self.assertRaises(EngineError):
+                Engine(self.root / 'new-contracts', self.repo)
+
+    def test_invalid_timeout_and_optional_brief(self):
+        for timeout in [0, -1, True, '300', float('inf')]:
+            with self.assertRaises(EngineError):
+                Engine(self.root / 'invalid', self.repo, {'gate_timeout_seconds': timeout})
+        for values in [dict(objective=' '), dict(brief='missing'), dict(inputs=[' '])]:
+            with self.assertRaises(EngineError):
+                self.task(**values)
+        brief = self.root / 'brief.md'
+        brief.write_text('Objective and bounded acceptance criteria.')
+        self.task(brief=str(brief))
+        brief.unlink()
+        with self.assertRaises(EngineError):
+            self.engine.dispatch('main', self.lease, 'a', 'worker')
+
+    def test_scanner_availability_and_required_release_evidence(self):
+        receipt = self.engine.run_secret_scan('main', self.lease)
+        self.assertEqual(126, receipt['exit_code'])
+        self.assertFalse(receipt['passed'])
+        command = [sys.executable, '-c', 'print("scanned")']
+        policy = dict(required_checks=[dict(name='unit', argv=command)],
+                      secret_scan=dict(required=True, argv=command),
+                      release=dict(enabled=True, authorization='user', remote='origin', target='main', argv=['git', 'push', 'origin', 'HEAD:main']))
+        engine = Engine(self.root / 'scanner', self.repo, policy)
+        lease = engine.open_session('main')
+        report = self.root / 'final.json'
+        from orchestra_core.engine import CATEGORIES
+        self.review(report, categories=CATEGORIES, final=True, engine=engine)
+        engine.record_review('main', lease, 'reviewer', report, CATEGORIES, final=True)
+        engine.run_gate('main', lease, 'unit', command)
+        with self.assertRaisesRegex(EngineError, 'secret-scan'):
+            engine.release_permit('main', lease, 'origin', 'main')
+        engine.run_secret_scan('main', lease)
+        engine.release_permit('main', lease, 'origin', 'main')
+        (self.repo / 'new').write_text('uncommitted')
+        with self.assertRaisesRegex(EngineError, 'clean working tree'):
+            engine.release_permit('main', lease, 'origin', 'main')
+        policy['secret_scan']['argv'] = []
+        engine = Engine(self.root / 'missing-scanner', self.repo, policy)
+        lease = engine.open_session('main')
+        with self.assertRaisesRegex(EngineError, 'unavailable'):
+            engine.run_secret_scan('main', lease)
+
 
 if __name__ == '__main__':
     unittest.main()

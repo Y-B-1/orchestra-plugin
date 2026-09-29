@@ -7,10 +7,15 @@ import fcntl
 import hashlib
 import json
 import os
+import math
+import shlex
+import signal
 from pathlib import Path
 import subprocess
 import tempfile
 import uuid
+
+from .guards import classify_command
 
 
 class EngineError(ValueError):
@@ -18,15 +23,36 @@ class EngineError(ValueError):
 
 
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
-MODES = {
-    'investigator': ['code', 'docs'], 'founder-mind': ['default'],
-    'designer-planner': ['design', 'plan'], 'red-teamer': ['default'],
-    'builder': ['implementation', 'frontend', 'sensitive', 'mechanical', 'repair'],
-    'code-reviewer': ['checkpoint', 'final'], 'auditor': ['spec', 'standards', 'ledger'],
-    'gatekeeper': ['default'], 'janitor': ['default'], 'releaser': ['default'],
-}
+PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
+               gate_timeout_seconds=300, secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]))
+
+
+def _contracts():
+    """Canonical role definitions and every referenced method bind run evidence."""
+    try:
+        path = PACKAGE_ROOT / 'config/roles.json'
+        raw = path.read_bytes()
+        roles = json.loads(raw)['roles']
+        result, hashes = {}, {'roles.json': _hash(raw)}
+        root = (PACKAGE_ROOT / 'skills/orchestra').resolve()
+        hashes['SKILL.md'] = _hash((root / 'SKILL.md').read_bytes())
+        for role in roles:
+            name, modes, methods = role['id'], role['modes'], role['methods']
+            if (not isinstance(name, str) or name in result or not modes or not methods
+                    or not all(isinstance(v, str) and v.strip() for v in modes + methods)):
+                raise ValueError('Invalid role contract')
+            result[name] = modes
+            for method in methods:
+                target = (root / method).resolve()
+                if root not in target.parents or not target.is_file():
+                    raise ValueError('Missing required method: ' + method)
+                hashes[method] = _hash(target.read_bytes())
+        result.pop('orchestrator', None)
+        return result, _digest(hashes)
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        raise EngineError('Invalid canonical role/method contract: ' + str(exc)) from exc
 
 
 def _hash(data):
@@ -46,9 +72,18 @@ class Engine:
         self.policy = copy.deepcopy(DEFAULT)
         if policy:
             self.policy.update(copy.deepcopy(policy))
-        if not isinstance(self.policy['max_workers'], int) or self.policy['max_workers'] < 1:
+        if isinstance(self.policy['max_workers'], bool) or not isinstance(self.policy['max_workers'], int) or self.policy['max_workers'] < 1:
             raise EngineError('Invalid worker capacity')
-        self.policy_hash = _digest(self.policy)
+        timeout = self.policy['gate_timeout_seconds']
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            raise EngineError('Gate timeout must be positive and finite')
+        for key in ('release', 'secret_scan'):
+            if not isinstance(self.policy[key], dict):
+                raise EngineError('Invalid policy ' + key)
+        if not isinstance(self.policy['required_checks'], list):
+            raise EngineError('Invalid required checks')
+        self.modes, self.contract_hash = _contracts()
+        self.policy_hash = _digest(dict(policy=self.policy, contracts=self.contract_hash))
         self._git('rev-parse', '--show-toplevel')
         if Path(self._git('rev-parse', '--show-toplevel').decode().strip()).resolve() != self.repo:
             raise EngineError('repo must name repository root')
@@ -102,16 +137,25 @@ class Engine:
 
     @contextlib.contextmanager
     def _state(self, write=True):
+        if _contracts()[1] != self.contract_hash:
+            raise EngineError('Role or method instructions changed; start a new run')
         with (self.state_dir / 'state.lock').open('a+') as lock:
             fcntl.flock(lock, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
             if self.state_path.exists():
-                state = json.loads(self.state_path.read_text())
+                try:
+                    state = json.loads(self.state_path.read_text())
+                    self._validate_state(state)
+                except (ValueError, TypeError, KeyError, OSError) as exc:
+                    raise EngineError('Malformed run state: ' + str(exc)) from exc
                 if state['repo'] != str(self.repo) or state['policy'] != self.policy_hash:
                     raise EngineError('Repository or policy changed; start a new run')
             else:
                 state = dict(version=1, repo=str(self.repo), policy=self.policy_hash,
                              session=None, tasks={}, reviews=[], gates=[], permits=[], autonomy=None)
-            yield state
+            try:
+                yield state
+            except (KeyError, TypeError, AttributeError, IndexError) as exc:
+                raise EngineError('Malformed run state or request: ' + str(exc)) from exc
             if write:
                 fd, name = tempfile.mkstemp(dir=self.state_dir, prefix='.state-')
                 try:
@@ -128,6 +172,62 @@ class Engine:
                 finally:
                     if os.path.exists(name):
                         os.unlink(name)
+
+    @staticmethod
+    def _validate_state(state):
+        if not isinstance(state, dict) or state.get('version') != 1:
+            raise EngineError('Unsupported run state schema')
+        for key, kind in [('repo', str), ('policy', str), ('tasks', dict),
+                          ('reviews', list), ('gates', list), ('permits', list)]:
+            if not isinstance(state.get(key), kind):
+                raise EngineError('Invalid run state ' + key)
+        for key in ('session', 'autonomy'):
+            if key not in state or (state[key] is not None and not isinstance(state[key], dict)):
+                raise EngineError('Invalid run state ' + key)
+        session = state['session']
+        if session is not None and (not isinstance(session.get('active'), bool)
+                or any(not isinstance(session.get(k), str) or not session[k] for k in ('actor', 'lease'))):
+            raise EngineError('Invalid session state')
+        for name, task in state['tasks'].items():
+            if not isinstance(task, dict) or task.get('id') != name or task.get('state') not in ('queued', 'running', 'reported', 'accepted'):
+                raise EngineError('Invalid task state')
+            for key in ('role', 'mode'):
+                if not isinstance(task.get(key), str):
+                    raise EngineError('Invalid task ' + key)
+            for key in ('inputs', 'acceptance', 'files', 'resources', 'dependencies'):
+                if not isinstance(task.get(key), list) or any(not isinstance(v, str) or not v.strip() for v in task[key]):
+                    raise EngineError('Invalid task ' + key)
+            if any(dep not in state['tasks'] for dep in task['dependencies']):
+                raise EngineError('Invalid stored dependency')
+        fields = {
+            'reviews': {'id': str, 'reviewer': str, 'categories': list, 'tasks': list, 'final': bool,
+                        'findings': list, 'artifact': dict, 'action': str, 'path': str, 'source': str, 'sha256': str},
+            'gates': {'id': str, 'name': str, 'argv': list, 'exit_code': int, 'artifact': dict,
+                      'after': dict, 'action': str, 'path': str, 'sha256': str, 'passed': bool},
+            'permits': {'id': str, 'action': str, 'remote': str, 'target': str, 'argv': list,
+                        'artifact': dict, 'lease': str},
+        }
+        for key, schema in fields.items():
+            for item in state[key]:
+                if not isinstance(item, dict) or any(not isinstance(item.get(k), kind) for k, kind in schema.items()):
+                    raise EngineError('Invalid ' + key + ' state')
+
+    def _check_contract(self, task):
+        modes, digest = _contracts()
+        if digest != self.contract_hash:
+            raise EngineError('Role or method instructions changed; start a new run')
+        if task['mode'] not in modes.get(task['role'], []):
+            raise EngineError('Unavailable role or mode')
+        if 'objective' in task and (not isinstance(task['objective'], str) or not task['objective'].strip()):
+            raise EngineError('Task objective must be meaningful')
+        if 'brief' in task:
+            if not isinstance(task['brief'], str) or not task['brief'].strip():
+                raise EngineError('Task brief must name a file')
+            brief = Path(task['brief'])
+            if not brief.is_absolute():
+                brief = self.repo / brief
+            if not brief.is_file() or not brief.read_bytes().strip():
+                raise EngineError('Task brief must be an existing nonempty file')
 
     def status(self):
         with self._state(False) as state:
@@ -171,8 +271,7 @@ class Engine:
                     raise EngineError('Missing task ' + key)
             if task['id'] in state['tasks']:
                 raise EngineError('Duplicate task')
-            if task['mode'] not in MODES.get(task['role'], []):
-                raise EngineError('Unavailable role or mode')
+            self._check_contract(task)
             for key in ('inputs', 'acceptance', 'files', 'resources', 'dependencies'):
                 values = task.get(key)
                 if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
@@ -194,7 +293,7 @@ class Engine:
                 repair_of = task.get('repair_of')
                 if repair_of not in state['tasks'] or state['tasks'][repair_of]['role'] != 'builder':
                     raise EngineError('Repair needs a specific earlier builder task')
-                if not any(r.get('findings') and self._intact(r) and repair_of in r['tasks']
+                if not any(r.get('findings') and self._intact(r) and r['artifact'] == self.artifact() and repair_of in r['tasks']
                            for r in state['reviews']):
                     raise EngineError('Repair needs earlier checked coding findings')
             # Dependencies refer only to existing immutable cards, making cycles impossible.
@@ -230,6 +329,7 @@ class Engine:
                 raise EngineError('Worker is already reserved')
             if task_id not in self._ready(state):
                 raise EngineError('Task is not ready or capacity is exhausted')
+            self._check_contract(state['tasks'][task_id])
             token = uuid.uuid4().hex
             state['tasks'][task_id].update(state='running', worker=worker, assignment=token, lease=lease)
             return token
@@ -280,6 +380,8 @@ class Engine:
                 raise EngineError('Checkpoint review needs task coverage')
             if any(i not in state['tasks'] for i in ids):
                 raise EngineError('Unknown reviewed task')
+            if final and (len(ids) != len(set(ids)) or set(ids) != set(state['tasks'])):
+                raise EngineError('Final review must explicitly cover every task')
             covered = list(state['tasks'].values()) if final else [state['tasks'][i] for i in ids]
             if any(t.get('worker') == reviewer for t in covered):
                 raise EngineError('Worker cannot review own artifact')
@@ -316,17 +418,41 @@ class Engine:
                 raise EngineError('Reported artifact is stale')
             task['state'] = 'accepted'
 
+    def run_secret_scan(self, actor, lease):
+        return self.run_gate(actor, lease, 'secret-scan', self.policy['secret_scan'].get('argv', []))
+
     def run_gate(self, actor, lease, name, argv):
-        if not isinstance(argv, list) or not argv or any(not isinstance(a, str) or not a or '\0' in a for a in argv):
+        unavailable = name == 'secret-scan' and argv == [] and not self.policy['secret_scan'].get('argv')
+        if unavailable and self.policy['secret_scan'].get('required'):
+            raise EngineError('Required secret scanner is unavailable')
+        if not isinstance(name, str) or not name.strip():
+            raise EngineError('Gate needs a name')
+        if not unavailable and (not isinstance(argv, list) or not argv or any(not isinstance(a, str) or not a or '\0' in a for a in argv)):
             raise EngineError('Gate needs an argv list')
+        decision = classify_command(shlex.join(argv)) if not unavailable else None
+        if decision is not None and decision.action != 'allow':
+            raise EngineError('Gate command forbidden: ' + decision.reason)
         with self._state(False) as state:
             self._lease(state, actor, lease)
         before = self.artifact()
         log = self.state_dir / ('gate-' + uuid.uuid4().hex + '.log')
         with log.open('xb') as out:
             try:
-                result = subprocess.run(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT, check=False)
-                code = result.returncode
+                if unavailable:
+                    out.write(b'Optional secret scanner unavailable: no command configured\n')
+                    code = 126
+                else:
+                    process = subprocess.Popen(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT,
+                                               start_new_session=True)
+                    try:
+                        code = process.wait(timeout=self.policy['gate_timeout_seconds'])
+                    except subprocess.TimeoutExpired:
+                        os.killpg(process.pid, signal.SIGKILL)
+                        process.wait()
+                        raise
+            except subprocess.TimeoutExpired:
+                out.write(b'Gate timed out\n')
+                code = 124
             except OSError as exc:
                 out.write(str(exc).encode())
                 code = 127
@@ -346,6 +472,11 @@ class Engine:
         if (action != 'release' or not release.get('enabled') or not release.get('authorization')
                 or not release.get('argv') or release.get('remote') != remote or release.get('target') != target):
             raise EngineError('Release is disabled or target is unauthorized')
+        decision = classify_command(shlex.join(release['argv']))
+        if decision.action == 'deny':
+            raise EngineError('Forbidden release command: ' + decision.reason)
+        if self._git('status', '--porcelain=v1', '--untracked-files=all').strip():
+            raise EngineError('Release needs a clean working tree')
         if argv is not None and argv != release['argv']:
             raise EngineError('Release command differs from configured command')
         if any(t['state'] != 'accepted' for t in state['tasks'].values()):
@@ -357,7 +488,12 @@ class Engine:
                 categories.update(review['categories'])
         if not set(self.policy['required_review_categories']) <= categories:
             raise EngineError('Current final review coverage is incomplete')
-        checks = self.policy['required_checks']
+        checks = list(self.policy['required_checks'])
+        scanner = self.policy['secret_scan']
+        if scanner.get('required'):
+            if not scanner.get('argv'):
+                raise EngineError('Required secret scanner is unavailable')
+            checks.append(dict(name='secret-scan', argv=scanner['argv']))
         if not checks:
             raise EngineError('Release needs configured required checks')
         for check in checks:
