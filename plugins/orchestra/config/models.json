@@ -2,7 +2,7 @@
   "schema_version": 1,
   "codex": {
     "orchestrator": {
-      "model": "gpt-6-astra",
+      "model": "gpt-6.1-sol",
       "effort": "high"
     },
     "investigator": {
@@ -10,8 +10,8 @@
       "effort": "medium",
       "presets": {
         "code": {
-          "model": "gpt-6.1-sol",
-          "effort": "low"
+          "model": "gpt-6-luna",
+          "effort": "high"
         },
         "docs": {
           "model": "gpt-6.1-sol",
@@ -20,16 +20,16 @@
       }
     },
     "founder-mind": {
-      "model": "gpt-6-astra",
+      "model": "gpt-6.1-sol",
       "effort": "high"
     },
     "designer-planner": {
-      "model": "gpt-6-astra",
+      "model": "gpt-6.1-sol",
       "effort": "high"
     },
     "red-teamer": {
       "model": "gpt-6-astra",
-      "effort": "high"
+      "effort": "medium"
     },
     "builder": {
       "model": "gpt-6.1-sol",
@@ -58,21 +58,21 @@
       }
     },
     "code-reviewer": {
-      "model": "gpt-6-astra",
+      "model": "gpt-6.1-sol",
       "effort": "high",
       "presets": {
         "checkpoint": {
-          "model": "gpt-6-astra",
+          "model": "gpt-6.1-sol",
           "effort": "medium"
         },
         "final": {
-          "model": "gpt-6-astra",
+          "model": "gpt-6.1-sol",
           "effort": "high"
         }
       }
     },
     "auditor": {
-      "model": "gpt-6-astra",
+      "model": "gpt-6.1-sol",
       "effort": "high"
     },
     "gatekeeper": {
@@ -80,8 +80,8 @@
       "effort": "medium"
     },
     "janitor": {
-      "model": "gpt-6.1-sol",
-      "effort": "medium"
+      "model": "gpt-6-luna",
+      "effort": "high"
     },
     "releaser": {
       "model": "gpt-6.1-sol",

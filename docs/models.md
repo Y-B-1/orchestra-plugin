@@ -1,21 +1,27 @@
 # Native model matrix
 
-The matrix remains the approved task-based selection. Parallel work never raises effort. Main-session model choice remains with the user.
+The matrix prioritizes Sol. Astra is limited to red team and checked build repair, capped at medium. Sol may use high for broad judgment; parallel work never raises effort. Main-session model choice remains with the user.
 
 | Contract | Codex model | Effort |
 | --- | --- | --- |
-| Main, founder, designer-planner, red team, auditor | gpt-6-astra | high |
-| Final integration code reviewer | gpt-6-astra | high |
-| Checkpoint code reviewer | gpt-6-astra | medium |
+| Main, founder, designer-planner, auditor | gpt-6.1-sol | high |
+| Final integration code reviewer | gpt-6.1-sol | high |
+| Checkpoint code reviewer | gpt-6.1-sol | medium |
+| Red team | gpt-6-astra | medium |
 | Builder first attempt: implementation, frontend, sensitive, mechanical | gpt-6.1-sol | medium |
 | Builder repair after checked coding findings | gpt-6-astra | medium |
-| Investigator: code | gpt-6.1-sol | low |
+| Investigator: bounded code discovery | gpt-6-luna | high |
 | Investigator: documentation | gpt-6.1-sol | medium |
-| Gatekeeper, janitor, releaser | gpt-6.1-sol | medium |
+| Gatekeeper, releaser | gpt-6.1-sol | medium |
+| Janitor: read-only hygiene proposal | gpt-6-luna | high |
 
 Claude uses claude-opus-5-5 for judgment at high, checkpoint and repair at medium; claude-sonnet-5 for first builds and operations at medium, code discovery at low. Check provider availability before dispatch; unavailable models need an explicit equivalent selection, never silent cross-provider substitution.
 
-Each native worker profile pins both model and reasoning effort. Hold settings constant during an assignment. Repair requires a BLOCKED independent review tied to the earlier builder card. No first-attempt frontier builder, effort above high, Cursor fallback or million-token opt-in is generated. The observed Codex catalog lists 272,000 context tokens for both models; a future host catalog can change that value.
+Luna receives explicit paths and a bounded read-only question. It returns source evidence or a cleanup proposal; the coordinator checks evidence before edits or removal. Keep external research, implementation, independent approval, command gates and release on Sol. If discovery becomes ambiguous or crosses architecture/permission boundaries, return the unresolved question to the coordinator for a new Sol assignment.
+
+Luna high is a practical starting choice, not a proved optimum for these roles. Published evaluations show capable high-effort workflow performance, but do not establish that xhigh improves Orchestra discovery or hygiene. Token rates remain fixed across effort levels; more reasoning tokens can increase total API cost and latency. API pricing does not directly measure a Codex subscription allowance. See RESEARCH.md for current sources and limits.
+
+Each native worker profile pins both model and reasoning effort. Hold settings constant during an assignment. Repair requires a BLOCKED independent review tied to the earlier builder card. No first-attempt Astra builder, Astra above medium, other effort above high, Cursor fallback or million-token opt-in is generated. Check the active host catalog and account before dispatch; a model name does not establish account availability or a context limit.
 
 ## Fast mode
 

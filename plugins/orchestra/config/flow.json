@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "card_states": ["queued", "running", "reported", "accepted"],
+  "card_states": ["queued", "running", "reported", "repairing", "accepted"],
   "lanes": {
     "answer": ["answer"],
     "investigate": ["investigate", "route-again"],

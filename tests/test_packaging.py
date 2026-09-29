@@ -98,9 +98,24 @@ class NativeTests(unittest.TestCase):
             self.assertEqual((PLUGIN / name).read_text(), content, name)
             if name.endswith('.toml'):
                 data = tomllib.loads(content)
-                self.assertIn(data['model'], ['gpt-6-astra','gpt-6.1-sol'])
+                self.assertIn(data['model'], ['gpt-6-astra','gpt-6.1-sol','gpt-6-luna'])
                 self.assertIn(data['model_reasoning_effort'], ['low','medium','high'])
                 self.assertFalse(data['agents']['enabled'])
+
+    def test_codex_cost_policy_limits_frontier_and_small_model_assignments(self):
+        matrix = json.loads((PLUGIN / 'config/models.json').read_text())['codex']
+        frontier = []
+        small = []
+        for role, values in matrix.items():
+            for preset, selection in [('default', values), *values.get('presets', {}).items()]:
+                if selection['model'] == 'gpt-6-astra':
+                    frontier.append((role, preset))
+                    self.assertEqual(selection['effort'], 'medium')
+                if selection['model'] == 'gpt-6-luna':
+                    small.append((role, preset))
+                    self.assertEqual(selection['effort'], 'high')
+        self.assertEqual(frontier, [('red-teamer', 'default'), ('builder', 'repair')])
+        self.assertEqual(small, [('investigator', 'code'), ('janitor', 'default')])
 
     def test_separate_hook_definitions_and_contained_catalogs(self):
         root = json.loads((PLUGIN / 'plugin.json').read_text())

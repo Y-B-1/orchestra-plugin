@@ -8,8 +8,8 @@ Status: FINAL REVIEW. Ten worker contracts plus main, native matrices and GitHub
 | T2 | BUILT | Shared parser and native hooks; covered malformed and release cases |
 | T3 | BUILT | Progressive skill, all roles/modes, canonical native matrices |
 | T4 | BUILT | Both native installs/removals exit 0; safe profiles; reproducible archives |
-| T5 | REVIEW | 56 tests pass, local bare-target release matches full HEAD, independent skill forward-test complete |
+| T5 | REVIEW | 76 tests pass, local bare-target release matches full HEAD, independent skill forward-test complete |
 
-Candidate implementation: c92bd08462cea3d73504a60a11c625553f742200. Final code review and spec audit are pending. Subsequent commits need current gate evidence.
+The initial final review found review-verdict, repair scheduling, release-lease, state-path and literal-command gaps. Checked repair commits address those failures with regression tests. Fresh Sol final code review and spec audit remain pending on the integrated candidate. Subsequent commits need current gate evidence.
 
-Live native model limits: standalone Codex account rejected the approved Sol model; Claude OAuth expired. Native metadata installation succeeds, but those model sessions did not. Native hook trust was not written or bypassed. User review/trust and compatible authenticated model access remain separate activation checks. See VALIDATION.md.
+Native model evidence: older Codex CLI 0.158.0 rejected Sol, while the desktop-bundled 0.159.0 ran Sol medium successfully. Claude OAuth expired. Native metadata installation succeeds for both clients. Native hook trust was not written or bypassed. User hook review/trust remains a separate activation check. See VALIDATION.md.

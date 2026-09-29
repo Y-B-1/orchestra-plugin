@@ -4,12 +4,13 @@
 
 | Check | Result |
 | --- | --- |
-| Python 3.11 unit/integration suite | 56 tests pass |
+| Python 3.11 unit/integration suite | 76 tests pass |
 | Canonical native profile drift | 27 generated files match: 13 Codex, 14 Claude |
 | Skill Creator frontmatter check | Pass |
 | Claude plugin manifest, strict | Pass, no warnings |
 | Claude marketplace manifest, strict | Pass, no warnings |
 | Codex marketplace add/install/list/remove, isolated CODEX_HOME | All exit 0; correct plugin ID/version discovered |
+| Bundled Codex CLI 0.159.0 model smoke, isolated configuration | Sol medium returns the requested response, exit 0 |
 | Claude marketplace add/install/list/uninstall/remove, isolated configuration | All exit 0; correct plugin ID/version discovered |
 | User profile install/update/uninstall | Pass; unrelated files preserved; collisions and symlinked locations rejected |
 | Paths with spaces | Native installation, hooks and local release pass |
@@ -20,11 +21,11 @@
 | Source comparison | All 31 source flow states and all 14 source responsibilities mapped |
 | Application source preservation | Original HEAD remained fd140bd32df441db36b1f70bd2d506a8582958f9; working tree remained clean |
 
-The suite includes actual subprocess commands, locking/concurrency, schema rejection, release receipts, and repeat-run history. The local release fixture has no production remote, deployment or credentials.
+The suite includes actual subprocess commands, locking/concurrency, schema rejection, release receipts, and repeat-run history. Final-audit regressions cover newer BLOCKED review precedence, repair chains, reported-work review scheduling, terminal release cards, actor/lease rejection, plugin state-path protection, release destinations, literal shell wrappers and process timeouts. The local release fixture has no production remote, deployment or credentials.
 
 ## Native limits observed
 
-Codex CLI 0.158.0 accepted native packaging and installation. Its authenticated standalone model request rejected gpt-6.1-sol with HTTP 400: model is not supported when using Codex with a ChatGPT account. The current desktop host exposes the approved matrix to its agent tool, but that does not establish availability for every separate client/account. Matrix defaults remain unchanged by user instruction. Actual native worker/model execution in the standalone CLI is not a passing check.
+Codex CLI 0.158.0 accepted native packaging and installation but rejected an authenticated gpt-6.1-sol request with HTTP 400. The desktop-bundled CLI 0.159.0 subsequently ran that model at medium successfully using isolated configuration. Use a current compatible client; metadata installation alone does not prove account/model availability. The matrix reflects the user's latest Sol-first choice, with Astra medium only for red team/checked repair and Luna high for bounded discovery/hygiene.
 
 Claude Code 2.1.284 accepted packaging and installation. A live print-mode attempt failed before model execution because its OAuth session expired and could not refresh. Authentication needs renewal before live model testing. No login or global credential change was performed.
 
