@@ -94,15 +94,15 @@
       "effort": "high"
     },
     "investigator": {
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-5-5",
       "effort": "medium",
       "presets": {
         "code": {
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "effort": "low"
         },
         "docs": {
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "effort": "medium"
         }
       }
@@ -120,23 +120,23 @@
       "effort": "high"
     },
     "builder": {
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-5-5",
       "effort": "medium",
       "presets": {
         "implementation": {
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "effort": "medium"
         },
         "frontend": {
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "effort": "medium"
         },
         "sensitive": {
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "effort": "medium"
         },
         "mechanical": {
-          "model": "claude-sonnet-5",
+          "model": "claude-sonnet-5-5",
           "effort": "medium"
         },
         "repair": {
@@ -164,15 +164,15 @@
       "effort": "high"
     },
     "gatekeeper": {
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-5-5",
       "effort": "medium"
     },
     "janitor": {
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-5-5",
       "effort": "medium"
     },
     "releaser": {
-      "model": "claude-sonnet-5",
+      "model": "claude-sonnet-5-5",
       "effort": "medium"
     }
   }

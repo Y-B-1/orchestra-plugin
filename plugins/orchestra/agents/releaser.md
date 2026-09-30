@@ -1,7 +1,7 @@
 ---
 name: releaser
 description: "Execute explicitly project-authorized release at a checked artifact."
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 effort: medium
 disallowedTools: Agent
 ---

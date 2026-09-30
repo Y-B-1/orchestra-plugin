@@ -1,7 +1,7 @@
 ---
 name: investigator
 description: "Read-only source discovery or current primary-source research."
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 effort: medium
 disallowedTools: Agent
 ---
