@@ -15,7 +15,7 @@ The Codex matrix uses only GPT-6.1 Sol and GPT-6 Luna. Sol uses high for broad j
 | Gatekeeper, releaser | gpt-6.1-sol | medium |
 | Janitor: read-only hygiene proposal | gpt-6-luna | high |
 
-Claude uses claude-opus-5-5 for judgment at high, checkpoint and repair at medium; claude-sonnet-5 for first builds and operations at medium, code discovery at low. Check provider availability before dispatch; unavailable models need an explicit equivalent selection, never silent cross-provider substitution.
+Claude uses claude-opus-5-5 for judgment at high, checkpoint and repair at medium; claude-sonnet-5-5 for first builds and operations at medium, code discovery at low. Check provider availability before dispatch; unavailable models need an explicit equivalent selection, never silent cross-provider substitution.
 
 Luna receives explicit paths and a bounded read-only question. It returns source evidence or a cleanup proposal; the coordinator checks evidence before edits or removal. Keep external research, implementation, independent approval, command gates and release on Sol. If discovery becomes ambiguous or crosses architecture/permission boundaries, return the unresolved question to the coordinator for a new Sol assignment.
 

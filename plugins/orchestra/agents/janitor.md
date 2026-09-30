@@ -1,7 +1,7 @@
 ---
 name: janitor
 description: "Inspect hygiene and preserve unfinished work before proposing cleanup."
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 effort: medium
 disallowedTools: Agent
 ---

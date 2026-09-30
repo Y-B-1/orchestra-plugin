@@ -1,7 +1,7 @@
 ---
 name: builder
 description: "Bounded implementation with checked-findings repair escalation."
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 effort: medium
 disallowedTools: Agent
 ---

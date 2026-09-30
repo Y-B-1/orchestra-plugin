@@ -1,7 +1,7 @@
 ---
 name: gatekeeper
 description: "Run named checks and report actual exits at an exact artifact."
-model: claude-sonnet-5
+model: claude-sonnet-5-5
 effort: medium
 disallowedTools: Agent
 ---
