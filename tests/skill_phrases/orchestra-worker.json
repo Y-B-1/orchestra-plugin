@@ -4,6 +4,8 @@
     "STATUS: PASS|ISSUES|BLOCKED",
     "Mode:",
     "ARTIFACT:",
-    "should"
+    "should",
+    "writes no file in the repository, and no report file anywhere",
+    "Return the report as your final message"
   ]
 }

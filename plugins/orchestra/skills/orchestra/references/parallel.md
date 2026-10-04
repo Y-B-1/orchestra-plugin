@@ -11,7 +11,7 @@ Each brief is focused and self-contained, names one output and its constraints, 
 
 ## Workflow script
 
-Each `agent()` call sets `agentType: 'orchestra:<role>'`, the effort from the model matrix, and a brief whose first lines carry the `Mode:` line. Concurrent editors set `isolation: 'worktree'` (references/worktrees.md). The script holds no coordinator state: you reserve before it and record every report after it.
+Each `agent()` call sets `agentType: 'orchestra:<role>'`, the effort from the model matrix, and a brief whose first lines carry the `Mode:` line. Concurrent editors set `isolation: 'worktree'` (references/worktrees.md). The script holds no coordinator state: reserve every card before the script and record every report after it.
 
 A round-4 repair goes through the Agent tool with the model override, never through a script (references/repair-rounds.md). Codex has no Workflow tool; dispatch the same roles in parallel one by one.
 

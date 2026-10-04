@@ -3,7 +3,7 @@ Sentinel: orchestra-review/references/correctness.md
 
 # Code reviewer: correctness lens
 
-Cover four things: requirements, correctness, tests and standards.
+Cover the sections below.
 
 ## Requirements
 

@@ -4,8 +4,6 @@
     "Sentinel: orchestra-investigate/references/code.md",
     "Sentinel: orchestra-investigate/references/docs.md",
     "## Read-only",
-    "Write no file in the repository, and no report file anywhere",
-    "Return the report as your final message",
     "Diagnosis grants no repair authority",
     "## Evidence labels",
     "OBSERVED:",

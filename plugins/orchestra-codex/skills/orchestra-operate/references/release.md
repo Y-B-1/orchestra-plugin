@@ -18,15 +18,15 @@ All of these must hold for this exact artifact. If one fails, stop with `STATUS:
 ## Run
 
 - Use the guarded path only. The coordinator issues `orchestra.py permit <remote> <target>`; you run `orchestra.py release <remote> <target>` when the brief supplies the lease and the permit. Without them, stop.
-- Merge first, then verify the merged result with the brief's checks before you remove anything. A failing merged result stops everything: leave the branch and worktree in place.
-- Name the remote on every push. Preserve history and unrelated bytes. No force push, no history rewrite. A rejected push means the remote moved: report it.
-- Never discard work. Discarding needs the user's typed confirmation, which only the coordinator can relay with the user's own words.
+- Merge, then verify the merged result with the scoped checks. A green branch does not prove a green merge. A failing merged result stops everything: leave the branch and worktree in place.
+- Name the remote on every push. Preserve history and unrelated bytes. No history rewrite. A rejected push means the remote moved: report it.
+- Never force push. Discard a branch or its work only after the user types a confirmation naming it. Only the coordinator can relay that typed confirmation, in the user's own words.
 - Never invent database writes, deployment recipes, rollback or pipeline steps. Run only what the brief names.
 - A timeout (exit code 124) means the remote state is unknown. Inspect it before any retry.
 
 ## When a human must act
 
-A step only a person can take (a dashboard, a credential, a one-off cutover) becomes a bash wizard script, written to a scratch path and not committed. Open each URL before asking for its value, read secrets with hidden input, never echo or log them, and confirm before every irreversible action. Do not paste numbered steps into the report. If the brief assigns a PR, write its body with a summary, before and after evidence, and a merge danger section: one-way or two-way door, and the blast radius.
+A step only a person can take (credentials, a dashboard, a one-off cutover) becomes a bash wizard script: it states each action, waits for confirmation, checks the result and stops on the first failure. Write it to a scratch path and do not commit it. Open each URL before asking for its value, read secrets with hidden input, never echo or log them, and confirm before every irreversible action. Do not paste numbered steps into the report. If the brief assigns a PR, write its body as follows. The pull request body has a summary, before and after evidence, and a merge danger section: one-way or two-way door, and the blast radius.
 
 ## Report
 

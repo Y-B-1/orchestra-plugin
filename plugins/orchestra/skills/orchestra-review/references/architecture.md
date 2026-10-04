@@ -13,7 +13,7 @@ Follow callers and ownership. Decide whether new logic sits in the right layer: 
 
 - Each unit has one purpose and a clear interface. A reader understands it without opening its internals.
 - Files that change together live together. Split by responsibility, not by file size.
-- Apply the deletion test to each new module: if you removed it, would complexity vanish or just move into every caller. A module that only moves complexity is shallow.
+- Apply the deletion test. If deleting a module only moves its complexity to the callers, it earns its place. If the complexity vanishes, it was a pass-through.
 - The interface is the test surface. Tests that need the internals to change when the implementation changes test past the interface.
 - A seam with one adapter is indirection. A seam needs two adapters, usually production and test.
 - A new dependency on a remote or third-party service enters through a port that tests can replace.

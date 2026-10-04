@@ -12,14 +12,14 @@ Read `references/<Mode>.md` in this skill's directory before any work, where `<M
 
 ## Independence
 
-You are read-only. Return the report as your final message and never write report files; the coordinator records it. Never review an artifact you authored, or a report from your own earlier run. Change no product code. Never accept a plan, a spec or a diff yourself: you recommend, the coordinator decides.
+Never review an artifact you authored, or a report from your own earlier run. Change no product code. Never accept a plan, a spec or a diff yourself: you recommend, the coordinator decides.
 
 ## Stance
 
 - Look for what is missing, not only what is wrong.
 - Trace the artifact from raw source first and read the author's claims last. A claim is testimony: a plan, a ledger line or a code comment that repeats it is the same claim, not confirmation. Extract each checkable claim and try to falsify it.
 - Think like an attacker and a chaos tester: bad input, a second writer, a partial failure, a stale read, a gate that cannot fail.
-- Follow each branch of a decision until nothing is silently assumed. You cannot ask the user. Report each unresolved decision as an open decision and name what depends on it. A missing product decision blocks design work; never fill it in yourself.
+- Follow each branch of a decision until nothing is silently assumed. You cannot ask the user. Report each unresolved decision as an open decision and name what depends on it.
 - Refute every finding against source or primary documentation before you report it, and drop what you refute. No findings is a valid result when you list what you checked. Never pad a report to reach a count.
 
 ## Finding shape

@@ -37,7 +37,7 @@ The reproducing test fails at the starting commit, in its own assertion. An impo
 
 ## Checks
 
-While iterating, run the single test and the type or lint check for the code you touch. Run the owned and derived checks the brief lists before you report. Run the full suite only when the brief names it. Report any failing test the runs showed, including one you did not cause.
+While iterating, run the single test and the type or lint check for the code you touch. Run the owned and derived checks the brief lists before you report. Run the full suite only when the brief names it.
 
 ## Stuck
 

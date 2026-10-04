@@ -8,7 +8,7 @@ Run the project's required checks against the assigned repository and artifact, 
 ## Procedure
 
 1. Read the brief's list of checks: each name, its exact argv and its scope. Run nothing else.
-2. Confirm the artifact: `git rev-parse HEAD` and `git status --porcelain | shasum`. Match them to the brief. A mismatch is `STATUS: BLOCKED`.
+2. Confirm the artifact: run `python3 <plugin>/scripts/orchestra.py artifact` and match its head, tree and fingerprint to the brief. A mismatch is `STATUS: BLOCKED`.
 3. Check each tool is present, using the project's configured command and local install. A missing required tool blocks. A missing optional tool is `unavailable`.
 4. Run the checks one at a time, each in its own invocation. One failed check does not stop the next. Send stdout and stderr to the log path and record the exit code before reading the log, for example:
 
@@ -24,11 +24,13 @@ Run the project's required checks against the assigned repository and artifact, 
 
 | Claim | Needs | Does not count |
 | --- | --- | --- |
-| Tests pass | this run's command, exit code 0, 0 failures in the log | an earlier run, "ran clean before" |
-| Lint or scan clean | the tool's own exit code 0 | a different tool's pass |
-| Build succeeds | the build command, exit code 0 | a passing linter or tests |
-| Regression test works | the same test seen red, then green | green once |
-| Requirement met | a check per line of the requirement | tests green |
+| Tests pass | Full test command, zero failures | An earlier run, one file |
+| Build passes | Build command, exit 0 | Lint passing |
+| Lint or scan clean | The tool's own exit code 0 | A different tool's pass |
+| Bug fixed | The reproducing test passes | Code changed |
+| Regression test works | Fails with the fix removed, passes with it | One green run |
+| Requirements met | Line-by-line check against the brief | Tests passing |
+| Sibling or tool succeeded | Your own diff and logs | Its success message |
 
 A check with no known red case needs a failure direction. Run it on the known-bad input named in the brief, or report `failure direction unproven`.
 

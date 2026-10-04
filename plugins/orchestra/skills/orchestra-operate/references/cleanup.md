@@ -7,7 +7,7 @@ Two jobs, both read-only until the coordinator assigns a removal: a hygiene pass
 
 ## Hygiene pass
 
-Inspect the directory, never only the refs. A merged branch says nothing about edits an agent left uncommitted.
+Inspect the directory, not the refs. A merged branch says nothing about edits left uncommitted after the commit.
 
 1. List what exists: `git worktree list`, `git branch -vv`, and for each worktree the brief names, `git -C <worktree> status --porcelain -uall`.
 2. Tell a linked worktree from a plain checkout: compare `git rev-parse --git-dir` with `--git-common-dir`. Differing values with a non-empty `git rev-parse --show-superproject-working-tree` mean a submodule, not a worktree.
@@ -19,15 +19,16 @@ Ownership rules for the proposal:
 
 - Propose removal only for worktrees the dispatching coordinator created for this unit. Leave host-created and other workers' worktrees alone.
 - A dirty or untracked worktree is not disposable. Show the file list and the three ways out: commit to a named branch, move the files out, or delete them as unrecoverable. The coordinator or user picks.
-- Preserve unfinished work on a named branch. Never leave it on a detached HEAD, which garbage collection eats.
-- Never `--force` a refused removal. Never stash: all worktrees share one ref store. Never rewrite history another worker may hold.
+- Commit to a named branch to preserve work. A detached HEAD is not preservation; garbage collection eats it.
+- Never stash: all worktrees share one ref store, so a stash is repo-wide.
+- Never `--force` a refused removal. Never rewrite history another worker may hold.
 - Tracked memory changes land before the final gates. A later edit voids earlier evidence.
 
 Return the proposal: each item, its evidence (command, exit code, log path), the action proposed and who must approve it. Removal runs only under a coordinator assignment that names the item.
 
 ## Retro
 
-The brief carries the problem statement and the session paths. If either is missing, stop with `STATUS: BLOCKED`. You work through every dimension yourself and delegate nothing.
+The brief carries the problem statement and the session paths. If either is missing, stop with `STATUS: BLOCKED`. You work through every dimension.
 
 Rules for reading sessions:
 

@@ -11,9 +11,12 @@ Sentinel: orchestra/references/handoff.md
 
 Resume only on an explicit user request, never from a late report. Check in this order:
 
-1. The ledger, then `git log` and `git status` for the real artifact. After compaction both outrank recollection.
-2. Live worker state: a live process and a recent transcript write. A journal line records what started, not what still runs.
-3. Each card: a card with a completion line is never dispatched again. A card whose last line is a repair round resumes at the next round.
+1. The ledger. After compaction it outranks recollection.
+2. `python3 <plugin>/scripts/orchestra.py status`.
+3. Live worker state: a live process and a recent transcript write. A journal line records what started, not what still runs.
+4. Artifacts: `git log`, `git status`, and each report against its logs.
+5. `python3 <plugin>/scripts/orchestra.py start`: a new lease requeues running cards.
+6. Re-dispatch by ledger line: a card with a completion line is never dispatched again. A card whose last line is a repair round resumes at the next round.
 
 Late reports from before the interruption stay historical. Re-inspect the artifact before accepting anything.
 

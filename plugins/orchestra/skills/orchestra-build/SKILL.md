@@ -31,23 +31,17 @@ A bug fix starts with a test that reproduces the bug and fails at the starting c
 
 ## Evidence before claims
 
-Make no completion claim without a fresh run in the current state.
-
-1. Name the command that proves the claim.
-2. Run it in full.
-3. Read all output and the exit code.
-4. Claim exactly what the output shows, with the command and exit code.
-
 | Claim | Needs | Does not count |
 | --- | --- | --- |
 | Tests pass | Full test command, zero failures | An earlier run, one file |
 | Build passes | Build command, exit 0 | Lint passing |
+| Lint or scan clean | The tool's own exit code 0 | A different tool's pass |
 | Bug fixed | The reproducing test passes | Code changed |
 | Regression test works | Fails with the fix removed, passes with it | One green run |
 | Requirements met | Line-by-line check against the brief | Tests passing |
 | Sibling or tool succeeded | Your own diff and logs | Its success message |
 
-A failure you saw but did not cause still goes in the report by name. After any later edit, rerun.
+A failure you saw but did not cause still goes in the report by name.
 
 ## Self-review
 
@@ -62,4 +56,4 @@ Stop and report a blocker when the task needs an architecture choice the brief l
 
 ## Commit and report
 
-Stage explicit paths only, on the named branch. Report the changed paths, the commit, each command with its exit code and log path, and for new behavior the red and green output. Screenshots go in when the brief asks for them.
+Stage explicit paths only, on the named branch. Report the commit, and for new behavior the red and green output. Screenshots go in when the brief asks for them.

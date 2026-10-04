@@ -34,7 +34,7 @@ Write 3 to 5 hypotheses before testing any. Each states its prediction: "If X is
 
 ## 4. Test one at a time
 
-Change one variable per probe, and map each probe to a prediction. Prefer a debugger or REPL inspection; otherwise add targeted logs at the boundaries that separate the hypotheses, never "log everything". Tag probe output with a unique prefix such as `[DEBUG-a4f2]` so none survives. Probes live in a scratch copy or harness, never in the repository tree.
+Change one variable per probe, and map each probe to a prediction. Prefer a debugger or REPL inspection; otherwise add targeted logs at the boundaries that separate the hypotheses, never "log everything". Tag probe output with a unique prefix such as `[DEBUG-a4f2]` so none survives.
 
 For a failure deep in a call chain, trace backward: where does the bad value originate, and what passed it in? Stop at the source, not the symptom. Across component boundaries, record what enters and leaves each one, then investigate the failing layer. Compare against similar working code and list every difference. For a performance bug, take a baseline measurement first, then bisect.
 
@@ -48,5 +48,5 @@ The report body is a debug report, under the lines the worker contract requires:
 - Proposed fix: file and line. You make no edit.
 - Evidence: the loop command, its redacted output and exit, and the ranked hypotheses with the result of each probe.
 - Regression check: a description of the failing behavior test, at a seam that exercises the real call pattern. If no such seam exists, say so; that is a finding about the code.
-- Blast radius: the files a fix would touch. Name more than 5 files here so the coordinator can decide.
+- Blast radius: the files a fix would touch. Flag it when a fix touches more than 5 files so the coordinator can decide.
 - Related: earlier bugs and rules that apply.

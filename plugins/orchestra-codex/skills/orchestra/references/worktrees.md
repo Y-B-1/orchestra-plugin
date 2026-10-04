@@ -16,8 +16,12 @@ One worktree serves one unit of work. The dispatcher who created it removes it i
 
 ## Share nothing
 
-All worktrees share one ref store. Never run `git stash` in a repository that uses them; it is repo-wide. Commit to a named branch to preserve work. A detached HEAD is not preservation.
+Never stash: all worktrees share one ref store, so a stash is repo-wide.
+
+Commit to a named branch to preserve work. A detached HEAD is not preservation; garbage collection eats it.
 
 ## Remove
 
-Inspect the directory, not the refs. A merged branch says nothing about edits left uncommitted after the commit. Run `git status` inside the worktree. Refuse to remove a dirty one: show the uncommitted paths and what is at stake, commit them to the named branch, then remove with `git worktree remove`.
+Inspect the directory, not the refs. A merged branch says nothing about edits left uncommitted after the commit.
+
+Run `git status` inside the worktree. Refuse to remove a dirty one: show the uncommitted paths and what is at stake, commit them to the named branch, then remove with `git worktree remove`.

@@ -11,11 +11,11 @@ Test whether the plan can be executed as written, on the real APIs and the real 
 - Coverage: every spec requirement maps to a task, and every input class or failure mode the spec implies has a task whose tests exercise it.
 - Consistency: names, types and signatures used in later tasks match what earlier tasks define.
 - Proportion: a plan several times longer than its spec is a transcript of the program.
-- Premises: check each premise against code or primary documentation. Label it OBSERVED (you ran or read it), REASONED (inferred) or UNKNOWN. Look for an API that does not exist in the pinned version, an unsafe write, two tasks that write one path, a lease or reservation collision, and a gate that cannot fail.
+- Premises: check each premise against code or primary documentation. Label it OBSERVED, REASONED (inferred) or UNKNOWN. OBSERVED means you read the file or ran the command in this assignment and saw the result. Look for an API that does not exist in the pinned version, an unsafe write, two tasks that write one path, a lease or reservation collision, and a gate that cannot fail.
 
 ## Spikes
 
-When a premise is UNKNOWN and matters, propose a spike instead of guessing. You propose and never run it. A spike is throwaway code that answers one question and reports what it proved, so a doubt becomes evidence. State:
+When a premise is UNKNOWN and matters, propose a spike instead of guessing. You propose and never run it. Spike: throwaway code that answers one question and reports what it proved, so a doubt becomes evidence. State:
 
 1. The one question, in a sentence.
 2. The smallest throwaway artifact: a pure logic module for a state or data question, or a few structurally different variants on the real page for a look-and-feel question.
