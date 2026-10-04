@@ -55,7 +55,6 @@ IDENTICAL_COPIES = [
     ('orchestra/references/handoff.md', 'orchestra-operate/references/cleanup.md', LIVENESS),
     ('orchestra-design/references/design.md', 'orchestra-review/references/architecture.md', DELETION_TEST),
     ('orchestra-design/references/design.md', 'orchestra-build/references/cleanup.md', DELETION_TEST),
-    ('orchestra-review/references/cleanliness.md', 'orchestra-build/references/cleanup.md', DELETION_TEST),
     ('orchestra-design/references/design.md', 'orchestra-review/references/architecture.md',
      'One adapter is a hypothetical seam; two adapters, usually production and test, make a real one.'),
     ('orchestra-design/references/design.md', 'orchestra-review/references/architecture.md', EXTRACT),

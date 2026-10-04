@@ -19,7 +19,7 @@ Tag each finding with one of: delete, stdlib, native, speculative, shrink.
 - speculative: an abstraction, option or hook with one use or none
 - shrink: a smaller equivalent that saves five lines or more
 
-Apply the deletion test. If deleting a module only moves its complexity to the callers, it earns its place. If the complexity vanishes, it was a pass-through. Report a delete finding for a module only when it is a pass-through.
+Report a delete finding for a module only when it is a pass-through.
 
 ## Reuse
 
