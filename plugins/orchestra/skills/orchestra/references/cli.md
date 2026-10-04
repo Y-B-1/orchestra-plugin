@@ -2,18 +2,18 @@
 
 Use Python 3.11+ with `plugins/orchestra/scripts/orchestra.py`. Common options precede the command: `--repo`, `--state`, `--actor`, `--lease`. Paths with spaces are supported. Actor/lease values are consistency checks, not authentication.
 
-1. Inspect the target repository and applicable project rules. Run `route facts.json` with checked facts.
+1. Inspect the target repository and applicable project rules.
 2. Run `--repo /path/to/project start --policy policy.json`. Save the returned lease. Policy and run data stay outside the application.
 3. Add bounded cards with `--lease LEASE add task.json`; run `ready`, then choose `dispatch TASK WORKER` or `inline TASK`.
 4. Start the actual native worker only after reserving the card. Give the full brief and selected native profile. Return a startup receipt naming actual cwd/root/HEAD. A reservation token alone does not prove a worker is running.
-5. Run `report WORKER TOKEN result.txt`. Inspect results and group returned builders with `review-groups`.
+5. Run `report WORKER TOKEN result.txt`. Inspect results and group returned builders by hand.
 6. Record independent structured reviews with `--lease LEASE review review.json`; accept covered cards with `accept TASK`.
-7. Integrate changes, make tracked memory edits, freeze the candidate, run configured `gate NAME -- COMMAND...` checks and final review. Run `audit-policy audit-facts.json`; dispatch one independent auditor per needed axis.
+7. Integrate changes, make tracked memory edits, freeze the candidate, run configured `gate NAME -- COMMAND...` checks and final review. Dispatch one independent auditor per needed axis.
 8. For a configured authorized release, run `permit REMOTE TARGET`, then `release REMOTE TARGET`. Inspect the remote and running system separately. Run `finish` only after completion checks. For another run, use `start --new-run` after the previous session closes.
 
 Read-only evidence cards need coordinator inspection before acceptance; builder cards need current independent review by default. Use `review_required: true` for other consequential artifacts. Review groups cover several task IDs in one report. Tiny reads do not need a run. A changed artifact invalidates old final evidence, including documentation edits.
 
-`inline TASK` reserves the same card for the main actor and returns an assignment token; it does not start a child agent. Run `report MAIN_ACTOR TOKEN result.txt` when done. Disjoint worker cards can run concurrently. Inline work cannot replace code-reviewer, auditor or red-teamer assignments, bypass ownership, or accept unreviewed implementation. The `route` facts may include `execution: "inline"` or `"worker"`; omission returns `decide` and available options. The coordinator supplies judgment; the rubric does not classify free-text prompts.
+`inline TASK` reserves the same card for the main actor and returns an assignment token; it does not start a child agent. Run `report MAIN_ACTOR TOKEN result.txt` when done. Disjoint worker cards can run concurrently. Inline work cannot replace code-reviewer, auditor or red-teamer assignments, bypass ownership, or accept unreviewed implementation. The coordinator supplies judgment; the rubric does not classify free-text prompts.
 
 ## Task example
 
@@ -32,7 +32,7 @@ A code-reviewer, auditor or red-teamer card can name `review_of: ["B1"]` to star
 
 A repair card names `repair_of` and needs an intact current BLOCKED review of that builder. It replaces an accepted dependency on the original. Creation suspends the original chain as repairing and transfers its reservations to the queued repair. Report the repair, obtain fresh independent review of repair and ancestor IDs, accept the repair, then accept ancestors. Old reports remain history; old CLEAN coverage cannot approve repaired work.
 
-`review-groups` combines returned low-risk builder cards with the same explicit group/outcome or shared input. It isolates consequential foundations. The coordinator checks group coherence and context size before dispatch; the rubric cannot infer semantic relatedness from arbitrary text. Avoid a new reviewer for each micro-ticket.
+Group returned low-risk builder cards by hand when they share an explicit group/outcome or input, and isolate consequential foundations. Check group coherence and context size before dispatch. Avoid a new reviewer for each micro-ticket.
 
 ## Review schema
 

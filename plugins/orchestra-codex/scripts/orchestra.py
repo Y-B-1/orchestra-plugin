@@ -16,7 +16,6 @@ from orchestra_core.engine import Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import load_policy, repository, state_location
 from orchestra_core.profiles import atomic, install, uninstall
-from orchestra_core.routing import route, review_groups, audit_axes
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,7 +36,7 @@ def parser():
     start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
-    for name in ['status','artifact','ready','board','review-groups','interrupt','finish','scan']:
+    for name in ['status','artifact','ready','board','interrupt','finish','scan']:
         sub.add_parser(name)
     add = sub.add_parser('add')
     add.add_argument('task', help='Task JSON path')
@@ -70,10 +69,6 @@ def parser():
         profile.add_argument('--codex-home',default=os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
     route = sub.add_parser('classify')
     route.add_argument('shell_command')
-    lane = sub.add_parser('route')
-    lane.add_argument('facts',help='Facts JSON path; coordinator checks facts against source')
-    audit = sub.add_parser('audit-policy')
-    audit.add_argument('facts',help='Audit trigger facts JSON path')
     return p
 
 
@@ -98,10 +93,6 @@ def execute(args):
         return uninstall(args.codex_home),0
     if args.command == 'classify':
         return classify_command(args.shell_command).__dict__,0
-    if args.command == 'route':
-        return route(read_json(args.facts)),0
-    if args.command == 'audit-policy':
-        return audit_axes(read_json(args.facts)),0
     repo = repository(args.repo)
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
     if args.command=='where':
@@ -127,8 +118,6 @@ def execute(args):
         for card in cards:
             board.setdefault(card['role'],{}).setdefault(card['state'],[]).append(card['id'])
         return board,0
-    if args.command=='review-groups':
-        return review_groups(list(engine.status()['tasks'].values())),0
     if args.command=='report':
         engine.report(args.worker,args.token,Path(args.report).read_text())
         return {'reported':args.token},0
