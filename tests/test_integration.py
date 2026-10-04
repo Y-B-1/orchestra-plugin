@@ -227,5 +227,73 @@ class LinkedWorktreeHook(unittest.TestCase):
                 self.assertIsNone(self.hook(self.root/'bare checkout',command))
 
 
+class HarnessSessionIntegration(unittest.TestCase):
+    """B-F5 through the real CLI and run-hook.sh."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='Orchestra harness session ')
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        self.repo=self.root/'repo'
+        self.repo.mkdir()
+        self.state=self.root/'state'
+        for args in (['init','-b','main'],['config','user.name','T'],['config','user.email','t@example.invalid']):
+            subprocess.run(['git','-C',str(self.repo),*args],check=True,capture_output=True)
+        (self.repo/'f').write_text('x')
+        subprocess.run(['git','-C',str(self.repo),'add','f'],check=True,capture_output=True)
+        subprocess.run(['git','-C',str(self.repo),'commit','-qm','f'],check=True,capture_output=True)
+        self.env=dict(os.environ,ORCHESTRA_STATE_DIR=str(self.state))
+
+    def cli(self,*args,expected=0):
+        result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),*args],env=self.env,
+                              capture_output=True,text=True,timeout=25)
+        self.assertEqual(result.returncode,expected,result.stderr+result.stdout)
+        return json.loads(result.stdout) if expected==0 else result.stderr
+
+    def hook(self,event,**payload):
+        payload.setdefault('cwd',str(self.repo))
+        result=subprocess.run(['/bin/sh',str(HOOK),event,'--harness','claude'],input=json.dumps(payload),env=self.env,
+                              capture_output=True,text=True,timeout=25)
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout)
+
+    def session(self):
+        return self.cli('status')['session']
+
+    def test_session_end_releases_so_a_new_run_starts(self):
+        self.cli('start','--harness-session','S')
+        self.assertEqual(self.session()['harness_session'],'S')
+        self.cli('start',expected=2)  # still armed
+        self.hook('SessionEnd',session_id='S',reason='prompt_input_exit')
+        self.assertFalse(self.session()['active'])
+        self.cli('start','--new-run')
+
+    def test_clear_and_resume_rebind_then_exit_releases(self):
+        for reason in ('clear','resume'):
+            with self.subTest(reason=reason):
+                self.cli('start','--new-run','--harness-session','S')
+                self.hook('SessionEnd',session_id='S',reason=reason)
+                self.assertTrue(self.session()['active'])
+                out=self.hook('SessionStart',session_id='S2',source=reason)
+                self.assertIn('--harness-session S2',out['hookSpecificOutput']['additionalContext'])
+                self.assertEqual(self.session()['harness_session'],'S2')
+                self.hook('SessionEnd',session_id='S',reason='prompt_input_exit')
+                self.assertTrue(self.session()['active'])  # the old id no longer owns the run
+                self.hook('SessionEnd',session_id='S2',reason='prompt_input_exit')
+                self.assertFalse(self.session()['active'])
+                lease=self.cli('start','--new-run')['lease']
+                self.cli('--lease',lease,'interrupt')
+
+    def test_unbound_run_ignores_session_end_and_where_hides_the_lease(self):
+        self.cli('start')
+        self.hook('SessionEnd',session_id='S',reason='prompt_input_exit')
+        self.assertTrue(self.session()['active'])
+        where=self.cli('where')
+        self.assertEqual(set(where),{'repo','state','standing_orders'})
+        self.assertEqual((where['repo'],where['state'],where['standing_orders']),(str(self.repo),str(self.state),False))
+        (self.state/'standing-orders.md').write_text('rules\n')
+        self.assertTrue(self.cli('where')['standing_orders'])
+
+
 if __name__=='__main__':
     unittest.main()

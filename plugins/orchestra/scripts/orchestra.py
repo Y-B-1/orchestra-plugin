@@ -34,7 +34,9 @@ def parser():
     sub = p.add_subparsers(dest='command', required=True)
     start = sub.add_parser('start')
     start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
+    start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
+    sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
     for name in ['status','artifact','ready','board','review-groups','interrupt','finish','scan']:
         sub.add_parser(name)
     add = sub.add_parser('add')
@@ -102,12 +104,14 @@ def execute(args):
         return audit_axes(read_json(args.facts)),0
     repo = repository(args.repo)
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
+    if args.command=='where':
+        return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file()},0
     policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
     engine = Engine(state,repo,policy)
     if args.command=='start':
         if args.new_run:
             archive_inactive(state)
-        lease = engine.open_session(args.actor)
+        lease = engine.open_session(args.actor,args.harness_session)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo)},0

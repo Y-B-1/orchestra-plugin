@@ -351,8 +351,17 @@ class HooksTest(unittest.TestCase):
         self.assertIn('main coordinator', context)
         worker = handle_event('SessionStart', {'agent_type': 'orchestra-builder'})
         self.assertNotIn('main coordinator', worker.output['hookSpecificOutput']['additionalContext'])
-        self.assertEqual(handle_event('SubagentStart', {'agent_type': 'orchestra-builder'})
-                         .output['hookSpecificOutput']['hookEventName'], 'SubagentStart')
+        # A11: worker context only for orchestra: agents; every other subagent gets {}.
+        ours = handle_event('SubagentStart', {'agent_type': 'orchestra:builder'}).output['hookSpecificOutput']
+        self.assertEqual(ours['hookEventName'], 'SubagentStart')
+        self.assertIn('Orchestra worker', ours['additionalContext'])
+        for agent in ('orchestra-builder', 'Explore', 'general-purpose', '', None):
+            self.assertEqual(handle_event('SubagentStart', {'agent_type': agent}).output, {})
+        self.assertEqual(handle_event('SubagentStart', {}).output, {})
+        line = handle_event('SessionStart', {'source': 'startup', 'session_id': 'abc-123'}).output
+        self.assertIn('--harness-session abc-123', line['hookSpecificOutput']['additionalContext'])
+        worker = handle_event('SessionStart', {'agent_type': 'orchestra:builder', 'session_id': 'abc-123'})
+        self.assertNotIn('--harness-session', worker.output['hookSpecificOutput']['additionalContext'])
 
     def test_stop_unarmed_and_interrupt(self):
         self.assertEqual(handle_event('Stop', {}).output, {})
@@ -753,6 +762,164 @@ class RunStateResolutionTest(unittest.TestCase):
         (parent_state / 'state.json').write_text('{}')
         self.assertIsNone(self.bash(self.root / 'bare-wt', 'git push origin main'))
         self.assertIsNone(self.bash(self.root / 'bare-wt', 'git push origin main && git status'))
+
+
+class HarnessSessionHookTest(unittest.TestCase):
+    """B-F5: SessionEnd release policy and the /clear, /resume rebind. The engine clock is injected."""
+
+    def setUp(self):
+        from orchestra_core.engine import Engine
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name).resolve()
+        self.repo = root / 'repo'
+        self.repo.mkdir()
+        git(self.repo, 'init', '-q', '-b', 'main')
+        git(self.repo, 'config', 'user.name', 'T')
+        git(self.repo, 'config', 'user.email', 't@example.invalid')
+        (self.repo / 'f').write_text('x')
+        git(self.repo, 'add', 'f')
+        git(self.repo, 'commit', '-q', '-m', 'f')
+        self.now = [5000.0]
+        self.engine = Engine(root / 'state', self.repo, clock=lambda: self.now[0])
+        self.engine.open_session('main', harness_session='S')
+
+    def session(self):
+        return self.engine.status()['session']
+
+    def end(self, session_id, reason, engine=None):
+        return handle_event('SessionEnd', {'session_id': session_id, 'reason': reason, 'cwd': str(self.repo)},
+                            harness='claude', engine=engine or self.engine)
+
+    def start(self, session_id, source, harness='claude', engine=None):
+        return handle_event('SessionStart', {'session_id': session_id, 'source': source, 'cwd': str(self.repo)},
+                            harness=harness, engine=engine or self.engine)
+
+    def test_release_reasons_end_the_bound_session(self):
+        for reason in ('logout', 'prompt_input_exit', 'other', 'bypass_permissions_disabled', None, 7):
+            with self.subTest(reason=reason):
+                self.engine.state_path.unlink(missing_ok=True)
+                self.engine.open_session('main', harness_session='S')
+                payload = {'session_id': 'S', 'cwd': str(self.repo)}
+                if reason is not None:
+                    payload['reason'] = reason
+                self.assertEqual(handle_event('SessionEnd', payload, harness='claude', engine=self.engine).output, {})
+                self.assertFalse(self.session()['active'])
+                self.assertEqual(self.session()['outcome'], 'ended')
+
+    def test_clear_and_resume_keep_the_run_armed(self):
+        for reason in ('clear', 'resume'):
+            self.assertEqual(self.end('S', reason).output, {})
+            self.assertTrue(self.session()['active'])
+            self.assertEqual(self.session()['pending_rebind'], {'from': 'S', 'at': 5000.0})
+
+    def test_other_id_and_unbound_run_are_untouched(self):
+        self.end('other', 'prompt_input_exit')
+        self.end('other', 'clear')
+        self.assertTrue(self.session()['active'])
+        self.assertNotIn('pending_rebind', self.session())
+        self.engine.interrupt('main', self.session()['lease'])
+        self.engine.open_session('main')
+        before = self.engine.state_path.read_bytes()
+        self.end('S', 'prompt_input_exit')
+        self.end('S', 'clear')
+        self.assertEqual(self.engine.state_path.read_bytes(), before)
+
+    def test_repeated_session_end_is_idempotent(self):
+        self.end('S', 'prompt_input_exit')
+        after = self.engine.state_path.read_bytes()
+        self.assertEqual(self.end('S', 'prompt_input_exit').output, {})
+        self.assertEqual(self.engine.state_path.read_bytes(), after)
+
+    def test_session_end_without_an_engine_or_id_is_a_no_op(self):
+        self.assertEqual(handle_event('SessionEnd', {'reason': 'other'}, harness='claude').output, {})
+        self.assertEqual(handle_event('SessionEnd', {'reason': 'other'}, harness='claude', engine=self.engine).output, {})
+        self.assertTrue(self.session()['active'])
+
+    def test_clear_rebinds_then_exit_of_new_id_releases(self):
+        self.end('S', 'clear')
+        self.now[0] += 1
+        ctx = self.start('S2', 'clear').output['hookSpecificOutput']['additionalContext']
+        self.assertIn('--harness-session S2', ctx)
+        self.assertEqual(self.session()['harness_session'], 'S2')
+        self.assertNotIn('pending_rebind', self.session())
+        self.end('S2', 'prompt_input_exit')
+        self.assertFalse(self.session()['active'])
+
+    def test_resume_rebinds_then_exit_of_new_id_releases(self):
+        self.end('S', 'resume')
+        self.start('S2', 'resume')
+        self.assertEqual(self.session()['harness_session'], 'S2')
+        self.end('S2', 'prompt_input_exit')
+        self.assertFalse(self.session()['active'])
+
+    def test_fork_after_resume_rebinds(self):
+        self.end('S', 'resume')
+        self.start('S2', 'fork')
+        self.assertEqual(self.session()['harness_session'], 'S2')
+
+    def test_startup_and_compact_do_not_rebind(self):
+        for source in ('startup', 'compact'):
+            self.end('S', 'clear')
+            ctx = self.start('S2', source).output['hookSpecificOutput']['additionalContext']
+            self.assertIn('--harness-session S2', ctx)  # the context line is still the payload id
+            self.assertEqual(self.session()['harness_session'], 'S')
+            self.assertIn('pending_rebind', self.session())  # left alone by every other path
+
+    def test_codex_session_start_never_rebinds(self):
+        self.end('S', 'clear')
+        self.start('S2', 'resume', harness='codex')
+        self.assertEqual(self.session()['harness_session'], 'S')
+        self.assertIn('pending_rebind', self.session())
+
+    def test_worker_session_start_never_rebinds(self):
+        self.end('S', 'clear')
+        handle_event('SessionStart', {'session_id': 'S2', 'source': 'resume', 'cwd': str(self.repo),
+                                      'agent_type': 'orchestra:builder'}, harness='claude', engine=self.engine)
+        self.assertEqual(self.session()['harness_session'], 'S')
+
+    def test_stale_and_negative_age_pending_rebind_is_removed_without_binding(self):
+        for delta in (60.5, 3600, -5):
+            with self.subTest(delta=delta):
+                self.now[0] = 5000.0
+                self.end('S', 'clear')
+                self.now[0] = 5000.0 + delta
+                self.start('S2', 'clear')
+                self.assertEqual(self.session()['harness_session'], 'S')
+                self.assertNotIn('pending_rebind', self.session())
+
+    def test_after_a_rebind_the_old_id_does_not_release(self):
+        self.end('S', 'clear')
+        self.start('S2', 'clear')
+        self.end('S', 'prompt_input_exit')
+        self.assertTrue(self.session()['active'])
+
+    def test_second_clear_does_not_rebind_again(self):
+        self.end('S', 'clear')
+        self.start('S2', 'clear')
+        self.start('S3', 'clear')
+        self.assertEqual(self.session()['harness_session'], 'S2')
+
+    def test_release_removes_pending_rebind_and_keeps_harness_session(self):
+        self.end('S', 'clear')
+        self.end('S', 'logout')
+        self.assertFalse(self.session()['active'])
+        self.assertNotIn('pending_rebind', self.session())
+        self.assertEqual(self.session()['harness_session'], 'S')
+
+    def test_rebind_error_still_returns_the_session_start_context(self):
+        self.end('S', 'clear')
+        self.engine.state_path.write_text('{not json')
+        result = self.start('S2', 'clear')
+        context = result.output['hookSpecificOutput']['additionalContext']
+        self.assertIn('main coordinator', context)
+        self.assertIn('--harness-session S2', context)
+
+    def test_session_end_error_is_reported_not_raised(self):
+        self.engine.state_path.write_text('{not json')
+        result = self.end('S', 'logout')
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn('could not be recorded', result.output['systemMessage'])
 
 
 class RunHookScriptTest(unittest.TestCase):
