@@ -11,7 +11,7 @@ Search for the files and symbols the question names, then follow callers, data f
 
 ## Bug diagnosis
 
-Find the cause before naming any fix. A fix aimed at a symptom hides the cause and makes the next bug harder to find. Build the pass/fail loop first; with no loop, report `STATUS: BLOCKED`.
+Find the cause before naming any fix. A fix aimed at a symptom hides the cause and makes the next bug harder to find.
 
 ### 1. Build a feedback loop first
 

@@ -19,6 +19,6 @@ Dispatch four separate code-reviewer cards, one per lens: correctness, architect
 
 Add specialist reviewers only when `git diff --shortstat BASE..HEAD` reports more than 50 changed lines and the changed paths match the specialist's surface. Build the changed set from committed changes, the working tree and untracked files. Distinguish "could not look" (an unresolvable base, a failed command) from "nothing matched". Never read a failure to look as a clean match; stop and report it.
 
-Brief a specialist as a code-reviewer or critic card with `Lens: specialist:<name>`, where `<name>` is a section heading of `skills/orchestra-review/references/specialists.md` under the plugin root (frontend, visual, testing and the rest). The lens line only names the checklist; it never decides whether the card runs or what the verdict is.
+Brief a specialist as a code-reviewer card with `Lens: specialist:<name>`, where `<name>` is a section heading of `skills/orchestra-review/references/specialists.md` under the plugin root (frontend, visual, testing and the rest). The lens line only names the checklist; it never decides whether the card runs or what the verdict is.
 
 Merge and dedupe findings across lenses and specialists before routing.
