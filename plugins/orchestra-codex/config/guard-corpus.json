@@ -3539,6 +3539,667 @@
     "command": "echo `#c's`; git reset --hard"
    },
    "class": "deny"
+  },
+  {
+   "id": "inline-r10-1",
+   "input": {
+    "command": "echo a \\\n# c's\ngit reset --hard"
+   },
+   "class": "deny",
+   "_doc": "R2j 1: line continuation then a comment with an apostrophe."
+  },
+  {
+   "id": "inline-r10-2",
+   "input": {
+    "command": "echo a \\\n#'x\ngit reset --hard\n# y'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-3",
+   "input": {
+    "command": "echo a \\\n#\"x\ngit reset --hard\n# y\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-4",
+   "input": {
+    "command": "\\\n# c's\ngit reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-5",
+   "input": {
+    "command": "true;\\\n#'x\ngit reset --hard\n# y'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-6",
+   "input": {
+    "command": "echo a\\\n#'x\ngit reset --hard\n# y'"
+   },
+   "class": "allow",
+   "_doc": "R2j 1: glued to a word, the `#` is mid-word and the rest is a quoted literal."
+  },
+  {
+   "id": "inline-r10-7",
+   "input": {
+    "command": "echo $(true)\\\n#'x\ngit reset --hard\n# y'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-8",
+   "input": {
+    "command": "echo a \\\n  # it's fine\necho b"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-9",
+   "input": {
+    "command": "echo $(case x in a) true;; esac)#\"x\ny\"\ngit reset --hard\necho \"a #\""
+   },
+   "class": "deny",
+   "_doc": "R2j 2: a case-pattern `)` does not close `$(`."
+  },
+  {
+   "id": "inline-r10-10",
+   "input": {
+    "command": "echo $(case x in a) true;; esac)#'x\ny'\ngit reset --hard\necho 'a #'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-11",
+   "input": {
+    "command": "a=(1 2)#\"x\ny\"\ngit reset --hard\necho \"a #\""
+   },
+   "class": "deny",
+   "_doc": "R2j 2: the `)` of an array assignment is inside a word."
+  },
+  {
+   "id": "inline-r10-12",
+   "input": {
+    "command": "a=(1 2)#'x\ny'\ngit reset --hard\necho 'a #'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-13",
+   "input": {
+    "command": "a=(1 2) # it's fine\necho ok"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-14",
+   "input": {
+    "command": "echo $(case x in a) true;; esac) # it's fine\necho ok"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-15",
+   "input": {
+    "command": "<<< x git reset --hard"
+   },
+   "class": "deny",
+   "_doc": "R2j 3 (O31): here-string with a spaced operand before the command."
+  },
+  {
+   "id": "inline-r10-16",
+   "input": {
+    "command": "<<< \"a b\" git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-17",
+   "input": {
+    "command": "<<< 'a b' git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-18",
+   "input": {
+    "command": "<<< \"$x\" git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-19",
+   "input": {
+    "command": "<<< ${x:-a b} git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-20",
+   "input": {
+    "command": "<<<  x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-21",
+   "input": {
+    "command": "<<<\tx git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-22",
+   "input": {
+    "command": "0<<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-23",
+   "input": {
+    "command": "3<<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-24",
+   "input": {
+    "command": "<<< x git push --force origin main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-25",
+   "input": {
+    "command": "<<< x rm -rf /"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r10-26",
+   "input": {
+    "command": "x=1 <<< x git reset --hard"
+   },
+   "class": "deny",
+   "_doc": "R2j 3: positions."
+  },
+  {
+   "id": "inline-r10-27",
+   "input": {
+    "command": "env <<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-28",
+   "input": {
+    "command": "! <<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-29",
+   "input": {
+    "command": "{ <<< x git reset --hard; }"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-30",
+   "input": {
+    "command": "( <<< x git reset --hard )"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-31",
+   "input": {
+    "command": "true && <<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-32",
+   "input": {
+    "command": "true | <<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-33",
+   "input": {
+    "command": "case a in a) <<< x git reset --hard;; esac"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-34",
+   "input": {
+    "command": "if <<< x git reset --hard; then true; fi"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-35",
+   "input": {
+    "command": "for i in 1; do <<< x git reset --hard; done"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-36",
+   "input": {
+    "command": "f() { <<< x git reset --hard; }"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-37",
+   "input": {
+    "command": "bash -c '<<< x git reset --hard'"
+   },
+   "class": "deny",
+   "_doc": "R2j 3: nested shapes."
+  },
+  {
+   "id": "inline-r10-38",
+   "input": {
+    "command": "eval '<<< x git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-39",
+   "input": {
+    "command": "echo $(<<< x git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-40",
+   "input": {
+    "command": "echo `<<< x git reset --hard`"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-41",
+   "input": {
+    "command": "echo \"$(<<< x git reset --hard)\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-42",
+   "input": {
+    "command": "bash <<'EOF'\n<<< x git reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-43",
+   "input": {
+    "command": "bash <<< \"<<< x git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-44",
+   "input": {
+    "command": "echo '<<< x git reset --hard' | bash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-45",
+   "input": {
+    "command": "find . -exec <<< x git reset --hard \\;"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-46",
+   "input": {
+    "command": "<<< x $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-47",
+   "input": {
+    "command": "<<< x `echo git reset --hard`"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-48",
+   "input": {
+    "command": "<<< x bash <<< \"git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-49",
+   "input": {
+    "command": "<<< a <<< b git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-50",
+   "input": {
+    "command": "<<< x 2>&1 git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-51",
+   "input": {
+    "command": "cmd <<< \"$input\""
+   },
+   "class": "allow",
+   "_doc": "O31: ordinary here-strings keep allowing."
+  },
+  {
+   "id": "inline-r10-52",
+   "input": {
+    "command": "cat <<< \"git reset --hard\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-53",
+   "input": {
+    "command": "tr a b <<< x"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-54",
+   "input": {
+    "command": "<<< x cat"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-55",
+   "input": {
+    "command": "git 2>/dev/null reset --hard"
+   },
+   "class": "deny",
+   "_doc": "R2j 4 (O31): redirection between command name and subcommand."
+  },
+  {
+   "id": "inline-r10-56",
+   "input": {
+    "command": "git 2> /dev/null reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-57",
+   "input": {
+    "command": "git > f reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-58",
+   "input": {
+    "command": "git < f reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-59",
+   "input": {
+    "command": "git >&2 reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-60",
+   "input": {
+    "command": "git &> f reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-61",
+   "input": {
+    "command": "git >| f reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-62",
+   "input": {
+    "command": "git <> f reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-63",
+   "input": {
+    "command": "git <<< x reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-64",
+   "input": {
+    "command": "git <<<x reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-65",
+   "input": {
+    "command": "git {fd}> f reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-66",
+   "input": {
+    "command": "bash 2>/dev/null -c \"git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-67",
+   "input": {
+    "command": "bash > f -c \"git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-68",
+   "input": {
+    "command": "bash <<< x -c \"git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-69",
+   "input": {
+    "command": "bash &> f -c \"git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-70",
+   "input": {
+    "command": "eval <<< x \"git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-71",
+   "input": {
+    "command": "sudo <<< x git reset --hard"
+   },
+   "class": "deny",
+   "_doc": "R2j 4: here-string or {fd}> right after a wrapper."
+  },
+  {
+   "id": "inline-r10-72",
+   "input": {
+    "command": "env {fd}> f git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-73",
+   "input": {
+    "command": "xargs <<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-74",
+   "input": {
+    "command": "timeout 5 <<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-75",
+   "input": {
+    "command": "nohup {fd}> f git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-76",
+   "input": {
+    "command": "stdbuf -o0 <<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-77",
+   "input": {
+    "command": "flock /tmp/l <<< x git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-78",
+   "input": {
+    "command": "find . -exec {fd}> f git reset --hard \\;"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-79",
+   "input": {
+    "command": "gh pr 2>/dev/null merge 1"
+   },
+   "class": "release",
+   "_doc": "R2j 4: release and delete-boundary twins get their real class."
+  },
+  {
+   "id": "inline-r10-80",
+   "input": {
+    "command": "git 2>/dev/null push origin main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r10-81",
+   "input": {
+    "command": "git 2>/dev/null branch -d x"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r10-82",
+   "input": {
+    "command": "git > f rm a"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r10-83",
+   "input": {
+    "command": "git commit -m '>' -a"
+   },
+   "class": "deny",
+   "_doc": "A quoted `>` is an argument, not a redirection."
+  },
+  {
+   "id": "inline-r10-84",
+   "input": {
+    "command": "git 2>/dev/null status"
+   },
+   "class": "allow",
+   "_doc": "O31: ordinary redirections keep allowing."
+  },
+  {
+   "id": "inline-r10-85",
+   "input": {
+    "command": "npm test 2>&1 | tee log"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-86",
+   "input": {
+    "command": "git log > out.txt"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-87",
+   "input": {
+    "command": "make 2>/dev/null"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-88",
+   "input": {
+    "command": "git commit -m '>' -m x"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r10-89",
+   "input": {
+    "command": "<<<\"\" git reset --hard"
+   },
+   "class": "deny",
+   "_doc": "O31: a glued empty operand is still the operand; the next word is the command."
+  },
+  {
+   "id": "inline-r10-90",
+   "input": {
+    "command": "<<<'' git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-91",
+   "input": {
+    "command": "<<<${x:-a b} git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r10-92",
+   "input": {
+    "command": "git >\"\" reset --hard"
+   },
+   "class": "deny"
   }
  ]
 }

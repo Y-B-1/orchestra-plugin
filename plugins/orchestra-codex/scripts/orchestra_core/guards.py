@@ -124,9 +124,17 @@ def _pipelines(command):
 
 _WORD_START = ' \t\n;&|()<>'  # A `#` right after one of these (or at the start) begins a comment.
 _COMMENT_BLANK = re.compile(r'[\'"\\]')
+_KEYWORD_STOP = ' \t\n;&|()<>"\'\\$`#'  # Characters that cannot begin a bare word (case-keyword tracking, O27).
+_BARE_WORD = re.compile(r'[^ \t\n;&|()<>"\'\\$`]*')
+_WORD_GLUE = frozenset(['"', "'", '\\', '$', '`'])  # A bare word glued to one of these is not a keyword.
 _MARK = '\ue000'  # Private-use delimiter for the placeholder that stands in for a heredoc operator.
 _MARK_RE = re.compile('<<' + _MARK + r'\d+' + _MARK)
-_REDIRECT = re.compile(r'(?:[0-9]*(?:>&|<&|>>|>\||<>|>|<)|&>>?)(.*)')
+_REDIRECT = re.compile(r'(?:(?:[0-9]*|\{[A-Za-z_][A-Za-z0-9_]*\})(?:<<<|>&|<&|>>|>\||<>|>|<)|&>>?)(.*)')
+_RMARK = '\ue001'  # Private-use mark _mark_redirects puts before each unquoted redirection operator.
+_REDIRECT_WORD = re.compile(r'(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(?:<<<|<<-?|<>|<&|<|>>|>&|>\||>|&>>?)')
+_REDIRECT_OP = re.compile(r'<<<|<<-?|<>|<&|<|>>|>&|>\||>|&>>?')
+_FD_WORD = re.compile(r'[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\}')
+_SHLEX_BLANK = ' \t\r\n'
 _HEREDOC = re.compile(r'<<(-?)[ \t]*("[^"\n]*"|\'[^\'\n]*\'|\\?[A-Za-z_0-9][A-Za-z_0-9.\-]*)')
 
 
@@ -137,26 +145,44 @@ def _strip_heredocs(command):
     quote, escaped, i, n = None, False, 0, len(command)
     tick = False  # Inside a backtick substitution.
     parens, no_start = [], -1  # Open `(` as (kind, index); the index where a `#` cannot start a word.
+    cases, start = [], True  # Open `case` as [state, len(parens)]; at a command position (SPEC A5, O27).
     while i < n:
         char = command[i]
         if escaped:
             escaped = False
-            no_start = i + 1  # SPEC A5 (O27): a character after an unescaped backslash is not a word start.
+            # SPEC A5 (O27): a character after an unescaped backslash is not a word start. A backslash-newline
+            # pair is deleted, so the character after it is a word start exactly when the backslash was one.
+            glued = char != '\n' or i - 1 == no_start or (i > 1 and command[i - 2] not in _WORD_START)
+            no_start = i + 1 if glued else -1
+            start = start and not glued
         elif char == '\\' and quote != "'":
             escaped = True
         elif quote:
             if char == quote:
                 quote = None
         elif char in "\"'":
-            quote = char
+            quote, start = char, False
         elif char == '(':
-            sub = i and (command[i - 1] in '$<>' or (command[i - 1] == '(' and parens and parens[-1] == ('sub', i - 1)))
-            parens.append(('sub' if sub else 'plain', i))
+            top = cases[-1] if cases and cases[-1][1] == len(parens) else None
+            if not (top and top[0] == 'pattern'):  # In a case pattern the opening parenthesis is optional.
+                sub = i and (command[i - 1] in '$<>=' or (command[i - 1] == '(' and parens and parens[-1] == ('sub', i - 1)))
+                parens.append(('sub' if sub else 'plain', i))  # `=(` opens an array assignment, inside a word.
+            start = True
         elif char == ')':
-            if parens and parens.pop()[0] == 'sub':
-                no_start = i + 1  # The `)` of `$(`, `$((` or `<(` ends part of a word, not a command.
+            top = cases[-1] if cases and cases[-1][1] == len(parens) else None
+            if top and top[0] == 'pattern':
+                top[0] = 'body'  # The `)` of a case pattern closes no group, so it cannot pop an enclosing `$(`.
+            elif parens and parens.pop()[0] == 'sub':
+                no_start = i + 1  # The `)` of `$(`, `$((`, `<(` or `a=(` ends part of a word, not a command.
+            start = True
         elif char == '`':
             tick = not tick
+            start = tick
+        elif char in ';&|':
+            top = cases[-1] if cases and cases[-1][1] == len(parens) else None
+            if top and top[0] == 'body' and command.startswith((';;', ';&'), i):
+                top[0] = 'pattern'
+            start = True
         elif char == '#' and i != no_start and (i == 0 or command[i - 1] in _WORD_START or (tick and command[i - 1] == '`')):
             # SPEC A5 (O27): a comment runs to the newline. Its quotes and backslashes are literal, so they
             # are blanked: no later scanner can read them as opening a quote or escaping the newline.
@@ -182,9 +208,24 @@ def _strip_heredocs(command):
                 out.append('<<' + _MARK + str(len(docs) + len(pending) - 1) + _MARK)
                 i = match.end()
                 continue
+        elif char not in _KEYWORD_STOP and i != no_start and (i == 0 or command[i - 1] in _WORD_START):
+            end = _BARE_WORD.match(command, i).end()
+            word = command[i:end] if command[end:end + 1] not in _WORD_GLUE else ''
+            top = cases[-1] if cases and cases[-1][1] == len(parens) else None
+            if word == 'in' and top and top[0] == 'head':
+                top[0] = 'pattern'
+            elif word == 'case' and start:
+                cases.append(['head', len(parens)])
+            elif word == 'esac' and start and top and top[0] != 'head':
+                cases.pop()
+            start = word in _CASE_PREV
+            out.append(command[i:end])
+            i = end
+            continue
         elif char == '\n':
             out.append(char)
             i += 1
+            start = True
             for word, strip, quoted in pending:
                 body, found = [], False
                 while i < n:
@@ -200,6 +241,8 @@ def _strip_heredocs(command):
                 docs.append(('\n'.join(body), quoted))
             pending = []
             continue
+        elif char not in ' \t':
+            start = False
         out.append(char)
         i += 1
     if pending:
@@ -529,20 +572,128 @@ def _substitutions(body):
     return found
 
 
-def _command_words(segment):
-    """The command words of a segment: wrappers unwrapped, redirections dropped."""
-    words = _unwrap(shlex.split(segment, comments=True))
-    kept, skip = [], False
-    for word in words:
-        if skip:
-            skip = False
+def _mark_redirects(segment):
+    """SPEC A5 (O31): put a blank and _RMARK before each redirection operator outside quotes (before its
+    descriptor prefix when a number or `{name}` is the whole word before it), so shlex starts a word there
+    that reads as a redirection. Quotes, escapes and `#` comments follow shlex.split(comments=True); a
+    `${...}` expansion is copied whole."""
+    if '<' not in segment and '>' not in segment:
+        return segment
+    if _RMARK in segment:
+        raise ValueError('Reserved character in command')
+    out, quote, i, n = [], None, 0, len(segment)
+    start, bare = 0, True  # Where the current word starts in out; whether it holds only bare characters.
+    here = 0  # 2 right after a `<<<`, 1 inside its operand word: a here-string operand is not word-split.
+    while i < n:
+        char = segment[i]
+        if quote:
+            if char == quote:
+                quote = None
+            elif char == '\\' and quote == '"':
+                out.append(segment[i:i + 2])
+                i += 2
+                continue
+        elif char in _SHLEX_BLANK:
+            out.append(char)
+            i += 1
+            start, bare = len(out), True
+            here = 2 if here == 2 else 0
             continue
-        redirect = _REDIRECT.fullmatch(word)
-        if redirect:
-            skip = not redirect.group(1)
+        elif char in "\"'":
+            quote, bare = char, False
+        elif char == '\\':
+            out.append(segment[i:i + 2])
+            i += 2
+            bare, here = False, 1 if here else 0
+            continue
+        elif char == '#':
+            end = segment.find('\n', i)
+            end = n if end < 0 else end
+            out.append(segment[i:end])
+            i = end
+            continue
+        elif segment.startswith('${', i):
+            end = segment.find('}', i)
+            end = n if end < 0 else end + 1
+            out.append(_escape_blanks(segment[i:end]) if here else segment[i:end])
+            here = 1 if here else 0
+            i = end
+            bare = False
+            continue
+        elif char in '<>&':
+            match = _REDIRECT_OP.match(segment, i)
+            if match:
+                if bare and _FD_WORD.fullmatch(''.join(out[start:])):
+                    out.insert(start, ' ' + _RMARK)
+                else:
+                    out.append(' ' + _RMARK)
+                out.append(match.group())
+                i = match.end()
+                if i < n and segment[i] not in _SHLEX_BLANK:
+                    out.append(_RMARK)  # A second mark right after the operator says its operand is glued.
+                start, bare = len(out), False  # A glued operand is never a descriptor prefix.
+                here = 2 if match.group() == '<<<' else 0
+                continue
+        here = 1 if here else 0
+        out.append(char)
+        i += 1
+    return ''.join(out)
+
+
+def _escape_blanks(text):
+    """Escape the blanks of text that stand outside quotes, so shlex keeps it one word."""
+    out, quote = [], None
+    for char in text:
+        if quote:
+            quote = None if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif char in _SHLEX_BLANK:
+            out.append('\\')
+        out.append(char)
+    return ''.join(out)
+
+
+def _words(segment):
+    """SPEC A5 (O31): the shlex words of a segment (comments dropped) as (all words, the words without
+    redirections, the here-string operands). A redirection is an unquoted operator, with or without a
+    descriptor prefix, together with its operand word, glued or spaced, wherever it stands."""
+    marked_text = _mark_redirects(segment)
+    words = shlex.split(marked_text, comments=True)
+    if _RMARK not in marked_text:
+        return words, words.copy(), []
+    original, kept, operands, skip = [], [], [], None
+    for word in words:
+        marked = word.startswith(_RMARK)
+        plain = word.replace(_RMARK, '')
+        original.append(plain)
+        if skip:
+            if skip == '<<<':
+                operands.append(plain)
+            skip = None
+            continue
+        match = _REDIRECT_WORD.match(plain) if marked and not _MARK_RE.fullmatch(plain) else None
+        if not match:  # A heredoc placeholder stays a word, as before O31.
+            kept.append(plain)
+            continue
+        here = '<<<' if match.group().endswith('<<<') else '>'
+        if word.startswith(_RMARK, 1 + match.end()):  # Glued operand (even an empty one, as in `<<<""`).
+            if here == '<<<':
+                operands.append(plain[match.end():])
         else:
-            kept.append(word)
-    return kept
+            skip = here
+    return original, kept, operands
+
+
+def _command_words(segment, operands=None):
+    """The command words of a segment: redirections dropped, wrappers unwrapped. Here-string operands
+    are added to operands when given (rule 6b still scans them as producer text)."""
+    if '<' not in segment and '>' not in segment:
+        return _unwrap(shlex.split(segment, comments=True))
+    _, words, here = _words(segment)
+    if operands is not None:
+        operands.extend(here)
+    return _unwrap(words)
 
 
 def _consumer_mode(segment, allow_eval=True):
@@ -1016,7 +1167,7 @@ def _command_positions(text, ats):
             token = 'close'
         else:
             end = max(_read_word(text, i), i + 1)
-            if text[i:end].isdigit() and text[end:end + 1] in ('<', '>') and text[end:end + 2] != '<(' and text[end:end + 2] != '>(':
+            if (text[i:end].isdigit() or _FD_WORD.fullmatch(text[i:end])) and text[end:end + 1] in ('<', '>') and text[end:end + 2] != '<(' and text[end:end + 2] != '>(':
                 while end < n and text[end] in '<>':
                     end += 1
                 if text[end:end + 1] == '&' or (text[end:end + 1] == '|' and text[end - 1] == '>'):
@@ -1135,7 +1286,7 @@ def _raw_commands(text):
             i = end
         else:
             end = max(_read_word(text, i), i + 1)
-            if text[i:end].isdigit() and text[end:end + 1] in {'<', '>'}:
+            if (text[i:end].isdigit() or _FD_WORD.fullmatch(text[i:end])) and text[end:end + 1] in {'<', '>'}:
                 while end < n and text[end] in '<>':
                     end += 1
             words.append(text[i:end])
@@ -1158,8 +1309,14 @@ def _raw_scan(text, depth):
             except ValueError:
                 parts = []
             values.append(parts[0] if len(parts) == 1 else raw)
+        kept, skip = [], False
+        for raw, value in zip(raws, values):  # SPEC A5 (O31): unquoted redirections and their operands.
+            redirect = None if skip else _REDIRECT.fullmatch(raw)
+            if not skip and not redirect:
+                kept.append(value)
+            skip = bool(redirect) and not redirect.group(1)
         try:
-            words = _unwrap(values)
+            words = _unwrap(kept)
         except ValueError:
             continue
         if not words:
@@ -1310,11 +1467,12 @@ def _scan_text(text, depth, as_command=False):
         if hit:
             return hit
     for segment in _segments(text):
+        operands = []
         try:
-            words = _command_words(segment)
+            words = _command_words(segment, operands)
         except ValueError:
             continue
-        hit = _scan_pieces(words[1:], depth)
+        hit = _scan_pieces(words[1:] + operands, depth)
         if hit:
             return hit
     return None
@@ -1395,12 +1553,11 @@ def classify_command(command: str, _depth=0) -> Decision:
     try:
         text, docs = _strip_heredocs(command)
         text = _tick_to_dollar(_dollar_decode(text))
-        segments = [[_MARK_RE.sub('<<HEREDOC', word) for word in shlex.split(segment, comments=True)]
-                    for segment in _segments(text)]
-        segments = [words for words in segments if words]
+        segments = [_words(segment)[:2] for segment in _segments(text)]
         items = []  # (decision, original words, counts as a segment)
-        for original in segments:
-            words = _unwrap(original.copy())
+        for original, words in segments:
+            original = [_MARK_RE.sub('<<HEREDOC', word) for word in original]
+            words = _unwrap([_MARK_RE.sub('<<HEREDOC', word) for word in words])  # Redirections removed (O31).
             if words:
                 items.append((_classify_segment(words, _depth), original, True))
         items.extend(_heredoc_items(docs, _pipelines(text), _depth))
