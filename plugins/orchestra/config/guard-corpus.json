@@ -730,11 +730,11 @@
    "class": "allow"
   },
   {
-   "id": "allow-heredoc-2",
+   "id": "deny-heredoc-2r",
    "input": {
     "command": "cat <<EOF\ngit reset --hard\nEOF"
    },
-   "class": "allow"
+   "class": "deny"
   },
   {
    "id": "allow-heredoc-3",
@@ -751,11 +751,11 @@
    "class": "allow"
   },
   {
-   "id": "allow-heredoc-5",
+   "id": "deny-heredoc-5r",
    "input": {
     "command": "bash -c 'cat' <<EOF\ngit reset --hard\nEOF"
    },
-   "class": "allow"
+   "class": "deny"
   },
   {
    "id": "allow-heredoc-6",
@@ -1350,6 +1350,265 @@
     "cwd": "/work/proj"
    },
    "class": "allow"
+  },
+  {
+   "id": "deny-heredoc-8",
+   "input": {
+    "command": "cat <<'EOF' | bash\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-9",
+   "input": {
+    "command": "cat <<'EOF' | sudo bash\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-10",
+   "input": {
+    "command": "bash -c \"$(cat)\" <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-11",
+   "input": {
+    "command": "cat <<EOF\n$(git reset --hard)\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-12",
+   "input": {
+    "command": "cat <<EOF\necho '$(git reset --hard)'\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-13",
+   "input": {
+    "command": "cat <<EOF\nrun `git reset --hard`\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-14",
+   "input": {
+    "command": "source /dev/stdin <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-15",
+   "input": {
+    "command": "cat <<'EOF' | . /dev/stdin\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-16",
+   "input": {
+    "command": "cat <<'EOF' | eval\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-17",
+   "input": {
+    "command": "bash -c \"$(cat <<'EOF'\ngit reset --hard\nEOF\n)\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-18",
+   "input": {
+    "command": "bash <(cat <<'EOF'\ngit reset --hard\nEOF\n)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-19",
+   "input": {
+    "command": "cat <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-20",
+   "input": {
+    "command": "bash -c 'cat' <<'EOF'\nit's data\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-21",
+   "input": {
+    "command": "cat <<'EOF'\ngit reset \\\n--hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "allow-heredoc-8",
+   "input": {
+    "command": "cat <<'EOF' > f\nit's fine\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-9",
+   "input": {
+    "command": "cat <<EOF > f\nit's $(date)\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-10",
+   "input": {
+    "command": "bash -c 'cat > f' <<'EOF'\nit's data\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-11",
+   "input": {
+    "command": "cat <<EOF\necho \"\\$(git reset --hard)\" \"$((1 + 2))\"\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-12",
+   "input": {
+    "command": "cat <<'EOF'\n$(date)\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "deny-inline-1",
+   "input": {
+    "command": "bash <<'EOF'\nit's data\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "allow-inline-1",
+   "input": {
+    "command": "cat <<EOF\necho \"$((1+2))\" it's\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-inline-2",
+   "input": {
+    "command": "echo \"git push origin HEAD:main\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "release-inline-1",
+   "input": {
+    "command": "env --chdir=other git push origin main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-inline-2",
+   "input": {
+    "command": "gh release create v1 --verify-tag"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-inline-3",
+   "input": {
+    "command": "git -C elsewhere push origin HEAD:main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-inline-4",
+   "input": {
+    "command": "git -C other push origin main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "deny-inline-2",
+   "input": {
+    "command": "git checkout -f main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-inline-3",
+   "input": {
+    "command": "git push --force origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "release-inline-5",
+   "input": {
+    "command": "git push origin"
+   },
+   "class": "release"
+  },
+  {
+   "id": "deny-inline-4",
+   "input": {
+    "command": "git push origin HEAD:main:other"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "release-inline-6",
+   "input": {
+    "command": "git push origin feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-inline-7",
+   "input": {
+    "command": "git push origin main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-multi-inline-1",
+   "input": {
+    "command": "git push origin main && git status"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "release-multi-inline-2",
+   "input": {
+    "command": "git push origin x && git status"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "deny-inline-5",
+   "input": {
+    "command": "git reset --hard && git push origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "release-inline-8",
+   "input": {
+    "command": "sh -c 'git push origin main'"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-inline-9",
+   "input": {
+    "command": "sudo -nu root git push origin HEAD:main"
+   },
+   "class": "release"
   }
  ]
 }
