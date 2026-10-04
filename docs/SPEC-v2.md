@@ -1,6 +1,6 @@
 # Orchestra 2.0.0 specification
 
-Status: design revised after the P0 red team and user decisions U1 to U8. Settled product decisions are quoted under "Settled decisions" and are not reopened here. Open items are listed under "Open decisions" with a recommended default. Each is marked blocking or non-blocking.
+Status: design revised after the P0 red team, user decisions U1 to U8, and coordinator rounds 3 and 4. Settled product decisions are quoted under "Settled decisions" and are not reopened here. Open items are listed under "Open decisions" with a recommended default. Each is marked blocking or non-blocking.
 
 - Starting artifact: branch `feat/v2-roles-guard-mods` at `8c1f1953666cc6d5e0e81579e3b37aa2212c26f1`. The tree was clean when inspected. The first SPEC/PLAN draft was written against `0ea2ece`.
 - Policy revision: `AGENTS.md` blob `182417468e23bfa02c1afbd15bac1d031141a18e`.
@@ -45,7 +45,7 @@ Eight areas are in scope:
   - the lease left active after a lost session (F5);
   - the hard-coded version in `test_packaging` (F3).
 - **C. Role consolidation**: 14 Claude agent files and 13 Codex profiles become 7 roles. The roles are carried through `roles.json`, `models.json`, `generate.py`, engine role keys, skills, references and tests. The main session model follows the user's picker (U7).
-- **D. Skills**: one skill per role plus one shared worker skill, written in our own words on a superpowers base (U6 as amended, section 3.3), preloaded via `skills:`, with mode procedures in mode files and no double-loading. Binding constraints stay inline.
+- **D. Skills**: one skill per role plus one shared worker skill, written in our own words on a superpowers base (U6 as amended, section 3.3), preloaded via `skills:`, with mode procedures in mode files and no double-loading. Binding constraints stay inline. Source texts are selected through a reviewed capability matrix before any authoring (section 8.4). The coordinator skill gains executor-choice guidance (section 8.5).
 - **E. Borrowed procedures**:
   - fix-round cap;
   - progress ledger and resume protocol;
@@ -113,10 +113,25 @@ Decisions (as given):
 5. Content sourcing: Superpowers is the base; graft only Pocock improvements that add something; Claude built-ins security-review and simplify feed review/build cleanup; gstack only for cleanup/deslop ideas, no preamble/telemetry/personas. No upstream skill is embedded whole; each role skill and mode file cites its upstream sources (MIT notice in NOTICE file). A suggested source and mode map accompanied it.
 
 How this revision applies round 3 against round 2:
-- Decision 1 changes the U6 amendment's "the agent file preloads only that one role skill" to two skills per worker. Each role still has exactly one role skill, and no upstream skills are stacked. Applied; flagged as O9 for user confirmation.
-- The suggested map renamed persisted modes (for example builder `feature`, critic `redteam`, operator `gates`/`hygiene`), added modes (investigator `bug`, designer-planner `architecture`) and dropped designer-planner `product` and critic `surface`. Modes are persisted card identifiers, and decision 1(c) requires the product lens and the surface axis. This revision keeps the section 7.1 modes, folds bug diagnosis into `code.md` and the architecture method into `design.md`, and uses the map for source assignment only. Flagged as O10.
-- Decision 5 limits gstack to cleanup/deslop ideas, while the U6 amendment names gstack `cso` for the security lens. This revision keeps `cso` as an idea-level security candidate and flags the conflict as O11.
+- Decision 1 changes the U6 amendment's "the agent file preloads only that one role skill" to two skills per worker. Each role still has exactly one role skill, and no upstream skills are stacked. Applied; flagged as O9, confirmed in round 4 (section 3.4).
+- The suggested map renamed persisted modes (for example builder `feature`, critic `redteam`, operator `gates`/`hygiene`), added modes (investigator `bug`, designer-planner `architecture`) and dropped designer-planner `product` and critic `surface`. Modes are persisted card identifiers, and decision 1(c) requires the product lens and the surface axis. This revision keeps the section 7.1 modes, folds bug diagnosis into `code.md` and the architecture method into `design.md`, and uses the map for source assignment only. Flagged as O10, confirmed in round 4.
+- Decision 5 limits gstack to cleanup/deslop ideas, while the U6 amendment names gstack `cso` for the security lens. This revision keeps `cso` as an idea-level security candidate and flags the conflict as O11, confirmed in round 4.
 - "NOTICE file" is read as the U6 file name `THIRD-PARTY-NOTICES`.
+
+### 3.4 Round 4 (user decisions and a coordinator probe, 2026-10-04)
+
+Decisions (as given by the coordinator):
+- **A. Defaults confirmed.** "O9 (two preloaded skills per worker), O10 (keep section 7.1 modes; map is source assignment only), O11 (gstack cso only if it adds to the Claude security-review checklist). Option A trim stays in 2.0.0." Nothing moves to 2.1: "every in-scope item ships in 2.0.0; exclusions stay exclusions." (first clause paraphrased)
+- **B. Skill curation is a selection, not an import.** "Add a card before any skill authoring, after I2: a capability matrix in docs/RESEARCH-v2.md (or docs/SKILL-SOURCES.md)." Rows are the capabilities Orchestra roles need; columns are the candidate texts in Superpowers, Pocock, gstack and the Claude built-ins security-review and simplify. Each row records the winner, grafts from runners-up, any gap filled from outside Superpowers, and rejected candidates with one-line reasons. "Superpowers wins ties; another repo wins only when its version is better for a subagent." Skills that do not fit subagents are rejected with a reason, not silently dropped. "A critic reviews the matrix before authoring starts." Authoring method: "each role skill and mode file is new text in Orchestra vocabulary, written from the matrix winners. No concatenation, one voice, no rule repeated across files (worker-contract rules live only in orchestra-worker), within the byte budget." Add "a critic cohesion review over all skill files (contradictions, duplicates, rules that conflict with the engine or briefs, missing provenance header)."
+- **C. Executor choice guidance** in the coordinator `orchestra` skill, as a new section with a phrase test. Three executors: inline; single Agent dispatch; Workflow, the default for 2+ independent units "whenever the host has the Workflow tool; the user's standing opt-in makes it the default with or without ultracode." Workflow mechanics: each `agent()` uses `agentType: 'orchestra:<role>'`, passes `effort` per the matrix, and carries a brief with a `Mode:` line. The coordinator reserves every card in the engine before starting the workflow script and records each agent's report against its card. Concurrent editors use `isolation: 'worktree'`. Hosts without Workflow (Codex) fall back to parallel role dispatch. The variant agent files stay for the Agent tool path.
+
+Probe evidence reported by the coordinator (Claude Code 2.1.289, `claude -p`, scratchpad probe plugin), recorded as OBSERVED by the coordinator and not re-run by design: a Workflow `agent()` with `agentType: 'probe:probe'` had both preloaded skill sentinels and read `references/repair.md` from the brief's `Mode:` line (1 of 1 run).
+
+How this revision applies round 4:
+- O9, O10 and O11 are settled (section 13).
+- B becomes section 8.4 and PLAN tickets MX (matrix), MXR (matrix critic) and SC (cohesion critic). The matrix lives in `docs/SKILL-SOURCES.md`, the brief's alternative name, so that a single ticket owns it; `docs/RESEARCH-v2.md` stays the coordinator's record of I2.
+- C becomes section 8.5, written by S1.
+- The round-4 repair model override stays on the Agent tool path (E1, R-Q2). A per-call `model` option on Workflow `agent()` is UNVERIFIED, so a round-4 repair card is dispatched with the Agent tool, not inside a workflow script.
 
 ## 4. Glossary
 
@@ -141,6 +156,8 @@ How this revision applies round 3 against round 2:
 | Role skill | The one role-specific skill directory a role preloads (section 8). |
 | Worker skill | `skills/orchestra-worker/`, the shared worker contract every worker preloads beside its role skill (section 8.1). |
 | Mode file | `skills/<role skill>/references/<mode>.md`, the procedure a worker reads before work according to the brief's `Mode:` line. |
+| Capability matrix | `docs/SKILL-SOURCES.md`: per needed capability, the winning upstream text, grafts, gaps and rejections (section 8.4). The only input from which skill text is written. |
+| Executor | How the coordinator runs a unit of work: inline, a single Agent dispatch, or a Workflow script (section 8.5). |
 | Armed run | A repository whose Orchestra state file exists with `session.active == true`. If there is no state file, or the session is inactive, the run is unarmed. |
 | Autonomy | The U8 overnight mode. "Autonomy active" means an armed run whose state has `autonomy.active == true` with an intact ledger snapshot. |
 | Autonomy ledger | `<state>/autonomy.md`, the U8 ledger file. |
@@ -335,19 +352,19 @@ Codex profiles have no preload mechanism (REASONED). Their `developer_instructio
 
 ### 8.2 Content and sources
 
-Every skill is written in our own words. Superpowers is the base. A Pocock, gstack or Claude built-in item is grafted only when it adds something the base lacks. No upstream skill is embedded whole, and no worker loads stacked upstream skills. The text uses Orchestra vocabulary (cards, modes, leases, reservations, evidence, approval boundaries) and the engine's real commands. Final source choice is made from I2's fetched texts.
+Every skill is written in our own words. Superpowers is the base. A Pocock, gstack or Claude built-in item is grafted only when it adds something the base lacks. No upstream skill is embedded whole, and no worker loads stacked upstream skills. The text uses Orchestra vocabulary (cards, modes, leases, reservations, evidence, approval boundaries) and the engine's real commands. Final source choice is made in the capability matrix (section 8.4), from I2's fetched texts. The "Sources" column below lists candidates only; the matrix decides.
 
 Mode names are the persisted modes of section 7.1. The file list follows from them.
 
 | Skill dir | Role | SKILL.md core | `references/` | Sources (candidates) |
 | --- | --- | --- | --- | --- |
-| `orchestra/` | orchestrator | Coordination loop: assign, dispatch, evidence, integration, approval boundaries, autonomy rules | `coordination.md` (inlined), `briefs.md` (inlined; requires `Mode:` and, for final review, `Lens:`), `cli.md` (B7), `triage.md`, `handoff.md` (E2 resume), `parallel.md` (dispatch, plan execution, E3 review package), `worktrees.md`, `finishing.md`, `repair-rounds.md` (E1), `final-review.md` (lenses, cleanup loop, E7), `audit-axes.md` (former `audit-policy` rules), `autonomy.md` (section 12) | superpowers: dispatching-parallel-agents, subagent-driven-development, executing-plans, using-git-worktrees, finishing-a-development-branch. Pocock: triage, handoff, writing-for-agents. |
+| `orchestra/` | orchestrator | Coordination loop: assign, dispatch, evidence, integration, approval boundaries, autonomy rules, executor choice (8.5) | `coordination.md` (inlined), `briefs.md` (inlined; requires `Mode:` and, for final review, `Lens:`), `cli.md` (B7), `triage.md`, `handoff.md` (E2 resume), `parallel.md` (dispatch, Workflow mechanics of 8.5, plan execution, E3 review package), `worktrees.md`, `finishing.md`, `repair-rounds.md` (E1), `final-review.md` (lenses, cleanup loop, E7), `audit-axes.md` (former `audit-policy` rules), `autonomy.md` (section 12) | superpowers: dispatching-parallel-agents, subagent-driven-development, executing-plans, using-git-worktrees, finishing-a-development-branch. Pocock: triage, handoff, writing-for-agents. |
 | `orchestra-worker/` | all workers | Worker contract (8.1) | none | superpowers: verification-before-completion (verifier wording). Existing `briefs.md` worker contract. |
 | `orchestra-investigate/` | investigator | Read-only rules, evidence labels | `code.md` (diagnosis), `docs.md` | superpowers: systematic-debugging. Pocock: diagnosing-bugs, grill-with-docs. Existing `investigation.md`. |
 | `orchestra-design/` | designer-planner | Separate design and plan artifacts, decisions to the user, glossary first | `design.md` (with the architecture method), `plan.md`, `product.md` | superpowers: brainstorming, writing-plans. Pocock: grill-with-docs, productivity/grill-me, domain-modeling, codebase-design, improve-codebase-architecture, GLOSSARY/ADR, to-spec, to-tickets, prototype (spikes). Spec-kit assess gate. Plan-conflict pre-flight and the Spike/Bounded/Architectural classes. Existing `design.md`, `planning.md`, `founder.md` (design dossier). |
 | `orchestra-critique/` | critic | Independence, challenge stance | `requirements.md`, `feasibility.md`, `scope.md`, `judge.md`, `spec.md`, `standards.md`, `ledger.md`, `surface.md` | Pocock: grill-me style challenge. BMAD lenses. Existing `red-team.md`, `audit.md`, `founder.md` (shipped-surface audit). |
 | `orchestra-build/` | builder | Tests first, verification before completion, ownership | `implementation.md`, `frontend.md`, `sensitive.md`, `mechanical.md`, `repair.md` (E1 note), `cleanup.md` (lean-and-simplify pass) | superpowers: test-driven-development, executing-plans, receiving-code-review (repair). Pocock: tdd, implement. Claude Code built-in simplify and gstack deslop ideas (cleanup). Existing `building.md`. |
-| `orchestra-review/` | code-reviewer | Exact-diff review, anti-tautology rule, verdict JSON with artifact echo | `checkpoint.md`, `final.md`, and the lens files `correctness.md`, `architecture.md`, `security.md`, `cleanliness.md`, plus `specialists.md` (E7) | superpowers: requesting-code-review and its reviewer prompt. Pocock: code-review, smell baseline, improve-codebase-architecture and codebase-design (architecture lens). Claude Code built-ins: security-review (security), simplify (cleanliness). gstack: `deslop-shared-libs` and `health` (cleanliness), `cso` (security, see O11), diff-scope specialists. Existing `review.md`. |
+| `orchestra-review/` | code-reviewer | Exact-diff review, anti-tautology rule, verdict JSON with artifact echo | `checkpoint.md`, `final.md`, and the lens files `correctness.md`, `architecture.md`, `security.md`, `cleanliness.md`, plus `specialists.md` (E7) | superpowers: requesting-code-review and its reviewer prompt. Pocock: code-review, smell baseline, improve-codebase-architecture and codebase-design (architecture lens). Claude Code built-ins: security-review (security), simplify (cleanliness). gstack: `deslop-shared-libs` and `health` (cleanliness), `cso` (security, only where it adds to the Claude security-review checklist; O11), diff-scope specialists. Existing `review.md`. |
 | `orchestra-operate/` | operator | Exact commands, logs and exits; no release outside an assignment | `gate.md`, `cleanup.md` (repo hygiene and retro), `release.md` | superpowers: verification-before-completion (gate), finishing-a-development-branch and using-git-worktrees (release, hygiene). Pocock: retro (cleanup). Existing `gates.md`, `closeout.md`. |
 
 Left out of runtime skills: superpowers `using-superpowers` (a trigger meta-skill, moot with preload) and `writing-skills` (authoring). `writing-skills` ideas go into a contributor document, `docs/skill-authoring.md`.
@@ -389,6 +406,67 @@ Acceptance criteria for area D:
 - `generate.py --check` fails on an unresolved skill name or mode file (a test in `tests/test_packaging.py` proves it on a scratch copy).
 - `test_engine.py`: a card whose brief file lacks `Mode: <mode>` is rejected; a card without a brief file is accepted.
 - Live check: a dispatched `orchestra:builder` with `Mode: repair` quotes the sentinel lines of `orchestra-worker/SKILL.md` and `orchestra-build/SKILL.md` without calling Read or Skill, then reads `orchestra-build/references/repair.md` and quotes its sentinel. `claude --debug` shows no skill-skip warning.
+
+### 8.4 Capability matrix and authoring method (round 4 B)
+
+Skill curation is a selection, not an import. Before any skill text is written, `docs/SKILL-SOURCES.md` records a capability matrix built from I2's texts at their pinned SHAs.
+
+Rows: the capabilities Orchestra roles need. At least: diagnosis and debugging; TDD; spec writing; design interview; planning; ticket splitting; architecture improvement; domain modeling; code review; security review; cleanup and leanness; verification before completion; receiving review and repair; parallel dispatch; worktrees; branch finishing and release; handoff.
+
+Columns: the candidate text in Superpowers, Pocock, gstack, and the Claude built-ins security-review and simplify (path at the pinned SHA, or "none").
+
+Each row records:
+- the winner;
+- grafts from runners-up;
+- any gap filled from outside Superpowers;
+- rejected candidates, each with a one-line reason;
+- the destination skill file(s) in section 8.2 (so each authoring ticket knows its inputs).
+
+Selection rules:
+- Superpowers wins ties. Another repository wins only when its version is better for a subagent.
+- A skill that does not fit subagents (for example an interactive or main-thread-only procedure) is rejected with a reason, never silently dropped.
+- An upstream skill that I2 found but that maps to no row is listed under "Not used", with a reason.
+- License limits from 8.2 apply: an idea-level source can win a row, but its text is not copied.
+
+A critic reviews the matrix before authoring starts (PLAN MXR). Authoring tickets start only from the accepted matrix.
+
+Authoring method:
+- Each role skill and mode file is new text in Orchestra vocabulary, written from the matrix winners and grafts.
+- No concatenation of upstream texts. One voice across all skill files.
+- No rule is repeated across files. Worker-contract rules live only in `orchestra-worker/SKILL.md`.
+- Every file stays within its 8.3 budget and carries its `Source:` header when derived.
+
+A critic cohesion review runs over all skill files together after authoring (PLAN SC). It looks for contradictions, duplicated rules, rules that conflict with the engine or with `briefs.md`, and missing provenance headers.
+
+Acceptance:
+- `docs/SKILL-SOURCES.md` has every listed row, and each row has a winner (or "none, Orchestra text" with the reason), a rejections entry, and a destination.
+- The matrix critic report is PASS on the matrix commit before any S1 to S7 ticket starts.
+- The cohesion critic report is PASS on the merged skill files before INT freezes the candidate.
+- `test_skills.py` keeps the duplicate guard for the worker contract (8.3).
+
+### 8.5 Executor choice (coordinator skill, round 4 C)
+
+`orchestra/SKILL.md` gains an "Executor choice" section. The coordinator picks one of three executors per unit of work:
+
+| Executor | Use when | Never |
+| --- | --- | --- |
+| inline | A question, a doc read, or a one-file reversible edit where the main session already holds the context | Main approving its own implementation |
+| single Agent dispatch | One unit with nothing independent beside it that still needs a worker: deeper investigation, isolation, or a different model | |
+| Workflow | 2+ independent units in any phase (tickets, review lenses, audits, research angles) | |
+
+Workflow is the default whenever the host has the Workflow tool. The user's standing opt-in makes it the default with or without ultracode.
+
+Workflow mechanics, in `orchestra/references/parallel.md`:
+- Each `agent()` uses `agentType: 'orchestra:<role>'`, so the role's skills preload (probe, section 3.4). It passes `effort` per the model matrix and carries a brief with a `Mode:` line.
+- Before starting the workflow script, the coordinator reserves every card the script runs in the engine. After it, the coordinator records each agent's report against its card.
+- Concurrent editors use `isolation: 'worktree'`.
+- A round-4 repair card is not run inside a workflow script. It goes through the Agent tool with the `model` override (section 3.4).
+- Hosts without Workflow (Codex) fall back to parallel role dispatch.
+- The variant agent files (`investigator-code`, `code-reviewer-checkpoint`) stay for the Agent tool path.
+
+Acceptance:
+- `tests/skill_phrases/orchestra.json` asserts the phrases `Executor choice`, `single Agent dispatch`, `Workflow`, `agentType: 'orchestra:`, `isolation: 'worktree'` and `never main approving its own implementation` (case-insensitive match).
+- Live check (L1, restart point B): a Workflow `agent()` with `agentType: 'orchestra:builder'` and `Mode: repair` quotes both preload sentinels and the `repair.md` sentinel.
 
 ## 9. Area E: borrowed procedures (prose in skills; no engine features)
 
@@ -633,9 +711,9 @@ Acceptance for section 12:
 | O6 | SessionEnd reason policy | No release on `clear` or `resume`; release on `logout`, `prompt_input_exit`, `other` and unknown reasons. Reopens if the B3 live capture shows `/clear` changes the `session_id`. | Confirm before B3 acceptance; default applies |
 | O7 | Autonomy caps for an overnight run: keep the existing engine bounds (`max_passes` 1 to 20, `max_stalls` 1 to 2)? | Keep. A pass is a whole coordinator turn, which can dispatch and accept several cards. | Confirm before B10 acceptance; default applies |
 | O8 | `autonomy` `arm`, `disarm` and `status` without a lease, so the mod toggle can call the same entry | Accept. Arming still needs an active run and a complete ledger; disarm is the safe direction; any process able to run the CLI could arm, which is within the best-effort charter (X8). | Confirm before B10 acceptance; default applies |
-| O9 | Two preloaded skills per worker (`orchestra-worker` plus the role skill), per the coordinator's round 3 decision, against the U6 amendment's "preloads only that one role skill" | Apply round 3: the shared contract is Orchestra's own text, not a stacked upstream skill, and it removes the contract from every agent body. | Confirm with the user before S1 acceptance; default applies |
-| O10 | Mode renames and additions in the round 3 suggested map | Keep the section 7.1 modes (persisted identifiers; 1(c) requires `product` and `surface`). Bug diagnosis lives in investigator `code.md`; the architecture method lives in `design.md`. | Confirm before B4 starts; default applies |
-| O11 | gstack scope: round 3 says cleanup/deslop ideas only; the U6 amendment names `cso` for the security lens | Keep `cso` as an idea-level candidate for `security.md`, chosen only if it adds to the Claude security-review checklist. | Confirm before S5 acceptance; default applies |
+| O9 | Two preloaded skills per worker (`orchestra-worker` plus the role skill), per the coordinator's round 3 decision, against the U6 amendment's "preloads only that one role skill" | Settled in round 4 (section 3.4): two preloaded skills per worker. | No |
+| O10 | Mode renames and additions in the round 3 suggested map | Settled in round 4: keep the section 7.1 modes; the map is source assignment only. Bug diagnosis lives in investigator `code.md`; the architecture method lives in `design.md`. | No |
+| O11 | gstack scope: round 3 says cleanup/deslop ideas only; the U6 amendment names `cso` for the security lens | Settled in round 4: gstack `cso` is used only if it adds to the Claude security-review checklist; the matrix row records the verdict. | No |
 
 ## 14. Exclusions
 
@@ -668,4 +746,6 @@ Acceptance for section 12:
 | Scoped evidence still stales on every merge because HEAD is bound | Less benefit than a pure path scope | Decided model (U3b). The gain is for uncommitted sibling edits. |
 | Autonomy runs unattended | Unwanted actions overnight | Hard boundaries enforced by engine and hook (12.4), caps and deadline in the engine, a tamper-evident ledger, and a morning report. Credential entry and non-shell tools stay prose-only (X8). |
 | Upstream skill licenses differ from what the brief assumes | Licensing defect | I2 confirms each license at a pinned SHA; unconfirmed sources are idea-level only (8.2). |
+| Skill files written by seven parallel tickets drift apart | Contradictory or duplicated rules | One accepted capability matrix as the only input, one authoring method, the worker-contract duplicate test, and the SC cohesion critic over all skill files (8.4). |
+| Workflow `agent()` per-call `model` option is unverified | Round-4 override silently not applied | Round-4 repair uses the Agent tool path (8.5); the variant agent files stay. |
 | Coordinator-authored files are allowed in the state dir (A8 exception) | A worker could edit `standing-orders.md` or `autonomy.md` | Read-only roles lack Write. The coordinator verifies the register's `sha256:` line before dispatch. The autonomy ledger is snapshot-checked on every Stop. |

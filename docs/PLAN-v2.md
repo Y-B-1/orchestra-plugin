@@ -27,6 +27,11 @@ The installed plugin is 1.0.1 until L1 step 1. Until then, workers are dispatche
 | operator/gate | `orchestra:gatekeeper` |
 | operator/release | `orchestra:releaser`. Executed by the coordinator, per the user's authorization (U1). |
 
+Executor (SPEC 8.5), applied to this build:
+- Two or more ready, independent cards run as one Workflow script. Each `agent()` sets `agentType` to the v1 dispatch name above, passes `effort` per 0.2, and carries the brief with its `Mode:` line. Concurrent editors set `isolation: 'worktree'` (0.3).
+- Before the script starts, the coordinator reserves every card it runs in the engine. After it ends, the coordinator records each agent's report against its card.
+- A lone card uses one Agent dispatch. A round-4 repair card always uses the Agent tool with the `model` override.
+
 ### 0.2 Models
 
 - Claude builders run Sonnet 5.5 medium (all presets, including cleanup), except fix round 4, which runs Opus 5.5 (SPEC E1).
@@ -118,6 +123,37 @@ Sources:
 - Claude Code built-in `security-review` and `simplify`: license status. If none is published, record "idea level only, own words".
 
 Acceptance: every source has a SHA and a license verdict, or is marked UNKNOWN with the reason. A path that does not exist at the SHA is reported, not guessed.
+
+### MX: capability matrix (selection before authoring)
+
+| Field | Value |
+| --- | --- |
+| Goal | SPEC 8.4: the capability matrix in `docs/SKILL-SOURCES.md`, built from I2's texts at their pinned SHAs. |
+| Role | designer-planner/plan [v1 `orchestra:designer-planner`], Opus 5.5 high |
+| Deps | I2 (and its RESEARCH-v2 entry by the coordinator) |
+| Owned | New: `docs/SKILL-SOURCES.md` |
+
+Scope:
+- One row per SPEC 8.4 capability, with columns for Superpowers, Pocock, gstack and the Claude built-ins (path at the pinned SHA, or "none").
+- Per row: winner, grafts from runners-up, gap filled from outside Superpowers, rejected candidates with one-line reasons, destination skill file(s).
+- Superpowers wins ties; another repository wins only when its version is better for a subagent. Skills that do not fit subagents are rejected with a reason. Upstream skills that map to no row are listed under "Not used" with a reason.
+- License limits of SPEC 8.2 are marked per winner (MIT text or idea level).
+- The gstack `cso` verdict is recorded on the security-review row (O11).
+
+Acceptance:
+- `grep -c "^| " docs/SKILL-SOURCES.md` shows at least the 17 capability rows plus header rows.
+- For each SPEC 8.4 capability, `grep -n -i "<capability>" docs/SKILL-SOURCES.md` prints its row.
+- Every SHA cited appears in the RESEARCH-v2 I2 table.
+- No upstream text longer than one line is copied into the matrix.
+
+### MXR: matrix critic
+
+| Field | Value |
+| --- | --- |
+| Role | critic/spec [v1 `orchestra:auditor`], read-only, report returned as the final message |
+| Deps | MX |
+| Owned | Nothing |
+| Acceptance | PASS against SPEC 8.4: every row present; winners follow the tie rule; every rejection has a reason; no silent drops; destinations cover every file in SPEC 8.2; license marks match I2. ISSUES route to an MX repair card, then a fresh MXR. |
 
 ### B1: thin end-to-end slice (version, mod skeleton, package exclusion)
 
@@ -339,14 +375,14 @@ Acceptance:
 
 | Field | Value |
 | --- | --- |
-| Goal | SPEC 8.2 licensing: `THIRD-PARTY-NOTICES` with the MIT texts and SHAs from I2, idea-level credits, and `docs/skill-authoring.md` from the writing-skills ideas. |
+| Goal | SPEC 8.2 licensing: `THIRD-PARTY-NOTICES` with the MIT texts and SHAs of the sources the accepted matrix uses, idea-level credits, and `docs/skill-authoring.md` from the writing-skills ideas and the SPEC 8.4 authoring method. |
 | Role | builder/mechanical [v1 `orchestra:builder`] |
-| Deps | I2 (and its RESEARCH-v2 entry by the coordinator) |
+| Deps | I2, MXR |
 
 Owned paths: new `plugins/orchestra/THIRD-PARTY-NOTICES`, new `docs/skill-authoring.md`.
 
 Acceptance:
-- Every SHA in the RESEARCH-v2 I2 table appears in the notices file with its license text.
+- Every SHA cited by a winner or graft in `docs/SKILL-SOURCES.md` appears in the notices file, with its license text when the source is MIT at that SHA.
 - `python3 scripts/build_release.py --out "$SCRATCH/s0"` on the committed candidate exits 0.
 - `--check` exits 0 and the Codex package contains `THIRD-PARTY-NOTICES`.
 
@@ -356,20 +392,21 @@ Common fields:
 
 | Field | Value |
 | --- | --- |
-| Goal | Write the skill in our own words per SPEC 8.2, with E1 to E7 placed per SPEC 9, the source header on every derived file, and the avoid list honored. |
+| Goal | Write the skill as new text in Orchestra vocabulary from the accepted matrix rows whose destination is in the ticket's directory (SPEC 8.4): no concatenation, one voice, no rule repeated across files, E1 to E7 placed per SPEC 9, the source header on every derived file, and the avoid list honored. |
 | Role | builder/mechanical [v1 `orchestra:builder`] |
-| Deps | B4, I2, S0 |
-| Starting artifact | The branch with B4 and S0 merged |
+| Deps | B4, S0, MXR (I2 through MX) |
+| Starting artifact | The branch with B4, S0 and the accepted matrix merged |
 
 Common acceptance, for the ticket's own directories:
 - `python3 -m unittest discover -s tests -p 'test_skills.py'` exits 0 (budgets, phrases, source headers against `THIRD-PARTY-NOTICES`, worker-contract non-duplication).
 - `--check` exits 0, and the agent total stays under 32,000 bytes.
 - The stale-role grep over the ticket's directories prints nothing: `grep -rn "founder-mind\|red-teamer\|auditor\|gatekeeper\|janitor\|releaser\|builder-repair" <owned skill dirs>`.
 - `grep -rn "should\|probably\|seems" <owned skill dirs>` matches only the E6 rule text and quoted examples.
+- The report lists, per file written, the matrix rows used.
 
 | Ticket | Owned paths | Extra acceptance |
 | --- | --- | --- |
-| S1 | `plugins/orchestra/skills/orchestra/**` except `references/cli.md`; `plugins/orchestra/skills/orchestra-worker/**`; `tests/skill_phrases/orchestra.json`, `tests/skill_phrases/orchestra-worker.json` | `grep -rn "review-groups\|audit-policy\|orchestra.py route" plugins/orchestra/skills/orchestra` prints nothing. Phrases include `STATUS: PASS|ISSUES|BLOCKED` (in `orchestra-worker`), `Mode:`, `Lens:`, `Round 5`, `standing-orders.md`, `progress.md`, `more than 50 changed lines`, the four lens names, `park`, and the `gh api` bypass rule. `orchestrator.md` stays within 10,500 bytes. |
+| S1 | `plugins/orchestra/skills/orchestra/**` except `references/cli.md`; `plugins/orchestra/skills/orchestra-worker/**`; `tests/skill_phrases/orchestra.json`, `tests/skill_phrases/orchestra-worker.json` | `grep -rn "review-groups\|audit-policy\|orchestra.py route" plugins/orchestra/skills/orchestra` prints nothing. Phrases include `STATUS: PASS|ISSUES|BLOCKED` (in `orchestra-worker`), `Mode:`, `Lens:`, `Round 5`, `standing-orders.md`, `progress.md`, `more than 50 changed lines`, the four lens names, `park`, and the `gh api` bypass rule, plus the SPEC 8.5 executor phrases (`Executor choice`, `single Agent dispatch`, `Workflow`, `agentType: 'orchestra:`, `isolation: 'worktree'`, `never main approving its own implementation`). `orchestrator.md` stays within 10,500 bytes. |
 | S2 | `plugins/orchestra/skills/orchestra-design/**`; `tests/skill_phrases/orchestra-design.json` | Phrases cover glossary-first, decisions to the user, and the `product` mode dossier. |
 | S3 | `plugins/orchestra/skills/orchestra-critique/**`; `tests/skill_phrases/orchestra-critique.json` | Live (0.6): a dispatched `orchestra:critic` with `Mode: spec` reads `references/spec.md` by its plugin-root path and quotes its sentinel. |
 | S4 | `plugins/orchestra/skills/orchestra-build/**`; `tests/skill_phrases/orchestra-build.json` | Phrases cover tests first, `cleanup` lean-and-simplify, and the repair round note. |
@@ -388,6 +425,16 @@ Common acceptance, for the ticket's own directories:
 Owned paths: `docs/roles.md`, `docs/models.md`.
 
 Acceptance: `grep -n "user's selection" docs/models.md` and `grep -n "disallowedTools" docs/roles.md` each print a line; the stale-role grep over both files matches only a v1-to-v2 mapping table.
+
+### SC: skill cohesion critic
+
+| Field | Value |
+| --- | --- |
+| Role | critic/standards [v1 `orchestra:auditor`], read-only, report returned as the final message |
+| Deps | S0 to S7 accepted and merged |
+| Owned | Nothing |
+| Scope | All files under `plugins/orchestra/skills/**` together, against SPEC 8 and 9, `config/roles.json`, the engine CLI, and `orchestra/references/briefs.md`. |
+| Acceptance | PASS, or ISSUES naming file and line for: contradictions between files; a rule stated in more than one file; a rule that conflicts with the engine or with `briefs.md`; a derived file without its `Source:` header; text that reads as concatenated upstream prose. Findings route to the owning S ticket under E1, then a fresh SC. |
 
 ### B7: user-facing docs
 
@@ -413,7 +460,7 @@ Acceptance:
 ### INT (coordinator)
 
 - Tickets are merged into `feat/v2-roles-guard-mods` as each is accepted, in DAG order. Generated conflicts are resolved by regenerating (0.5).
-- RS, code-reviewer/checkpoint, runs once on the merged S0 to S8 diff, before the lens round. Its findings route to the owning S ticket.
+- SC (the cohesion critic) is PASS on the merged skill files before the lens round. The skill files have no separate code-reviewer checkpoint; SC and `test_skills.py` cover them, and the lens round covers the whole diff.
 - The last commit before the lens round is the coordinator's `docs/BUILD-LEDGER.md` entry (tickets, checkpoints, live-check results). It is committed with an explicit path. No follow-up PR is planned for the ledger.
 - The result is the candidate: full SHA, clean tree.
 
@@ -467,7 +514,7 @@ Deps: G1, RF1 to RF4, A1 to A4, all CLEAN on the frozen SHA. Post-freeze evidenc
 13. F2 check: `diff -rq ~/.claude/plugins/cache/orchestra-distribution/orchestra/2.0.0 plugins/orchestra` on `main` is empty apart from install metadata.
 14. User wizard, Codex (installs from remote `main`, so it follows the merge): `codex plugin marketplace upgrade orchestra-distribution`; `codex plugin remove orchestra@orchestra-distribution`; `codex plugin add orchestra@orchestra-distribution`; `python3.11 ~/.codex/plugins/cache/orchestra-distribution/orchestra/2.0.0/scripts/orchestra.py install-profiles`; `diff -rq` of the installed copy against `plugins/orchestra-codex`.
 15. Codex live discovery: a Codex session shows the Orchestra hooks (re-approve the hook trust entries in `~/.codex/config.toml` if prompted; a user step) and the 10 profiles; the read-only role profiles carry `sandbox_mode = "read-only"`; v1 profiles are gone.
-16. **Restart point B.** A fresh Claude session: the Agent listing shows the 8 worker agents and not `orchestra:orchestrator`; the plugin's agent list names the 9 v2 files and no v1 names; a dispatched worker reports `claude-sonnet-5-5`; the main session reports the picker's model; `git stash` denied, `git stash list` allowed; `/orchestra-board` renders.
+16. **Restart point B.** A fresh Claude session: the Agent listing shows the 8 worker agents and not `orchestra:orchestrator`; the plugin's agent list names the 9 v2 files and no v1 names; a dispatched worker reports `claude-sonnet-5-5`; the main session reports the picker's model; `git stash` denied, `git stash list` allowed; `/orchestra-board` renders; a Workflow `agent()` with `agentType: 'orchestra:builder'` and `Mode: repair` quotes both preload sentinels and the `repair.md` sentinel (SPEC 8.5).
 17. Coordinator, outside the tickets: update `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` (U5 list in the rulings).
 18. **Restart point C.** Coordinator, last, outside the tickets: update the Claude Desktop app, which restarts it (U2). After restart, the marker heartbeat appears in a Desktop session.
 
@@ -485,6 +532,8 @@ Deps: G1, RF1 to RF4, A1 to A4, all CLEAN on the frozen SHA. Post-freeze evidenc
 - **B9, scoped evidence breaks an existing review flow.** Repair under E1. If the scope rule itself is wrong, return to design (O3 interpretation).
 - **B11, no status band API.** Skip the band (SPEC 12.7) and record it. Not a spec change.
 - **I2, a source is not MIT at the pinned SHA, or a path is missing.** That source is idea level only (SPEC 8.2). Not a spec change.
+- **MXR ISSUES.** An MX repair card, then a fresh MXR. A capability with no fitting candidate is recorded as "none, Orchestra text" with the reason; it is not a spec change.
+- **SC ISSUES.** The owning S ticket repairs under E1. A rule that conflicts with the engine is fixed in the skill text; if the engine behavior itself contradicts SPEC-v2, it goes to design.
 - **S ticket over budget.** Move procedure text into a mode file. The coordinator may reallocate agent sub-budgets within the 32,000 total (SPEC 8.3).
 - **Any contradiction with SPEC-v2** goes to the designer-planner, design mode.
 - **Release failure.**
@@ -510,12 +559,14 @@ Edges (ticket: prerequisites):
 - B10: B9
 - B5: B2, B3, B4, I1
 - B11: B5, B10
-- S0: I2
-- S1 to S7: B4, I2, S0
+- MX: I2
+- MXR: MX
+- S0: I2, MXR
+- S1 to S7: B4, S0, MXR
 - S8: B4
 - B7: B5, B8, B9, B10, B11, S0
-- RS: S0 to S8
-- INT candidate: every B, S and RS card accepted
+- SC: S0 to S7
+- INT candidate: every B and S card accepted, and SC PASS
 - RF1 to RF4: INT candidate
 - CL: RF2 to RF4 (only with confirmed findings); then RF1 to RF4 again
 - G1, A1 to A4: the frozen SHA (RF1 to RF4 CLEAN on it)
@@ -524,17 +575,17 @@ Edges (ticket: prerequisites):
 Readiness from accepted prerequisites:
 
 - P0 and I2 are ready at start; I1 is accepted.
-- B1 is ready on P0. S0 is ready on I2.
+- B1 is ready on P0. MX is ready on I2; MXR on MX; S0 on MXR.
 - B2 and B4 are ready on B1 (and I1), in parallel.
-- B3 is ready on B2 and B4. S1 to S8 are ready on B4 (S1 to S7 also on S0), and run in parallel with B3 onward.
+- B3 is ready on B2 and B4. S8 is ready on B4. S1 to S7 are ready on B4, S0 and MXR, and run in parallel with B3 onward. SC is ready when S0 to S7 are merged.
 - B8, B9 and B10 follow B3 in a chain. B5 is ready on B3 and runs in parallel with B8 to B10.
 - B11 is ready on B5 and B10. B7 is ready on B11 (its other prerequisites are accepted by then).
-- Every node becomes ready from accepted prerequisites, and none depends on an unknown ticket. The graph is acyclic: one topological order is P0, I2, S0, B1, B2, B4, S1 to S8, RS, B3, B5, B8, B9, B10, B11, B7, INT, RF1 to RF4, CL, G1, A1 to A4, L1.
+- Every node becomes ready from accepted prerequisites, and none depends on an unknown ticket. The graph is acyclic: one topological order is P0, I2, MX, MXR, S0, B1, B2, B4, S1 to S8, SC, B3, B5, B8, B9, B10, B11, B7, INT, RF1 to RF4, CL, G1, A1 to A4, L1.
 
 Parallel sets and their owned paths are disjoint:
 
 - B2 and B4: guards/hooks/run-hook/claude.json/guard config/test_hooks/test_guard_corpus versus roles/models/generate/engine/skills/test_engine/test_packaging/test_skills/skill_phrases.
-- B3 to B10 chain, B5, B11, S0 to S8: engine.py, orchestra.py, hooks.py, policy, autonomy template and their tests (chain); `hooks/mod/**` except autonomy files, types, corpus (B5, then B11 after it); one skill directory and one phrase file each (S1 to S7); `docs/roles.md` and `docs/models.md` (S8); notices and `docs/skill-authoring.md` (S0). `skills/orchestra/references/cli.md` belongs to B8 and then B7, never to S1.
+- B3 to B10 chain, B5, B11, S0 to S8: engine.py, orchestra.py, hooks.py, policy, autonomy template and their tests (chain); `hooks/mod/**` except autonomy files, types, corpus (B5, then B11 after it); one skill directory and one phrase file each (S1 to S7); `docs/roles.md` and `docs/models.md` (S8); notices and `docs/skill-authoring.md` (S0); `docs/SKILL-SOURCES.md` (MX, finished before S0 starts). `skills/orchestra/references/cli.md` belongs to B8 and then B7, never to S1.
 
 Shared paths, each serialized by an edge:
 
@@ -557,7 +608,7 @@ Shared paths, each serialized by an edge:
 | `skills/**` | B4, then one S ticket per directory |
 | `tests/skill_phrases/<dir>.json` | B4, then the matching S ticket |
 
-Counts: builder tickets B1 to B5, B7 to B11 (10) and S0 to S8 (9). Checkpoints: R1, R2, R3, R4, R5, R8, R9, R10, RS. Final: RF1 to RF4, CL if needed, G1, A1 to A4.
+Counts: builder tickets B1 to B5, B7 to B11 (10) and S0 to S8 (9). Checkpoints: R1, R2, R3, R4, R5, R8, R9, R10. Critics: MXR, SC. Matrix: MX. Final: RF1 to RF4, CL if needed, G1, A1 to A4.
 
 ## Coordinator rulings (2026-10-04, revised)
 
@@ -566,7 +617,8 @@ Counts: builder tickets B1 to B5, B7 to B11 (10) and S0 to S8 (9). Checkpoints: 
 - O3: in scope for 2.0.0 (U3b, ticket B9). Final, gate, release and completion evidence stay whole-repo; confirm before B9 acceptance.
 - O4: `az repos pr update --status completed` stays behind the release check inside an armed run.
 - O5: accept the 32,000-byte agent-file limit.
-- O6 (SessionEnd reasons), O7 (autonomy caps), O8 (lease-free autonomy toggle), O9 (two preloaded skills), O10 (persisted modes kept), O11 (gstack `cso`): defaults in SPEC 13 apply unless the user overrides at the named confirmation point.
+- O6 (SessionEnd reasons), O7 (autonomy caps), O8 (lease-free autonomy toggle): defaults in SPEC 13 apply unless the user overrides at the named confirmation point.
+- O9, O10, O11: confirmed by the user (round 4, SPEC 3.4). Option A trim ships in 2.0.0, and every in-scope item ships in 2.0.0.
 - U5, coordinator only, after release (L1 step 17). `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` must state:
   - the v1-to-v2 role mapping;
   - removal of the local `models.json` sonnet-5-5 patch note;
