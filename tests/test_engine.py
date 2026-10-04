@@ -232,11 +232,37 @@ class MoreEngineTests(EngineFixture):
 
 class IntegrationRepairTests(EngineFixture):
     def test_canonical_modes(self):
-        for role, mode in [('founder-mind', 'audit'), ('red-teamer', 'scope'), ('gatekeeper', 'checks'), ('janitor', 'hygiene'), ('releaser', 'release')]:
-            self.task(role, role=role, mode=mode)
-            self.engine.dispatch('main', self.lease, role, role + '-worker')
+        for role, mode in [('designer-planner', 'product'), ('critic', 'surface'), ('critic', 'scope'),
+                           ('operator', 'gate'), ('operator', 'cleanup'), ('operator', 'release')]:
+            name = role + '-' + mode
+            self.task(name, role=role, mode=mode)
+            self.engine.dispatch('main', self.lease, name, name + '-worker')
         with self.assertRaises(EngineError):
-            self.task('old-mode', role='gatekeeper', mode='default')
+            self.task('old-mode', role='operator', mode='default')
+
+    def test_old_role_names_are_unavailable(self):
+        for role, mode in [('founder-mind', 'audit'), ('red-teamer', 'scope'), ('auditor', 'spec'),
+                           ('gatekeeper', 'checks'), ('janitor', 'hygiene'), ('releaser', 'release')]:
+            with self.assertRaises(EngineError, msg=role):
+                self.task(role, role=role, mode=mode)
+
+    def test_builder_cleanup_needs_no_repair_of(self):
+        self.task('clean', mode='cleanup')
+        self.engine.dispatch('main', self.lease, 'clean', 'cleanup-worker')
+
+    def test_critic_review_of_and_no_inline_execution(self):
+        self.task('B1')
+        self.task('C1', role='critic', mode='spec', files=[], review_of=['B1'])
+        self.task('C2', role='critic', mode='judge', files=[])
+        with self.assertRaises(EngineError):
+            self.engine.start_inline('main', self.lease, 'C2')
+        token = self.engine.dispatch('main', self.lease, 'B1', 'builder')
+        self.engine.report('builder', token, 'Built')
+        self.assertIn('C1', self.engine.ready('main', self.lease))
+        modes = {'investigator': 'code', 'designer-planner': 'plan', 'operator': 'gate', 'builder': 'implementation'}
+        for role, mode in modes.items():
+            with self.assertRaises(EngineError, msg=role):
+                self.task('bad-' + role, role=role, mode=mode, review_of=['B1'])
 
     def test_gate_guard_and_timeout(self):
         for argv in [['git', 'reset', '--hard'], ['git', 'push', 'origin', 'main'], ['bash', '-c', 'git stash']]:
@@ -278,7 +304,7 @@ class IntegrationRepairTests(EngineFixture):
             lease = engine.open_session('main')
             task = dict(id='a', role='builder', mode='implementation', inputs=['https://example.com'], acceptance=['done'], files=['a'], resources=[], dependencies=[])
             engine.add_task('main', lease, task)
-            method = package / 'skills/orchestra/references/building.md'
+            method = package / 'skills/orchestra-build/SKILL.md'
             method.write_text(method.read_text() + '\nNew binding rule.\n')
             with self.assertRaises(EngineError):
                 engine.dispatch('main', lease, 'a', 'worker')
@@ -296,11 +322,29 @@ class IntegrationRepairTests(EngineFixture):
             with self.assertRaises(EngineError):
                 self.task(**values)
         brief = self.root / 'brief.md'
-        brief.write_text('Objective and bounded acceptance criteria.')
+        brief.write_text('Mode: implementation\nObjective and bounded acceptance criteria.')
         self.task(brief=str(brief))
         brief.unlink()
         with self.assertRaises(EngineError):
             self.engine.dispatch('main', self.lease, 'a', 'worker')
+
+    def test_brief_file_needs_the_cards_mode_line(self):
+        cases = {'no-mode.md': 'Objective and bounded acceptance criteria.',
+                 'wrong-mode.md': 'Mode: repair\nObjective.',
+                 'inline-mention.md': 'The card runs Mode: implementation somewhere in prose.',
+                 'other-prefix.md': 'Mode: implementation-extra\nObjective.'}
+        for name, text in cases.items():
+            brief = self.root / name
+            brief.write_text(text)
+            with self.assertRaises(EngineError, msg=name):
+                self.task(name, brief=str(brief))
+        ok = self.root / 'ok.md'
+        ok.write_text('# Brief\nMode: implementation\nObjective.\n')
+        self.task('with-brief', brief=str(ok))
+        self.task('without-brief')
+        cleanup = self.root / 'cleanup.md'
+        cleanup.write_text('Mode: cleanup\n')
+        self.task('cleanup-brief', mode='cleanup', brief=str(cleanup))
 
     def test_scanner_availability_and_required_release_evidence(self):
         receipt = self.engine.run_secret_scan('main', self.lease)
@@ -565,10 +609,10 @@ class FinalBlockerTests(EngineFixture):
         self.engine.accept('main', self.lease, 'B1')
         self.assertEqual(['outsider'], self.engine.ready('main', self.lease))
 
-    def test_releaser_card_runs_after_pre_release_review_then_closes(self):
+    def test_operator_release_card_runs_after_pre_release_review_then_closes(self):
         self.release_setup()
         self.task('B1', files=['a'])
-        self.task('L1', role='releaser', mode='release', files=[], dependencies=['B1'])
+        self.task('L1', role='operator', mode='release', files=[], dependencies=['B1'])
         token = self.engine.dispatch('main', self.lease, 'B1', 'builder')
         self.engine.report('builder', token, 'Built')
         self.record('checkpoint', ['B1'])
@@ -577,7 +621,7 @@ class FinalBlockerTests(EngineFixture):
         with self.assertRaises(EngineError):
             self.engine.release_permit('main', self.lease, 'authorized', 'main')
         with self.assertRaises(EngineError):
-            self.task('L2', role='releaser', mode='release', files=[])
+            self.task('L2', role='operator', mode='release', files=[])
         token = self.engine.dispatch('main', self.lease, 'L1', 'release-worker')
         permit = self.engine.release_permit('main', self.lease, 'authorized', 'main')
         self.assertEqual(permit, self.engine.check_release('authorized', 'main'))
@@ -590,7 +634,7 @@ class FinalBlockerTests(EngineFixture):
     def test_release_exemption_never_skips_queued_builder(self):
         self.release_setup()
         self.task('B1', files=['a'])
-        self.task('L1', role='releaser', mode='release', files=[])
+        self.task('L1', role='operator', mode='release', files=[])
         with self.assertRaises(EngineError):
             self.record('too-early', ['B1'], final=True)
         with self.assertRaises(EngineError):

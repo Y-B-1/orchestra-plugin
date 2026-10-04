@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import math
+import re
 import shlex
 import shutil
 import signal
@@ -23,6 +24,7 @@ class EngineError(ValueError):
     pass
 
 
+REVIEW_ROLES = ('code-reviewer', 'critic')
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
@@ -37,8 +39,8 @@ def _contracts():
         raw = path.read_bytes()
         roles = json.loads(raw)['roles']
         result, hashes = {}, {'roles.json': _hash(raw)}
-        root = (PACKAGE_ROOT / 'skills/orchestra').resolve()
-        hashes['SKILL.md'] = _hash((root / 'SKILL.md').read_bytes())
+        root = (PACKAGE_ROOT / 'skills').resolve()
+        hashes['orchestra/SKILL.md'] = _hash((root / 'orchestra/SKILL.md').read_bytes())
         for role in roles:
             name, modes, methods = role['id'], role['modes'], role['methods']
             if (not isinstance(name, str) or name in result or not modes or not methods
@@ -230,6 +232,8 @@ class Engine:
                 brief = self.repo / brief
             if not brief.is_file() or not brief.read_bytes().strip():
                 raise EngineError('Task brief must be an existing nonempty file')
+            if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', brief.read_text(errors='replace'), re.M):
+                raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
 
     def status(self):
         with self._state(False) as state:
@@ -279,8 +283,8 @@ class Engine:
             if task['id'] in state['tasks']:
                 raise EngineError('Duplicate task')
             self._check_contract(task)
-            if task['role'] == 'releaser' and any(t['role'] == 'releaser' for t in state['tasks'].values()):
-                raise EngineError('A run supports one terminal releaser task')
+            if self._is_release(task) and any(self._is_release(t) for t in state['tasks'].values()):
+                raise EngineError('A run supports one terminal release task')
             for key in ('inputs', 'acceptance', 'files', 'resources', 'dependencies'):
                 values = task.get(key)
                 if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
@@ -305,7 +309,7 @@ class Engine:
                     or any(not isinstance(i, str) or i not in state['tasks'] for i in review_of)
                     or len(review_of) != len(set(review_of))):
                 raise EngineError('Review targets must name existing tasks')
-            if review_of and task['role'] not in ('code-reviewer', 'auditor', 'red-teamer'):
+            if review_of and task['role'] not in REVIEW_ROLES:
                 raise EngineError('Only independent review roles can use review_of')
             if set(review_of) & set(task['dependencies']):
                 raise EngineError('Use review_of instead of an accepted dependency for reviewed work')
@@ -336,6 +340,10 @@ class Engine:
             state['tasks'][task['id']] = task
 
     @staticmethod
+    def _is_release(task):
+        return task['role'] == 'operator' and task['mode'] == 'release'
+
+    @staticmethod
     def _collides(a, b):
         if set(a['resources']) & set(b['resources']):
             return True
@@ -344,7 +352,7 @@ class Engine:
 
     @staticmethod
     def _read_review(task):
-        return bool(task.get('review_of')) and task['role'] in ('code-reviewer', 'auditor', 'red-teamer')
+        return bool(task.get('review_of')) and task['role'] in REVIEW_ROLES
 
     @staticmethod
     def _reservation(task, state):
@@ -387,7 +395,7 @@ class Engine:
             if not isinstance(worker, str) or not worker.strip() or (worker == actor and not inline):
                 raise EngineError('Worker must differ from coordinator')
             task = state['tasks'].get(task_id)
-            if inline and task and task['role'] in ('code-reviewer', 'auditor', 'red-teamer'):
+            if inline and task and task['role'] in REVIEW_ROLES:
                 raise EngineError('Independent review roles need a separate worker')
             if any(t.get('worker') == worker and t['state'] in ('running', 'reported') for t in state['tasks'].values()):
                 raise EngineError('Worker is already reserved')
@@ -593,13 +601,13 @@ class Engine:
     @staticmethod
     def _pre_release_ids(state):
         return {t['id'] for t in state['tasks'].values()
-                if not (t['role'] == 'releaser' and t['mode'] == 'release')}
+                if not Engine._is_release(t)}
 
     def _completion_evidence(self, state, require_review=False, require_checks=False, for_release=False):
         if for_release:
-            releasers = [t for t in state['tasks'].values() if t['role'] == 'releaser']
-            if releasers and (len(releasers) != 1 or releasers[0]['state'] != 'running'):
-                raise EngineError('The terminal releaser task must be running')
+            releases = [t for t in state['tasks'].values() if self._is_release(t)]
+            if releases and (len(releases) != 1 or releases[0]['state'] != 'running'):
+                raise EngineError('The terminal release task must be running')
         required_ids = self._pre_release_ids(state) if for_release else set(state['tasks'])
         if any(state['tasks'][i]['state'] != 'accepted' for i in required_ids):
             raise EngineError('All tasks must be accepted')
