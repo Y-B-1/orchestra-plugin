@@ -91,6 +91,7 @@ Review and trust the hook definition again in Codex if it asks. See the [README]
 - 2.0.0 has no automatic recovery for a run left active across the upgrade; use the manual `state.json` move in Install path from 1.0.1.
 - Edit or Write through a symlink into the protected marker or state directory is not caught by the mod's lexical path check; the Python `resolve()` check runs only when the mod is not live.
 - Classifying a long chain of here-strings is quadratic in its length.
+- A wrapper whose option value is a substitution, followed by a later substitution argument (for example `sudo -u $(whoami) mkdir -p $(dirname $f)`), denies as malformed. Write the value literally or split the command.
 - `docs/models.md` is a hand copy of `config/models.json`; keep them in step by hand.
 - `plugins/orchestra/hooks/mod/fixtures/o17-cases.ts` duplicates corpus cases.
 - Windows is not supported by the POSIX locking core; use WSL.
