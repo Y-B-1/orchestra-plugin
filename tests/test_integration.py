@@ -55,7 +55,7 @@ class WorkflowIntegration(unittest.TestCase):
         return result,json.loads(result.stdout if expected==0 else result.stderr)
 
     def review(self,ids,final=False,summary='Inspected fixture source and concrete failure checks.'):
-        artifact=self.cli('artifact')[1]
+        artifact=self.cli('artifact')[1] if final or not ids else self.cli('artifact','--tasks',','.join(ids))[1]
         p=self.write('final.json' if final else 'checkpoint.json',
                      dict(reviewer='independent-reviewer',categories=CATEGORIES,tasks=ids,findings=[],
                           verdict='CLEAN',final=final,summary=summary,artifact=artifact))
@@ -154,6 +154,22 @@ class WorkflowIntegration(unittest.TestCase):
         self.cli('accept','INLINE',lease=True,expected=2)
         self.review(['INLINE'])
         self.cli('accept','INLINE',lease=True)
+
+    def test_artifact_tasks_output_is_accepted_by_review(self):
+        task=dict(id='T',role='builder',mode='implementation',inputs=['fixture'],
+                  acceptance=['fixture check'],files=['fixture.txt'],resources=[],dependencies=[])
+        self.cli('add',str(self.write('T.json',task)),lease=True)
+        token=self.cli('dispatch','T','worker',lease=True)[1]['assignment']
+        self.cli('report','worker',token,str(self.write('t.txt','Inspected fixture source.')))
+        artifact=self.cli('artifact','--tasks','T')[1]
+        self.assertEqual(['fixture.txt'],artifact['scope'])
+        self.assertNotIn('scope',self.cli('artifact')[1])
+        (self.repo/'sibling.txt').write_text('sibling uncommitted edit\n')
+        p=self.write('scoped.json',dict(reviewer='independent-reviewer',categories=['correctness'],tasks=['T'],
+                     findings=[],verdict='CLEAN',final=False,summary='Inspected fixture source.',artifact=artifact))
+        self.cli('review',str(p),lease=True)
+        self.cli('accept','T',lease=True)
+        self.cli('artifact','--tasks','NOPE',expected=2)
 
     def test_dirty_candidate_invalidates_review_and_permit(self):
         task=dict(id='I',role='investigator',mode='code',inputs=['fixture'],acceptance=['inspect'],files=[],resources=[],dependencies=[])

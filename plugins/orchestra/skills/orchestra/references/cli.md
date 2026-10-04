@@ -13,7 +13,7 @@ Use Python 3.11+ with `plugins/orchestra/scripts/orchestra.py`. Common options p
 
 Read-only evidence cards need coordinator inspection before acceptance; builder cards need current independent review by default. Use `review_required: true` for other consequential artifacts. Review groups cover several task IDs in one report. Tiny reads do not need a run. A changed artifact invalidates old final evidence, including documentation edits.
 
-`inline TASK` reserves the same card for the main actor and returns an assignment token; it does not start a child agent. Run `report MAIN_ACTOR TOKEN result.txt` when done. Disjoint worker cards can run concurrently. Inline work cannot replace code-reviewer, auditor or red-teamer assignments, bypass ownership, or accept unreviewed implementation. The coordinator supplies judgment; the rubric does not classify free-text prompts.
+`inline TASK` reserves the same card for the main actor and returns an assignment token; it does not start a child agent. Run `report MAIN_ACTOR TOKEN result.txt` when done. Disjoint worker cards can run concurrently. Inline work cannot replace code-reviewer, auditor or red-teamer assignments, bypass ownership, or accept unreviewed implementation.
 
 ## Task example
 
@@ -36,7 +36,7 @@ Group returned low-risk builder cards by hand when they share an explicit group/
 
 ## Review schema
 
-Write the report outside the application. Obtain the exact artifact from `artifact` and enumerate covered task IDs. The report uses:
+Write the report outside the application. Obtain the exact artifact and enumerate covered task IDs: `artifact --tasks ID[,ID]` for a checkpoint review (scoped to the covered cards' reserved files plus HEAD; a card with no reserved files gets the whole repo), plain `artifact` for a final review. The report uses:
 
 ```json
 {

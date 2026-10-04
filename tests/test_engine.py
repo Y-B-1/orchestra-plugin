@@ -37,9 +37,10 @@ class EngineFixture(unittest.TestCase):
 
     def review(self, path, reviewer='reviewer', categories=None, tasks=None, findings=None, final=False, engine=None):
         engine = engine or self.engine
+        artifact = engine.artifact() if final or not tasks else engine.artifact(engine.scope_for(tasks))
         path.write_text(json.dumps(dict(reviewer=reviewer, categories=categories or ['correctness'],
                                        tasks=tasks or [], findings=findings or [], final=final,
-                                       verdict='BLOCKED' if findings else 'CLEAN', artifact=engine.artifact(),
+                                       verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact,
                                        summary='Behavior checked against acceptance criteria.')))
 
 
@@ -332,6 +333,18 @@ class IntegrationRepairTests(EngineFixture):
                 engine.status()
             with self.assertRaisesRegex(EngineError, 'start a new run'):
                 engine.add_task('main', lease, dict(id='a', role='builder', mode='implementation', inputs=['x'], acceptance=['y'], files=['a'], resources=[], dependencies=[]))
+
+    def test_added_orchestrator_mode_invalidates_run(self):
+        from unittest.mock import patch
+        package = self.package_copy()
+        with patch('orchestra_core.engine.PACKAGE_ROOT', package):
+            engine = Engine(self.root / 'contracts', self.repo)
+            engine.open_session('main')
+            roles = json.loads((package / 'config/roles.json').read_text())
+            next(r for r in roles['roles'] if r['id'] == 'orchestrator')['modes'].append('extra-mode')
+            (package / 'config/roles.json').write_text(json.dumps(roles))
+            with self.assertRaisesRegex(EngineError, 'start a new run'):
+                engine.status()
 
     def test_status_has_no_lease_key_anywhere(self):
         self.task('a')
@@ -878,6 +891,12 @@ class HarnessSessionTests(EngineFixture):
         self.assertEqual((state['permits'], state['autonomy']), ([], None))
         self.assertEqual(json.loads(self.engine.state_path.read_text())['permits'], [])
 
+    def test_interrupt_active_on_inactive_run_leaves_state_unwritten(self):
+        self.engine.interrupt_active()
+        before = self.stat()
+        self.assertFalse(self.engine.interrupt_active())
+        self.assertEqual(before, self.stat())
+
     def test_interrupt_active_with_no_state_file_does_not_create_one(self):
         engine = Engine(self.root / 'fresh', self.repo)
         self.assertFalse(engine.interrupt_active())
@@ -988,3 +1007,120 @@ class HarnessSessionTests(EngineFixture):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ScopedEvidenceTests(EngineFixture):
+    def setUp(self):
+        super().setUp()
+        for name in ('b', 'c'):
+            (self.repo / name).write_text('initial')
+        self.git('add', 'b', 'c')
+        self.git('commit', '-qm', 'more')
+        self.engine = Engine(self.root / 'state2', self.repo)
+        self.lease = self.engine.open_session('main')
+
+    def reported(self, name='a', **kw):
+        self.task(name, **kw)
+        self.engine.report('w' + name, self.engine.dispatch('main', self.lease, name, 'w' + name), 'checked')
+
+    def checkpoint(self, name='a', findings=None):
+        report = self.root / (name + '-review.json')
+        self.review(report, tasks=[name], findings=findings)
+        return self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], [name], findings=findings)
+
+    def test_scoped_artifact_binds_scope_and_ignores_outside_edits(self):
+        base = self.engine.artifact(['a'])
+        self.assertEqual(['a'], base['scope'])
+        self.assertNotIn('scope', self.engine.artifact())
+        (self.repo / 'b').write_text('sibling edit')
+        (self.repo / 'new-untracked').write_text('x')
+        self.assertEqual(base, self.engine.artifact(['a']))
+        self.assertNotEqual(self.engine.artifact(), self.engine.artifact(['a']))
+        (self.repo / 'a').write_text('inside edit')
+        self.assertNotEqual(base, self.engine.artifact(['a']))
+
+    def test_scoped_artifact_directory_scope_covers_children(self):
+        (self.repo / 'd').mkdir()
+        (self.repo / 'd' / 'f').write_text('1')
+        base = self.engine.artifact(['d'])
+        (self.repo / 'd' / 'f').write_text('2')
+        self.assertNotEqual(base, self.engine.artifact(['d']))
+
+    def test_edit_outside_scope_keeps_scoped_verdict_current(self):
+        self.reported('a')
+        self.checkpoint('a')
+        (self.repo / 'b').write_text('sibling uncommitted edit')
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
+    def test_edit_inside_scope_stales_scoped_verdict(self):
+        self.reported('a')
+        self.checkpoint('a')
+        (self.repo / 'a').write_text('edited after review')
+        with self.assertRaisesRegex(EngineError, 'independent review'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_new_commit_stales_scoped_verdict(self):
+        self.reported('a')
+        self.checkpoint('a')
+        (self.repo / 'b').write_text('committed elsewhere')
+        self.git('commit', '-qam', 'elsewhere')
+        with self.assertRaisesRegex(EngineError, 'independent review'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_scoped_report_artifact_survives_outside_edit_and_stales_inside(self):
+        self.reported('r', role='investigator', mode='code', files=['b'])
+        self.assertEqual(['b'], self.engine.status()['tasks']['r']['report_artifact']['scope'])
+        (self.repo / 'a').write_text('outside edit')
+        self.engine.accept('main', self.lease, 'r')
+        self.reported('s', role='investigator', mode='code', files=['c'])
+        (self.repo / 'c').write_text('inside edit')
+        with self.assertRaisesRegex(EngineError, 'stale'):
+            self.engine.accept('main', self.lease, 's')
+
+    def test_review_receipt_stores_scope_union_of_covered_tasks(self):
+        self.reported('a')
+        self.reported('b')
+        report = self.root / 'union.json'
+        self.review(report, tasks=['a', 'b'])
+        receipt = self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a', 'b'])
+        self.assertEqual(['a', 'b'], receipt['scope'])
+        self.assertEqual(['a', 'b'], receipt['artifact']['scope'])
+
+    def test_review_with_wrong_scope_is_rejected(self):
+        self.reported('a')
+        report = self.root / 'whole.json'
+        self.review(report, tasks=['a'], final=True)  # whole-repo artifact
+        report.write_text(json.dumps({**json.loads(report.read_text()), 'final': False}))
+        with self.assertRaisesRegex(EngineError, 'does not match'):
+            self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a'])
+
+    def test_repair_chain_files_join_the_scope(self):
+        self.reported('a')
+        self.checkpoint('a', findings=['bug'])
+        self.task('fix', mode='repair', repair_of='a', files=['c'])
+        self.assertEqual(['a', 'c'], self.engine.scope_for(['fix']))
+
+    def test_task_without_reserved_files_gets_whole_repo_artifact(self):
+        self.reported('n', role='investigator', mode='code', files=[])
+        self.assertIsNone(self.engine.scope_for(['n']))
+        task = self.engine.status()['tasks']['n']
+        self.assertNotIn('scope', task['report_artifact'])
+        self.assertEqual(self.engine.artifact(), task['report_artifact'])
+        (self.repo / 'b').write_text('any edit')
+        with self.assertRaisesRegex(EngineError, 'stale'):
+            self.engine.accept('main', self.lease, 'n')
+
+    def test_final_review_still_binds_whole_repo(self):
+        self.reported('a')
+        self.checkpoint('a')
+        self.engine.accept('main', self.lease, 'a')
+        cats = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
+        report = self.root / 'final.json'
+        self.review(report, categories=cats, tasks=['a'], final=True)
+        receipt = self.engine.record_review('main', self.lease, 'reviewer', report, cats, ['a'], final=True)
+        self.assertNotIn('scope', receipt['artifact'])
+        self.assertIsNone(receipt.get('scope'))
+        (self.repo / 'b').write_text('outside edit stales final evidence')
+        with self.assertRaises(EngineError):
+            self.engine.check_completion('main', self.lease)
