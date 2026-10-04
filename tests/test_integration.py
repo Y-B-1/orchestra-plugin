@@ -165,5 +165,48 @@ class WorkflowIntegration(unittest.TestCase):
         self.cli('finish',lease=True,expected=2)
 
 
+class LinkedWorktreeHook(unittest.TestCase):
+    """A15 through the real hook script: a linked worktree follows the main worktree's run."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='Orchestra linked ')
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        self.env={**os.environ,'XDG_STATE_HOME':str(self.root/'xdg')}
+        self.env.pop('ORCHESTRA_STATE_DIR',None)
+        self.repo=self.root/'main checkout'
+        self.repo.mkdir()
+        self.git(self.repo,'init','-q','-b','main')
+        self.git(self.repo,'config','user.name','Integration')
+        self.git(self.repo,'config','user.email','integration@example.invalid')
+        (self.repo/'fixture.txt').write_text('ready\n')
+        self.git(self.repo,'add','fixture.txt')
+        self.git(self.repo,'commit','-q','-m','Fixture')
+        self.linked=self.root/'linked checkout'
+        self.git(self.repo,'worktree','add','-q',str(self.linked),'-b','side')
+
+    def git(self,cwd,*args):
+        return subprocess.check_output(['git','-C',str(cwd),*args],stderr=subprocess.PIPE).decode().strip()
+
+    def hook(self,cwd,command):
+        payload={'cwd':str(cwd),'tool_name':'Bash','tool_input':{'command':command}}
+        result=subprocess.run(['/bin/sh',str(HOOK),'PreToolUse','--harness','codex'],input=json.dumps(payload),
+                              capture_output=True,text=True,env=self.env,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout).get('hookSpecificOutput',{}).get('permissionDecision')
+
+    def test_push_from_linked_worktree_follows_the_main_checkout_run(self):
+        command='git push origin side'
+        self.assertIsNone(self.hook(self.linked,command))
+        lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start'],env=self.env,
+                                        capture_output=True,text=True,check=True).stdout)['lease']
+        self.assertEqual(self.hook(self.linked,command),'deny')
+        self.assertEqual(self.hook(self.repo,command),'deny')
+        self.assertIsNone(self.hook(self.linked,'git status'))
+        subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--lease',lease,'interrupt'],env=self.env,
+                       capture_output=True,text=True,check=True)
+        self.assertIsNone(self.hook(self.linked,command))
+
+
 if __name__=='__main__':
     unittest.main()

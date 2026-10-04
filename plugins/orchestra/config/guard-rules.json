@@ -1,0 +1,59 @@
+{
+  "version": 1,
+  "classes": ["allow", "deny", "release", "release-multi", "boundary"],
+  "boundary_categories": ["delete", "merge"],
+  "tools": {
+    "shell": ["Bash", "exec_command", "shell", "shell_command"],
+    "edit": ["apply_patch", "Edit", "Write", "MultiEdit"],
+    "claude_matcher": "Bash|Edit|Write|MultiEdit"
+  },
+  "shells": ["sh", "bash", "zsh", "dash", "ksh"],
+  "shell_value_flags": ["-o", "+o", "-O", "+O", "--rcfile", "--init-file"],
+  "wrappers": {
+    "exec": ["-a"],
+    "command": [],
+    "builtin": [],
+    "nohup": [],
+    "env": ["-u", "--unset", "-C", "--chdir", "-S", "--split-string"],
+    "sudo": ["-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--close-from", "-T", "--command-timeout", "-R", "--chroot", "-D", "--chdir", "-r", "--role", "-t", "--type"],
+    "nice": ["-n", "--adjustment"],
+    "timeout": ["-s", "--signal", "-k", "--kill-after"],
+    "time": ["-f", "--format", "-o", "--output"]
+  },
+  "git": {
+    "global_value_options": ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path", "--super-prefix", "--attr-source"],
+    "clean_value_options": ["-e", "--exclude"],
+    "push_value_options": ["-o", "--push-option", "--receive-pack", "--exec"],
+    "commit_value_options": ["-m", "--message", "-F", "--file", "-C", "-c", "--reuse-message", "--reedit-message"],
+    "stash_allowed": ["list", "show"],
+    "push_multi_flags": ["--all", "--tags", "--follow-tags", "--delete", "--prune"],
+    "switch_force_flags": ["--force", "--discard-changes"],
+    "worktree_delete": ["remove", "prune"],
+    "boundary_merge_verbs": ["merge", "pull", "rebase", "cherry-pick"]
+  },
+  "release": {
+    "gh": [["pr", "merge"], ["release", "create"]],
+    "az_requires": ["deployment", "create"],
+    "az_pr_update": {"prefix": ["repos", "pr", "update"], "word": "completed"},
+    "package_tools": ["npm", "pnpm"],
+    "package_verb": "publish",
+    "deploy_tools": ["vercel", "netlify", "flyctl", "wrangler", "swa"],
+    "deploy_words": ["deploy", "publish", "--prod"]
+  },
+  "boundary": {
+    "delete_commands": ["rm", "rmdir", "unlink"],
+    "find_delete_flag": "-delete",
+    "gh": [["repo", "delete"], ["release", "delete"]]
+  },
+  "protected": {
+    "harness_dirs": [".codex", ".claude"],
+    "files": ["hooks.json", "config.toml"],
+    "agents_prefixes": ["orchestra-", "orchestra_"],
+    "component": ".orchestra",
+    "state_root_exceptions": ["progress.md", "standing-orders.md", "autonomy.md"]
+  },
+  "marker": {
+    "fresh_ms": 15000,
+    "session_id_pattern": "^[A-Za-z0-9_-]{1,128}$"
+  }
+}

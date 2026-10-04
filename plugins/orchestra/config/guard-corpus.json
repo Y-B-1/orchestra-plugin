@@ -1,0 +1,1355 @@
+{
+ "version": 1,
+ "cases": [
+  {
+   "id": "deny-destructive-1",
+   "input": {
+    "command": "git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-2",
+   "input": {
+    "command": "git clean -fd"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-3",
+   "input": {
+    "command": "git branch -D topic"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-4",
+   "input": {
+    "command": "git checkout -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-5",
+   "input": {
+    "command": "git restore ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-6",
+   "input": {
+    "command": "git stash push"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-7",
+   "input": {
+    "command": "git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-8",
+   "input": {
+    "command": "git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-9",
+   "input": {
+    "command": "git add -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-10",
+   "input": {
+    "command": "git commit -am done"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-11",
+   "input": {
+    "command": "exec env X=1 git -C \"a b\" -c color.ui=never reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-12",
+   "input": {
+    "command": "true && git clean -f"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-13",
+   "input": {
+    "command": "sh -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-14",
+   "input": {
+    "command": "git push --force origin main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-15",
+   "input": {
+    "command": "git clean -f -e \"--dry-run\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-16",
+   "input": {
+    "command": "2>/dev/null sudo -n git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-17",
+   "input": {
+    "command": "> /dev/null nice -n 5 git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-18",
+   "input": {
+    "command": "2>&1 command -p git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-19",
+   "input": {
+    "command": "sudo -n git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-20",
+   "input": {
+    "command": "env --split-string='git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-21",
+   "input": {
+    "command": "env -S 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-22",
+   "input": {
+    "command": "bash -s -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-23",
+   "input": {
+    "command": "bash --norc -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-24",
+   "input": {
+    "command": "bash -O extglob -lc 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-25",
+   "input": {
+    "command": "nice -n 5 git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-26",
+   "input": {
+    "command": "timeout -s TERM 5 git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-27",
+   "input": {
+    "command": "time git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-28",
+   "input": {
+    "command": "time -p git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-29",
+   "input": {
+    "command": "builtin eval 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-30",
+   "input": {
+    "command": "command -p git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-31",
+   "input": {
+    "command": "builtin command git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-32",
+   "input": {
+    "command": "eval 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-33",
+   "input": {
+    "command": "git --exec-path /tmp reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-34",
+   "input": {
+    "command": "git reset --hard=HEAD"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-destructive-35",
+   "input": {
+    "command": "cd other && git push origin main"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "deny-destructive-36",
+   "input": {
+    "command": "git branch --delete --force topic"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-grouped-1",
+   "input": {
+    "command": "sudo -nu root git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-grouped-2",
+   "input": {
+    "command": "sudo -nuroot git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-grouped-3",
+   "input": {
+    "command": "sudo -nEu root git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-grouped-4",
+   "input": {
+    "command": "env -iS \"git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-grouped-5",
+   "input": {
+    "command": "env -iS\"git reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-grouped-6",
+   "input": {
+    "command": "env -iugone git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-semantic-1",
+   "input": {
+    "command": "git reset --hard \"--dry-run\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-push-destination-1",
+   "input": {
+    "command": "git push origin main side"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-push-destination-2",
+   "input": {
+    "command": "git push --all origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-push-destination-3",
+   "input": {
+    "command": "git push --tags origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-push-destination-4",
+   "input": {
+    "command": "git push --delete origin main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-push-destination-5",
+   "input": {
+    "command": "git push origin :main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-push-destination-6",
+   "input": {
+    "command": "git push origin 'refs/heads/*:refs/heads/*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-push-destination-7",
+   "input": {
+    "command": "git push --follow-tags origin main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-malformed-1",
+   "input": {
+    "command": "git 'reset"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-1",
+   "input": {
+    "command": "git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-3",
+   "input": {
+    "command": "git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-4",
+   "input": {
+    "command": "git stash apply"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-5",
+   "input": {
+    "command": "git stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-6",
+   "input": {
+    "command": "git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-7",
+   "input": {
+    "command": "git stash save wip"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-8",
+   "input": {
+    "command": "git stash branch topic"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-9",
+   "input": {
+    "command": "git stash create"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-stash-10",
+   "input": {
+    "command": "git stash store abc"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-restore-1",
+   "input": {
+    "command": "git restore --staged --worktree ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-restore-2",
+   "input": {
+    "command": "git restore -SW ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-restore-3",
+   "input": {
+    "command": "git restore -W ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-restore-4",
+   "input": {
+    "command": "git restore --worktree ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-switch-1",
+   "input": {
+    "command": "git switch -f main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-switch-2",
+   "input": {
+    "command": "git switch --force main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-switch-3",
+   "input": {
+    "command": "git switch --discard-changes main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-switch-4",
+   "input": {
+    "command": "git switch -c topic -f"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-1",
+   "input": {
+    "command": "bash <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-2",
+   "input": {
+    "command": "sh <<EOF\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-3",
+   "input": {
+    "command": "sudo bash <<'EOF'\ngit clean -f\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-4",
+   "input": {
+    "command": "env X=1 sh <<-EOF\n\tgit reset --hard\n\tEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-5",
+   "input": {
+    "command": "cat <<EOF && git reset --hard\nbody\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-6",
+   "input": {
+    "command": "cat <<EOF\nbody\nEOF\ngit reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-7",
+   "input": {
+    "command": "cat <<EOF\nnever ends"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "allow-grouped-1",
+   "input": {
+    "command": "sudo -nu root git commit -m \"-a\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-grouped-2",
+   "input": {
+    "command": "env -iS \"echo git reset --hard\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-grouped-3",
+   "input": {
+    "command": "echo 'env -iS git reset --hard'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-1",
+   "input": {
+    "command": "git add src/a.py"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-2",
+   "input": {
+    "command": "git commit -m \"--all --dry-run\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-3",
+   "input": {
+    "command": "echo \"git reset --hard\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-4",
+   "input": {
+    "command": "bash --norc -c 'echo safe'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-5",
+   "input": {
+    "command": "sudo -n git commit -m '-a'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-6",
+   "input": {
+    "command": "bash -c 'git commit -m \"-a\"'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-7",
+   "input": {
+    "command": "git log --oneline"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-8",
+   "input": {
+    "command": "git clean --dry-run"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-9",
+   "input": {
+    "command": "git push --dry-run origin main"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-10",
+   "input": {
+    "command": "git checkout feature"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-11",
+   "input": {
+    "command": "git add -- -A"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-12",
+   "input": {
+    "command": "echo \";\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-semantic-13",
+   "input": {
+    "command": "wrangler dev"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-stash-1",
+   "input": {
+    "command": "git stash list"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-stash-2",
+   "input": {
+    "command": "git stash show"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-stash-3",
+   "input": {
+    "command": "git stash show -p stash@{1}"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-stash-4",
+   "input": {
+    "command": "git stash show --stat"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-restore-1",
+   "input": {
+    "command": "git restore --staged ."
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-restore-2",
+   "input": {
+    "command": "git restore -S ."
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-restore-3",
+   "input": {
+    "command": "git restore --staged src/a.py"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-restore-4",
+   "input": {
+    "command": "git restore --staged :/"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-az-1",
+   "input": {
+    "command": "az deployment group show --name x -g g"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-az-2",
+   "input": {
+    "command": "az deployment group list -g g"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-az-3",
+   "input": {
+    "command": "az deployment group what-if --name x -g g"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-az-4",
+   "input": {
+    "command": "az group list"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-1",
+   "input": {
+    "command": "cat <<'EOF'\nit's fine\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-2",
+   "input": {
+    "command": "cat <<EOF\ngit reset --hard\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-3",
+   "input": {
+    "command": "git commit -F - <<'EOF'\nmessage with a quote's apostrophe\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-4",
+   "input": {
+    "command": "cat <<-EOF\n\tit's tabbed\n\tEOF\ngit status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-5",
+   "input": {
+    "command": "bash -c 'cat' <<EOF\ngit reset --hard\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-6",
+   "input": {
+    "command": "cat <<< \"git reset --hard\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-7",
+   "input": {
+    "command": "echo $((1 << 2))"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-2",
+   "input": {
+    "command": "git branch"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-3",
+   "input": {
+    "command": "git branch -a"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-4",
+   "input": {
+    "command": "git tag v1"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-5",
+   "input": {
+    "command": "git worktree list"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-6",
+   "input": {
+    "command": "git log"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-7",
+   "input": {
+    "command": "ls rm"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-8",
+   "input": {
+    "command": "echo rm -rf x"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-9",
+   "input": {
+    "command": "gh pr view 3"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-10",
+   "input": {
+    "command": "gh release view v1"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-11",
+   "input": {
+    "command": "find . -name x"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-12",
+   "input": {
+    "command": "git switch main"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-13",
+   "input": {
+    "command": "git switch -c topic"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-14",
+   "input": {
+    "command": "git status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-15",
+   "input": {
+    "command": "az repos pr update --id 4 --status active"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-misc-16",
+   "input": {
+    "command": "gh pr create"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "release-existing-1",
+   "input": {
+    "command": "git push origin HEAD:main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-existing-2",
+   "input": {
+    "command": "gh pr merge 3"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-existing-3",
+   "input": {
+    "command": "az repos pr update --id 4 --status completed"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-existing-4",
+   "input": {
+    "command": "npm publish"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-existing-5",
+   "input": {
+    "command": "vercel --prod"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-existing-6",
+   "input": {
+    "command": "az deployment group create"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-existing-7",
+   "input": {
+    "command": "git push -o \"--dry-run\" origin main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-existing-8",
+   "input": {
+    "command": "git push -o \"--force\" origin main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-unarmed-1",
+   "input": {
+    "command": "git push origin feat/v2-roles-guard-mods"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-unarmed-2",
+   "input": {
+    "command": "git push origin v2.0.0"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-unarmed-3",
+   "input": {
+    "command": "gh pr merge 12 --squash --delete-branch"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-unarmed-4",
+   "input": {
+    "command": "gh release create v2.0.0 dist/a.tgz --verify-tag --notes-file notes.md"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-unarmed-6",
+   "input": {
+    "command": "pnpm publish"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-unarmed-8",
+   "input": {
+    "command": "az deployment group create --name x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-az-sub-1",
+   "input": {
+    "command": "az deployment sub create --name x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-heredoc-1",
+   "input": {
+    "command": "bash <<EOF\ngit push origin x\nEOF"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-multi-1",
+   "input": {
+    "command": "git push origin x && gh pr create"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "release-multi-2",
+   "input": {
+    "command": "git push origin a && git push origin b"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "release-multi-3",
+   "input": {
+    "command": "git tag v2.0.0 && git push origin v2.0.0"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "release-multi-4",
+   "input": {
+    "command": "cd sub && git push origin x"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "release-multi-5",
+   "input": {
+    "command": "gh pr merge 3 --squash; echo done"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "linked-worktree-1",
+   "input": {
+    "command": "git push origin side"
+   },
+   "class": "release"
+  },
+  {
+   "id": "linked-worktree-2",
+   "input": {
+    "command": "git -C ../linked push origin side"
+   },
+   "class": "release"
+  },
+  {
+   "id": "linked-worktree-3",
+   "input": {
+    "command": "git push origin side && git status"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "boundary-delete-1",
+   "input": {
+    "command": "rm -rf build"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-2",
+   "input": {
+    "command": "rm file.txt"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-3",
+   "input": {
+    "command": "rmdir empty"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-4",
+   "input": {
+    "command": "unlink link"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-5",
+   "input": {
+    "command": "find . -name \"*.o\" -delete"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-6",
+   "input": {
+    "command": "git rm src/a.py"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-7",
+   "input": {
+    "command": "git branch -d topic"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-8",
+   "input": {
+    "command": "git branch --delete topic"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-9",
+   "input": {
+    "command": "git tag -d v1"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-10",
+   "input": {
+    "command": "git tag --delete v1"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-11",
+   "input": {
+    "command": "git worktree remove ../wt"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-12",
+   "input": {
+    "command": "git worktree prune"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-13",
+   "input": {
+    "command": "gh repo delete owner/name --yes"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-14",
+   "input": {
+    "command": "gh release delete v1"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-15",
+   "input": {
+    "command": "sudo rm -r x"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-delete-16",
+   "input": {
+    "command": "git -C other rm a.py"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "boundary-merge-1",
+   "input": {
+    "command": "git merge topic"
+   },
+   "class": "boundary",
+   "category": "merge"
+  },
+  {
+   "id": "boundary-merge-2",
+   "input": {
+    "command": "git pull"
+   },
+   "class": "boundary",
+   "category": "merge"
+  },
+  {
+   "id": "boundary-merge-3",
+   "input": {
+    "command": "git pull --rebase origin main"
+   },
+   "class": "boundary",
+   "category": "merge"
+  },
+  {
+   "id": "boundary-merge-4",
+   "input": {
+    "command": "git rebase main"
+   },
+   "class": "boundary",
+   "category": "merge"
+  },
+  {
+   "id": "boundary-merge-5",
+   "input": {
+    "command": "git cherry-pick abc123"
+   },
+   "class": "boundary",
+   "category": "merge"
+  },
+  {
+   "id": "boundary-merge-delete",
+   "input": {
+    "command": "git merge x && rm y"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "release-multi-merge",
+   "input": {
+    "command": "git merge x && git push origin b"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "deny-over-release",
+   "input": {
+    "command": "git push origin x && git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-1",
+   "input": {
+    "tool": "Edit",
+    "path": ".claude/hooks.json",
+    "cwd": "/work/proj/.claude/plugins/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-2",
+   "input": {
+    "tool": "Write",
+    "path": ".claude/hooks.json",
+    "cwd": "/work/proj/.claude/plugins/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-3",
+   "input": {
+    "tool": "MultiEdit",
+    "path": ".claude/hooks.json",
+    "cwd": "/work/proj"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-4",
+   "input": {
+    "tool": "Write",
+    "path": ".codex/hooks.json",
+    "cwd": "/work/proj"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-5",
+   "input": {
+    "tool": "Write",
+    "path": ".codex/config.toml",
+    "cwd": "/work/proj/.claude/plugins/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-6",
+   "input": {
+    "tool": "Write",
+    "path": ".codex/agents/orchestra_builder.toml",
+    "cwd": "/work/proj"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-7",
+   "input": {
+    "tool": "Write",
+    "path": ".claude/agents/orchestra-builder.md",
+    "cwd": "/work/proj"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-8",
+   "input": {
+    "tool": "Edit",
+    "path": ".orchestra/state.json",
+    "cwd": "/work/proj"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "edit-9",
+   "input": {
+    "tool": "Write",
+    "path": ".claude/settings.json",
+    "cwd": "/work/proj"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "edit-10",
+   "input": {
+    "tool": "Write",
+    "path": ".claude/settings.local.json",
+    "cwd": "/work/proj"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "edit-11",
+   "input": {
+    "tool": "Write",
+    "path": "notes.md",
+    "cwd": "/work/proj/.claude/plugins/x"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "edit-12",
+   "input": {
+    "tool": "Write",
+    "path": ".claude/plugins/x/readme.md",
+    "cwd": "/work/proj/.claude/plugins/x"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "edit-13",
+   "input": {
+    "tool": "Edit",
+    "path": "src/app.py",
+    "cwd": "/work/proj"
+   },
+   "class": "allow"
+  }
+ ]
+}
