@@ -498,6 +498,29 @@ class HooksTest(unittest.TestCase):
         with unittest.mock.patch.dict(os.environ, {'ORCHESTRA_ROLE': 'builder'}):
             self.assertEqual(self.pre('spawn_agent', {}).output['hookSpecificOutput']['permissionDecision'], 'deny')
 
+    def test_claude_worker_agent_call_is_denied(self):
+        for tool in ['Agent', 'Task']:
+            payload = {'tool_name': tool, 'tool_input': {}, 'agent_id': 'a1'}
+            result = handle_event('PreToolUse', payload, harness='claude')
+            self.assertEqual(result.output['hookSpecificOutput']['permissionDecision'], 'deny', tool)
+            self.assertIn('Workers do not delegate', result.output['hookSpecificOutput']['permissionDecisionReason'])
+
+    def test_claude_main_agent_call_is_allowed(self):
+        for tool in ['Agent', 'Task']:
+            payload = {'tool_name': tool, 'tool_input': {}}
+            self.assertEqual(handle_event('PreToolUse', payload, harness='claude').output, {}, tool)
+
+    def test_fresh_marker_does_not_skip_worker_agent_deny(self):
+        with tempfile.TemporaryDirectory() as directory:
+            mods = Path(directory) / 'orchestra' / 'mods'
+            mods.mkdir(parents=True)
+            (mods / 's1.json').write_text(json.dumps({'session_id': 's1', 'heartbeat_ms': int(time.time() * 1000),
+                                                      'plugin_version': '2.0.0', 'rules_sha256': guard_digest()}))
+            payload = {'cwd': directory, 'session_id': 's1', 'tool_name': 'Agent', 'tool_input': {}, 'agent_id': 'a1'}
+            code, output = run_main(payload, '--harness', 'claude', env={'XDG_STATE_HOME': directory})
+            self.assertEqual(code, 0)
+            self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+
     def test_release_checks_exact_command(self):
         engine = mock.Mock()
         engine.check_release.return_value = {'id': 'permit'}
@@ -582,8 +605,11 @@ class HooksTest(unittest.TestCase):
 
     def test_a9_claude_matcher_is_narrow_and_codex_is_unchanged(self):
         claude = json.loads((PLUGIN / 'hooks/claude.json').read_text())
-        self.assertEqual(claude['hooks']['PreToolUse'][0]['matcher'], 'Bash|Edit|Write|MultiEdit')
-        self.assertEqual(claude['hooks']['PreToolUse'][0]['matcher'], RULES['tools']['claude_matcher'])
+        matcher = claude['hooks']['PreToolUse'][0]['matcher']
+        self.assertEqual(matcher, RULES['tools']['claude_matcher'])
+        for tool in ['Bash', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task']:
+            self.assertRegex(tool, '^(?:' + matcher + ')$')
+        self.assertNotRegex('Read', '^(?:' + matcher + ')$')
         codex = json.loads((PLUGIN / 'hooks/codex.json').read_text())
         self.assertEqual(codex['hooks']['PreToolUse'][0]['matcher'], '.*')
 
