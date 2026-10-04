@@ -29,3 +29,5 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | I1 | investigator | none | 512bfac (RESEARCH-v2) | coordinator check | ACCEPTED |
 | I2 | investigator | none | 512bfac (RESEARCH-v2 I2) | coordinator re-check of SHAs and licenses | ACCEPTED |
 | P0 r1 | critic feasibility + scope | none | e9140d0 (round 5 repair) | ISSUES FF1-FF3, SF1-SF10, routed to designer-planner | REPAIRED |
+| P0 r2 | critic feasibility + scope | none | 3e0889d (round 6 repair) | ISSUES F1-F5, N1-N4 (planning only); all FF/SF RESOLVED | REPAIRED; P0 accepted for B1 scope |
+| MX | investigator (matrix) | main checkout (one-time exception, PLAN round 6) | 6003c11 | coordinator check: one path, no personal paths | REPORTED; MXR running |
