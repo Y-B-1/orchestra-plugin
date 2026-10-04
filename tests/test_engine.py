@@ -1129,6 +1129,53 @@ class ScopedEvidenceTests(EngineFixture):
             self.engine.accept('main', self.lease, 'a')
         self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
 
+    def receipt(self, name, tasks, categories, findings=None):
+        report = self.root / (name + '.json')
+        self.review(report, tasks=tasks, categories=categories, findings=findings)
+        return self.engine.record_review('main', self.lease, 'reviewer', report, categories, tasks, findings=findings)
+
+    def test_cross_category_stale_blocked(self):
+        # O22: a stale non-CLEAN newest receipt voids every category for the tasks it covers.
+        self.reported('a')
+        self.reported('b')
+        self.receipt('r1', ['a'], ['correctness', 'security'])
+        self.receipt('r2', ['a', 'b'], ['correctness'], findings=['bug in a'])
+        with self.assertRaisesRegex(EngineError, 'findings'):
+            self.engine.accept('main', self.lease, 'a')
+        (self.repo / 'b').write_text('edit inside the blocking scope only')
+        with self.assertRaisesRegex(EngineError, 'needs current independent review'):
+            self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
+
+    def test_disjoint_category_stale_blocked(self):
+        self.reported('a')
+        self.reported('b')
+        self.receipt('r1', ['a'], ['security'])
+        self.receipt('r2', ['a', 'b'], ['correctness'], findings=['bug in a'])
+        (self.repo / 'b').write_text('edit inside the blocking scope only')
+        with self.assertRaisesRegex(EngineError, 'needs current independent review'):
+            self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
+
+    def test_stale_clean_newest_only_removes_its_own_category(self):
+        self.reported('a')
+        self.reported('b')
+        self.receipt('r1', ['a'], ['security'])
+        self.receipt('r2', ['a', 'b'], ['correctness'])
+        (self.repo / 'b').write_text('edit inside the clean wide scope only')
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
+    def test_newer_receipt_lifts_stale_blocked_void(self):
+        self.reported('a')
+        self.reported('b')
+        self.receipt('r1', ['a'], ['security'])
+        self.receipt('r2', ['a', 'b'], ['correctness'], findings=['bug in a'])
+        (self.repo / 'b').write_text('edit inside the blocking scope only')
+        self.receipt('r3', ['a', 'b'], ['correctness'])
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
     def test_review_covering_a_no_file_task_uses_whole_repo_artifact(self):
         self.reported('a')
         self.reported('n', files=[])
