@@ -146,7 +146,7 @@ def _shlex_words(text):
     a mid-word `#` is literal (SPEC A5, O27 and O33). Word-start comments are cut here and shlex reads
     the rest with comments off."""
     if '#' not in text:
-        return shlex.split(text, comments=True)
+        return _plain_split(text)
     out, quote, start, i, last, n = [], None, True, 0, 0, len(text)
     while i < n:
         char = text[i]
@@ -174,9 +174,24 @@ _PLAIN_WORD = re.compile(r'(?:\\[\s\S]|[^ \t\r\n\\])+')
 _PLAIN_ESCAPE = re.compile(r'\\([\s\S])')
 
 
+_DQ_SPAN = re.compile(r"""\\[\s\S]|'[^']*'?|"(?:[^"\\]|\\[\s\S])*"?""")
+
+
+def _dq_unescape(match):
+    """Inside double quotes a backslash before `$`, a backtick or a newline is removed, as in bash (O34);
+    shlex already removes it before `"` and a backslash, and keeps it before any other character."""
+    span = match.group()
+    if span[0] != '"':
+        return span
+    return _PLAIN_ESCAPE.sub(lambda m: m.group(1) if m.group(1) in '$`' else '' if m.group(1) == '\n' else m.group(), span)
+
+
 def _plain_split(text):
-    """shlex.split(text) without comments; quote-free text takes an equivalent regex path (speed only)."""
+    """shlex.split(text) without comments, except for the bash double-quote backslash rule (O34);
+    quote-free text takes an equivalent regex path (speed only)."""
     if '"' in text or "'" in text or text.endswith('\\') and _PLAIN_WORD.sub('', text).endswith('\\'):
+        if '"' in text and ('\\$' in text or '\\`' in text or '\\\n' in text):
+            text = _DQ_SPAN.sub(_dq_unescape, text)
         return shlex.split(text)
     return [_PLAIN_ESCAPE.sub(r'\1', word) for word in _PLAIN_WORD.findall(text)]
 
@@ -328,7 +343,7 @@ def _eat_options(wrapper, words):
                     raise ValueError('Missing wrapper option value')
                 value = words.pop(0)
             if wrapper == 'env' and value_option in {'-S', '--split-string'}:
-                words = shlex.split(value) + words
+                words = _plain_split(value) + words
                 break
             if wrapper == 'flock' and value_option in _COMMAND_FLAGS:
                 found['command'] = value
@@ -995,7 +1010,7 @@ def _scan_ops(text):
     """Quote-aware pre-pass (SPEC A5 rule 6) that finds here-strings and process substitutions without
     changing the text. Returns ([(command text around a here-string, its word)], [(text before a
     `<(`, its inner text)]). The command text is the segment the operator sits in, as `_split` cuts it."""
-    herestrings, procsubs, pending = [], [], []
+    herestrings, procsubs, pending, parens = [], [], [], []
     start, quote, escaped, n = 0, None, False, len(text)
     for i, char in enumerate(text):
         if escaped:
@@ -1021,10 +1036,21 @@ def _scan_ops(text):
             continue
         elif char == '|' and i and text[i - 1] == '>':
             continue
+        elif char == '(' and i and text[i - 1] == '$' and not _backslashed(text, i - 1):
+            # O34: a `$(` substitution does not cut the command around it (`bash $(true) <<< ...`);
+            # its inner text is a command of its own.
+            parens.append((start, pending))
+            pending, start = [], i + 1
         elif char in ';|&()\n':
             herestrings.extend((before + ' ' + (text[end:i] if i >= end else ''), word) for before, word, end in pending)
             pending = []
             start = i + 1
+            if char == '(':
+                parens.append(None)
+            elif char == ')' and parens and parens[-1] is not None:
+                start, pending = parens.pop()
+            elif char == ')' and parens:
+                parens.pop()
     herestrings.extend((before + ' ' + text[end:], word) for before, word, end in pending)
     return herestrings, procsubs
 
@@ -1268,7 +1294,7 @@ def _command_positions(text, ats):
                 reset()
         elif token in ('word', 'redirect'):
             try:
-                parts = shlex.split(raw)
+                parts = _plain_split(raw)
             except ValueError:
                 parts = []
             word(parts[0] if len(parts) == 1 else raw)
@@ -1367,7 +1393,7 @@ def _raw_scan(text, depth):
         values = []
         for raw in raws:
             try:
-                parts = shlex.split(raw)
+                parts = _plain_split(raw)
             except ValueError:
                 parts = []
             values.append(parts[0] if len(parts) == 1 else raw)
@@ -1400,7 +1426,7 @@ def _raw_scan(text, depth):
 def _only_redirects(segment):
     """True when the segment is blank or only redirections (`2>/dev/null`, `>&1`, `</dev/stdin`)."""
     try:
-        words = shlex.split(segment)
+        words = _plain_split(segment)
     except ValueError:
         return False
     i = 0
@@ -1556,7 +1582,7 @@ def _stream_items(text, ops, depth):
         if mode is None:
             continue
         try:
-            value = ' '.join(shlex.split(word))
+            value = ' '.join(_plain_split(word))
         except ValueError:
             continue
         items.append((_body_decision(value, {mode}, depth), argv, False))
@@ -1609,7 +1635,31 @@ def _heredoc_items(docs, pipelines, depth):
     return items
 
 
-_FOLD_LEVELS = 8  # Substitution nesting levels folded (O33); deeper text is segmented as before.
+_FOLD_LEVELS = 16  # Substitution nesting levels folded (O33); a substitution nested deeper denies (O34).
+_RANK = {'deny': 4, 'release-multi': 3, 'release': 2, 'boundary': 1}
+
+
+def _stricter(first, second):
+    """The stricter of two verdicts (O34): deny > release-multi > release > boundary > allow; first on a tie."""
+    return second if _RANK.get(second.klass, 0) > _RANK.get(first.klass, 0) else first
+
+
+def _removed_reading(full, kept, whole):
+    """O33 and O34: the words of a segment with its pure-substitution words removed, then unwrapped.
+    eval arguments keep them; a shell keeps them only at and after its -c payload."""
+    words = _unwrap([word for word, raw in zip(full, kept) if not _PURE_SUB.fullmatch(raw)])
+    if not words or not whole or whole[0] != words[0]:
+        return words
+    if words[0] == 'eval' or PurePosixPath(words[0]).name not in _SHELLS:
+        return whole if words[0] == 'eval' else words
+    if full[len(full) - len(whole):] != whole:
+        return whole  # Rewritten by a runner (watch, flock -c): no substitution word stands before options.
+    out, payload = [whole[0]], False
+    for word, raw in zip(whole[1:], kept[len(kept) - len(whole) + 1:]):
+        if payload or not _PURE_SUB.fullmatch(raw):
+            out.append(word)
+        payload = payload or bool(re.fullmatch(r'-[A-Za-z]+', word) and 'c' in word[1:])
+    return out
 
 
 def _fold(text, subs):
@@ -1645,6 +1695,8 @@ def _folded_segments(text, subs, level=0):
     """The segments of text with its substitutions folded (O33), each followed by the segments of the
     substitutions it holds, so their content is still classified."""
     if level >= _FOLD_LEVELS:
+        if _fold(text, []) != text:  # O34: a substitution nested deeper than the cap denies as malformed.
+            raise ValueError('Substitution nesting too deep')
         return list(_segments(text))
     result = []
     for segment in _segments(_fold(text, subs)):
@@ -1673,17 +1725,27 @@ def classify_command(command: str, _depth=0) -> Decision:
             heredoc = any(_MARK in word for word in original)
             original = [render(word) for word in original]
             full = [render(word) for word in kept]
-            # Redirections removed (O31, heredocs included); a word made only of substitutions is removed too (O33).
-            words = _unwrap([word for word, raw in zip(full, kept) if not _PURE_SUB.fullmatch(raw)])
-            if words and (words[0] == 'eval' or PurePosixPath(words[0]).name in _SHELLS):
-                whole = _unwrap(full)  # Script text (an eval argument, a -c payload) keeps its substitutions.
-                words = whole if whole and whole[0] == words[0] else words
-            if words and words[0] == 'eval' and heredoc:
-                items.append((_deny('Malformed heredoc', 'malformed'), original, True))  # R2b F3 fail-safe.
-            elif words:
-                items.append((_classify_segment(words, _depth), original, True))
-            elif _unwrap(full):
-                items.append((Decision(), original, True))  # Only substitutions: still a command of its own.
+            whole = _unwrap(full)  # Redirections removed (O31, heredocs included).
+            readings = [whole]
+            pure = [bool(_PURE_SUB.fullmatch(raw)) for raw in kept]
+            if any(pure):
+                # A word made only of substitutions may expand to nothing (O33): the segment is classified
+                # with it removed and with it kept, and the stricter verdict wins (O34).
+                readings.insert(0, _removed_reading(full, kept, whole))
+                if any(PurePosixPath(word).name in _WRAPPER_VALUES for word in full[:pure.index(True)]):
+                    # After a wrapper it may also fill an option value and the next slot (two words).
+                    readings.append(_unwrap([twin for word, sub in zip(full, pure) for twin in [word] * (1 + sub)]))
+            decision = None
+            for words in readings:
+                if not words:
+                    continue
+                if words[0] == 'eval' and heredoc:
+                    found = _deny('Malformed heredoc', 'malformed')  # R2b F3 fail-safe.
+                else:
+                    found = _classify_segment(words, _depth)
+                decision = found if decision is None else _stricter(decision, found)
+            if decision is not None:
+                items.append((decision, original, True))
         items.extend(_heredoc_items(docs, _pipelines(text), _depth))
         items.extend(_stream_items(text, _scan_ops(text), _depth))
         raw_hit = _raw_scan(text, _depth) or _backtick_scan(text, _depth)

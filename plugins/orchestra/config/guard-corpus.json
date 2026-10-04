@@ -4564,6 +4564,496 @@
     "command": "cat <<< ${x:-${y} b}"
    },
    "class": "allow"
+  },
+  {
+   "id": "guard-r12-1",
+   "input": {
+    "command": "sudo -u $(whoami) git reset --hard"
+   },
+   "class": "deny",
+   "_doc": "R2l major 1: a substitution that is an option value keeps its class (both readings, stricter wins)."
+  },
+  {
+   "id": "guard-r12-2",
+   "input": {
+    "command": "sudo -u `whoami` git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-3",
+   "input": {
+    "command": "nice -n $(echo 1) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-4",
+   "input": {
+    "command": "timeout $(echo 5) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-5",
+   "input": {
+    "command": "env -u $(echo X) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-6",
+   "input": {
+    "command": "xargs -I $(echo {}) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-7",
+   "input": {
+    "command": "flock $(mktemp) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-8",
+   "input": {
+    "command": "doas -u $(whoami) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-9",
+   "input": {
+    "command": "stdbuf -o $(echo 0) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-10",
+   "input": {
+    "command": "exec -a $(echo v) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-11",
+   "input": {
+    "command": "time -o $(echo v) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-12",
+   "input": {
+    "command": "git -C $(pwd) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-13",
+   "input": {
+    "command": "git -c $(echo a=b) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-14",
+   "input": {
+    "command": "git -C `pwd` reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-15",
+   "input": {
+    "command": "git -C $(pwd) push --force origin main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-16",
+   "input": {
+    "command": "git -C $(pwd) branch -D x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-17",
+   "input": {
+    "command": "sudo -u $(whoami) git branch -D x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-18",
+   "input": {
+    "command": "sudo -u $(whoami) gh pr merge 1"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-r12-19",
+   "input": {
+    "command": "nice -n $(echo 1) git push origin main"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-r12-20",
+   "input": {
+    "command": "sudo -u $(whoami) git branch -d x"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "guard-r12-21",
+   "input": {
+    "command": "xargs -n $(echo 1) rm -rf /"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "guard-r12-22",
+   "input": {
+    "command": "bash $(true) -c 'git reset --hard'"
+   },
+   "class": "deny",
+   "_doc": "R2l major 2: a substitution between the shell name and its options is removed."
+  },
+  {
+   "id": "guard-r12-23",
+   "input": {
+    "command": "sh `true` -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-24",
+   "input": {
+    "command": "zsh $(true) -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-25",
+   "input": {
+    "command": "bash -x $(true) -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-26",
+   "input": {
+    "command": "sudo bash $(true) -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-27",
+   "input": {
+    "command": "env bash $(true) -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-28",
+   "input": {
+    "command": "bash $(true) <<< 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-29",
+   "input": {
+    "command": "sh $(true) -s <<< 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-30",
+   "input": {
+    "command": "bash $(true) < <(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-31",
+   "input": {
+    "command": "bash $(true) <(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-32",
+   "input": {
+    "command": "bash $(true) -c 'gh pr merge 1'"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-r12-33",
+   "input": {
+    "command": "bash $(true) -c 'git branch -d x'"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "guard-r12-34",
+   "input": {
+    "command": "bash -c \"git \\$(true) reset --hard\""
+   },
+   "class": "deny",
+   "_doc": "R2l major 3: inside double quotes a backslash before $ is removed, as in bash."
+  },
+  {
+   "id": "guard-r12-35",
+   "input": {
+    "command": "eval \"git \\$(true) reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-36",
+   "input": {
+    "command": "bash -c \"git \\`true\\` reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-37",
+   "input": {
+    "command": "bash -c \"git 2>\\$(mktemp) reset --hard\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-38",
+   "input": {
+    "command": "sh -c \"git \\$(true) push --force origin main\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-39",
+   "input": {
+    "command": "echo $($($($($($($($($($($($($($($(git $(true) reset --hard)))))))))))))))"
+   },
+   "class": "deny",
+   "_doc": "R2l minor 4: nesting deeper than the fold cap denies as malformed."
+  },
+  {
+   "id": "guard-r12-40",
+   "input": {
+    "command": "echo $($($($($($($($($($($($($($($($($($($($(git $(true) reset --hard))))))))))))))))))))"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-41",
+   "input": {
+    "command": "echo $($($($($($($($($($($($($($($($($($($($(git 2>$(mktemp) reset --hard))))))))))))))))))))"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-42",
+   "input": {
+    "command": "sudo -u $(whoami) ls"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-r12-43",
+   "input": {
+    "command": "git -C $(pwd) status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-r12-44",
+   "input": {
+    "command": "timeout $(echo 5) npm test"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-r12-45",
+   "input": {
+    "command": "bash -c \"echo \\$HOME\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-r12-46",
+   "input": {
+    "command": "echo \"cost: \\$5\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-r12-47",
+   "input": {
+    "command": "echo \"a \\\" b\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-r12-48",
+   "input": {
+    "command": "echo \"x \\\\ y\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-r12-49",
+   "input": {
+    "command": "echo \"keep \\n\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-r12-50",
+   "input": {
+    "command": "doas -a `echo v` git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-51",
+   "input": {
+    "command": "env -C $(echo v) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-52",
+   "input": {
+    "command": "exec -a `echo v` git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-53",
+   "input": {
+    "command": "flock -E $(echo v) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-54",
+   "input": {
+    "command": "nice -n $(echo v) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-55",
+   "input": {
+    "command": "stdbuf -e $(echo v) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-56",
+   "input": {
+    "command": "sudo -C $(echo v) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-57",
+   "input": {
+    "command": "time -f $(echo v) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-58",
+   "input": {
+    "command": "timeout -k `echo v` git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-59",
+   "input": {
+    "command": "xargs -I `echo v` git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-60",
+   "input": {
+    "command": "doas -a $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-61",
+   "input": {
+    "command": "env --unset $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-62",
+   "input": {
+    "command": "exec -a $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-63",
+   "input": {
+    "command": "flock --wait $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-64",
+   "input": {
+    "command": "nice --adjustment $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-65",
+   "input": {
+    "command": "stdbuf --output $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-66",
+   "input": {
+    "command": "sudo --user $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-67",
+   "input": {
+    "command": "time --output $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-68",
+   "input": {
+    "command": "timeout -k $((1)) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-r12-69",
+   "input": {
+    "command": "xargs -I $((1)) git reset --hard"
+   },
+   "class": "deny"
   }
  ]
 }
