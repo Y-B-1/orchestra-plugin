@@ -995,9 +995,6 @@ class HarnessSessionTests(EngineFixture):
                     self.engine.status()
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class ScopedEvidenceTests(EngineFixture):
     def setUp(self):
@@ -1564,6 +1561,21 @@ class AutonomyParkTests(AutonomyFixture):
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.auto()['last_stop_reason'], 'parked-only')
 
+    def test_unparking_a_parked_reported_repair_card_resumes_the_chain(self):
+        self.repaired()
+        self.engine.park('main', self.lease, 'repair-of-a', 'needs a push')
+        self.assertEqual(self.engine.status()['tasks']['a']['state'], 'repairing')
+        self.engine.unpark('main', self.lease, 'repair-of-a')
+        self.assertEqual(self.engine.ready('main', self.lease), ['repair-of-a'])
+        token = self.engine.dispatch('main', self.lease, 'repair-of-a', 'w3')
+        self.engine.report('w3', token, 'Repaired a again.')
+        report = self.root / 'clean.json'
+        self.review(report, tasks=['a', 'repair-of-a'])
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a', 'repair-of-a'])
+        self.engine.accept('main', self.lease, 'repair-of-a')
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual(self.engine.status()['tasks']['a']['state'], 'accepted')
+
     def test_parked_cards_block_finish(self):
         self.task('a', role='investigator', mode='code')
         self.engine.park('main', self.lease, 'a', 'why')
@@ -1665,6 +1677,9 @@ class AutonomyReportTests(AutonomyFixture):
         self.assertIn('disarmed', result['text'])
         self.assertEqual((self.engine.autonomy_status()['active'], self.engine.autonomy_status()['last_stop_reason']), (False, 'disarmed'))
         self.assertEqual((self.state / 'progress.md').read_text().count('## Autonomy report'), 2)
+        stored = self.engine.autonomy_report()  # SPEC 12.6: the disarm report is stored like any stop's
+        self.assertEqual((stored['reason'], stored['text']), ('disarmed', result['text']))
+        self.assertFalse(self.engine.disarm_autonomy()['was_active'])  # a later disarm clears it
         self.assertIsNone(self.engine.autonomy_report())
 
     def test_disarm_is_safe_at_any_time(self):
@@ -1751,3 +1766,7 @@ class AutonomyPreconditionsTests(unittest.TestCase):
         self.assertNotIn('warning', self.report()['codex_approval_policy'].lower())
         config.write_text('not = = toml')
         self.assertTrue(self.report()['codex_approval_policy'].startswith('unknown'))
+
+
+if __name__ == '__main__':
+    unittest.main()

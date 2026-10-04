@@ -314,7 +314,7 @@ class Engine:
                 except (ValueError, TypeError, KeyError, OSError) as exc:
                     raise EngineError('Malformed run state: ' + str(exc)) from exc
                 if state['repo'] != str(self.repo) or state['policy'] != self.policy_hash:
-                    raise EngineError('Repository or policy changed; start a new run')
+                    raise EngineError('Repository or policy changed; run `start --new-run`')
             else:
                 state = dict(version=1, repo=str(self.repo), policy=self.policy_hash,
                              session=None, tasks={}, reviews=[], gates=[], permits=[], autonomy=None)
@@ -625,6 +625,11 @@ class Engine:
             task.update(state='parked', parked_reason=reason.strip())
             for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact'):
                 task.pop(key, None)
+            ancestor = task
+            while ancestor.get('repair_of'):  # the repair's report is dropped: its chain is under repair again
+                ancestor = state['tasks'][ancestor['repair_of']]
+                ancestor['state'] = 'repairing'
+                ancestor['review_since'] = len(state['reviews'])
 
     @staticmethod
     def _open_repair(state, task):
@@ -1019,7 +1024,7 @@ class Engine:
             if not auto:
                 return dict(was_active=False)
             if auto['active']:
-                return dict(was_active=True, reason='disarmed', text=self._stop_autonomy(state, 'disarmed', shown=False))
+                return dict(was_active=True, reason='disarmed', text=self._stop_autonomy(state, 'disarmed'))
             auto.pop('report', None)  # clear the report shown from the previous stop
             return dict(was_active=False)
 
@@ -1041,7 +1046,7 @@ class Engine:
     def _accepted(state):
         return sorted(t['id'] for t in state['tasks'].values() if t['state'] == 'accepted')
 
-    def _stop_autonomy(self, state, reason, shown=True):
+    def _stop_autonomy(self, state, reason):
         auto = state['autonomy']
         auto.update(active=False, last_stop_reason=reason)
         at = datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')
@@ -1050,10 +1055,7 @@ class Engine:
         old = progress.read_text() if progress.exists() else ''
         gap = '' if not old.strip() else ('' if old.endswith('\n') else '\n') + '\n'
         progress.write_text(old + gap + text + '\n')
-        if shown:
-            auto['report'] = dict(reason=reason, at=at, text=text, path=str(progress))
-        else:
-            auto.pop('report', None)
+        auto['report'] = dict(reason=reason, at=at, text=text, path=str(progress))
         return text
 
     @staticmethod

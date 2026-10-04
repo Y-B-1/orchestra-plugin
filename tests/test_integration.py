@@ -287,6 +287,33 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.assertFalse(self.session()['active'])
         self.cli('start','--new-run')
 
+    def foreign_policy(self):
+        """A plugin upgrade or policy edit: the stored policy hash no longer matches."""
+        path=self.state/'state.json'
+        data=json.loads(path.read_text())
+        data['policy']='0'*64
+        path.write_text(json.dumps(data))
+
+    def test_new_run_archives_an_ended_run_under_a_changed_policy(self):
+        lease=self.cli('start')['lease']
+        self.cli('--lease',lease,'interrupt')
+        self.foreign_policy()
+        self.assertIn('start --new-run',self.cli('status',expected=2))
+        self.assertIn('start --new-run',self.cli('start',expected=2))
+        push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
+        self.assertEqual(push,{})  # O35: an ended run is unarmed
+        self.cli('start','--new-run')
+        self.assertEqual(len(list((self.state/'history').glob('run-*.json'))),1)
+        self.assertTrue(self.session()['active'])
+
+    def test_new_run_refuses_an_active_run_under_a_changed_policy(self):
+        self.cli('start')
+        self.foreign_policy()
+        self.assertIn('active run',self.cli('start','--new-run',expected=2))
+        self.assertFalse((self.state/'history').exists())
+        push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
+        self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'deny')
+
     def test_clear_and_resume_rebind_then_exit_releases(self):
         for reason in ('clear','resume'):
             with self.subTest(reason=reason):

@@ -1222,6 +1222,35 @@ class AutonomyHookTest(unittest.TestCase):
         (self.state / 'state.json').write_text(json.dumps(never_armed))
         self.assertIsNone(self.hook(self.repo, 'rm -rf build'))
 
+    def set_raw_session_active(self, value):
+        data = json.loads((self.state / 'state.json').read_text())
+        data['session']['active'] = value
+        (self.state / 'state.json').write_text(json.dumps(data))
+
+    def test_o35_ended_run_under_a_changed_policy_is_unarmed(self):
+        self.engine.interrupt('main', self.lease)
+        self.break_policy()
+        for cwd in (self.repo, self.linked):
+            with self.subTest(cwd=cwd.name):
+                self.assertIsNone(self.hook(cwd, 'git push origin main'))
+                self.assertIsNone(self.hook(cwd, 'rm -rf build'))
+                self.assertEqual(self.hook(cwd, 'git reset --hard'), 'deny')  # always-deny is unchanged
+                self.assertEqual(self.stop_main(cwd), {})
+
+    def test_o35_active_run_under_a_changed_policy_stays_armed(self):
+        self.engine.interrupt('main', self.lease)
+        self.break_policy()
+        self.set_raw_session_active(True)
+        for cwd in (self.repo, self.linked):
+            with self.subTest(cwd=cwd.name):
+                self.assertEqual(self.hook(cwd, 'git push origin main'), 'deny')
+                self.assertEqual(self.hook(cwd, 'git reset --hard'), 'deny')
+
+    def test_o35_unparseable_state_stays_armed(self):
+        self.engine.interrupt('main', self.lease)
+        self.truncate_state()
+        self.assertEqual(self.hook(self.repo, 'git push origin main'), 'deny')
+
     def test_o29_autonomy_status_error_counts_as_active(self):
         engine = mock.Mock()
         engine.autonomy_active.side_effect = RuntimeError('state changed')

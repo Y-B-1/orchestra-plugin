@@ -224,6 +224,18 @@ def _raw_autonomy_active(state_file):
     return isinstance(auto, dict) and auto.get('active') is True
 
 
+def _raw_session_active(state_file):
+    """O35: an ended run under a changed policy is unarmed; an unparseable or active state stays armed."""
+    try:
+        data = json.loads(Path(state_file).read_text())
+    except (OSError, ValueError, UnicodeError):
+        return True
+    if not isinstance(data, dict) or 'session' not in data:
+        return True  # Not a recorded session: fail closed.
+    session = data['session']
+    return not (session is None or (isinstance(session, dict) and session.get('active') is False))
+
+
 def _report_context(engine):
     try:
         report = engine.autonomy_report()
@@ -322,6 +334,7 @@ def main(argv=None):
                         pass  # Opaque engine adapters stay armed.
                 except Exception:
                     engine = None
+                    armed = _raw_session_active(state_dir / 'state.json')  # O35
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
                 if args.event == 'PreToolUse' and not armed:
                     engine = None  # An inactive session is an unarmed run.
