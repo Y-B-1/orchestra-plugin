@@ -624,8 +624,11 @@ class Engine:
             # A stale newest receipt leaves its categories without a current verdict (O19).
             current = review['artifact'] == self._artifact_cached(cache, review.get('scope'))
             for category in review['categories']:
-                verdicts[category] = review if current else None
-        verdicts = {category: review for category, review in verdicts.items() if review is not None}
+                verdicts[category] = (review, current)
+        # A stale non-CLEAN newest receipt in any category voids every verdict until re-review (O22).
+        if any(not current and review['findings'] for review, current in verdicts.values()):
+            return {}
+        verdicts = {category: review for category, (review, current) in verdicts.items() if current}
         if any(not self._intact(review) for review in verdicts.values()):
             kind = 'final' if final else 'task'
             raise EngineError('Current ' + kind + ' review evidence is missing or altered')
