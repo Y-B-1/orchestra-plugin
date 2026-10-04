@@ -1051,6 +1051,18 @@ class SessionEndBuildErrorTest(unittest.TestCase):
     def test_no_state_file_stays_silent(self):
         self.assertEqual(self.session_end(), (0, {}))
 
+    def test_malformed_policy_on_an_ended_run_stays_silent(self):
+        """FX6 (O35): an ended run has nothing to record, even when the engine cannot be built."""
+        from orchestra_core.paths import state_location
+        out = subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), 'start', '--harness-session', 'S'],
+                             env=os.environ, capture_output=True, text=True, check=True).stdout
+        subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), '--lease', json.loads(out)['lease'],
+                        'interrupt'], env=os.environ, capture_output=True, text=True, check=True)
+        state = state_location(self.repo)
+        self.assertIs(json.loads((state / 'state.json').read_text())['session']['active'], False)
+        (state / 'policy.json').write_text('{not json')
+        self.assertEqual(self.session_end(), (0, {}))
+
 
 class RunHookScriptTest(unittest.TestCase):
     def test_syntax(self):
@@ -1322,6 +1334,33 @@ class AutonomyHookTest(unittest.TestCase):
     def add_card(self, name):
         self.engine.add_task('main', self.lease, dict(id=name, role='builder', mode='implementation', inputs=['spec'],
                              acceptance=['check'], files=[name], resources=[], dependencies=[]))
+
+    def stop_as(self, cwd, session_id):
+        payload = {'cwd': str(cwd)} if session_id is None else {'cwd': str(cwd), 'session_id': session_id}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            self.assertEqual(main(['Stop', '--harness', 'claude']), 0)
+        return json.loads(out.getvalue())
+
+    def test_o37_stop_from_another_session_neither_continues_nor_spends_a_pass(self):
+        data = json.loads((self.state / 'state.json').read_text())
+        data['session']['harness_session'] = 'S-main'
+        (self.state / 'state.json').write_text(json.dumps(data))
+        self.arm(passes='3')
+        self.add_card('c1')
+        passes = lambda: self.engine.status()['autonomy']['passes']
+        self.assertEqual(self.stop_as(self.linked, 's-1'), {})  # another Claude session in a linked worktree
+        self.assertEqual(passes(), 0)
+        self.assertEqual(self.stop_as(self.linked, 'S-main')['decision'], 'block')
+        self.assertEqual(passes(), 1)
+        self.assertEqual(self.stop_as(self.repo, None)['decision'], 'block')  # no session id: as before
+        self.assertEqual(passes(), 2)
+
+    def test_o37_stop_without_a_bound_session_continues_as_before(self):
+        self.arm(passes='3')
+        self.add_card('c1')
+        self.assertEqual(self.stop_as(self.linked, 's-1')['decision'], 'block')
+        self.assertEqual(self.engine.status()['autonomy']['passes'], 1)
 
     def test_stop_continues_while_active_and_stops_at_the_pass_cap(self):
         self.arm(passes='1')

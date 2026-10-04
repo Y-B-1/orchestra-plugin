@@ -1637,12 +1637,27 @@ def _heredoc_items(docs, pipelines, depth):
 
 _FOLD_LEVELS = 16  # Substitution nesting levels folded (O33); a substitution nested deeper denies (O34).
 _SUFFIX_CAP = 32  # Command readings after pure-substitution words in one segment (FX4); more denies.
+_READING_BUDGET = 1024  # Extra readings (O33 removed, wrapper twin, FX4 suffix) per call, nested shells included (FX6).
+_BUDGET = {'left': _READING_BUDGET}
 _RANK = {'deny': 4, 'release-multi': 3, 'release': 2, 'boundary': 1}
 
 
 def _stricter(first, second):
     """The stricter of two verdicts (O34): deny > release-multi > release > boundary > allow; first on a tie."""
     return second if _RANK.get(second.klass, 0) > _RANK.get(first.klass, 0) else first
+
+
+def _extra(build):
+    """One extra reading of a segment (FX6). It spends the per-call budget; past it the command denies as
+    malformed. A reading the words cannot form (a wrapper option left without its value) is dropped, as
+    the shell could not run that expansion: it is no reason to deny the command."""
+    _BUDGET['left'] -= 1
+    if _BUDGET['left'] < 0:
+        raise ValueError('Too many command readings')
+    try:
+        return build()
+    except ValueError:
+        return []
 
 
 def _removed_reading(full, kept, whole):
@@ -1661,6 +1676,12 @@ def _removed_reading(full, kept, whole):
             out.append(word)
         payload = payload or bool(re.fullmatch(r'-[A-Za-z]+', word) and 'c' in word[1:])
     return out
+
+
+def _suffix_reading(full, kept, pure):
+    """FX4: the words after a pure-substitution word, read as the command."""
+    rest = _unwrap(full)
+    return _removed_reading(full, kept, rest) if any(pure) else rest
 
 
 def _fold(text, subs):
@@ -1708,6 +1729,16 @@ def _folded_segments(text, subs, level=0):
 
 
 def classify_command(command: str, _depth=0) -> Decision:
+    if _depth:
+        return _classify_command(command, _depth)
+    _BUDGET['left'] = _READING_BUDGET
+    decision = _classify_command(command, 0)
+    return _deny('Malformed shell quoting', 'malformed') if _BUDGET['left'] < 0 else decision
+
+
+def _classify_command(command, _depth):
+    if _BUDGET['left'] < 0:
+        return _deny('Malformed shell quoting', 'malformed')  # The reading budget is spent (FX6).
     if not isinstance(command, str) or not command.strip() or len(command) > 131072 or _depth > 8:
         return _deny('Invalid or excessively nested command', 'malformed')
     if _RMARK in command or _SMARK in command:  # Reserved placeholder characters (R2k minor 4).
@@ -1732,10 +1763,10 @@ def classify_command(command: str, _depth=0) -> Decision:
             if any(pure):
                 # A word made only of substitutions may expand to nothing (O33): the segment is classified
                 # with it removed and with it kept, and the stricter verdict wins (O34).
-                readings.insert(0, _removed_reading(full, kept, whole))
+                readings.insert(0, _extra(lambda: _removed_reading(full, kept, whole)))
                 if any(PurePosixPath(word).name in _WRAPPER_VALUES for word in full[:pure.index(True)]):
                     # After a wrapper it may also fill an option value and the next slot (two words).
-                    readings.append(_unwrap([twin for word, sub in zip(full, pure) for twin in [word] * (1 + sub)]))
+                    readings.append(_extra(lambda: _unwrap([twin for word, sub in zip(full, pure) for twin in [word] * (1 + sub)])))
                     # Or fill an option value while a later one expands to nothing (FX4): the words after
                     # each pure-substitution word are also read as the command. A suffix that starts with
                     # another pure substitution or an option names no new command; past the cap it denies.
@@ -1743,8 +1774,7 @@ def classify_command(command: str, _depth=0) -> Decision:
                     if len(heads) > _SUFFIX_CAP:
                         raise ValueError('Too many substitution words')
                     for k in heads:
-                        rest = _unwrap(full[k + 1:])
-                        readings.append(_removed_reading(full[k + 1:], kept[k + 1:], rest) if any(pure[k + 1:]) else rest)
+                        readings.append(_extra(lambda: _suffix_reading(full[k + 1:], kept[k + 1:], pure[k + 1:])))
             decision = None
             for words in readings:
                 if not words:

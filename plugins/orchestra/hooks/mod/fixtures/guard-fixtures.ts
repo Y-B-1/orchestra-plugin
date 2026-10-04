@@ -5228,5 +5228,159 @@ export const CORPUS: CorpusCase[] = [
    "command": "git commit -m \"$(cat msg)\""
   },
   "class": "allow"
+ },
+ {
+  "id": "guard-fx6-1",
+  "input": {
+   "command": "xargs -P $(nproc) make -s"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-2",
+  "input": {
+   "command": "xargs -n $(nproc) make -s"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-3",
+  "input": {
+   "command": "xargs -n $(nproc) pytest -s"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-4",
+  "input": {
+   "command": "xargs -P $(nproc) du -s"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-5",
+  "input": {
+   "command": "xargs -P $(nproc) ls -a"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-6",
+  "input": {
+   "command": "nice -n $(echo 5) make -n"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-7",
+  "input": {
+   "command": "env -C $(git rev-parse --show-toplevel) sort -u"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-8",
+  "input": {
+   "command": "env -u $(echo X) sort -u"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-9",
+  "input": {
+   "command": "sudo -u $(whoami) ls -h"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-10",
+  "input": {
+   "command": "sudo -u $(whoami) df -h"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-11",
+  "input": {
+   "command": "sudo -u $(whoami) sort -u"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-12",
+  "input": {
+   "command": "doas -u $(whoami) ls -a"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-13",
+  "input": {
+   "command": "sudo -u $(whoami) mkdir -p $(dirname x)"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-fx6-14",
+  "input": {
+   "command": "xargs -P $(nproc) git clean -fd"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-fx6-15",
+  "input": {
+   "command": "xargs -P $(nproc) git clean -f -d"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-fx6-16",
+  "input": {
+   "command": "xargs -n $(nproc) git reset --hard"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-fx6-17",
+  "input": {
+   "command": "nice -n $(echo 5) git reset --hard"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-fx6-18",
+  "input": {
+   "command": "env -C $(git rev-parse --show-toplevel) git clean -fdx"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-fx6-19",
+  "input": {
+   "command": "doas -u $(whoami) git push --force"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-fx6-20",
+  "input": {
+   "command": "sudo -u $(whoami) git reset --hard -q"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-fx6-21",
+  "input": {
+   "command": "sudo -u $(whoami) git push -f origin main"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-fx6-22",
+  "input": {
+   "command": "sudo -u $(whoami) git stash"
+  },
+  "class": "deny"
  }
 ];

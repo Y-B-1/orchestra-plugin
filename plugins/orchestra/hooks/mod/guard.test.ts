@@ -54,6 +54,27 @@ test('classifier: malformed input denies, size and depth caps', () => {
   expect(klassOf(classifyCommand('git stash list'))).toBe('allow');
 });
 
+test('FX6: crafted nested shells deny well inside the hook timeout (reading budget)', () => {
+  const quote = (text: string): string => "'" + text.replace(/'/g, `'"'"'`) + "'";
+  const nested = (levels: number, width: number): string => {
+    let body = 'git status';
+    for (let i = 0; i < levels; i++) body = 'sudo -u $(a) x ' + Array(width).fill('$(b) bash -c ' + quote(body)).join(' ');
+    return body + '; git ' + 'reset --hard';
+  };
+  for (const [levels, width] of [[5, 2], [4, 4], [6, 2], [5, 3]] as const) {
+    const start = performance.now();
+    const decision = classifyCommand(nested(levels, width));
+    expect(performance.now() - start).toBeLessThan(5000);
+    expect(klassOf(decision)).toBe('deny');
+  }
+});
+
+test('FX6: a wrapper option substitution before a dash word is dropped as a reading, not denied', () => {
+  expect(klassOf(classifyCommand('xargs -P $(nproc) make -s'))).toBe('allow');
+  expect(klassOf(classifyCommand('sudo -u $(whoami) df -h'))).toBe('allow');
+  expect(klassOf(classifyCommand('sudo -u $(whoami) git ' + 'reset --hard'))).toBe('deny');
+});
+
 test('A8: settings.json is not protected; hooks.json, config.toml and .orchestra are', () => {
   const env = { stateDir: null, xdg: '/state', home: '/home/u' };
   for (const p of ['.claude/settings.json', '.codex/settings.json', '.claude/settings.local.json']) {

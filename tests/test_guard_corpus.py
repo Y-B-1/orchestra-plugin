@@ -2,16 +2,19 @@ import ast
 import hashlib
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from orchestra_core import guards
 from orchestra_core.guards import GUARD_DIGEST_FILES, classify_command, guard_digest, RULES
 from orchestra_core.hooks import handle_event
 import test_hooks
@@ -189,6 +192,40 @@ class GuardCorpusTest(unittest.TestCase):
         result = subprocess.run([sys.executable, str(PLUGIN / 'hooks/mod/fixtures/sync.py'), '--check'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+def _nested_shells(levels, width):
+    """The rf_security finding 2 input: wrapper option substitutions around nested `bash -c` bodies."""
+    body = 'git status'
+    for _ in range(levels):
+        body = 'sudo -u $(a) x ' + ' '.join(f'$(b) bash -c {shlex.quote(body)}' for _ in range(width))
+    return body + '; git ' + 'reset --hard'
+
+
+class ReadingBudgetTest(unittest.TestCase):
+    """FX6: one budget of extra readings per call bounds classification time; ordinary commands never reach it."""
+
+    def test_crafted_nested_shells_deny_well_inside_the_hook_timeout(self):
+        for levels, width in ((5, 2), (4, 4), (6, 2), (5, 3)):  # 14, 38, 78 and 97 KB
+            command = _nested_shells(levels, width)
+            with self.subTest(size=len(command)):
+                start = time.perf_counter()
+                decision = classify_command(command)
+                self.assertLess(time.perf_counter() - start, 5)
+                self.assertEqual(decision.action, 'deny')
+
+    def test_spent_budget_denies_as_malformed(self):
+        with mock.patch.object(guards, '_READING_BUDGET', 2):
+            decision = classify_command('sudo -u $(whoami) $(echo) x $(echo) y $(echo) ls')
+        self.assertEqual((decision.action, decision.category), ('deny', 'malformed'))
+        self.assertEqual(classify_command('sudo -u $(whoami) $(echo) x $(echo) y $(echo) ls').action, 'allow')
+
+    def test_corpus_commands_stay_far_below_the_budget(self):
+        for case in CORPUS:
+            if 'command' in case['input']:
+                with self.subTest(case=case['id']):
+                    classify_command(case['input']['command'])
+                    self.assertLess(guards._READING_BUDGET - guards._BUDGET['left'], guards._READING_BUDGET // 4)
 
 
 class GuardDigestTest(unittest.TestCase):
