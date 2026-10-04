@@ -115,23 +115,24 @@ test('autonomy: the tick reads status at most every 30 s, only while active, and
   const s = stage(on);
   const table: Record<string, { exitCode: number; stdout: string }> = {
     arm: { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/state/autonomy.md', preconditions: {} }) },
-    status: { exitCode: 0, stdout: JSON.stringify(ACTIVE) },
+    status: { exitCode: 0, stdout: JSON.stringify({ ...STOPPED, last_stop_reason: null }) },
   };
   answers(r, table);
   await $.session.start(start);
-  // Not active yet: ticks never read status.
+  // Not active: the one startup read (unknown state), then ticks never read status.
   await r.clock.advance(60000);
-  expect(autonomyRuns(r).length).toBe(0);
-  await run($ as never, 'on');
   expect(autonomyRuns(r).length).toBe(1);
+  await run($ as never, 'on');
+  table['status'] = { exitCode: 0, stdout: JSON.stringify(ACTIVE) };
+  expect(autonomyRuns(r).length).toBe(2);
   // First tick after arming reads once; the next five ticks (25 s) read nothing more.
   await r.clock.advance(5000);
   const afterFirst = autonomyRuns(r).filter((x) => action(x.argv) === 'status').length;
-  expect(afterFirst).toBe(1);
+  expect(afterFirst).toBe(2);
   await r.clock.advance(25000);
-  expect(autonomyRuns(r).filter((x) => action(x.argv) === 'status').length).toBe(1);
-  await r.clock.advance(5000);
   expect(autonomyRuns(r).filter((x) => action(x.argv) === 'status').length).toBe(2);
+  await r.clock.advance(5000);
+  expect(autonomyRuns(r).filter((x) => action(x.argv) === 'status').length).toBe(3);
   expect(r.toasts.length).toBe(0);
   // The run stops by cap: one toast with reason and counts; afterwards no more reads.
   table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
@@ -203,4 +204,127 @@ test('autonomy: session.end clears a shown band and stops reading', async ($, on
   const reads = autonomyRuns(r).length;
   await r.clock.advance(60000);
   expect(autonomyRuns(r).length).toBe(reads);
+});
+
+const statusReads = (r: Rig) => autonomyRuns(r).filter((x) => action(x.argv) === 'status').length;
+
+test('autonomy: a run armed through the CLI before session.start gets the band and exactly one stop toast', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const table: Record<string, { exitCode: number; stdout: string }> = { status: { exitCode: 0, stdout: JSON.stringify(ACTIVE) } };
+  answers(r, table);
+  await $.session.start(start);
+  await r.clock.advance(5000);
+  expect(statusReads(r)).toBe(1);
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2/5, deadline 07:30');
+  expect(r.toasts.length).toBe(0);
+  table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
+  await r.clock.advance(30000);
+  expect(r.toasts.length).toBe(1);
+  expect(r.toasts[0]).toContain('cap-passes');
+  expect(s.bands.at(-1)).toBeUndefined();
+  const reads = statusReads(r);
+  await r.clock.advance(120000);
+  expect(statusReads(r)).toBe(reads);
+  expect(r.toasts.length).toBe(1);
+});
+
+test('autonomy: an inactive session reads status once at startup and not again', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  answers(r, { status: { exitCode: 0, stdout: JSON.stringify({ ...STOPPED, last_stop_reason: null }) } });
+  await $.session.start(start);
+  await r.clock.advance(120000);
+  expect(statusReads(r)).toBe(1);
+  expect(r.toasts.length).toBe(0);
+  expect(s.bands.at(-1)).toBeUndefined();
+});
+
+test('autonomy: a failed startup read is retried at the next interval until one answers', async ($, on) => {
+  const r = rig(on);
+  stage(on);
+  const table: Record<string, { exitCode: number; stdout: string }> = { status: { exitCode: 1, stdout: '' } };
+  answers(r, table);
+  await $.session.start(start);
+  await r.clock.advance(5000);
+  expect(statusReads(r)).toBe(1);
+  table['status'] = { exitCode: 0, stdout: JSON.stringify({ ...STOPPED, last_stop_reason: null }) };
+  await r.clock.advance(30000);
+  expect(statusReads(r)).toBe(2);
+  await r.clock.advance(120000);
+  expect(statusReads(r)).toBe(2);
+});
+
+test('autonomy: a Bash orchestra.py autonomy arm makes the next tick read status', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const table: Record<string, { exitCode: number; stdout: string }> = { status: { exitCode: 0, stdout: JSON.stringify({ ...STOPPED, last_stop_reason: null }) } };
+  answers(r, table);
+  await $.session.start(start);
+  await r.clock.advance(120000);
+  expect(statusReads(r)).toBe(1);
+  expect(s.bands.at(-1)).toBeUndefined();
+  table['status'] = { exitCode: 0, stdout: JSON.stringify(ACTIVE) };
+  await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'python3 ~/plugin/scripts/orchestra.py autonomy arm' });
+  await r.clock.advance(5000);
+  expect(statusReads(r)).toBe(2);
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2/5, deadline 07:30');
+  table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
+  await r.clock.advance(30000);
+  expect(r.toasts.length).toBe(1);
+  // Other orchestra.py calls do not trigger a read.
+  const reads = statusReads(r);
+  await $.tool.call({ tool: 'Bash', tool_use_id: 't2', command: 'python3 ~/plugin/scripts/orchestra.py status' });
+  await r.clock.advance(60000);
+  expect(statusReads(r)).toBe(reads);
+});
+
+test('autonomy: clear and resume session.end keep polling alive', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const table: Record<string, { exitCode: number; stdout: string }> = { status: { exitCode: 0, stdout: JSON.stringify(ACTIVE) } };
+  answers(r, table);
+  await $.session.start(start);
+  await r.clock.advance(5000);
+  expect(s.bands.at(-1)).toContain('pass 2/5');
+  for (const reason of ['clear', 'resume']) {
+    await $.session.end({ reason, sessionId: 'sid-1' } as never);
+    expect(s.bands.at(-1)).toContain('pass 2/5');
+    const before = statusReads(r);
+    await r.clock.advance(35000);
+    expect(statusReads(r)).toBeGreaterThan(before);
+  }
+  table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
+  await r.clock.advance(35000);
+  expect(r.toasts.length).toBe(1);
+});
+
+test('autonomy: a status read in flight when off runs is dropped: band stays cleared and no stop toast', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  let release: () => void = () => undefined;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let hold = true;
+  r.runAnswer = async (argv) => {
+    if (!isAutonomy(argv)) return { exitCode: 0, stdout: '{}' };
+    if (action(argv) === 'status') {
+      const snapshot = JSON.stringify(ACTIVE);
+      if (hold) await held;
+      return { exitCode: 0, stdout: snapshot };
+    }
+    if (action(argv) === 'arm') return { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/l', preconditions: {} }) };
+    return { exitCode: 0, stdout: JSON.stringify({ was_active: true, reason: 'disarmed', text: '' }) };
+  };
+  await $.session.start(start);
+  await run($ as never, 'on');
+  await r.clock.advance(5000);
+  expect(statusReads(r)).toBe(1);
+  await run($ as never, 'off');
+  hold = false;
+  release();
+  await r.clock.advance(1000);
+  expect(s.bands.at(-1)).toBeUndefined();
+  await r.clock.advance(120000);
+  expect(r.toasts.length).toBe(0);
+  expect(s.bands.at(-1)).toBeUndefined();
 });
