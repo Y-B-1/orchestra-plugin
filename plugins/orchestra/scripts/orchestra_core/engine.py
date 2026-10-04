@@ -156,17 +156,19 @@ class Engine:
         return result
 
     def scope_for(self, task_ids):
-        """Union of the tasks' reservation files, or None (whole repo) when they reserve no files."""
+        """Union of the tasks' reservation files, or None (whole repo) when any task reserves no files."""
         with self._state(False) as state:
             return self._scope_of(state, task_ids)
 
     def _scope_of(self, state, task_ids):
-        files = set()
+        files, whole = set(), False
         for task_id in task_ids:
             if task_id not in state['tasks']:
                 raise EngineError('Unknown task: ' + str(task_id))
-            files.update(Path(f).as_posix() for f in self._reservation(state['tasks'][task_id], state)['files'])
-        return sorted(files) or None
+            reserved = self._reservation(state['tasks'][task_id], state)['files']
+            whole = whole or not reserved
+            files.update(Path(f).as_posix() for f in reserved)
+        return None if whole or not files else sorted(files)
 
     def _artifact_cached(self, cache, scope):
         key = tuple(scope) if scope else None
@@ -614,15 +616,16 @@ class Engine:
         verdicts = {}
         since = state['tasks'][task_id].get('review_since', 0) if task_id is not None else 0
         for review in state['reviews'][since:]:
-            # Each receipt is compared against the artifact recomputed with its own stored scope.
-            if review['artifact'] != self._artifact_cached(cache, review.get('scope')):
-                continue
             if task_id is not None and task_id not in review['tasks']:
                 continue
             if final and (not review['final'] or not self._pre_release_ids(state) <= set(review['tasks'])):
                 continue
+            # Each receipt is compared against the artifact recomputed with its own stored scope.
+            # A stale newest receipt leaves its categories without a current verdict (O19).
+            current = review['artifact'] == self._artifact_cached(cache, review.get('scope'))
             for category in review['categories']:
-                verdicts[category] = review
+                verdicts[category] = review if current else None
+        verdicts = {category: review for category, review in verdicts.items() if review is not None}
         if any(not self._intact(review) for review in verdicts.values()):
             kind = 'final' if final else 'task'
             raise EngineError('Current ' + kind + ' review evidence is missing or altered')
