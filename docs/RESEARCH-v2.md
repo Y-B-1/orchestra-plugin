@@ -1,0 +1,71 @@
+# RESEARCH-v2 (I1)
+
+Accessed 2026-10-04 against Claude Code 2.1.289 and codex-cli 0.160.0. Expires with the 2.0.0 release.
+
+## Q1. `skills:` name form, and `disable-model-invocation`
+- **Name form: UNKNOWN for same-plugin skills.**
+  - DOCUMENTED, https://code.claude.com/docs/en/sub-agents: "Use the `skills` field to inject skill content into a subagent's context at startup." Its example uses bare names (`api-conventions`).
+  - The docs say nothing about `plugin:skill` or same-plugin resolution. A fetch of the sub-agents page for any such text found none.
+  - OBSERVED: the installed plugin `openai-codex/codex` 1.0.6 has an agent `codex-rescue.md` with `skills: [codex-cli-runtime, gpt-5-4-prompting]`. These are bare names of skills in the same plugin's `skills/` dir. This shows the bare form is used in shipped plugins. I did not observe whether the preload actually resolves at runtime.
+  - Plugin agents support `skills` (https://code.claude.com/docs/en/plugins/components, "Supported fields: ... `skills`"). `permissionMode`, `hooks`, `mcpServers` and `initialPrompt` are ignored.
+- **`disable-model-invocation: true` blocks preload: DOCUMENTED.**
+  - "You can't preload skills that set `disable-model-invocation: true`, since preloading draws from the same set of skills Claude can invoke."
+  - A listed skill that is missing or disabled is skipped with only a debug-log warning. So a wrong name fails silently.
+- **Consequence for PLAN B4:**
+  - Use bare names first.
+  - The live B4 check must read the debug log (`claude --debug`) for "skipped" warnings. A worker that merely runs is not proof.
+  - The B4 fallback applies if the bare form does not preload.
+  - Role skills must not set `disable-model-invocation`.
+
+## Q2. Agent tool `model` parameter: DOCUMENTED
+From https://code.claude.com/docs/en/sub-agents: "Full model ID: use a full model ID such as `claude-opus-5-5` or `claude-sonnet-5`. Accepts the same values as the `--model` flag". Aliases are `sonnet`, `opus`, `haiku` and `fable`, plus `inherit`. "The per-invocation `model` parameter accepts the same values."
+- `claude-opus-5-5` is accepted. The `opus` alias fallback is also valid.
+- UNKNOWN: whether the Agent tool in this build rejects an unlisted id at call time. Not observed.
+
+## Q3. Codex read-only profile key: DOCUMENTED (https://learn.chatgpt.com/docs/config-file/config-reference, reached through a 308 redirect from developers.openai.com)
+- The key is `sandbox_mode`, with values `"read-only"`, `"workspace-write"` and `"danger-full-access"`.
+- Agent roles are declared as `agents.<name>.config_file` ("Path to a TOML config layer for that role"). "Role configuration files support `sandbox_mode` and `model`".
+- So `sandbox_mode = "read-only"` in a role file is documented to apply.
+- OBSERVED: the installed role files (`~/.codex/agents/orchestra_*.toml`) set `name`, `description`, `model`, `model_reasoning_effort` and `developer_instructions`, and no `sandbox_mode`. `grep sandbox_mode ~/.codex/agents ~/.codex/config.toml` returned nothing.
+- The docs also list `agents.default_subagent_model` and `agents.default_subagent_reasoning_effort`.
+- UNKNOWN: whether a per-role dispatch-time model override exists. SPEC already treats that as unverified, so keep Codex variants as profiles.
+
+## Q4. Hook payloads
+- **SessionEnd `session_id` and `cwd`: DOCUMENTED** (https://code.claude.com/docs/en/hooks).
+  - Common fields for every event include `session_id`, `transcript_path` and `cwd`. SessionEnd adds `reason`: `clear`, `resume`, `logout`, `prompt_input_exit` or `other`. Example: `{"session_id":"abc123","cwd":"/Users/my-project","hook_event_name":"SessionEnd","reason":"clear"}`.
+  - `cwd` is defined as "Current working directory when the hook is invoked". Equality with the SessionStart `cwd` is not promised. UNKNOWN, not observed. If the session `cd`s, the two can differ.
+  - Budget: "SessionEnd hooks share a 1.5-second budget", raised to a configured `timeout` up to 60 s.
+  - Resume and `/clear`: SessionEnd fires with `reason` `resume` or `clear`. SPEC B-F5 must not release a run that the same `session_id` continues.
+- **Subagent PreToolUse: DOCUMENTED.** The payload carries `agent_id` and `agent_type`. The docs say `session_id` is "Current session identifier". They do not state it is the parent's id, and there is no `parent_session_id` field. So parent `session_id` in subagents is UNKNOWN by docs. B3 should be checked by a live capture before the engine relies on it.
+
+## Q5. Mods under `claude -p`: DOCUMENTED (local `plugin-authoring` skill reference, 2.1.286; not re-observed on 2.1.289)
+- "A headless `claude -p` always loads fresh". For a `--plugin-dir` plugin whose module was not loaded, "the switch being off included, which `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` in that process's environment turns on".
+- So a gating switch exists, and its name is `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`.
+- Hot reload is not offered under `-p`. A long-lived headless session needs `CLAUDE_CODE_PLUGIN_DIR_WATCH=1`.
+- The hooks module is not loaded by default under `-p` without the switch. Whether it is on or off by default under 2.1.289 `-p`: UNKNOWN. I did not run a probe, because writing a mod would trip the watch and the probe was not needed.
+- B1 tests under `-p` must set `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`, and must separately test the no-mods path.
+- `claude plugin test <folder>` runs `*.test.ts` against the engine without a session.
+
+## Q6. Reinstall commands: OBSERVED from `--help`, plus a documented restart rule
+- **Claude Code:**
+  - `claude plugin marketplace update orchestra-distribution`
+  - `claude plugin update orchestra@orchestra-distribution`
+  - The new version loads "in your next session, or after you run `/reload-plugins`". The help text says "restart required to apply".
+  - Installed state: version 1.0.1 at `~/.claude/plugins/cache/orchestra-distribution/orchestra/1.0.1`, scope user.
+  - A `version` field in `plugin.json` pins the plugin until it changes, so the bump is required for an update to be seen.
+- **Codex** (`codex plugin --help`; the marketplace `orchestra-distribution` is configured in `~/.codex/config.toml` from the GitHub repo, `ref = "main"`):
+  - `codex plugin marketplace upgrade orchestra-distribution`
+  - `codex plugin remove orchestra@orchestra-distribution`, then `codex plugin add orchestra@orchestra-distribution`.
+  - The README names profile install as `python3.11 <plugin>/scripts/orchestra.py install-profiles`. Run it from the installed Codex copy, `~/.codex/plugins/cache/orchestra-distribution/orchestra/<version>/scripts/orchestra.py`. I did not execute it, because it writes `~/.codex/agents`.
+- Codex installs from the remote `main`, so the merge to main must happen before the Codex reinstall.
+- UNKNOWN: whether `plugin add` over an existing install upgrades in place without `remove`.
+
+## Coverage and gaps
+- Commands run: `claude --version`, `claude plugin --help` and its subcommand helps, `codex --version`, `codex plugin --help` and its subcommand helps, plus read-only reads of installed files.
+- Not run: any `claude -p` probe, and `install-profiles`.
+- Gaps:
+  - Runtime `skills:` resolution (Q1).
+  - SessionEnd `cwd` equality (Q4).
+  - Subagent `session_id` identity (Q4).
+  - Default `-p` mod behaviour (Q5).
+- Routing: Q1 and Q4 UNKNOWNs go to implementation as live checks in B4 and B3, with the existing fallbacks. No SPEC "settled decision" is found infeasible.
