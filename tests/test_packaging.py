@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -162,6 +163,16 @@ class NativeTests(unittest.TestCase):
         self.assertIn('hooks/codex.json', package)
         for name in ['hooks/mods.json', 'hooks/mod', 'types']:
             self.assertFalse((ROOT / 'plugins/orchestra-codex' / name).exists(), name)
+
+    def test_host_written_tsconfig_is_ignored_by_codex_package(self):
+        # Claude Code writes plugins/orchestra/tsconfig.json when it loads a plugin with `types`.
+        with tempfile.TemporaryDirectory() as temp:
+            copy = Path(temp) / 'orchestra'
+            shutil.copytree(PLUGIN, copy, ignore=shutil.ignore_patterns('__pycache__'))
+            (copy / 'tsconfig.json').write_text('{"extends": "./.claude-plugin/types/tsconfig.json"}\n')
+            self.assertNotIn('tsconfig.json', generate.codex_package(root=copy))
+        ignored = (ROOT / '.gitignore').read_text().splitlines()
+        self.assertIn('plugins/orchestra/tsconfig.json', ignored)
 
 
 if __name__ == '__main__':
