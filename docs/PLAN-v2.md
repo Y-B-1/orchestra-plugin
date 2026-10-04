@@ -236,6 +236,8 @@ Acceptance:
 - `bash -n plugins/orchestra/scripts/run-hook.sh` exits 0.
 - Latency evidence (10 runs before and after) is recorded.
 
+Repair card B2-r2 (D4, R2b): owned paths `scripts/orchestra_core/guards.py`, `config/guard-corpus.json` (append only, except where a SPEC rule flips an expectation, which the report names), `tests/test_guard_corpus.py`, `tests/test_hooks.py` (guard tests only), plus generated Codex copies. Scope: A5 rule (6) with every SPEC listed case; the 10 `test_a2_always_deny_rules_remain` loop commands, the 5 concatenated B2-r1 commands and the refspec loop commands appended to the corpus; the coverage walker extended to string lists a test iterates whose loop variable reaches `classify_command`, and to simple string concatenation of literals. Acceptance: the three guard test modules and `--check` exit 0; a probe log shows each rule (6) case denying and the two allowed cases allowing.
+
 ### B4: role consolidation and skill skeleton (schema foundation)
 
 | Field | Value |
