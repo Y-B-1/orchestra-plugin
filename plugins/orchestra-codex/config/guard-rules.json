@@ -7,7 +7,8 @@
     "tools": "shell and edit are tool names compared exactly with the payload tool_name; claude_matcher is the Claude PreToolUse matcher regex.",
     "shells": "Interpreter names compared with the basename of the first word after wrapper unwrapping; a heredoc consumed by one of them is classified as a script.",
     "shell_value_flags": "Shell options that take a value; skipped, with their value, while looking for the -c payload.",
-    "wrappers": "Command wrappers, matched by the basename of the first word, unwrapped repeatedly; each list holds the options that take a value, long options also as --name=value and short options also with the value attached.",
+    "wrappers": "Command wrappers and runners (A5 rule 6c), matched by the basename of the first word, unwrapped repeatedly; each list holds the options that take a value, long options also as --name=value and short options also with the value attached. xargs, doas, stdbuf, watch and flock are runners: xargs, doas and stdbuf unwrap like the others; watch without -x or --exec turns its remaining words into a shell string; flock skips its options and the lock file, and a -c or --command value becomes a shell string.",
+    "runners": "attached_value_flags: per runner, options whose value can only be attached (xargs -i -l -e, watch -d), never the next word; watch_exec_flags: watch options after which the remaining words are an argv, not a shell string; flock_command_flags: flock options whose value is a shell string; find_exec_actions: find actions whose words up to a terminating ; or {} + are classified as a command.",
     "git": "Option sets compared with the words after the git verb: global_value_options only before the verb; clean, push and commit value options inside that verb; the other lists are matched against the verb or its first argument.",
     "release": "gh pairs are compared with words[1:3]; az_requires words may appear anywhere in the az words; az_pr_update is the prefix words[1:4] plus the word completed anywhere; package_tools with package_verb anywhere after the tool name; deploy_words anywhere after the tool name of a deploy_tools entry.",
     "boundary": "delete_commands match the basename of the first word; find_delete_flag anywhere after find; gh pairs are compared with words[1:3].",
@@ -32,7 +33,18 @@
     "sudo": ["-u", "--user", "-g", "--group", "-h", "--host", "-p", "--prompt", "-C", "--close-from", "-T", "--command-timeout", "-R", "--chroot", "-D", "--chdir", "-r", "--role", "-t", "--type"],
     "nice": ["-n", "--adjustment"],
     "timeout": ["-s", "--signal", "-k", "--kill-after"],
-    "time": ["-f", "--format", "-o", "--output"]
+    "time": ["-f", "--format", "-o", "--output"],
+    "xargs": ["-I", "-n", "-L", "-P", "-d", "-E", "-s", "-a", "--max-args", "--max-procs", "--delimiter", "--max-chars", "--arg-file"],
+    "doas": ["-u", "-a", "-C"],
+    "stdbuf": ["-i", "-o", "-e", "--input", "--output", "--error"],
+    "watch": ["-n", "--interval", "-q", "--equexit"],
+    "flock": ["-w", "--wait", "--timeout", "-E", "--conflict-exit-code", "-c", "--command"]
+  },
+  "runners": {
+    "attached_value_flags": {"xargs": ["-i", "-l", "-e"], "watch": ["-d"]},
+    "watch_exec_flags": ["-x", "--exec"],
+    "flock_command_flags": ["-c", "--command"],
+    "find_exec_actions": ["-exec", "-execdir", "-ok", "-okdir"]
   },
   "git": {
     "global_value_options": ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--exec-path", "--super-prefix", "--attr-source"],

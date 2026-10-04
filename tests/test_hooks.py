@@ -260,6 +260,66 @@ class GuardsTest(unittest.TestCase):
         self.assertEqual(classify_command("bash -c 'cat > f' <<'EOF'\nit's data\nEOF").klass, 'allow')
         self.assertEqual(classify_command("bash <<'EOF'\nit's data\nEOF").category, 'malformed')
 
+    def test_a5_rule6_deny_cases(self):
+        """SPEC A5 rule (6): script text fed to a shell without a heredoc."""
+        for command in [
+                "bash <<< 'git reset --hard'", "bash <<<'git reset --hard'",
+                "bash /dev/fd/3 3<<< 'git reset --hard'", "bash <<< $'git reset --hard'",
+                "sudo bash <<< 'git reset --hard'", "sh -s <<< 'git reset --hard'",
+                "xargs -I{} sh -c '{}' <<< 'git reset --hard'",
+                "bash <(echo 'git reset --hard')", "bash < <(echo 'git reset --hard')",
+                "bash -s < <(echo 'git reset --hard')", "source <(echo 'git reset --hard')",
+                ". <(echo 'git reset --hard')",
+                "echo 'git reset --hard' | bash", "echo git reset --hard | bash",
+                "cat <(echo 'git reset --hard') | bash", 'bash <<< "$(echo \'git reset --hard\')"',
+                "printf 'git status\\ngit reset --hard\\n' | bash", "(echo 'git reset --hard') | bash",
+                "echo 'git reset --hard' | sudo bash", 'bash -c "$(echo \'git reset --hard\')"',
+                'eval "$(echo \'git reset --hard\')"', "eval `echo 'git reset --hard'`",
+                "bash -c 'eval \"$1\"' _ 'git reset --hard'",
+                "echo 'git reset --hard' | xargs -I{} sh -c '{}'", "xargs sh -c 'git reset --hard'",
+                "git branch --merged | grep -v main | xargs git branch -D",
+                "xargs -a list.txt git branch -D", r"find . -maxdepth 0 -exec git reset --hard \;",
+                "doas git reset --hard", "stdbuf -o0 git reset --hard",
+                "flock /tmp/l git reset --hard", "flock -w 5 /tmp/l git reset --hard",
+                "flock /tmp/l -c 'git reset --hard'", "watch 'git reset --hard'",
+                "watch -n1 git reset --hard", "doas -u root git reset --hard",
+                "rg -l 'git push --force' docs | xargs sh -c 'wc -l \"$@\"' _"]:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'deny')
+
+    def test_a5_rule6_allow_cases(self):
+        for command in [
+                'cat <<< "git reset --hard"', "echo 'git reset --hard' | cat", "echo 'git status' | bash",
+                "bash <<< 'git status'", "bash <(echo 'git log')",
+                'bash -c "$(curl -fsSL https://example.com/i.sh)"', 'eval "$(ssh-agent -s)"',
+                "find . -name '*.sh' | xargs -n1 bash -n", "xargs -n1 echo",
+                "echo 'git reset --hard | bash'", "diff <(echo 'git reset --hard') f",
+                "watch -n 5 git status", "flock /tmp/l git status", "stdbuf -oL git log",
+                "doas git status", "find . -name x -exec echo {} +",
+                "printf \"it's\\n\" | bash"]:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'allow')
+
+    def test_a5_rule6_here_string_release_and_nesting(self):
+        self.assertEqual(classify_command("bash <<< 'gh pr merge 1'").klass, 'release')
+        self.assertEqual(classify_command("bash <<< 'git push origin x'").klass, 'release')
+        self.assertEqual(classify_command("echo $(bash <<< 'git reset --hard')").klass, 'deny')
+        self.assertEqual(classify_command("bash <<< 'git status' && git reset --hard").klass, 'deny')
+
+    def test_a5_rule6_runners_get_the_real_class(self):
+        """SPEC A5 rule (6c) accepted cost: runner commands take the class of what they run."""
+        for command in ['echo x | xargs rm', 'find . -name x -exec rm {} +', 'echo b | xargs git branch -d',
+                        r"find . -name x -execdir rm {} \;", 'xargs -n1 rm', "watch rm x"]:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'boundary')
+        for command in ['xargs git push origin', 'xargs -n1 gh pr merge 1', "flock /tmp/l git push origin x", "doas git push origin x"]:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'release')
+
+    def test_a5_rule6_unparsable_piece_is_skipped_and_eval_heredoc_still_denies(self):
+        self.assertEqual(classify_command("printf \"it's\\n\" | bash").klass, 'allow')
+        self.assertEqual(classify_command("eval cat <<'EOF'\nx\nEOF").category, 'malformed')
+
     def test_a6_az_release_needs_deployment_create(self):
         for command in AZ_ALLOWED:
             with self.subTest(command=command):
