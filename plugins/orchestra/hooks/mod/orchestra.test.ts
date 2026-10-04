@@ -3,7 +3,7 @@ import type { On } from 'claude-code';
 
 import { RULES_JSON } from './fixtures/guard-fixtures.js';
 import { classifyCommand, klassOf, loadRules } from './guard.js';
-import { encode, EXPECTED_DIGEST, rig, toBase64 } from './testkit.js';
+import { deferred, encode, EXPECTED_DIGEST, rig, toBase64 } from './testkit.js';
 import type { Rig } from './testkit.js';
 
 const start = { cwd: '/work/proj', surface: null, isInteractive: false } as const;
@@ -229,6 +229,157 @@ test('R5 F1: a re-fired session.start that throws hands git stash to the Python 
   expect(pythonSkips(r, 'sid-1')).toBe(false);
   await r.clock.advance(5000);
   expect(pythonSkips(r, 'sid-1')).toBe(false);
+});
+
+// O24 (R5b): whenever the TypeScript guard is not ready, a guarded call is decided by Python through
+// `--from-mod`, which guards in full whatever the marker says; a failed delegation denies.
+const PY_DENY = 'python full guard: git stash';
+
+function pythonDenies(r: Rig): void {
+  r.runAnswer = (argv) => (argv.includes('--from-mod') ? { exitCode: 0, stdout: deny(PY_DENY) } : { exitCode: 0, stdout: '{}' });
+}
+
+function expectDelegated(r: Rig, b: { calls: unknown[] }, res: unknown, tool: string, key: string, value: string): void {
+  expect(res).toEqual({ deny: PY_DENY } as never);
+  expect(b.calls.length).toBe(0);
+  const run = r.runs.filter((x) => x.argv.includes('--from-mod')).at(-1);
+  expect(run === undefined).toBe(false);
+  expect(run!.argv.join(' ')).toContain('run-hook.sh PreToolUse --harness claude --from-mod');
+  const stdin = JSON.parse(run!.init!.stdin!);
+  expect(stdin.tool_name).toBe(tool);
+  expect(stdin.tool_input[key]).toBe(value);
+  expect(stdin.cwd).toBe('/work/proj');
+}
+
+const yieldTick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+test('O24 PROBE A: a rejected zero write and a failed re-start: git stash is decided by Python', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  await $.session.start(start);
+  await r.clock.advance(5000);
+  r.beforeWrite = async (w) => {
+    if (w.json.heartbeat_ms === 0) throw new Error('EIO');
+  };
+  r.files['.claude-plugin/plugin.json'] = null;
+  await $.session.start(start);
+  pythonDenies(r);
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' });
+  expectDelegated(r, b, res, 'Bash', 'command', 'git stash');
+});
+
+test('O24 PROBE B: a zero write hung past the 2 s wait and a failed re-start: git stash is decided by Python', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  await $.session.start(start);
+  await r.clock.advance(5000);
+  const hold = deferred();
+  r.beforeWrite = async (w) => {
+    if (w.json.heartbeat_ms === 0) await hold.promise;
+  };
+  r.files['.claude-plugin/plugin.json'] = null;
+  const s = $.session.start(start);
+  for (let i = 0; i < 10; i++) {
+    await yieldTick();
+    await r.clock.advance(1000);
+  }
+  await s;
+  pythonDenies(r);
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' });
+  hold.resolve();
+  expectDelegated(r, b, res, 'Bash', 'command', 'git stash');
+});
+
+test('O24 PROBE C: a fresh closure whose first start fails delegates git stash, never passes it on', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  r.files['.claude-plugin/plugin.json'] = null;
+  await $.session.start(start);
+  pythonDenies(r);
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' });
+  expectDelegated(r, b, res, 'Bash', 'command', 'git stash');
+});
+
+test('O24: a closure that has seen no session.start delegates guarded calls and edits', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  pythonDenies(r);
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' });
+  expectDelegated(r, b, res, 'Bash', 'command', 'git stash');
+  const edit = await $.tool.call({ tool: 'Edit', tool_use_id: 't2', file_path: '/work/proj/.claude/hooks.json' } as never);
+  expectDelegated(r, b, edit, 'Edit', 'file_path', '/work/proj/.claude/hooks.json');
+});
+
+test('O24: a guarded call during a start in progress waits, then is delegated when that start fails', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  await $.session.start(start);
+  // The re-start is held at its first step: the zero write of the last marker does not land.
+  const hold = deferred();
+  r.beforeWrite = async (w) => {
+    if (w.json.heartbeat_ms === 0) await hold.promise;
+  };
+  r.files['.claude-plugin/plugin.json'] = null;
+  pythonDenies(r);
+  const s = $.session.start(start);
+  await yieldTick();
+  let settled = false;
+  const call = $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' }).then((v) => {
+    settled = true;
+    return v;
+  });
+  for (let i = 0; i < 5; i++) await yieldTick();
+  expect(settled).toBe(false);
+  expect(b.calls.length).toBe(0);
+  expect(r.runs.length).toBe(0);
+  for (let i = 0; i < 10; i++) {
+    await yieldTick();
+    await r.clock.advance(1000);
+  }
+  await s;
+  const res = await call;
+  hold.resolve();
+  expectDelegated(r, b, res, 'Bash', 'command', 'git stash');
+});
+
+test('O24: a failed or unparseable delegation denies; an unguarded tool is not delegated', async ($, on) => {
+  const r = rig(on, { files: { 'config/guard-rules.json': '{bad' } });
+  const b = bottom(on, r);
+  await $.session.start(start);
+  for (const answer of [
+    () => ({ exitCode: 1, stdout: '' }),
+    () => ({ exitCode: 0, stdout: 'not json' }),
+    () => ({ exitCode: 0, stdout: '{"hookSpecificOutput": 3}' }),
+    () => {
+      throw new Error('spawn failed');
+    },
+  ]) {
+    r.runAnswer = answer;
+    const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' });
+    expect('deny' in res).toBe(true);
+    const edit = await $.tool.call({ tool: 'Write', tool_use_id: 't2', file_path: '/work/proj/src/a.ts' } as never);
+    expect('deny' in edit).toBe(true);
+  }
+  expect(b.calls.length).toBe(0);
+  const before = r.runs.length;
+  const read = await $.tool.call({ tool: 'Read', tool_use_id: 't3', file_path: '/work/proj/a' } as never);
+  expect('deny' in read).toBe(false);
+  expect(r.runs.length).toBe(before);
+  expect(b.calls.length).toBe(1);
+});
+
+test('O24: with the guard ready, allowed calls reach the tool with no Python process', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  pythonDenies(r);
+  await $.session.start(start);
+  const runs = r.runs.length;
+  const ok = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'echo hi' });
+  const edit = await $.tool.call({ tool: 'Edit', tool_use_id: 't2', file_path: '/work/proj/src/a.ts' } as never);
+  expect('deny' in ok).toBe(false);
+  expect('deny' in edit).toBe(false);
+  expect(b.calls.length).toBe(2);
+  expect(r.runs.length).toBe(runs);
 });
 
 const PANE = { title: 'Orchestra board', isFocused: true, bodyColumns: 80, placement: 'inline', scroll: { offset: 0, bodyRows: 20 }, view: {} } as const;
