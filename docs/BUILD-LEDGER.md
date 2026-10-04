@@ -55,7 +55,9 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | B2-r4 | builder | $SCRATCH/wt/B2-r4 | 38d78a8 (1fe405f) | skills + --check 0 after merge; 40 red then green, 64 corpus cases appended, one flip ($'a\'b' allows); R2d probe all benign allow; R2e CLEAN (5 minors, pre-existing shapes, ruled O20) | ACCEPTED; O20 shapes -> B2-r5 |
 | SC-r2 | builder | $SCRATCH/wt/SC-r2 | 6db8eaf (6ec577f) | skills + --check 0 after merge; full suite 251 OK in worktree; rulings 1-7 applied; SC3 CLEAN (3 minors: code.md duplicate, final-review critic path, deletion-test duplicate) | ACCEPTED; minors -> SC-r3 |
 | B5 | builder | $SCRATCH/wt/B5 | 48157fd (ea679df) + b33b098 fixtures resync | skills + --check 0 after merge; plugin test 39/39 incl. corpus parity with B2-r4 cases (logs/feat-parity-post-B5.log); live items to wizard; R5 ISSUES: MAJOR fail-open when a re-fired session.start throws while the old marker is fresh (probe confirmed); minors to builder; capacity and negative standing-orders cache ruled O21; parity 0 mismatches over ~28k cases | REPAIRING: B5-r1 |
-| B9-r1 | builder-repair | $SCRATCH/wt/B9-r1 | d68c2e9 (366dd8b) | O19 applied; 3 new tests; full suite 254 OK in worktree; engine + integration 0 after merge | REPORTED; R9b pending |
-| B2-r5 | builder | $SCRATCH/wt/B2-r5 | from 0ad6eb6 | O20 guard shapes (Python, corpus append-only) | RUNNING |
-| B5-r1 | builder-repair | $SCRATCH/wt/B5-r1 | from 0ad6eb6 | R5 major + builder minors, O21, O20 mirrored in guard.ts | RUNNING |
-| SC-r3 | builder | $SCRATCH/wt/SC-r3 | from 0ad6eb6 | SC3 minors | RUNNING |
+| B9-r1 | builder-repair | $SCRATCH/wt/B9-r1 | d68c2e9 (366dd8b) | O19 applied; 3 new tests; full suite 254 OK in worktree; engine + integration 0 after merge R9b ISSUES: cross-category stale BLOCKED leaves an older CLEAN current (spec gap, ruled O22) | REPAIRING: B9-r2 |
+| B2-r5 | builder | $SCRATCH/wt/B2-r5 | 4906d2e (fd1cc97) | 33 corpus cases appended (21 red then green), no flips; full suite 254 OK; probe 14 flips all target shapes; command-position $(...) gap ruled O23 | REPORTED; R2f pending |
+| B5-r1 | builder-repair | $SCRATCH/wt/B5-r1 | 2847337 (73fc92b) + 296f8f3 fixtures resync | plugin test 50/50 after resync incl. corpus parity (logs/feat-parity-post-r5wave.log) | REPORTED; R5b pending |
+| SC-r3 | builder | $SCRATCH/wt/SC-r3 | e3faa83 (b625777) | skills + --check 0; full suite 254 OK | REPORTED; SC4 pending |
+| B9-r2 | builder-repair | $SCRATCH/wt/B9-r2 | from 4799a0e | O22 | RUNNING |
+| B2-r6 | builder | $SCRATCH/wt/B2-r6 | from 4799a0e | O23 Python + TypeScript | RUNNING |
