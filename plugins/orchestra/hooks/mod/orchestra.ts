@@ -11,6 +11,8 @@ import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, 
 // `session.start` and `session.end` handlers below, at the marked comments.
 
 const DELEGATED = ['release', 'release-multi', 'boundary'];
+// SPEC 10.3: the tools the mod guards; known without loaded rules, so a not-ready guard still delegates them (O24).
+const GUARDED = ['Bash', 'Edit', 'Write', 'MultiEdit'];
 const FAIL_CLOSED = 'Orchestra guard error; failing closed';
 const STATE_DENY = 'Use the structured coordinator API for state; protect installed runtime configuration';
 const VERDICT_SUBS = ['review', 'gate', 'accept'];
@@ -59,9 +61,9 @@ async function runHook($: Dollar, args: string[], stdin: string | undefined, cwd
   return $.process.run(['/bin/sh', `${$.plugin.root}/scripts/run-hook.sh`, ...args], { stdin, cwd, timeoutMs: 8000 });
 }
 
-async function delegate($: Dollar, tool: string, command: string, sessionId: string): Promise<string | null> {
+async function delegate($: Dollar, tool: string, toolInput: Json, sessionId: string): Promise<string | null> {
   const cwd = await $.session.cwd();
-  const payload = JSON.stringify({ tool_name: tool, tool_input: { command }, cwd, session_id: sessionId });
+  const payload = JSON.stringify({ tool_name: tool, tool_input: toolInput, cwd, session_id: sessionId });
   const run = await runHook($, ['PreToolUse', '--harness', 'claude', '--from-mod'], payload, cwd);
   if (run.exitCode !== 0) return FAIL_CLOSED;
   const out = asJson(run.stdout);
@@ -248,9 +250,19 @@ export const register: Register = (on: On) => {
   on('tool.call', async ($, e, next) => {
     // A start in flight first zeroes the last marker or makes the guard ready (R5 finding 1).
     while (starting !== null) await starting;
-    if (!guardReady) return next(e);
     const input = e as unknown as Json;
     const tool = String(input['tool']);
+    if (!guardReady) {
+      // O24: no loaded guard, so Python decides with `--from-mod` (full guard, no marker skip).
+      if (!GUARDED.includes(tool) && !shellTools().includes(tool) && !editTools().includes(tool)) return next(e);
+      const toolInput: Json = { ...input };
+      delete toolInput['tool'];
+      delete toolInput['tool_use_id'];
+      delete toolInput['consent'];
+      const reason = await delegate($, tool, toolInput, lastSeen ?? '');
+      if (reason !== null) return { deny: reason };
+      return next(e);
+    }
     if (shellTools().includes(tool)) {
       const raw = input['command'] !== undefined ? input['command'] : input['cmd'];
       if (raw === undefined || Object(raw).constructor !== String) return { deny: 'Missing shell command' };
@@ -260,7 +272,7 @@ export const register: Register = (on: On) => {
       if (klass === 'deny') return { deny: d.reason !== '' ? d.reason : FAIL_CLOSED };
       if (DELEGATED.includes(klass)) {
         const sid = lastSeen ?? '';
-        const reason = await delegate($, tool, command, sid);
+        const reason = await delegate($, tool, { command }, sid);
         if (reason !== null) return { deny: reason };
       }
       const result = await next(e);
