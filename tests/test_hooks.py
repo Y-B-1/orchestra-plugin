@@ -1078,3 +1078,174 @@ class RunHookScriptTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AutonomyHookTest(unittest.TestCase):
+    """SPEC 12: the autonomy columns of the PreToolUse mapping, Stop and the SessionStart report."""
+
+    def setUp(self):
+        from orchestra_core.engine import AUTONOMY_FIXED, Engine
+        from orchestra_core.paths import state_location
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        patcher = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root / 'xdg')})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop('ORCHESTRA_STATE_DIR', None)
+        self.repo = self.root / 'main'
+        self.repo.mkdir()
+        git(self.repo, 'init', '-q', '-b', 'main')
+        git(self.repo, 'config', 'user.name', 'T')
+        git(self.repo, 'config', 'user.email', 't@example.invalid')
+        (self.repo / 'f.txt').write_text('x\n')
+        git(self.repo, 'add', 'f.txt')
+        git(self.repo, 'commit', '-q', '-m', 'f')
+        self.linked = self.root / 'linked'
+        git(self.repo, 'worktree', 'add', '-q', str(self.linked), '-b', 'side')
+        self.state = state_location(self.repo)
+        self.now = [1_800_000_000.0]
+        self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main')
+        self.fixed = AUTONOMY_FIXED
+
+    def ledger(self, passes='3', deadline_in=3600):
+        when = time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime(self.now[0] + deadline_in))
+        text = ['goal: g', 'max_passes: ' + passes, 'max_stalls: 2', 'deadline: ' + when, '', '## Completion checks', '',
+                'never: ' + sys.executable + ' -c "import sys; sys.exit(1)"', '', '## Approval boundaries', '', *self.fixed]
+        (self.state / 'autonomy.md').write_text('\n'.join(text) + '\n')
+
+    def arm(self, **kw):
+        self.ledger(**kw)
+        self.engine.arm_autonomy()
+
+    def hook(self, cwd, command):
+        code, output = run_main({'cwd': str(cwd), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+        self.assertEqual(code, 0)
+        return output.get('hookSpecificOutput', {}).get('permissionDecision')
+
+    def test_boundary_denied_while_active_and_allowed_while_autonomy_is_off(self):
+        for command in ['rm -rf build', 'rmdir empty', 'unlink link', 'git branch -d topic', 'git tag -d v1']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(self.repo, command))  # armed run, autonomy off
+        self.arm()
+        for command in ['rm -rf build', 'rmdir empty', 'unlink link', 'git branch -d topic', 'git tag -d v1']:
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(self.repo, command), 'deny')
+        self.assertIsNone(self.hook(self.repo, 'git status'))
+        self.engine.disarm_autonomy()
+        self.assertIsNone(self.hook(self.repo, 'rm -rf build'))
+
+    def test_denial_names_the_park_command(self):
+        self.arm()
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'rm -rf build'}})
+        reason = output['hookSpecificOutput']['permissionDecisionReason']
+        self.assertIn('park', reason)
+        self.assertIn('--reason', reason)
+
+    def test_release_is_denied_while_active_even_with_a_permit(self):
+        self.arm()
+        for command in ['git push origin side', 'git push origin side && git status', 'gh release create v1 --verify-tag']:
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(self.repo, command), 'deny')
+
+    def test_merge_denied_on_the_default_branch_and_allowed_on_another(self):
+        self.arm()
+        self.assertEqual(self.hook(self.repo, 'git merge topic'), 'deny')  # main is the default branch
+        git(self.repo, 'checkout', '-q', '-b', 'work')
+        self.assertIsNone(self.hook(self.repo, 'git merge topic'))
+        self.assertIsNone(self.hook(self.repo, 'git pull --rebase origin main'))
+
+    def test_merge_allowed_while_autonomy_is_off_on_the_default_branch(self):
+        self.assertIsNone(self.hook(self.repo, 'git merge topic'))
+
+    def test_merge_default_branch_follows_origin_head(self):
+        git(self.repo, 'update-ref', 'refs/remotes/origin/trunk', 'HEAD')
+        git(self.repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/trunk')
+        self.arm()
+        self.assertIsNone(self.hook(self.repo, 'git merge topic'))  # main is not the default here
+        git(self.repo, 'checkout', '-q', '-b', 'trunk')
+        self.assertEqual(self.hook(self.repo, 'git merge topic'), 'deny')
+
+    def test_merge_on_a_detached_head_is_denied(self):
+        self.arm()
+        git(self.repo, 'checkout', '-q', '--detach')
+        self.assertEqual(self.hook(self.repo, 'git merge topic'), 'deny')
+
+    def test_a15_push_and_rm_denied_in_a_linked_worktree_of_the_armed_repository(self):
+        self.arm()
+        for command in ['git push origin side', 'git -C ../linked push origin side', 'rm -rf build', 'rm file.txt']:
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(self.linked, command), 'deny')
+        self.assertIsNone(self.hook(self.linked, 'git status'))
+
+    def test_linked_worktree_merge_reads_the_branch_of_the_payload_cwd(self):
+        self.arm()
+        # The linked worktree is on `side`; the main worktree has the default branch checked out.
+        self.assertIsNone(self.hook(self.linked, 'git merge topic'))
+        self.assertEqual(self.hook(self.repo, 'git merge topic'), 'deny')
+        # Reverse: the linked worktree holds the default branch while the main worktree is elsewhere.
+        git(self.linked, 'checkout', '-q', '--detach')
+        git(self.repo, 'checkout', '-q', 'side')
+        git(self.linked, 'checkout', '-q', 'main')
+        self.assertEqual(self.hook(self.linked, 'git merge topic'), 'deny')
+        self.assertIsNone(self.hook(self.repo, 'git merge topic'))
+
+    def stop(self):
+        return handle_event('Stop', {'cwd': str(self.repo)}, harness='claude', engine=self.engine).output
+
+    def add_card(self, name):
+        self.engine.add_task('main', self.lease, dict(id=name, role='builder', mode='implementation', inputs=['spec'],
+                             acceptance=['check'], files=[name], resources=[], dependencies=[]))
+
+    def test_stop_continues_while_active_and_stops_at_the_pass_cap(self):
+        self.arm(passes='1')
+        self.add_card('c1')
+        first = self.stop()
+        self.assertEqual(first['decision'], 'block')
+        self.assertIn('Autonomy pass 1 of 1', first['reason'])
+        self.assertEqual(self.stop(), {})
+        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'cap-passes')
+
+    def test_stop_stops_at_the_deadline(self):
+        self.arm()
+        self.now[0] += 7200
+        self.assertEqual(self.stop(), {})
+        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'deadline')
+
+    def test_stop_without_autonomy_is_empty(self):
+        self.assertEqual(self.stop(), {})
+
+    def test_session_start_shows_the_report_with_the_progress_path(self):
+        self.arm()
+        self.now[0] += 7200
+        self.stop()
+        payload = {'cwd': str(self.repo), 'session_id': 's-1', 'source': 'startup'}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            main(['SessionStart', '--harness', 'claude'])
+        context = json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
+        self.assertIn('Autonomy report', context)
+        self.assertIn('deadline', context)
+        self.assertIn(str(self.state / 'progress.md'), context)
+
+    def test_session_start_report_is_capped_at_2000_characters(self):
+        engine = mock.Mock()
+        engine.autonomy_report.return_value = {'reason': 'complete', 'text': 'Q' * 5000, 'path': '/p/progress.md'}
+        context = handle_event('SessionStart', {'session_id': 's-1', 'source': 'startup'}, harness='claude',
+                               engine=engine).output['hookSpecificOutput']['additionalContext']
+        self.assertEqual(context.count('Q'), 2000)
+        self.assertIn('/p/progress.md', context)
+
+    def test_session_start_without_a_report_adds_nothing(self):
+        context = handle_event('SessionStart', {'session_id': 's-1', 'source': 'startup'}, harness='claude',
+                               engine=self.engine).output['hookSpecificOutput']['additionalContext']
+        self.assertNotIn('Autonomy report', context)
+
+    def test_session_start_worker_gets_no_report(self):
+        engine = mock.Mock()
+        engine.autonomy_report.return_value = {'reason': 'complete', 'text': 'T', 'path': '/p'}
+        with mock.patch.dict(os.environ, {'ORCHESTRA_ROLE': 'builder'}):
+            context = handle_event('SessionStart', {'session_id': 's-1'}, harness='claude',
+                                   engine=engine).output['hookSpecificOutput']['additionalContext']
+        self.assertNotIn('Autonomy report', context)

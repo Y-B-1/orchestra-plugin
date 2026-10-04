@@ -314,5 +314,73 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.assertTrue(self.cli('where')['standing_orders'])
 
 
+class AutonomyIntegration(unittest.TestCase):
+    """SPEC 12 through the real CLI and run-hook.sh."""
+
+    def ledger(self,passes='1'):
+        from datetime import datetime,timedelta,timezone
+        sys.path.insert(0,str(PLUGIN/'scripts'))
+        from orchestra_core.engine import AUTONOMY_FIXED
+        when=(datetime.now(timezone.utc)+timedelta(hours=2)).isoformat(timespec='seconds')
+        text=['goal: integration','max_passes: '+passes,'max_stalls: 2','deadline: '+when,'','## Completion checks','',
+              'never: '+sys.executable+' -c "import sys; sys.exit(1)"','','## Approval boundaries','',*AUTONOMY_FIXED]
+        (self.state/'autonomy.md').write_text('\n'.join(text)+'\n')
+
+    def card(self,name):
+        task=self.root/(name+'.json')
+        task.write_text(json.dumps(dict(id=name,role='builder',mode='implementation',inputs=['s'],acceptance=['a'],
+                                        files=[name],resources=[],dependencies=[])))
+        self.cli('--lease',self.lease,'add',str(task))
+
+    cli=HarnessSessionIntegration.cli
+    hook=HarnessSessionIntegration.hook
+
+    def setUp(self):
+        HarnessSessionIntegration.setUp(self)
+        self.lease=self.cli('start')['lease']
+
+    def test_arm_needs_no_lease_writes_the_template_then_arms_and_reports_preconditions(self):
+        message=self.cli('autonomy','arm',expected=2)
+        self.assertIn('fill the ledger, then arm again',message)
+        self.assertTrue((self.state/'autonomy.md').is_file())
+        self.ledger()
+        armed=self.cli('autonomy','arm')
+        self.assertTrue(armed['active'])
+        self.assertIn('permission_mode',armed['preconditions'])
+        self.assertTrue(self.cli('autonomy','status')['active'])
+        self.assertTrue(self.cli('autonomy','disarm')['was_active'])
+        self.assertFalse(self.cli('autonomy','status')['active'])
+
+    def test_park_and_unpark_take_the_lease_and_a_reason(self):
+        self.card('c1')
+        self.cli('park','c1','--reason','x',expected=2)  # no lease
+        self.cli('--lease',self.lease,'park','c1',expected=2)  # --reason is required
+        self.cli('--lease',self.lease,'park','c1','--reason','needs a push')
+        self.assertEqual(self.cli('status')['tasks']['c1']['state'],'parked')
+        self.cli('--lease',self.lease,'unpark','c1')
+        self.assertEqual(self.cli('status')['tasks']['c1']['state'],'queued')
+
+    def test_stop_continues_then_caps_then_session_start_shows_the_report(self):
+        self.card('c1')
+        self.ledger('1')
+        self.cli('autonomy','arm')
+        first=self.hook('Stop')
+        self.assertEqual(first['decision'],'block')
+        self.assertEqual(self.hook('Stop'),{})
+        self.assertEqual(self.cli('autonomy','status')['last_stop_reason'],'cap-passes')
+        context=self.hook('SessionStart',session_id='S3',source='startup')['hookSpecificOutput']['additionalContext']
+        self.assertIn('cap-passes',context)
+        self.assertIn('progress.md',context)
+
+    def test_hook_denies_boundary_only_while_active(self):
+        self.card('c1')
+        self.ledger()
+        self.cli('autonomy','arm')
+        out=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'rm -rf build'})
+        self.assertEqual(out['hookSpecificOutput']['permissionDecision'],'deny')
+        self.cli('autonomy','disarm')
+        self.assertEqual(self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'rm -rf build'}),{})
+
+
 if __name__=='__main__':
     unittest.main()

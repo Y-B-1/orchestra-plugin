@@ -110,6 +110,8 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
                 engine.apply_harness_rebind(session_id)  # B-F5: the one SessionStart write
             except Exception:
                 pass  # An unloadable state or changed contract never blocks the context
+        if not worker and engine is not None:
+            context += _report_context(engine)
         if not worker and isinstance(session_id, str) and session_id:
             context += ' Harness session id: ' + session_id + '. Pass --harness-session ' + session_id + ' to orchestra.py start.'
         return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': context}})
@@ -190,7 +192,51 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
                 raise ValueError('No current release permit')
         except (OSError, ValueError, KeyError, RuntimeError, AttributeError) as exc:
             return _deny('Release denied: ' + str(exc))
-    return HookResult({})  # allow, boundary (until autonomy, B10) and unarmed release classes
+    if engine is not None and _autonomy_active(engine):
+        if klass in {'release', 'release-multi'}:
+            return _deny('Autonomy is active: ' + _PARK_HINT)
+        if decision.category == 'boundary' and decision.boundary == 'delete':
+            return _deny('Approval boundary under autonomy: ' + _PARK_HINT)
+        if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
+            return _deny('Approval boundary under autonomy: no merge on the default branch. ' + _PARK_HINT)
+    return HookResult({})  # allow, boundary (autonomy off) and unarmed release classes
+
+
+_PARK_HINT = 'park this card with `orchestra.py park TASK --reason ...` and continue with other cards.'
+
+
+def _autonomy_active(engine):
+    try:
+        return engine.autonomy_active() is True  # Strict: an opaque adapter never reads as active.
+    except Exception:
+        return False
+
+
+def _report_context(engine):
+    try:
+        report = engine.autonomy_report()
+    except Exception:
+        return ''
+    if not isinstance(report, dict) or not isinstance(report.get('text'), str):
+        return ''
+    return ' Autonomy report (' + str(report.get('reason')) + '): ' + report['text'][:2000] \
+        + ' Full report: ' + str(report.get('path')) + '.'
+
+
+def _on_default_branch(cwd):
+    """SPEC 5.1: the branch is read from the payload cwd's own worktree; any doubt counts as the default branch."""
+    try:
+        current = subprocess.check_output(['git', '-C', str(cwd), 'symbolic-ref', '--short', 'HEAD'],
+                                          stderr=subprocess.PIPE, timeout=10).decode().strip()
+    except (OSError, subprocess.SubprocessError):
+        return True  # Detached HEAD or a git error: fail closed.
+    try:
+        head = subprocess.check_output(['git', '-C', str(cwd), 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
+                                       stderr=subprocess.PIPE, timeout=10).decode().strip()
+        default = head[len('origin/'):] if head.startswith('origin/') else head
+    except (OSError, subprocess.SubprocessError):
+        default = 'main'
+    return current == default
 
 
 def _main_worktree(cwd):
@@ -268,7 +314,7 @@ def main(argv=None):
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
     if (args.event in {'SessionStart', 'SessionEnd'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str)
-            and (args.event == 'SessionEnd' or (args.harness == 'claude' and payload.get('source') in _REBIND_SOURCES))):
+            and (args.event == 'SessionStart' or args.event == 'SessionEnd')):
         try:
             from .paths import load_policy
             from .engine import Engine

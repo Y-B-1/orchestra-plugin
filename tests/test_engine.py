@@ -1,12 +1,16 @@
 import json
 import pathlib
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
-from orchestra_core.engine import Engine, EngineError
+from pathlib import Path
+
+from orchestra_core.engine import AUTONOMY_FIXED, Engine, EngineError, autonomy_preconditions
 
 
 class EngineFixture(unittest.TestCase):
@@ -210,20 +214,6 @@ class MoreEngineTests(EngineFixture):
         report.write_text(json.dumps(body))
         with self.assertRaises(EngineError):
             self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a'])
-
-    def test_explicit_capped_stop(self):
-        self.task()
-        self.assertIsNone(self.engine.hook_stop())
-        ledger = self.root / 'ledger'
-        ledger.write_text('Goal: finish a; acceptance: checked review; bounded ownership a.')
-        with self.assertRaises(EngineError):
-            self.engine.enable_autonomy('main', self.lease, ledger, 21, 2)
-        self.engine.enable_autonomy('main', self.lease, ledger, 20, 2)
-        self.assertIsInstance(self.engine.hook_stop(), str)
-        self.assertIsNone(self.engine.hook_stop())
-        self.engine.enable_autonomy('main', self.lease, ledger, 20, 2)
-        self.engine.interrupt('main', self.lease)
-        self.assertIsNone(self.engine.hook_stop())
 
     def test_lock_preserves_concurrent_cards(self):
         from concurrent.futures import ThreadPoolExecutor
@@ -1214,3 +1204,524 @@ class ScopedEvidenceTests(EngineFixture):
         (self.repo / 'b').write_text('outside edit stales final evidence')
         with self.assertRaises(EngineError):
             self.engine.check_completion('main', self.lease)
+
+
+T0 = 1_800_000_000.0  # 2027-01-15T08:00:00Z; the injected clock never sleeps
+PASS_ARGV = [sys.executable, '-c', 'print("ok")']
+
+
+def iso(ts):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat()
+
+
+class AutonomyFixture(EngineFixture):
+    """Engine on an injected clock; nothing sleeps."""
+
+    def setUp(self):
+        super().setUp()
+        self.now = [T0]
+        self.state = self.root / 'state'
+        self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
+
+    def fresh(self, policy):
+        shutil.rmtree(self.state)
+        self.engine = Engine(self.state, self.repo, policy, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main')
+
+    def ledger(self, goal='ship the fixture', passes='3', stalls='2', deadline=None, checks=None, boundaries=None, extra=''):
+        checks = ['fixture: ' + shlex.join(PASS_ARGV)] if checks is None else checks
+        text = ['# Autonomy ledger', '', 'goal: ' + goal, 'max_passes: ' + passes, 'max_stalls: ' + stalls,
+                'deadline: ' + (deadline or iso(T0 + 3600)), '', '## Completion checks', '', *checks, '',
+                '## Approval boundaries', '', *(AUTONOMY_FIXED if boundaries is None else boundaries), extra]
+        (self.state / 'autonomy.md').write_text('\n'.join(text) + '\n')
+
+    def arm(self, **kw):
+        self.ledger(**kw)
+        return self.engine.arm_autonomy()
+
+    def auto(self):
+        return self.engine.status()['autonomy']
+
+    def accept_card(self, name):
+        self.task(name, role='investigator', mode='code')
+        token = self.engine.dispatch('main', self.lease, name, 'w-' + name)
+        self.engine.report('w-' + name, token, 'Inspected ' + name + '.')
+        self.engine.accept('main', self.lease, name)
+
+    def stops(self, n):
+        """n Stops, each preceded by a newly accepted card so the loop never stalls."""
+        for i in range(n):
+            self.accept_card('prog-%d-%d' % (len(self.engine.status()['tasks']), i))
+            self.assertIsInstance(self.engine.hook_stop(), str)
+
+
+class AutonomyArmTests(AutonomyFixture):
+    def test_arm_refuses_without_an_active_run(self):
+        fresh = Engine(self.root / 'other-state', self.repo)
+        with self.assertRaisesRegex(EngineError, 'run'):
+            fresh.arm_autonomy()
+        self.assertFalse((self.root / 'other-state' / 'state.json').exists())
+        self.engine.interrupt('main', self.lease)
+        self.ledger()
+        with self.assertRaisesRegex(EngineError, 'run'):
+            self.engine.arm_autonomy()
+
+    def test_missing_ledger_writes_the_template_and_refuses(self):
+        with self.assertRaisesRegex(EngineError, 'fill the ledger, then arm again') as raised:
+            self.engine.arm_autonomy()
+        self.assertIn(str(self.state / 'autonomy.md'), str(raised.exception))
+        text = (self.state / 'autonomy.md').read_text()
+        for line in AUTONOMY_FIXED:
+            self.assertIn(line, text)
+        self.assertIsNone(self.auto())
+        with self.assertRaisesRegex(EngineError, 'goal'):  # the template's own placeholders refuse
+            self.engine.arm_autonomy()
+
+    def test_placeholder_or_bad_field_refuses_and_names_the_field(self):
+        cases = [(dict(goal='<one line goal>'), 'goal'), (dict(passes='<integer>'), 'max_passes'),
+                 (dict(passes='0'), 'max_passes'), (dict(passes='21'), 'max_passes'), (dict(passes='two'), 'max_passes'),
+                 (dict(stalls='3'), 'max_stalls'), (dict(stalls='0'), 'max_stalls'),
+                 (dict(deadline='<ISO 8601 with UTC offset>'), 'deadline'), (dict(deadline='tomorrow'), 'deadline'),
+                 (dict(deadline='2027-01-16T00:00:00'), 'deadline'),  # no UTC offset
+                 (dict(deadline=iso(T0 - 1)), 'deadline'), (dict(deadline=iso(T0)), 'deadline'),
+                 (dict(checks=[]), 'Completion checks'), (dict(checks=['<NAME: argv...>']), 'Completion checks'),
+                 (dict(checks=['no colon here']), 'Completion checks'),
+                 (dict(checks=['a: true', 'a: true']), 'Completion checks')]
+        for kw, field in cases:
+            with self.subTest(kw=kw):
+                self.ledger(**kw)
+                with self.assertRaisesRegex(EngineError, field):
+                    self.engine.arm_autonomy()
+                self.assertIsNone(self.auto())
+
+    def test_missing_field_refuses(self):
+        self.ledger()
+        path = self.state / 'autonomy.md'
+        path.write_text(path.read_text().replace('goal: ship the fixture\n', ''))
+        with self.assertRaisesRegex(EngineError, 'goal'):
+            self.engine.arm_autonomy()
+
+    def test_each_fixed_boundary_line_is_required_and_added_lines_are_fine(self):
+        for line in AUTONOMY_FIXED:
+            with self.subTest(line=line):
+                self.ledger(boundaries=[l for l in AUTONOMY_FIXED if l != line])
+                with self.assertRaisesRegex(EngineError, 'Approval boundaries'):
+                    self.engine.arm_autonomy()
+        self.ledger(extra='- Never touch the billing module.')
+        self.assertTrue(self.engine.arm_autonomy()['active'])
+
+    def test_arm_snapshots_stores_fields_and_prints_preconditions(self):
+        receipt = self.arm(passes='5', stalls='1')
+        self.assertTrue(receipt['active'])
+        auto = self.auto()
+        self.assertEqual((auto['active'], auto['passes'], auto['stalls'], auto['max_passes'], auto['max_stalls']),
+                         (True, 0, 0, 5, 1))
+        self.assertEqual(auto['goal'], 'ship the fixture')
+        self.assertEqual(auto['deadline'], iso(T0 + 3600))
+        self.assertEqual(auto['checks'], [dict(name='fixture', argv=PASS_ARGV)])
+        self.assertTrue(Path(auto['ledger']['path']).is_file())
+        self.assertIn('permission_mode', receipt['preconditions'])
+        self.assertIn('keep-awake', receipt['preconditions']['keep_awake'])
+
+    def test_arm_again_resets_counters_and_clears_the_old_report(self):
+        self.arm(passes='1')
+        self.task('left-queued')
+        self.accept_card('c')
+        self.engine.hook_stop()
+        self.engine.hook_stop()
+        self.assertIsNotNone(self.engine.autonomy_report())
+        self.arm()
+        self.assertIsNone(self.engine.autonomy_report())
+        self.assertEqual((self.auto()['passes'], self.auto()['active']), (0, True))
+
+    def test_status_has_the_documented_keys_and_never_the_lease(self):
+        self.assertEqual(self.engine.autonomy_status(), dict(active=False, passes=None, max_passes=None, stalls=None,
+                         max_stalls=None, deadline=None, parked=[], last_stop_reason=None))
+        self.arm(passes='4')
+        self.task('p')
+        self.engine.park('main', self.lease, 'p', 'needs a push')
+        status = self.engine.autonomy_status()
+        self.assertEqual(set(status), {'active', 'passes', 'max_passes', 'stalls', 'max_stalls', 'deadline', 'parked', 'last_stop_reason'})
+        self.assertEqual((status['active'], status['max_passes'], status['parked']), (True, 4, [{'id': 'p', 'reason': 'needs a push'}]))
+        self.assertNotIn(self.lease, json.dumps(status))
+
+    def test_template_carries_the_fields_and_the_fixed_lines(self):
+        template = (Path(__file__).resolve().parents[1] / 'plugins/orchestra/config/autonomy-template.md').read_text()
+        for line in AUTONOMY_FIXED:
+            self.assertIn(line, template)
+        for field in ('goal:', 'max_passes:', 'max_stalls:', 'deadline:', '## Completion checks', '## Approval boundaries'):
+            self.assertIn(field, template)
+        self.assertEqual(len(AUTONOMY_FIXED), 6)
+
+
+class AutonomyLoopTests(AutonomyFixture):
+    def test_stop_continues_inside_the_bounds_and_counts_passes(self):
+        self.arm(passes='3')
+        self.task('x')
+        reason = self.engine.hook_stop()
+        self.assertIn('Autonomy pass 1 of 3', reason)
+        self.assertIn('park any card that reaches an approval boundary', reason)
+        self.assertEqual(self.auto()['passes'], 1)
+
+    def test_unarmed_and_inactive_stop_is_silent_and_writes_nothing(self):
+        self.task('x')
+        before = self.engine.state_path.read_bytes()
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(before, self.engine.state_path.read_bytes())
+
+    def test_pass_cap_continues_max_passes_times_then_stops(self):
+        self.arm(passes='1')
+        self.task('x')
+        self.assertIn('pass 1 of 1', self.engine.hook_stop())
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['active'], self.auto()['last_stop_reason']), (False, 'cap-passes'))
+        self.assertIsNone(self.engine.hook_stop())  # a stop is final for this arm
+        self.assertEqual(self.auto()['passes'], 1)
+
+    def test_stall_cap_stops_after_passes_without_a_newly_accepted_card(self):
+        self.arm(passes='9', stalls='2')
+        self.task('x')
+        self.assertIsNotNone(self.engine.hook_stop())  # the arming turn is not a pass: pass 1 starts
+        self.assertIsNotNone(self.engine.hook_stop())  # pass 1 stalled once
+        self.assertIsNone(self.engine.hook_stop())  # pass 2 stalled twice
+        self.assertEqual((self.auto()['last_stop_reason'], self.auto()['stalls']), ('cap-stalls', 2))
+
+    def test_a_newly_accepted_card_resets_the_stall_count(self):
+        self.arm(passes='9', stalls='2')
+        self.task('x')
+        self.engine.hook_stop()
+        self.engine.hook_stop()  # stalls 1
+        self.assertEqual(self.auto()['stalls'], 1)
+        self.accept_card('z')
+        self.assertIsNotNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['stalls'], self.auto()['active']), (0, True))
+
+    def test_deadline_stops(self):
+        self.arm(deadline=iso(T0 + 60))
+        self.task('x')
+        self.assertIsNotNone(self.engine.hook_stop())
+        self.now[0] = T0 + 60.5
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.auto()['last_stop_reason'], 'deadline')
+
+    def test_completion_stops_only_with_a_passed_intact_gate_on_the_current_artifact(self):
+        self.arm(passes='9')
+        self.task('x')
+        self.stops(1)  # no gate receipt yet
+        other = self.engine.run_gate('main', self.lease, 'fixture', [sys.executable, '-c', 'print("different")'])
+        self.assertTrue(other['passed'])
+        self.stops(1)  # same name, different argv
+        self.engine.run_gate('main', self.lease, 'unrelated', PASS_ARGV)
+        self.stops(1)  # same argv, different name
+        self.assertTrue(self.engine.run_gate('main', self.lease, 'fixture', PASS_ARGV)['passed'])
+        (self.repo / 'a').write_text('edited after the gate')
+        self.stops(1)  # stale: the artifact moved on
+        self.assertTrue(self.engine.run_gate('main', self.lease, 'fixture', PASS_ARGV)['passed'])
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.auto()['last_stop_reason'], 'complete')
+
+    def test_a_tampered_gate_log_is_not_completion(self):
+        self.arm(passes='9')
+        self.task('x')
+        receipt = self.engine.run_gate('main', self.lease, 'fixture', PASS_ARGV)
+        Path(receipt['path']).write_text('forged')
+        self.assertIsNotNone(self.engine.hook_stop())
+
+    def test_a_failed_gate_is_not_completion(self):
+        self.arm(passes='9', checks=['fixture: ' + shlex.join([sys.executable, '-c', 'raise SystemExit(3)'])])
+        self.task('x')
+        receipt = self.engine.run_gate('main', self.lease, 'fixture', [sys.executable, '-c', 'raise SystemExit(3)'])
+        self.assertFalse(receipt['passed'])
+        self.assertIsNotNone(self.engine.hook_stop())
+
+    def test_parked_only_stops(self):
+        self.arm(passes='9')
+        self.accept_card('done')
+        self.task('p')
+        self.engine.park('main', self.lease, 'p', 'needs a push')
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.auto()['last_stop_reason'], 'parked-only')
+
+    def test_a_card_blocked_behind_a_parked_dependency_is_parked_only(self):
+        self.arm(passes='9')
+        self.task('p')
+        self.task('dep', dependencies=['p'])
+        self.engine.park('main', self.lease, 'p', 'boundary')
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.auto()['last_stop_reason'], 'parked-only')
+
+    def test_no_ready_card_stops(self):
+        self.arm(passes='9')
+        self.accept_card('done')
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.auto()['last_stop_reason'], 'no-ready-card')
+
+    def test_running_and_reported_cards_keep_the_loop_going(self):
+        self.arm(passes='9')
+        self.task('x')
+        token = self.engine.dispatch('main', self.lease, 'x', 'w')
+        self.assertIsNotNone(self.engine.hook_stop())
+        self.engine.report('w', token, 'Inspected x.')
+        self.assertIsNotNone(self.engine.hook_stop())
+
+    def test_tampered_ledger_stops(self):
+        self.arm(passes='9')
+        self.task('x')
+        self.assertIsNotNone(self.engine.hook_stop())
+        with (self.state / 'autonomy.md').open('a') as out:
+            out.write('- Quietly allow pushes.\n')
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['last_stop_reason'], self.auto()['active']), ('ledger-tampered', False))
+
+    def test_a_deleted_snapshot_stops_as_tampered(self):
+        self.arm(passes='9')
+        self.task('x')
+        Path(self.auto()['ledger']['path']).unlink()
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.auto()['last_stop_reason'], 'ledger-tampered')
+
+
+class AutonomyParkTests(AutonomyFixture):
+    def test_park_drops_assignment_reservation_and_capacity(self):
+        self.task('a1', files=['shared'])
+        self.task('a2', files=['shared'])
+        self.task('dep', dependencies=['a1'])
+        token = self.engine.dispatch('main', self.lease, 'a1', 'w1')
+        self.assertEqual(self.engine.ready('main', self.lease), [])  # a2 collides with the running a1
+        self.engine.park('main', self.lease, 'a1', 'needs a push')
+        card = self.engine.status()['tasks']['a1']
+        self.assertEqual((card['state'], card['parked_reason']), ('parked', 'needs a push'))
+        for key in ('assignment', 'worker', 'inline', 'report'):
+            self.assertNotIn(key, card)
+        self.assertEqual(self.engine.ready('main', self.lease), ['a2'])  # reservation released, dep still blocked
+        with self.assertRaises(EngineError):
+            self.engine.report('w1', token, 'late report')
+        self.engine.dispatch('main', self.lease, 'a2', 'w1')  # the worker name is free again
+
+    def test_park_a_reported_card_and_unpark_returns_it_to_the_queue(self):
+        self.task('a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'w')
+        self.engine.report('w', token, 'Inspected a.')
+        self.engine.park('main', self.lease, 'a', 'boundary')
+        self.assertNotIn('report', self.engine.status()['tasks']['a'])
+        self.engine.unpark('main', self.lease, 'a')
+        card = self.engine.status()['tasks']['a']
+        self.assertEqual(card['state'], 'queued')
+        self.assertNotIn('parked_reason', card)
+        self.assertEqual(self.engine.ready('main', self.lease), ['a'])
+
+    def test_park_and_unpark_validate(self):
+        self.task('a')
+        self.accept_card('done')
+        for args in [('done', 'why'), ('nope', 'why'), ('a', ''), ('a', '   ')]:
+            with self.subTest(args=args), self.assertRaises(EngineError):
+                self.engine.park('main', self.lease, *args)
+        with self.assertRaises(EngineError):
+            self.engine.park('main', 'wrong-lease', 'a', 'why')
+        with self.assertRaises(EngineError):
+            self.engine.unpark('main', self.lease, 'a')  # not parked
+        self.engine.park('main', self.lease, 'a', 'why')
+        with self.assertRaises(EngineError):
+            self.engine.park('main', self.lease, 'a', 'again')
+        with self.assertRaises(EngineError):
+            self.engine.unpark('main', 'wrong-lease', 'a')
+
+    def test_a_card_under_repair_cannot_be_parked(self):
+        self.task('a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'w')
+        self.engine.report('w', token, 'Implemented a.')
+        report = self.root / 'r.json'
+        self.review(report, tasks=['a'], findings=['bug'])
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a'], findings=['bug'])
+        self.task('fix', mode='repair', files=['fix'], repair_of='a')
+        with self.assertRaises(EngineError):
+            self.engine.park('main', self.lease, 'a', 'why')
+
+    def test_parked_cards_block_finish(self):
+        self.task('a', role='investigator', mode='code')
+        self.engine.park('main', self.lease, 'a', 'why')
+        with self.assertRaisesRegex(EngineError, 'accepted'):
+            self.engine.close_session('main', self.lease)
+        self.assertTrue(self.engine.status()['session']['active'])
+
+
+class AutonomyBoundaryTests(AutonomyFixture):
+    def setUp(self):
+        super().setUp()
+        self.fresh(dict(release=dict(enabled=True, authorization='user request', remote='devops', target='main',
+                                     argv=['git', 'push', 'devops', 'HEAD:main'])))
+
+    def test_permit_and_release_refuse_while_autonomy_is_active(self):
+        self.arm()
+        self.assertTrue(self.engine.autonomy_active())
+        with self.assertRaisesRegex(EngineError, 'autonomy'):
+            self.engine.release_permit('main', self.lease, 'devops', 'main')
+        with self.assertRaisesRegex(EngineError, 'autonomy'):
+            self.engine.check_release('devops', 'main', argv=['git', 'push', 'devops', 'HEAD:main'])
+        self.engine.disarm_autonomy()
+        self.assertFalse(self.engine.autonomy_active())
+        with self.assertRaises(EngineError) as raised:  # now the ordinary evidence refusal
+            self.engine.release_permit('main', self.lease, 'devops', 'main')
+        self.assertNotIn('autonomy', str(raised.exception))
+
+    def test_autonomy_active_needs_an_active_session(self):
+        self.arm()
+        self.engine.interrupt('main', self.lease)
+        self.assertFalse(self.engine.autonomy_active())
+
+    def test_interrupt_finish_and_session_end_clear_autonomy(self):
+        self.arm()
+        self.engine.interrupt('main', self.lease)
+        self.assertIsNone(self.auto())
+        self.engine.open_session('main', harness_session='S')
+        self.arm()
+        self.engine.end_harness_session('S')
+        self.assertIsNone(self.auto())
+        self.engine.open_session('main')
+        self.arm()
+        self.engine.interrupt_active()
+        self.assertIsNone(self.auto())
+
+
+class AutonomyReportTests(AutonomyFixture):
+    def test_stop_writes_the_morning_report_with_accepted_parked_and_failures(self):
+        self.engine.run_gate('main', self.lease, 'old-failure', [sys.executable, '-c', 'raise SystemExit(4)'])
+        self.arm(passes='1')
+        self.accept_card('done')
+        self.task('p')
+        self.engine.park('main', self.lease, 'p', 'needs a push')
+        self.task('b')
+        token = self.engine.dispatch('main', self.lease, 'b', 'wb')
+        self.engine.report('wb', token, 'Implemented b.')
+        report = self.root / 'r.json'
+        self.review(report, reviewer='rev-1', tasks=['b'], findings=['off by one'])
+        self.engine.record_review('main', self.lease, 'rev-1', report, ['correctness'], ['b'], findings=['off by one'])
+        self.assertFalse(self.engine.run_gate('main', self.lease, 'unit', [sys.executable, '-c', 'raise SystemExit(3)'])['passed'])
+        self.assertIsNotNone(self.engine.hook_stop())
+        self.assertIsNone(self.engine.hook_stop())
+        progress = (self.state / 'progress.md').read_text()
+        self.assertIn('## Autonomy report 2027-01-15T08:00:00', progress)
+        for fragment in ('cap-passes', 'passes: 1 of 1', 'done (investigator/code)', 'p: needs a push',
+                         'unit', 'exit 3', 'BLOCKED', 'rev-1', 'off by one'):
+            self.assertIn(fragment, progress)
+        self.assertNotIn('old-failure', progress)  # failures recorded before arm are not this run's
+        stored = self.engine.autonomy_report()
+        self.assertEqual(stored['reason'], 'cap-passes')
+        self.assertEqual(stored['text'], progress.strip())
+        self.assertEqual(stored['path'], str(self.engine.state_dir / 'progress.md'))
+
+    def test_report_appends_and_keeps_earlier_progress_lines(self):
+        (self.state / 'progress.md').write_text('# Plan X\nearlier line\n')
+        self.arm(passes='1')
+        self.task('left-queued')
+        self.accept_card('done')
+        self.engine.hook_stop()
+        self.engine.hook_stop()
+        text = (self.state / 'progress.md').read_text()
+        self.assertTrue(text.startswith('# Plan X\nearlier line\n'))
+        self.assertEqual(text.count('## Autonomy report'), 1)
+
+    def test_disarm_records_the_reason_writes_the_report_and_clears_the_shown_one(self):
+        self.arm(passes='1')
+        self.task('left-queued')
+        self.accept_card('done')
+        self.engine.hook_stop()
+        self.engine.hook_stop()  # the cap-passes report is now shown
+        self.assertIsNotNone(self.engine.autonomy_report())
+        self.assertFalse(self.engine.disarm_autonomy()['was_active'])
+        self.assertIsNone(self.engine.autonomy_report())
+        self.assertEqual(self.engine.autonomy_status()['last_stop_reason'], 'cap-passes')
+        self.assertEqual((self.state / 'progress.md').read_text().count('## Autonomy report'), 1)
+        self.arm()
+        result = self.engine.disarm_autonomy()
+        self.assertTrue(result['was_active'])
+        self.assertIn('disarmed', result['text'])
+        self.assertEqual((self.engine.autonomy_status()['active'], self.engine.autonomy_status()['last_stop_reason']), (False, 'disarmed'))
+        self.assertEqual((self.state / 'progress.md').read_text().count('## Autonomy report'), 2)
+        self.assertIsNone(self.engine.autonomy_report())
+
+    def test_disarm_is_safe_at_any_time(self):
+        fresh = Engine(self.root / 'fresh-state', self.repo)
+        self.assertFalse(fresh.disarm_autonomy()['was_active'])
+        self.assertFalse((self.root / 'fresh-state' / 'state.json').exists())
+        before = self.engine.state_path.read_bytes()
+        self.assertFalse(self.engine.disarm_autonomy()['was_active'])
+        self.assertEqual(before, self.engine.state_path.read_bytes())
+        self.assertFalse((self.state / 'progress.md').exists())
+
+    def test_report_survives_interrupt_until_the_next_arm(self):
+        self.arm(passes='1')
+        self.task('left-queued')
+        self.accept_card('done')
+        self.engine.hook_stop()
+        self.engine.hook_stop()
+        self.engine.interrupt('main', self.lease)
+        self.assertEqual(self.engine.autonomy_report()['reason'], 'cap-passes')
+        self.assertFalse(self.engine.autonomy_active())
+        self.assertFalse(self.engine.autonomy_status()['active'])
+
+    def test_a_malformed_autonomy_state_is_rejected(self):
+        state = json.loads(self.engine.state_path.read_text())
+        state['autonomy'] = {'active': 'yes'}
+        self.engine.state_path.write_text(json.dumps(state))
+        with self.assertRaises(EngineError):
+            self.engine.status()
+
+
+class AutonomyPreconditionsTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / 'home'
+        self.repo = Path(self.tmp.name) / 'repo'
+        for d in (self.home / '.claude', self.repo / '.claude', self.home / '.codex'):
+            d.mkdir(parents=True)
+
+    def report(self):
+        return autonomy_preconditions(self.repo, home=self.home)
+
+    def write(self, where, mode):
+        path = {'user': self.home / '.claude/settings.json', 'project': self.repo / '.claude/settings.json',
+                'local': self.repo / '.claude/settings.local.json'}[where]
+        path.write_text(json.dumps({'permissions': {'defaultMode': mode}}))
+
+    def test_unknown_when_no_settings_name_a_mode(self):
+        out = self.report()
+        self.assertTrue(out['permission_mode'].startswith('unknown'))
+        self.assertIn('warning', out['permission_mode'].lower())
+        self.assertIn('keep-awake', out['keep_awake'])
+
+    def test_local_beats_project_beats_user(self):
+        self.write('user', 'default')
+        self.assertIn('default', self.report()['permission_mode'])
+        self.write('project', 'acceptEdits')
+        self.assertIn('acceptEdits', self.report()['permission_mode'])
+        self.write('local', 'bypassPermissions')
+        out = self.report()['permission_mode']
+        self.assertIn('bypassPermissions', out)
+        self.assertNotIn('warning', out.lower())
+
+    def test_a_prompting_mode_warns_and_a_skipping_mode_does_not(self):
+        self.write('user', 'default')
+        self.assertIn('warning', self.report()['permission_mode'].lower())
+        self.write('user', 'bypassPermissions')
+        self.assertNotIn('warning', self.report()['permission_mode'].lower())
+
+    def test_unreadable_settings_are_skipped_and_nothing_is_written(self):
+        (self.repo / '.claude/settings.local.json').write_text('{not json')
+        self.write('user', 'bypassPermissions')
+        before = sorted(p.name for p in self.repo.rglob('*'))
+        self.assertIn('bypassPermissions', self.report()['permission_mode'])
+        self.assertEqual(before, sorted(p.name for p in self.repo.rglob('*')))
+
+    def test_codex_approval_policy(self):
+        config = self.home / '.codex/config.toml'
+        self.assertTrue(self.report()['codex_approval_policy'].startswith('unknown'))
+        config.write_text('approval_policy = "on-request"\n')
+        self.assertIn('on-request', self.report()['codex_approval_policy'])
+        self.assertIn('warning', self.report()['codex_approval_policy'].lower())
+        config.write_text('approval_policy = "never"\n')
+        self.assertNotIn('warning', self.report()['codex_approval_policy'].lower())
+        config.write_text('not = = toml')
+        self.assertTrue(self.report()['codex_approval_policy'].startswith('unknown'))
