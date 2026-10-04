@@ -3086,6 +3086,92 @@
     "command": "$(echo ls)"
    },
    "class": "allow"
+  },
+  {
+   "id": "inline-r7-1",
+   "input": {
+    "command": "echo `gh pr merge 1`"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "inline-r7-2",
+   "input": {
+    "command": "echo `git push origin main`"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "inline-r7-3",
+   "input": {
+    "command": "echo `rm -rf ~/x`"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r7-4",
+   "input": {
+    "command": "echo `git branch -d foo`"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r7-5",
+   "input": {
+    "command": "x=`gh pr merge 1`"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r7-6",
+   "input": {
+    "command": "echo `echo \\`git reset --hard\\``"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r7-7",
+   "input": {
+    "command": "x=`echo \\`git reset --hard\\``"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r7-8",
+   "input": {
+    "command": "echo \"`echo \\`git reset --hard\\``\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r7-9",
+   "input": {
+    "command": "echo \\`git reset --hard\\` "
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r7-10",
+   "input": {
+    "command": "echo `date`"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r7-11",
+   "input": {
+    "command": "echo 'a `b` c'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r7-12",
+   "input": {
+    "command": "echo `echo `echo hi``"
+   },
+   "class": "allow"
   }
  ]
 }
