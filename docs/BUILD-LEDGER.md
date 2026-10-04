@@ -59,5 +59,5 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | B2-r5 | builder | $SCRATCH/wt/B2-r5 | 4906d2e (fd1cc97) | 33 corpus cases appended (21 red then green), no flips; full suite 254 OK; probe 14 flips all target shapes; command-position $(...) gap ruled O23 | REPORTED; R2f pending |
 | B5-r1 | builder-repair | $SCRATCH/wt/B5-r1 | 2847337 (73fc92b) + 296f8f3 fixtures resync | plugin test 50/50 after resync incl. corpus parity (logs/feat-parity-post-r5wave.log) | REPORTED; R5b pending |
 | SC-r3 | builder | $SCRATCH/wt/SC-r3 | e3faa83 (b625777) | skills + --check 0; full suite 254 OK | REPORTED; SC4 pending |
-| B9-r2 | builder-repair | $SCRATCH/wt/B9-r2 | from 4799a0e | O22 | RUNNING |
-| B2-r6 | builder | $SCRATCH/wt/B2-r6 | from 4799a0e | O23 Python + TypeScript | RUNNING |
+| B9-r2 | builder-repair | $SCRATCH/wt/B9-r2 | from 193858d | O22 | RUNNING |
+| B2-r6 | builder | $SCRATCH/wt/B2-r6 | from 193858d | O23 Python + TypeScript | RUNNING |
