@@ -5111,6 +5111,118 @@
     "command": "cat <<'EOF'\n$(gh pr merge 1)\nEOF"
    },
    "class": "allow"
+  },
+  {
+   "id": "guard-fx4-1",
+   "input": {
+    "command": "sudo -u $(whoami) $(echo) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-2",
+   "input": {
+    "command": "env -u $(echo X) $(echo) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-3",
+   "input": {
+    "command": "nice -n $(echo 1) $(echo) git branch -D x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-4",
+   "input": {
+    "command": "timeout $(echo 5) $(echo) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-5",
+   "input": {
+    "command": "xargs -I $(echo {}) $(echo) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-6",
+   "input": {
+    "command": "sudo -u $(whoami) $(true) $(true) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-7",
+   "input": {
+    "command": "sudo -u $(whoami) $(echo) git push --force origin main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-8",
+   "input": {
+    "command": "sudo -u $(whoami) $(echo) gh pr merge 1"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-fx4-9",
+   "input": {
+    "command": "sudo -u $(whoami) $(echo) git push origin main"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-fx4-10",
+   "input": {
+    "command": "sudo $(echo) -u $(whoami) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-11",
+   "input": {
+    "command": "sudo -u $(a) -g $(b) $(c) git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-fx4-12",
+   "input": {
+    "command": "sudo -u $(whoami) $(echo) ls"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-fx4-13",
+   "input": {
+    "command": "nice -n $(echo 1) $(echo) make"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-fx4-14",
+   "input": {
+    "command": "timeout $(echo 5) $(echo) npm test"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-fx4-15",
+   "input": {
+    "command": "env -u $(echo X) $(echo) git status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-fx4-16",
+   "input": {
+    "command": "git commit -m \"$(cat msg)\""
+   },
+   "class": "allow"
   }
  ]
 }

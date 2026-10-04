@@ -1636,6 +1636,7 @@ def _heredoc_items(docs, pipelines, depth):
 
 
 _FOLD_LEVELS = 16  # Substitution nesting levels folded (O33); a substitution nested deeper denies (O34).
+_SUFFIX_CAP = 32  # Command readings after pure-substitution words in one segment (FX4); more denies.
 _RANK = {'deny': 4, 'release-multi': 3, 'release': 2, 'boundary': 1}
 
 
@@ -1735,6 +1736,15 @@ def classify_command(command: str, _depth=0) -> Decision:
                 if any(PurePosixPath(word).name in _WRAPPER_VALUES for word in full[:pure.index(True)]):
                     # After a wrapper it may also fill an option value and the next slot (two words).
                     readings.append(_unwrap([twin for word, sub in zip(full, pure) for twin in [word] * (1 + sub)]))
+                    # Or fill an option value while a later one expands to nothing (FX4): the words after
+                    # each pure-substitution word are also read as the command. A suffix that starts with
+                    # another pure substitution or an option names no new command; past the cap it denies.
+                    heads = [k for k, sub in enumerate(pure[:-1]) if sub and not pure[k + 1] and full[k + 1][:1] != '-']
+                    if len(heads) > _SUFFIX_CAP:
+                        raise ValueError('Too many substitution words')
+                    for k in heads:
+                        rest = _unwrap(full[k + 1:])
+                        readings.append(_removed_reading(full[k + 1:], kept[k + 1:], rest) if any(pure[k + 1:]) else rest)
             decision = None
             for words in readings:
                 if not words:
