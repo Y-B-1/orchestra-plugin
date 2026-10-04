@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 from pathlib import Path
 import sys
 import tempfile
@@ -129,12 +130,49 @@ class NativeTests(unittest.TestCase):
         self.assertFalse((PLUGIN / 'hooks/hooks.json').exists())
         self.assertNotIn('hooks', root)
         compat = json.loads((PLUGIN / '.codex-plugin/plugin.json').read_text())
-        self.assertEqual({root['version'], claude['version'], compat['version']}, {'1.0.1'})
         for path in [ROOT/'.agents/plugins/marketplace.json', ROOT/'.claude-plugin/marketplace.json']:
             source = json.loads(path.read_text())['plugins'][0]['source']
             relative = source['path'] if isinstance(source, dict) else source
             expected = ROOT/'plugins/orchestra-codex' if '.agents/' in str(path) else PLUGIN
             self.assertEqual((ROOT/relative).resolve(), expected.resolve())
+
+    def test_five_manifest_versions_are_equal(self):
+        versions = {
+            name: json.loads((ROOT / name).read_text())['version']
+            for name in [
+                'plugins/orchestra/plugin.json',
+                'plugins/orchestra/.claude-plugin/plugin.json',
+                'plugins/orchestra/.codex-plugin/plugin.json',
+                'plugins/orchestra-codex/.codex-plugin/plugin.json',
+            ]
+        }
+        market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
+        versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
+        self.assertEqual(len(set(versions.values())), 1, versions)
+
+    def test_mod_files_exist_and_are_excluded_from_codex_package(self):
+        claude = json.loads((PLUGIN / '.claude-plugin/plugin.json').read_text())
+        self.assertEqual(claude['hooks'], ['./hooks/claude.json', './hooks/mods.json'])
+        self.assertEqual(claude['types'], './types/index.d.ts')
+        self.assertEqual(json.loads((PLUGIN / 'hooks/mods.json').read_text()), {'modules': ['./mod/orchestra.ts']})
+        for name in ['hooks/mod/orchestra.ts', 'hooks/mod/marker.ts', 'types/index.d.ts']:
+            self.assertTrue((PLUGIN / name).is_file(), name)
+        package = generate.codex_package()
+        leaked = [n for n in package if n == 'hooks/mods.json' or n.startswith(('hooks/mod/', 'types/'))]
+        self.assertEqual(leaked, [])
+        self.assertIn('hooks/codex.json', package)
+        for name in ['hooks/mods.json', 'hooks/mod', 'types']:
+            self.assertFalse((ROOT / 'plugins/orchestra-codex' / name).exists(), name)
+
+    def test_host_written_tsconfig_is_ignored_by_codex_package(self):
+        # Claude Code writes plugins/orchestra/tsconfig.json when it loads a plugin with `types`.
+        with tempfile.TemporaryDirectory() as temp:
+            copy = Path(temp) / 'orchestra'
+            shutil.copytree(PLUGIN, copy, ignore=shutil.ignore_patterns('__pycache__'))
+            (copy / 'tsconfig.json').write_text('{"extends": "./.claude-plugin/types/tsconfig.json"}\n')
+            self.assertNotIn('tsconfig.json', generate.codex_package(root=copy))
+        ignored = (ROOT / '.gitignore').read_text().splitlines()
+        self.assertIn('plugins/orchestra/tsconfig.json', ignored)
 
 
 if __name__ == '__main__':

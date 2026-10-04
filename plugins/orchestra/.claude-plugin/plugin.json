@@ -1,13 +1,17 @@
 {
   "name": "orchestra",
-  "version": "1.0.1",
+  "version": "2.0.0",
   "description": "Coordinate independent coding agents with explicit ownership, evidence and release checks.",
   "author": {
     "name": "Orchestra contributors"
   },
   "repository": "https://github.com/Y-B-1/orchestra-plugin",
   "license": "MIT",
-  "hooks": "./hooks/claude.json",
+  "hooks": [
+    "./hooks/claude.json",
+    "./hooks/mods.json"
+  ],
+  "types": "./types/index.d.ts",
   "settings": {
     "agent": "orchestra:orchestrator"
   }

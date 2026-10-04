@@ -59,7 +59,8 @@ def codex_package(root=ROOT, profiles=None):
             continue
         if ('__pycache__' in path.parts or path.name == '.DS_Store' or
             relative == 'plugin.json' or relative.startswith(('agents/', '.claude-plugin/')) or
-            relative in {'hooks/claude.json', 'scripts/generate.py'}):
+            relative in {'hooks/claude.json', 'hooks/mods.json', 'scripts/generate.py', 'tsconfig.json'} or
+            relative.startswith(('hooks/mod/', 'types/'))):
             continue
         output[relative] = profiles[relative].encode() if relative in profiles else path.read_bytes()
     return output
