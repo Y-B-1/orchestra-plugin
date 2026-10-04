@@ -1,5 +1,7 @@
 # Build plan
 
+This file is kept as 1.0 history. The 2.0.0 build plan is [docs/PLAN-v2.md](docs/PLAN-v2.md).
+
 | Ticket | Owner | Paths | Done contract |
 | --- | --- | --- | --- |
 | T1 strict engine | engine worker | scripts/orchestra_core/engine.py, tests/test_engine.py | State, artifacts, cards, ownership, reviews, gates, lifecycle rejection tests pass |

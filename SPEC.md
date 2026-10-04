@@ -1,5 +1,7 @@
 # Orchestra 1.0 specification
 
+This file is kept as 1.0 history. The 2.0.0 specification is [docs/SPEC-v2.md](docs/SPEC-v2.md).
+
 ## Approved outcome
 
 One installable plugin source for Codex and Claude Code, with a reusable core for other harnesses. An enabled, trusted plugin gives the main session the coordinator contract. Opening a session injects context only: no repository repair, automatic resume or unrequested autonomous loop.
