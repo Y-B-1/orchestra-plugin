@@ -556,7 +556,7 @@ Acceptance: each rule of E1 to E7 appears in exactly one skill file (orchestrato
 ### 10.2 API presence check (replaces the version floor)
 
 - There is no version floor and no `$.session.version()` call.
-- At `session.start`, before writing any marker, the mod checks that each `$` API it uses for the guard exists and is a function: `$.session.id`, `$.clock.every`, `$.fs.read`, `$.fs.write`, `$.process.run`. If any is missing, the mod writes no marker and installs no guard; the Python guard covers the session.
+- At `session.start`, before writing any marker, the mod checks that each `$` API it uses for the guard exists and is a function: `$.session.id`, `$.clock.every`, `$.clock.now`, `$.env.get`, `$.fs.read`, `$.fs.write`, `$.process.run`. If any is missing, the mod writes no marker and installs no guard; the Python guard covers the session.
 - UI APIs (`$.ui.open`, `$.ui.toast`, the status band) are checked separately. If one is missing, only that UI feature is skipped.
 - A build whose API drifted so far that the module fails validation at load also leaves no marker, so Python covers the session (the safe direction).
 - UNVERIFIED: whether the module validator accepts a `typeof` presence check. B1 proves it. If it does not, B1 drops the explicit check and relies on load-time validation, which has the same safe outcome; this is a technical fallback, not a design change.
@@ -565,8 +565,17 @@ Acceptance: each rule of E1 to E7 appears in exactly one skill file (orchestrato
 ### 10.3 In-process guard and the double-fire contract
 
 - At `session.start` the mod reads `${$.plugin.root}/config/guard-rules.json` with `$.fs.read` and computes `rules_sha256`. It writes the liveness marker `${XDG_STATE_HOME:-$HOME/.local/state}/orchestra/mods/<session_id>.json` containing `{session_id, heartbeat_ms, plugin_version, rules_sha256}`.
-- A `$.clock.every` tick of 5 s re-reads `$.session.id()` each time and refreshes the marker for the current id. If the id changed since the last tick, the mod writes the new id's marker and sets the old one's `heartbeat_ms` to 0.
-- `session.end` only retires the heartbeat: it stops the tick and overwrites the marker with `heartbeat_ms: 0`, which the Python check treats as stale. It does not touch the lease (O2).
+- Marker lifecycle. One tick runs per process, and every marker write goes through one serial write queue, so writes land in the order they were queued.
+  - Each queued job catches its own error, so a failed write never skips a later job.
+  - A fresh-write job checks the retired set inside the job, immediately before `$.fs.write`, after every `await` that builds its payload. The check at queue time is not enough.
+  - `session.start` cancels any running tick before it starts a new `$.clock.every` tick of 5 s. It removes the current id from the retired set and seeds the tick's last-seen id with it. A tick with no last-seen id queues no zero write. The declaration says `session.start` can fire again in one process (an enable, a worker respawn or a reload).
+  - Each tick re-reads `$.session.id()`. If the id differs from the id the tick saw last, the tick queues `heartbeat_ms: 0` for the old id, removes the new id from the retired set, and remembers the new id. It then queues a fresh write for the current id unless that id is in the retired set. The retired-set check applies to fresh writes only; zero writes always run.
+  - `session.end` adds `e.sessionId` to the retired set, queues `heartbeat_ms: 0` for it, and awaits that job within `next.budget`, so the zero write lands before the process exits. Because the queue is serial, a fresh write already queued by an in-flight tick lands before the zero write, never after it. It does not touch the lease (O2).
+  - On `e.reason` `clear`, the process continues under a new id and no `session.start` fires for it (declaration of `SessionEndInput`). The tick keeps running, and its next fire writes the marker for the new id. UNVERIFIED for `resume`: the declaration says only that the process continues under another id. The mod treats `resume` like `clear`; if `session.start` does fire, it cancels the old tick first, so no two ticks run. B5 records the observed behavior live.
+  - On `prompt_input_exit`, `logout` and `other`, `session.end` also cancels the tick.
+  - A resumed id that was retired earlier gets fresh markers again: the id change removes it from the retired set.
+- The tick callback catches its own errors. A failed tick writes no fresh marker, so the marker goes stale and Python guards in full. The heartbeat time comes from `$.clock.now()`, so `claude plugin test` can control it.
+- If neither `XDG_STATE_HOME` nor `HOME` is set, the mod writes no marker and installs no guard.
 - `on('tool.call', {tool: 'Bash'|'Edit'|'Write'|'MultiEdit'})` classifies the input with a TypeScript port of the shared rules:
   - `deny` returns `{deny: reason}`;
   - `allow` calls `next(e)`;
