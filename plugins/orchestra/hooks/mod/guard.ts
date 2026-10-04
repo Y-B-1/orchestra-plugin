@@ -321,6 +321,9 @@ const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=[^\n]*$/;
 
 type Doc = [string, boolean];
 
+const WORD_START = ' \t\n;&|()<>'; // A `#` right after one of these (or at the start) begins a comment.
+const COMMENT_BLANK = /['"\\]/g;
+
 function stripHeredocs(command: string): [string, Doc[]] {
   const out: string[] = [];
   const docs: Doc[] = [];
@@ -339,6 +342,14 @@ function stripHeredocs(command: string): [string, Doc[]] {
       if (char === q) q = null;
     } else if (char === '"' || char === "'") {
       q = char;
+    } else if (char === '#' && (i === 0 || WORD_START.includes(command[i - 1]!))) {
+      // SPEC A5 (O27): a comment runs to the newline. Its quotes and backslashes are literal, so they
+      // are blanked: no later scanner can read them as opening a quote or escaping the newline.
+      const found = command.indexOf('\n', i);
+      const end = found < 0 ? n : found;
+      out.push(command.slice(i, end).replace(COMMENT_BLANK, ' '));
+      i = end;
+      continue;
     } else if (char === '<' && command.startsWith('<<', i) && !command.startsWith('<<<', i) && (i === 0 || command[i - 1] !== '<')) {
       HEREDOC_RE.lastIndex = i;
       const match = HEREDOC_RE.exec(command);
@@ -1016,7 +1027,7 @@ function isArithmetic(text: string, i: number): boolean {
   return inner < 0 || text.slice(inner, inner + 1) === ')';
 }
 
-function rawSubstitutions(text: string, ticks: [boolean, number][] | null = null): [string[], boolean] {
+function rawSubstitutions(text: string, ticks: [boolean, number, boolean][] | null = null): [string[], boolean] {
   const found: string[] = [];
   let closed = true;
   let i = 0;
@@ -1024,7 +1035,7 @@ function rawSubstitutions(text: string, ticks: [boolean, number][] | null = null
   let inQuote = false;
 
   const command = (at: number): number => {
-    if (ticks !== null) ticks.push([text[at] === '`', at]);
+    if (ticks !== null) ticks.push([text[at] === '`', at, inQuote]);
     if (text[at] === '`') {
       let j = at + 1;
       while (j < n && text[j] !== '`') j += text[j] === '\\' ? 2 : 1;
@@ -1184,30 +1195,164 @@ function tickToDollar(text: string): string {
   return out.join('');
 }
 
+const ASSIGN_PREFIX_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=/;
+const SKIP_WORDS = 32; // Words of one segment kept to find its command name; a longer all-skip prefix counts as command position.
+
 /**
- * True when the text before a substitution leaves it at command position: after a separator or group
- * opener, with only reserved words and `NAME=value` assignments since (SPEC A5, O20, O23).
+ * True when a leading word is skipped before the command name (SPEC A5): reserved words, `time`,
+ * `function`/`coproc` headers, `case`, redirects, assignments and the wrappers table.
  */
-function atCommandPosition(before: string): boolean {
-  let tail = before;
-  for (let k = before.length - 1; k >= 0; k--) {
-    if (';&|({\n'.includes(before[k]!)) {
-      tail = before.slice(k + 1);
-      break;
-    }
-  }
+function skips(word: string): boolean {
+  return word === 'function' || !unwrap([word]).length;
+}
+
+type CommandGroup = ['proc' | 'group', string[], boolean, boolean];
+
+/**
+ * SPEC A5 (O20, O23, O28): for each index in ats (ascending, each the start of a substitution), true when
+ * the substitution is at command position: after a separator or group opener, with only the words the
+ * command-name rule skips since (see skips; wrapper options and values included). One forward,
+ * quote-aware pass: separators inside quotes or after a backslash do not count, and a literal `{` or `)`
+ * argument is not a separator. A case pattern is not a command position; the body of a case arm is.
+ */
+function commandPositions(text: string, ats: number[]): boolean[] {
+  const result: boolean[] = [];
+  const limit = ats.length;
+  const n = text.length;
+  let seg: string[] = [];
+  let settled = false; // Whether the segment's command name came.
+  let overflow = false; // Too many words.
+  const stack: CommandGroup[] = []; // Open `(` groups.
+  const cases: string[] = []; // Open `case` states ('head', 'pattern', 'body').
+  let t = 0;
   let i = 0;
-  while (i < tail.length) {
-    if (tail[i] === ' ' || tail[i] === '\t') {
-      i++;
+
+  const here = (): boolean => {
+    if (cases.length && cases[cases.length - 1] !== 'body') return false;
+    if (settled) return false;
+    if (overflow) return true;
+    try {
+      return !unwrap(seg.slice()).length;
+    } catch (e) {
+      if (e instanceof ValueError) return false;
+      throw e;
+    }
+  };
+
+  const word = (bare: string): void => {
+    const atCommand = here();
+    if (bare === 'case' && atCommand) cases.push('head');
+    else if (bare === 'in' && cases.length && cases[cases.length - 1] === 'head') cases[cases.length - 1] = 'pattern';
+    else if (bare === 'esac' && cases.length && ['body', 'pattern'].includes(cases[cases.length - 1]!) && !seg.length && !settled) cases.pop();
+    if (settled || overflow) return;
+    if (!seg.length && !skips(bare)) settled = true;
+    else if (seg.length < SKIP_WORDS) seg.push(bare);
+    else overflow = true;
+  };
+
+  const reset = (): void => {
+    seg = [];
+    settled = false;
+    overflow = false;
+  };
+
+  while (i < n && t < limit) {
+    const char = text[i]!;
+    if (char === ' ' || char === '\t') {
+      i += 1;
       continue;
     }
-    const end = Math.max(readWord(tail, i), i + 1);
-    const word = tail.slice(i, end);
-    if (!RESERVED.has(word) && !/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(word)) return false;
+    let token = 'word';
+    let end = i + 1;
+    if (char === '#' && (i === 0 || WORD_START.includes(text[i - 1]!))) {
+      const found = text.indexOf('\n', i);
+      end = found < 0 ? n : found;
+      token = 'comment';
+    } else if (char === '\n') {
+      token = 'sep';
+    } else if (char === ';') {
+      token = 'sep';
+      if (text.startsWith(';;&', i)) end = i + 3;
+      else if (text.slice(i, i + 2) === ';;' || text.slice(i, i + 2) === ';&') end = i + 2;
+      if (cases.length && cases[cases.length - 1] === 'body' && end > i + 1) cases[cases.length - 1] = 'pattern';
+    } else if (char === '|') {
+      token = 'pipe';
+    } else if (char === '&' && text.slice(i + 1, i + 2) !== '>') {
+      token = 'sep';
+    } else if ((char === '<' || char === '>') && text.startsWith('(', i + 1)) {
+      token = 'skip'; // `<(` or `>(`: the `(` after it opens the process substitution.
+    } else if (char === '<' || char === '>' || char === '&') {
+      while (end < n && (text[end] === '<' || text[end] === '>')) end += 1;
+      if ((text.slice(end, end + 1) === '&' && '<>'.includes(text[end - 1]!)) || (text.slice(end, end + 1) === '|' && text[end - 1] === '>')) end += 1;
+      token = 'redirect';
+    } else if (char === '(') {
+      token = 'open';
+    } else if (char === ')') {
+      token = 'close';
+    } else {
+      end = Math.max(readWord(text, i), i + 1);
+      const after = text.slice(end, end + 2);
+      if (isDigit(text.slice(i, end)) && (text.slice(end, end + 1) === '<' || text.slice(end, end + 1) === '>') && after !== '<(' && after !== '>(') {
+        while (end < n && (text[end] === '<' || text[end] === '>')) end += 1;
+        if (text.slice(end, end + 1) === '&' || (text.slice(end, end + 1) === '|' && text[end - 1] === '>')) end += 1;
+        token = 'redirect';
+      }
+    }
+    while (t < limit && ats[t]! < end) {
+      if (ats[t]! <= i) {
+        result.push(here());
+      } else if (token === 'word') {
+        const match = ASSIGN_PREFIX_RE.exec(text.slice(i)); // A substitution inside a `NAME=` word keeps the position before it.
+        result.push(match && ats[t]! >= i + match[0].length ? here() : false);
+      } else {
+        result.push(here());
+      }
+      t += 1;
+    }
+    const raw = text.slice(i, end);
+    if (token === 'sep' || (token === 'pipe' && !(cases.length && cases[cases.length - 1] === 'pattern'))) {
+      reset();
+    } else if (token === 'open') {
+      if (!(cases.length && cases[cases.length - 1] === 'pattern')) {
+        stack.push([i > 0 && '<>'.includes(text[i - 1]!) ? 'proc' : 'group', seg, settled, overflow]);
+        reset();
+      }
+    } else if (token === 'close') {
+      if (cases.length && cases[cases.length - 1] === 'pattern') {
+        cases[cases.length - 1] = 'body';
+        reset();
+      } else if (stack.length) {
+        const [kind, savedSeg, savedSettled, savedOverflow] = stack.pop()!;
+        seg = savedSeg;
+        settled = savedSettled;
+        overflow = savedOverflow;
+        if (kind === 'proc') {
+          word('<()');
+        } else {
+          seg = [];
+          settled = true;
+          overflow = false;
+        }
+      } else {
+        reset();
+      }
+    } else if (token === 'word' || token === 'redirect') {
+      let parts: string[];
+      try {
+        parts = shlexSplit(raw, false);
+      } catch (e) {
+        if (!(e instanceof ValueError)) throw e;
+        parts = [];
+      }
+      word(parts.length === 1 ? parts[0]! : raw);
+    }
     i = end;
   }
-  return true;
+  while (t < limit) {
+    result.push(here());
+    t += 1;
+  }
+  return result;
 }
 
 /**
@@ -1217,18 +1362,39 @@ function atCommandPosition(before: string): boolean {
  */
 function backtickScan(text: string, depth: number): Decision | null {
   if (depth > 8) return null;
-  const ticks: [boolean, number][] = []; // One [is a backtick, start index] per substitution.
+  const ticks: [boolean, number, boolean][] = []; // One [is a backtick, start index, inside double quotes] per substitution.
   const [found] = rawSubstitutions(text, ticks);
+  const positions = commandPositions(text, ticks.map((tick) => tick[1]));
   for (let k = 0; k < found.length && k < ticks.length; k++) {
     const content = found[k]!;
-    const [tick, at] = ticks[k]!;
+    const [tick] = ticks[k]!;
     let hit: Decision | null;
-    if (atCommandPosition(text.slice(0, at))) hit = scanText(content, depth + 1, true); // At command position its output runs.
+    if (positions[k]) hit = scanText(content, depth + 1, true); // At command position its output runs.
     else if (!tick) hit = backtickScan(content, depth + 1);
     else hit = classifyCommand(content, depth + 1);
     if (hit && hardDeny(hit)) return hit;
   }
   return null;
+}
+
+/**
+ * SPEC A5 (O26): a `$(...)` inside a double-quoted word keeps the full class of its content, as the
+ * unquoted one does (the segment split cuts that one out; here the quoted word stays whole). Returns the
+ * decision of each such substitution, found at any depth of unquoted substitutions. A double-quoted
+ * backtick is unchanged: backtickScan classifies it.
+ */
+function quotedSubstitutions(text: string, depth: number): Decision[] {
+  if (depth > 8 || !text.includes('$(') || !text.includes('"')) return [];
+  const ticks: [boolean, number, boolean][] = [];
+  const found: Decision[] = [];
+  const contents = rawSubstitutions(text, ticks)[0];
+  for (let k = 0; k < contents.length && k < ticks.length; k++) {
+    const [tick, , quoted] = ticks[k]!;
+    if (tick) continue;
+    if (quoted) found.push(classifyCommand(contents[k]!, depth + 1));
+    else found.push(...quotedSubstitutions(contents[k]!, depth + 1));
+  }
+  return found;
 }
 
 /** True when the segment is blank or only redirections (`2>/dev/null`, `>&1`, `</dev/stdin`). */
@@ -1479,6 +1645,7 @@ export function classifyCommand(command: string, depth = 0): Decision {
     items.push(...streamItems(text, scanOps(text), depth));
     const rawHit = rawScan(text, depth) ?? backtickScan(text, depth);
     if (rawHit) items.push([rawHit, [], false]);
+    for (const decision of quotedSubstitutions(text, depth)) items.push([decision, [], true]);
   } catch (e) {
     if (!(e instanceof ValueError)) throw e;
     return denyOf(e.message.startsWith('Heredoc') ? 'Malformed heredoc' : 'Malformed shell quoting', 'malformed');

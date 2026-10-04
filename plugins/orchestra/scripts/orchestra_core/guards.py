@@ -122,6 +122,8 @@ def _pipelines(command):
     return pipelines
 
 
+_WORD_START = ' \t\n;&|()<>'  # A `#` right after one of these (or at the start) begins a comment.
+_COMMENT_BLANK = re.compile(r'[\'"\\]')
 _MARK = '\ue000'  # Private-use delimiter for the placeholder that stands in for a heredoc operator.
 _MARK_RE = re.compile('<<' + _MARK + r'\d+' + _MARK)
 _REDIRECT = re.compile(r'(?:[0-9]*(?:>&|<&|>>|>\||<>|>|<)|&>>?)(.*)')
@@ -144,6 +146,14 @@ def _strip_heredocs(command):
                 quote = None
         elif char in "\"'":
             quote = char
+        elif char == '#' and (i == 0 or command[i - 1] in _WORD_START):
+            # SPEC A5 (O27): a comment runs to the newline. Its quotes and backslashes are literal, so they
+            # are blanked: no later scanner can read them as opening a quote or escaping the newline.
+            end = command.find('\n', i)
+            end = n if end < 0 else end
+            out.append(_COMMENT_BLANK.sub(' ', command[i:end]))
+            i = end
+            continue
         elif char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<'):
             match = _HEREDOC.match(command, i)
             # An all-digit word is shell arithmetic (1 << 2), not a heredoc.
@@ -809,7 +819,7 @@ def _raw_substitutions(text, ticks=None):
     def command(i):  # text[i] starts `$(` or a backtick; returns the index to resume from.
         nonlocal closed
         if ticks is not None:
-            ticks.append((text[i] == '`', i))
+            ticks.append((text[i] == '`', i, quote))
         if text[i] == '`':
             j = i + 1
             while j < n and text[j] != '`':
@@ -884,25 +894,144 @@ def _tick_to_dollar(text):
     return ''.join(out)
 
 
-def _at_command_position(before):
-    """True when the text before a substitution leaves it at command position: after a separator or
-    group opener, with only reserved words and `NAME=value` assignments since (SPEC A5, O20, O23)."""
-    tail = before
-    for k in range(len(before) - 1, -1, -1):
-        if before[k] in ';&|({\n':
-            tail = before[k + 1:]
-            break
-    i, n = 0, len(tail)
-    while i < n:
-        if tail[i] in ' \t':
+_ASSIGN_PREFIX = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\+?=')
+_SKIP_WORDS = 32  # Words of one segment kept to find its command name; a longer all-skip prefix counts as command position.
+
+
+def _skips(word):
+    """True when a leading word is skipped before the command name (SPEC A5): reserved words, `time`,
+    `function`/`coproc` headers, `case`, redirects, assignments and the wrappers table."""
+    return word == 'function' or not _unwrap([word])
+
+
+def _command_positions(text, ats):
+    """SPEC A5 (O20, O23, O28): for each index in ats (ascending, each the start of a substitution), True
+    when the substitution is at command position: after a separator or group opener, with only the words
+    the command-name rule skips since (see _skips; wrapper options and values included). One forward,
+    quote-aware pass: separators inside quotes or after a backslash do not count, and a literal `{` or `)`
+    argument is not a separator. A case pattern is not a command position; the body of a case arm is."""
+    result, limit, n = [], len(ats), len(text)
+    seg, settled, overflow = [], False, False  # Bare words of the segment, whether its command name came, too many words.
+    stack, cases = [], []  # Open `(` groups; open `case` states ('head', 'pattern', 'body').
+    t = i = 0
+
+    def here():
+        if cases and cases[-1] != 'body':
+            return False
+        if settled:
+            return False
+        if overflow:
+            return True
+        try:
+            return not _unwrap(seg.copy())
+        except ValueError:
+            return False
+
+    def word(bare):
+        nonlocal seg, settled, overflow
+        at_command = here()
+        if bare == 'case' and at_command:
+            cases.append('head')
+        elif bare == 'in' and cases and cases[-1] == 'head':
+            cases[-1] = 'pattern'
+        elif bare == 'esac' and cases and cases[-1] in ('body', 'pattern') and not seg and not settled:
+            cases.pop()
+        if settled or overflow:
+            return
+        if not seg and not _skips(bare):
+            settled = True
+        elif len(seg) < _SKIP_WORDS:
+            seg.append(bare)
+        else:
+            overflow = True
+
+    def reset():
+        nonlocal seg, settled, overflow
+        seg, settled, overflow = [], False, False
+
+    while i < n and t < limit:
+        char = text[i]
+        if char in ' \t':
             i += 1
             continue
-        end = max(_read_word(tail, i), i + 1)
-        word = tail[i:end]
-        if word not in _RESERVED and not re.match(r'[A-Za-z_][A-Za-z0-9_]*\+?=', word):
-            return False
+        token = 'word'
+        end = i + 1
+        if char == '#' and (i == 0 or text[i - 1] in _WORD_START):
+            found = text.find('\n', i)
+            end, token = (n if found < 0 else found), 'comment'
+        elif char == '\n':
+            token = 'sep'
+        elif char == ';':
+            token = 'sep'
+            if text.startswith(';;&', i):
+                end = i + 3
+            elif text[i:i + 2] in (';;', ';&'):
+                end = i + 2
+            if cases and cases[-1] == 'body' and end > i + 1:
+                cases[-1] = 'pattern'
+        elif char == '|':
+            token = 'pipe'
+        elif char == '&' and text[i + 1:i + 2] != '>':
+            token = 'sep'
+        elif char in '<>&' and text.startswith('(', i + 1) and char != '&':
+            token = 'skip'  # `<(` or `>(`: the `(` after it opens the process substitution.
+        elif char in '<>&':
+            while end < n and text[end] in '<>':
+                end += 1
+            if text[end:end + 1] == '&' and text[end - 1] in '<>' or text[end:end + 1] == '|' and text[end - 1] == '>':
+                end += 1
+            token = 'redirect'
+        elif char == '(':
+            token = 'open'
+        elif char == ')':
+            token = 'close'
+        else:
+            end = max(_read_word(text, i), i + 1)
+            if text[i:end].isdigit() and text[end:end + 1] in ('<', '>') and text[end:end + 2] != '<(' and text[end:end + 2] != '>(':
+                while end < n and text[end] in '<>':
+                    end += 1
+                if text[end:end + 1] == '&' or (text[end:end + 1] == '|' and text[end - 1] == '>'):
+                    end += 1
+                token = 'redirect'
+        while t < limit and ats[t] < end:
+            if ats[t] <= i:
+                result.append(here())
+            elif token == 'word':
+                match = _ASSIGN_PREFIX.match(text, i)  # A substitution inside a `NAME=` word keeps the position before it.
+                result.append(here() if match and ats[t] >= match.end() else False)
+            else:
+                result.append(here())
+            t += 1
+        raw = text[i:end]
+        if token == 'sep' or (token == 'pipe' and not (cases and cases[-1] == 'pattern')):
+            reset()
+        elif token == 'open':
+            if not (cases and cases[-1] == 'pattern'):
+                stack.append(('proc' if i and text[i - 1] in '<>' else 'group', seg, settled, overflow))
+                reset()
+        elif token == 'close':
+            if cases and cases[-1] == 'pattern':
+                cases[-1] = 'body'
+                reset()
+            elif stack:
+                kind, seg, settled, overflow = stack.pop()
+                if kind == 'proc':
+                    word('<()')
+                else:
+                    seg, settled, overflow = [], True, False
+            else:
+                reset()
+        elif token in ('word', 'redirect'):
+            try:
+                parts = shlex.split(raw)
+            except ValueError:
+                parts = []
+            word(parts[0] if len(parts) == 1 else raw)
         i = end
-    return True
+    while t < limit:
+        result.append(here())
+        t += 1
+    return result
 
 
 def _backtick_scan(text, depth):
@@ -911,9 +1040,10 @@ def _backtick_scan(text, depth):
     backtick there) the substitution's output runs, so its text is producer text."""
     if depth > 8:
         return None
-    ticks = []  # One (is a backtick, start index) per substitution.
-    for content, (tick, at) in zip(_raw_substitutions(text, ticks)[0], ticks):
-        if _at_command_position(text[:at]):
+    ticks = []  # One (is a backtick, start index, inside double quotes) per substitution.
+    contents = _raw_substitutions(text, ticks)[0]
+    for content, (tick, _, _), at_command in zip(contents, ticks, _command_positions(text, [at for _, at, _ in ticks])):
+        if at_command:
             hit = _scan_text(content, depth + 1, as_command=True)  # At command position its output runs.
         elif not tick:
             hit = _backtick_scan(content, depth + 1)
@@ -922,6 +1052,25 @@ def _backtick_scan(text, depth):
         if hit and _hard_deny(hit):
             return hit
     return None
+
+
+def _quoted_substitutions(text, depth):
+    """SPEC A5 (O26): a `$(...)` inside a double-quoted word keeps the full class of its content, as the
+    unquoted one does (the segment split cuts that one out; here the quoted word stays whole). Returns the
+    decision of each such substitution, found at any depth of unquoted substitutions. A double-quoted
+    backtick is unchanged: _backtick_scan classifies it."""
+    if depth > 8 or '$(' not in text or '"' not in text:
+        return []
+    ticks = []
+    found = []
+    for content, (tick, _, quoted) in zip(_raw_substitutions(text, ticks)[0], ticks):
+        if tick:
+            continue
+        if quoted:
+            found.append(classify_command(content, depth + 1))
+        else:
+            found.extend(_quoted_substitutions(content, depth + 1))
+    return found
 
 
 def _raw_commands(text):
@@ -1224,6 +1373,7 @@ def classify_command(command: str, _depth=0) -> Decision:
         raw_hit = _raw_scan(text, _depth) or _backtick_scan(text, _depth)
         if raw_hit:
             items.append((raw_hit, (), False))
+        items.extend((decision, (), True) for decision in _quoted_substitutions(text, _depth))
     except ValueError as exc:
         return _deny('Malformed heredoc' if str(exc).startswith('Heredoc') else 'Malformed shell quoting', 'malformed')
     for decision, _, _ in items:
