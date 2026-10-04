@@ -469,6 +469,7 @@ Rules:
 - Nothing is dropped silently. An upstream skill that I2 found and that maps to no row is listed under "Not used", with a reason.
 - License limits from 8.2 apply: an idea-level element can be merged in, but its text is not copied.
 - Every file in the 8.2 table appears as a destination of at least one row.
+- Non-repetition scope (coordinator ruling on SC, REASONED, O15): a rule appears once in the set of skills one actor loads: the coordinator's `orchestra`, or a worker's `orchestra-worker` plus its one role skill. Worker-contract rules (8.1) and E5/E6 live only in `orchestra-worker`; a role skill never restates them. A rule that two different actors both execute (for example worktree preservation for the coordinator and the operator, or the spike definition for designer and critic) may appear once in each actor's skill, worded identically; a matrix row that names two destinations means exactly this. E6 has two halves, both in `orchestra-worker` (every critic and code-reviewer preloads it): builders do not use hedge words in completion claims, and critic and code-reviewer file a hedged claim without command, exit code or log as an unverified `tests` or `requirements` finding.
 - `orchestra/references/cli.md` is Orchestra text only: the engine CLI reference, owned by PLAN B8 and B7. A row may list it as a destination, but no upstream text or idea is written into it, it carries no `Source:` header and no `Stub:` line, and the provenance tests (8.3) skip it.
 
 A critic reviews the matrix before authoring starts (PLAN MXR). Authoring starts only from the accepted matrix.
@@ -778,6 +779,7 @@ Acceptance for section 12:
 | O12 | Autonomy boundary details (SF5) | REASONED default (coordinator ruling, round 5): at a boundary the run parks the card and continues with other cards; the stop reason is `parked-only` when only parked cards remain (U8's own later sentence); local merges on a non-default branch are allowed; every push is denied while autonomy is active. | Confirm before B10 acceptance; default applies |
 | O13 | Linked worktrees of an armed repository (SF1) | REASONED (coordinator ruling, round 5): resolve state from the main worktree and apply that run's mapping, permit and autonomy (A15). This strengthens U8's hard boundaries. | No |
 | O14 | `docs/skill-authoring.md` (SF10) | REASONED (coordinator ruling, round 5): dropped; it traces to no user decision. `writing-skills` informs only the 8.4 authoring method. | No |
+| O15 | Skill non-repetition scope (SC findings) | REASONED (coordinator ruling, overnight): non-repetition applies per actor's loaded skill set; identical copies allowed across actors that both execute a rule; worker-contract and E5/E6 only in orchestra-worker (8.4). | Morning report; default applies |
 
 ## 14. Exclusions
 
