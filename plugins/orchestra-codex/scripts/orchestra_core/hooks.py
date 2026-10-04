@@ -5,14 +5,21 @@ https://code.claude.com/docs/en/hooks (checked 2026-09-30).
 """
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
 import sys
 import subprocess
+import time
 
-from .guards import classify_command
+from .guards import RULES, RULES_PATH, classify_command
+
+_PROTECTED = RULES['protected']
+_MARKER = RULES['marker']
+_EDIT_TOOLS = set(RULES['tools']['edit'])
+_SHELL_TOOLS = set(RULES['tools']['shell'])
 
 
 CONTEXT = (
@@ -39,20 +46,30 @@ def _deny(reason, malformed=False):
                         'permissionDecisionReason': reason}}, 2 if malformed else 0)
 
 
+def _marker_dir():
+    base = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state')
+    return (base.expanduser() / 'orchestra' / 'mods').resolve()
+
+
 def _protected(path, cwd, state_dir):
     resolved = (Path(cwd) / path).resolve()
     if state_dir:
         state = Path(state_dir).expanduser().resolve()
         if resolved == state or state in resolved.parents:
-            return True
-    parts = resolved.parts
-    if '.orchestra' in parts:
+            # Coordinator-authored notes at the state root stay writable (A8).
+            return not (resolved.parent == state and resolved.name in _PROTECTED['state_root_exceptions'])
+    marker = _marker_dir()
+    if resolved == marker or marker in resolved.parents:
         return True
-    for harness in ['.codex', '.claude']:
-        if harness in parts:
-            tail = parts[parts.index(harness) + 1:]
-            if tail and (tail[0] in {'hooks.json', 'config.toml', 'settings.json'} or
-                         (tail[0] == 'agents' and any(x.startswith(('orchestra-', 'orchestra_')) for x in tail[1:]))):
+    parts = resolved.parts
+    if _PROTECTED['component'] in parts:
+        return True
+    # Every harness directory in the path counts, not only the first (B-F4).
+    for i, part in enumerate(parts):
+        if part in _PROTECTED['harness_dirs']:
+            tail = parts[i + 1:]
+            if tail and (tail[0] in _PROTECTED['files'] or
+                         (tail[0] == 'agents' and any(x.startswith(tuple(_PROTECTED['agents_prefixes'])) for x in tail[1:]))):
                 return True
     return False
 
@@ -70,8 +87,12 @@ def _patch_paths(command):
     return paths
 
 
-def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None):
-    """Decide output; optional engine adapter owns locked state operations."""
+def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None, armed=False):
+    """Decide output; optional engine adapter owns locked state operations.
+
+    `armed` marks a run whose state could not be loaded: release classes deny (fail closed).
+    A loaded engine implies an armed run; neither means unarmed.
+    """
     if harness not in {'codex', 'claude'}:
         raise ValueError('Unsupported harness')
     if not isinstance(payload, dict):
@@ -113,7 +134,7 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
     cwd = payload.get('cwd', os.getcwd())
     if not isinstance(cwd, str):
         return _deny('Malformed cwd', True)
-    if name in {'apply_patch', 'Edit', 'Write', 'MultiEdit'}:
+    if name in _EDIT_TOOLS:
         try:
             if name == 'apply_patch':
                 paths = _patch_paths(data.get('command', data.get('patch')))
@@ -126,15 +147,18 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
                 return _deny('Use the structured coordinator API for state; protect installed runtime configuration')
         except (ValueError, OSError) as exc:
             return _deny(str(exc), True)
-    if name not in {'Bash', 'exec_command', 'shell', 'shell_command'}:
+    if name not in _SHELL_TOOLS:
         return HookResult({})
     command = data.get('command', data.get('cmd'))
     if not isinstance(command, str):
         return _deny('Missing shell command', True)
     decision = classify_command(command)
-    if decision.action == 'deny':
+    klass = decision.klass
+    if klass == 'deny':
         return _deny(decision.reason, decision.category == 'malformed')
-    if decision.action == 'release':
+    if klass in {'release', 'release-multi'} and (engine is not None or armed):
+        if klass == 'release-multi':
+            return _deny(decision.reason)
         if engine is None or not decision.remote or not decision.target:
             return _deny('Release needs a configured exact structured command and current permit')
         try:
@@ -143,32 +167,83 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
                 raise ValueError('No current release permit')
         except (OSError, ValueError, KeyError, RuntimeError, AttributeError) as exc:
             return _deny('Release denied: ' + str(exc))
-    return HookResult({})
+    return HookResult({})  # allow, boundary (until autonomy, B10) and unarmed release classes
+
+
+def _main_worktree(cwd):
+    """A15: the main worktree of a linked worktree; None for a bare common directory."""
+    common = subprocess.check_output(['git', '-C', str(cwd), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+                                     stderr=subprocess.PIPE).decode().strip()
+    path = Path(common).resolve()
+    return path.parent if path.name == '.git' else None
+
+
+def _run_location(cwd):
+    """Return (repo, state_dir) of the run that governs this cwd; own state first (A15)."""
+    from .paths import repository, state_location
+    repo = repository(cwd)
+    state_dir = state_location(repo)
+    if not (state_dir / 'state.json').is_file():
+        main = _main_worktree(cwd)
+        if main is not None and main != repo and (state_location(main) / 'state.json').is_file():
+            return main, state_location(main)
+    return repo, state_dir
+
+
+def _mod_is_live(payload):
+    """A12: a fresh marker carrying this copy's rules hash means the mod already guarded."""
+    session = payload.get('session_id')
+    if not isinstance(session, str) or not re.fullmatch(_MARKER['session_id_pattern'], session):
+        return False
+    try:
+        marker = json.loads((_marker_dir() / (session + '.json')).read_text())
+        age = int(time.time() * 1000) - marker['heartbeat_ms']
+        return (marker['session_id'] == session and not isinstance(marker['heartbeat_ms'], bool)
+                and 0 <= age < _MARKER['fresh_ms']
+                and marker['rules_sha256'] == hashlib.sha256(RULES_PATH.read_bytes()).hexdigest())
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd'])
     parser.add_argument('--harness', choices=['codex', 'claude'], default='codex')
+    parser.add_argument('--from-mod', action='store_true')
     args = parser.parse_args(argv)
     try:
         payload = json.load(sys.stdin)
     except (ValueError, UnicodeError):
         payload = None
+    if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
+            and isinstance(payload, dict) and _mod_is_live(payload)):
+        print('{}')
+        return 0
     state_dir = os.environ.get('ORCHESTRA_STATE_DIR')
     engine = None
+    armed = False
     if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         try:
-            from .paths import repository, state_location, load_policy
-            repo = repository(payload['cwd'])
-            state_dir = state_location(repo)
+            from .paths import load_policy
+            repo, state_dir = _run_location(payload['cwd'])
             # Discovery is read-only. Construct the engine only for an existing run.
             if (state_dir / 'state.json').is_file():
-                from .engine import Engine
-                engine = Engine(state_dir, repo, policy=load_policy(state_dir))
+                armed = True  # A state file that cannot be loaded fails closed: armed, no permit.
+                try:
+                    from .engine import Engine
+                    engine = Engine(state_dir, repo, policy=load_policy(state_dir))
+                    try:
+                        session = engine.status()['session']
+                        armed = bool(session and session.get('active'))
+                    except (TypeError, KeyError, AttributeError):
+                        pass  # Opaque engine adapters stay armed.
+                except Exception:
+                    engine = None
+                if args.event == 'PreToolUse' and not armed:
+                    engine = None  # An inactive session is an unarmed run.
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
-    result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine)
+    result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed)
     print(json.dumps(result.output))
     if result.exit_code == 2:
         print(result.output['hookSpecificOutput']['permissionDecisionReason'], file=sys.stderr)
