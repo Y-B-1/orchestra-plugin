@@ -5054,6 +5054,63 @@
     "command": "xargs -I $((1)) git reset --hard"
    },
    "class": "deny"
+  },
+  {
+   "id": "guard-fx2-1",
+   "input": {
+    "command": "cat <<EOF\n$(git push origin main)\nEOF"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-fx2-2",
+   "input": {
+    "command": "cat <<EOF\n$(gh pr merge 1)\nEOF"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-fx2-3",
+   "input": {
+    "command": "cat <<EOF\n`npm publish`\nEOF"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-fx2-4",
+   "input": {
+    "command": "git commit -F - <<EOF\n$(gh pr merge 1)\nEOF"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "guard-fx2-5",
+   "input": {
+    "command": "cat <<EOF\n$(rm -rf build)\nEOF"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "guard-fx2-6",
+   "input": {
+    "command": "cat <<EOF\n$(date)\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-fx2-7",
+   "input": {
+    "command": "cat <<EOF\n$(git status)\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-fx2-8",
+   "input": {
+    "command": "cat <<'EOF'\n$(gh pr merge 1)\nEOF"
+   },
+   "class": "allow"
   }
  ]
 }

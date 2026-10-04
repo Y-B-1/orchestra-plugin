@@ -1624,11 +1624,11 @@ def _heredoc_items(docs, pipelines, depth):
         if 'script' in modes or 'c' in modes:
             # Under -c the body is not what the shell runs, so an unparsable body is ignored.
             items.append((_body_decision(body, modes, depth), argv, False))
-        if not quoted:  # Rule (4)
+        if not quoted:  # Rule (4): every class but malformed is kept and counts as a segment, as for O26.
             for content in _substitutions(body):
                 decision = classify_command(content, depth + 1)
-                if _hard_deny(decision):
-                    items.append((decision, argv, False))
+                if decision.klass != 'allow' and decision.category != 'malformed':
+                    items.append((decision, argv, True))
         decision = _scan_lines(body, depth)  # Rule (5)
         if decision.action == 'deny':
             items.append((decision, argv, False))
