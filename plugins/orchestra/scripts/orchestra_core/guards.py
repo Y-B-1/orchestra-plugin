@@ -222,11 +222,18 @@ def _eat_options(wrapper, words):
     return words, found
 
 
+_RESERVED = frozenset(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'esac'])
+
+
 def _unwrap(words):
     while words:
         name = PurePosixPath(words[0]).name
         redirect = _REDIRECT.fullmatch(words[0])
-        if redirect:
+        if words[0] == 'case':
+            return []  # A case header (`case WORD in`) runs nothing; its patterns are not commands.
+        if words[0] in _RESERVED:
+            words = words[1:]  # SPEC A5 (O17): reserved words and group openers precede the real command.
+        elif redirect:
             words = words[1:] if redirect.group(1) else words[2:]
         elif _ASSIGNMENT.fullmatch(words[0]):
             words = words[1:]
@@ -593,25 +600,74 @@ def _read_balanced(text, i):
     return len(text) if end < 0 else end
 
 
+_CASE_PREV = frozenset(['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', '{'])
+
+
 def _balanced_end(text, i):
-    """Like _read_balanced, but -1 when the `(` is never closed."""
+    """Like _read_balanced, but -1 when the `(` is never closed. Besides quotes it skips `$'...'` strings
+    (escaped quotes included) and `#` comments, and does not count the `)` that ends a `case` pattern
+    (SPEC A5, O17)."""
     depth, quote, n = 1, None, len(text)
+    cases = []  # One [state, depth] per open `case`; state is 'head', 'pattern' or 'body'.
+    start = True  # At a command position, where `case` is a keyword.
     while i < n:
         char = text[i]
         if char == '\\' and quote != "'":
             i += 2
+            start = False
             continue
         if quote:
             if char == quote:
                 quote = None
-        elif char in "\"'":
-            quote = char
+            i += 1
+            continue
+        top = cases[-1] if cases and cases[-1][1] == depth else None
+        if char in "\"'":
+            quote, start = char, False
+        elif text.startswith("$'", i):
+            i += 2
+            while i < n and text[i] != "'":
+                i += 2 if text[i] == '\\' else 1
+            start = False
+        elif char == '#' and (i == 0 or text[i - 1] in ' \t\n;&|()'):
+            end = text.find('\n', i)
+            i = n if end < 0 else end
+            continue
+        elif char in ' \t':
+            pass
         elif char == '(':
-            depth += 1
+            if not (top and top[0] == 'pattern'):  # In a case pattern the opening parenthesis is optional.
+                depth += 1
+            start = True
         elif char == ')':
-            depth -= 1
-            if depth == 0:
-                return i + 1
+            if top and top[0] == 'pattern':
+                top[0] = 'body'
+            else:
+                depth -= 1
+                if depth == 0:
+                    return i + 1
+            start = True
+        elif char in ';&|\n':
+            if top and top[0] == 'body' and text[i:i + 2] in {';;', ';&'}:
+                top[0] = 'pattern'
+                i += 1
+            start = True
+        elif char not in '$`<>':
+            end = i
+            while end < n and text[end] not in ' \t\n;&|()<>"\'\\$`':
+                end += 1
+            word = text[i:end] if text[end:end + 1] not in {'"', "'", '\\', '$', '`'} else ''
+            if word == 'in' and top and top[0] == 'head':
+                top[0] = 'pattern'
+            elif word == 'case' and start:
+                cases.append(['head', depth])
+            elif word == 'esac' and start and top and top[0] != 'head':
+                cases.pop()
+            start = word in _CASE_PREV
+            i = end
+            continue
+        else:
+            start = False
         i += 1
     return -1
 
@@ -696,11 +752,21 @@ def _scan_ops(text):
     return herestrings, procsubs
 
 
+def _is_arithmetic(text, i):
+    """True when text[i:] starts `$((` that is arithmetic. `$((cmd) )` is a command substitution whose
+    first `)` closes the inner group before a matching `))` (SPEC A5, O17). Never closed counts as arithmetic."""
+    if not text.startswith('$((', i):
+        return False
+    inner = _balanced_end(text, i + 3)
+    return inner < 0 or text[inner:inner + 1] == ')'
+
+
 def _raw_substitutions(text):
     """Quote-aware scan of raw text (SPEC A5 rule 6b) for the `$(...)` and backtick substitutions the
     outer shell runs: unquoted or inside double quotes, never inside single quotes. Nested quotes and
     substitutions are tracked, so the text is not cut the way shlex or _split cut it. Returns
-    (contents of the outermost substitutions, False when one is never closed). `$((` is arithmetic."""
+    (contents of the outermost substitutions, False when one is never closed). `$((` is arithmetic
+    unless its first `)` closes before a matching `))`."""
     found, closed, i, n, quote = [], True, 0, len(text), False
 
     def command(i):  # text[i] starts `$(` or a backtick; returns the index to resume from.
@@ -725,7 +791,7 @@ def _raw_substitutions(text):
             if char == '"':
                 quote = False
                 i += 1
-            elif char == '`' or (text.startswith('$(', i) and not text.startswith('$((', i)):
+            elif char == '`' or (text.startswith('$(', i) and not _is_arithmetic(text, i)):
                 i = command(i)
             else:
                 i += 1
@@ -735,7 +801,7 @@ def _raw_substitutions(text):
         elif char == '"':
             quote = True
             i += 1
-        elif text.startswith('$((', i):
+        elif _is_arithmetic(text, i):
             i += 3
         elif char == '`' or text.startswith('$(', i):
             i = command(i)
@@ -858,9 +924,9 @@ def _chains(text):
             for members, _, _ in frames:
                 members.append(s)
         if closes and frames:
-            members, seen, _ = frames.pop()
+            members, seen, feeder = frames.pop()
             if state['flushes'] != seen:
-                cur = list(members)
+                cur = (feeder or []) + list(members)  # The producers that fed the group reach what follows it (O17).
         if op == '(':
             if not state['pipe_before']:
                 flush()
@@ -869,7 +935,7 @@ def _chains(text):
             if frames:
                 members, seen, feeder = frames.pop()
                 if state['flushes'] != seen and pipe_follows(k):
-                    cur = list(members)
+                    cur = (feeder or []) + list(members)  # The group's producers feed the next stage too (O17).
                 elif feeder and state['flushes'] != seen and cur:
                     cur = feeder + cur  # The group's last command still reads the pipe that fed it.
             if not pipe_follows(k):
