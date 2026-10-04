@@ -20,7 +20,7 @@
   "tools": {
     "shell": ["Bash", "exec_command", "shell", "shell_command"],
     "edit": ["apply_patch", "Edit", "Write", "MultiEdit"],
-    "claude_matcher": "Bash|Edit|Write|MultiEdit"
+    "claude_matcher": "Bash|Edit|Write|MultiEdit|Agent|Task"
   },
   "shells": ["sh", "bash", "zsh", "dash", "ksh"],
   "shell_value_flags": ["-o", "+o", "-O", "+O", "--rcfile", "--init-file"],

@@ -17,6 +17,7 @@ from .guards import RULES, classify_command, guard_digest
 
 _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
+_MOD_TOOLS = {'Bash', 'Edit', 'Write', 'MultiEdit'}  # The mod guards only these; any other tool needs Python.
 _EDIT_TOOLS = set(RULES['tools']['edit'])
 _SHELL_TOOLS = set(RULES['tools']['shell'])
 _REBIND_SOURCES = ('clear', 'resume', 'fork')
@@ -159,6 +160,8 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
     if not isinstance(name, str) or not name or not isinstance(data, dict):
         return _deny('Malformed tool payload', True)
     role = os.environ.get('ORCHESTRA_ROLE', 'main')  # Advisory, caller-controlled marker.
+    if harness == 'claude' and isinstance(payload.get('agent_id'), str) and payload['agent_id']:
+        role = 'subagent'  # Claude Code sets agent_id only for calls made inside a subagent.
     if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
         return _deny('Workers do not delegate')
     cwd = payload.get('cwd', os.getcwd())
@@ -328,7 +331,7 @@ def main(argv=None):
     except (ValueError, UnicodeError):
         payload = None
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
-            and isinstance(payload, dict) and _mod_is_live(payload)):
+            and isinstance(payload, dict) and payload.get('tool_name') in _MOD_TOOLS and _mod_is_live(payload)):
         print('{}')
         return 0
     state_dir = os.environ.get('ORCHESTRA_STATE_DIR')

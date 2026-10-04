@@ -11,7 +11,7 @@ One classifier and two native adapters replace duplicated provider guards. Comma
 | SessionEnd, Claude | Release the run bound to the ending session (see below) | Release on `clear` or `resume`; release a run started without `--harness-session` |
 | Interrupt, Codex | Invalidate dispatch and continuation lease | Undo an external action or guarantee every child process stopped |
 
-On Claude the PreToolUse matcher is `Bash|Edit|Write|MultiEdit`. Codex keeps its broad matcher.
+On Claude the PreToolUse matcher is `Bash|Edit|Write|MultiEdit|Agent|Task`; an Agent or Task call carrying `agent_id` (made inside a subagent) is denied with "Workers do not delegate", and a fresh mod marker never skips the Python hook for those two tools. Codex keeps its broad matcher.
 
 ## Session end and the lease
 
