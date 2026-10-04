@@ -7,8 +7,8 @@ A round is one repair plus one scoped independent re-review of it. Count rounds 
 
 | Round | Action |
 | --- | --- |
-| 1 to 3 | Builder in repair mode at the default model. Resume the same agent when the host allows; otherwise dispatch afresh with the brief and the report file. |
-| 4 | Dispatch override: model `claude-opus-5-5` through the Agent tool. On Codex use the `orchestra_builder_repair` profile at Sol high. |
+| 1 to 3 | Builder in repair mode. On Claude, the builder default model. On Codex, every repair round uses the `orchestra_builder_repair` profile at Sol high. Resume the same agent when the host allows; otherwise dispatch afresh with the brief and the report file. |
+| 4 | Claude: dispatch override, model `claude-opus-5-5` through the Agent tool. Codex: the same `orchestra_builder_repair` profile at Sol high. |
 | Round 5 | Breaker. No further repair. Send the ticket to critic `judge` mode, then to design or planning. Tell the user. |
 
 Each repair brief carries the exact artifact, the failing scenario and the scope of the defect.

@@ -7,7 +7,7 @@
 
 ## 0. How to read this plan
 
-`$SCRATCH` is the fixed directory `~/Documents/Claude/orchestra-v2-build` (coordinator ruling R1, round 6). It is outside the repository and independent of any session, so it survives restarts. It holds the ticket worktrees (`$SCRATCH/wt/<ticket>`), briefs, logs, live-check wizards (`$SCRATCH/wizards/`) and the L1 files (`$SCRATCH/release-notes-log.md`, `$SCRATCH/pr-body.md`, `$SCRATCH/release-notes.md`). The coordinator records it in `docs/BUILD-LEDGER.md`. Every brief and wizard that uses it sets `SCRATCH="$HOME/Documents/Claude/orchestra-v2-build"` explicitly.
+`$SCRATCH` is a fixed scratch directory outside the repository (coordinator ruling R1, round 6). It is outside the repository and independent of any session, so it survives restarts. It holds the ticket worktrees (`$SCRATCH/wt/<ticket>`), briefs, logs, live-check wizards (`$SCRATCH/wizards/`) and the L1 files (`$SCRATCH/release-notes-log.md`, `$SCRATCH/pr-body.md`, `$SCRATCH/release-notes.md`). The coordinator records it in `docs/BUILD-LEDGER.md`. Every brief and wizard that uses it sets `SCRATCH` explicitly.
 
 ### 0.1 Dispatch names during the build
 
@@ -668,7 +668,7 @@ Counts: builder tickets B1 to B5, B7 to B11 (10) and S0 to S8 (9). Checkpoints: 
 - O5: accept the 32,000-byte agent-file limit.
 - O6 (SessionEnd reasons), O7 (autonomy caps), O8 (lease-free autonomy toggle): defaults in SPEC 13 apply unless the user overrides at the named confirmation point.
 - Round 5 (user asleep, overnight run authorized): O12 autonomy boundary details as REASONED defaults, confirmed before B10 acceptance; O13 linked-worktree state resolution (A15); O14 no `docs/skill-authoring.md`. FF1/FF3: this build is tracked in `docs/BUILD-LEDGER.md`, not the engine (0.1). Worktrees are created by the coordinator (0.3). FF2: L1 step 2 always resets state under v2.
-- Round 6: R1 fixes `$SCRATCH` at `~/Documents/Claude/orchestra-v2-build` (0). R2: B1 was dispatched under its current text; its owned paths and acceptance are unchanged. MX runs in the main checkout as a one-time exception (0.3).
+- Round 6: R1 fixes `$SCRATCH` as one scratch directory outside the repository (0). R2: B1 was dispatched under its current text; its owned paths and acceptance are unchanged. MX runs in the main checkout as a one-time exception (0.3).
 - O9, O10, O11: confirmed by the user (round 4, SPEC 3.4). Option A trim ships in 2.0.0, and every in-scope item ships in 2.0.0.
 - U5, coordinator only, after release (L1 step 17). `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` must state:
   - the v1-to-v2 role mapping;

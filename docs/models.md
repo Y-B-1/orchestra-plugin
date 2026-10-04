@@ -31,11 +31,11 @@ The orchestrator row is the user's selection: the model and effort picked in the
 | builder: implementation, frontend, sensitive, mechanical, cleanup | gpt-6.1-sol | medium | `orchestra_builder` |
 | builder repair | gpt-6.1-sol | high | `orchestra_builder_repair` |
 | code-reviewer final | gpt-6.1-sol | high | `orchestra_code_reviewer` |
-| code-reviewer checkpoint | gpt-6.1-sol | medium | `orchestra_code_reviewer_checkpoint` |
+| code-reviewer checkpoint | gpt-6.1-sol | high | `orchestra_code_reviewer` (same as final; no separate profile) |
 | operator gate, release (default) | gpt-6.1-sol | medium | `orchestra_operator` |
 | operator cleanup | gpt-6-luna | high | `orchestra_operator_cleanup` |
 
-Result: 9 Claude agent files and 10 Codex profiles. Luna is limited to investigator code discovery and operator cleanup (read-only hygiene proposals). Codex presets always produce a profile when they differ from the default, because a Codex dispatch-time model override is unverified.
+Result: 9 Claude agent files and 9 Codex profiles. Luna is limited to investigator code discovery and operator cleanup (read-only hygiene proposals). Codex presets always produce a profile when they differ from the default, because a Codex dispatch-time model override is unverified.
 
 ## sandbox_mode and tool restrictions
 

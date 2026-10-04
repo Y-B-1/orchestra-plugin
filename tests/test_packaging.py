@@ -124,7 +124,7 @@ class NativeTests(unittest.TestCase):
             'investigator', 'investigator-code', 'operator', 'orchestrator']})
         codex = {p.name for p in (PLUGIN / 'profiles/codex').glob('*.toml')}
         self.assertEqual(codex, {f'orchestra_{n}.toml' for n in [
-            'builder', 'builder_repair', 'code_reviewer', 'code_reviewer_checkpoint', 'critic', 'designer_planner',
+            'builder', 'builder_repair', 'code_reviewer', 'critic', 'designer_planner',
             'investigator', 'investigator_code', 'operator', 'operator_cleanup']})
         read_only = ('investigator', 'critic', 'code-reviewer')
         for name in claude - {'orchestrator.md'}:
@@ -141,6 +141,24 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(matrix['builder']['presets']['repair']['dispatch'], 'override')
         self.assertFalse((PLUGIN / 'agents/builder-repair.md').exists())
         self.assertTrue((PLUGIN / 'profiles/codex/orchestra_builder_repair.toml').is_file())
+
+    def test_claude_variant_descriptions_name_their_mode(self):
+        def desc(name):
+            line = [l for l in (PLUGIN / 'agents' / name).read_text().split('---')[1].splitlines()
+                    if l.startswith('description:')][0]
+            return json.loads(line.split(':', 1)[1])
+        for base, variant, mode in [('investigator-code', 'investigator', 'Mode: code.'),
+                                    ('code-reviewer-checkpoint', 'code-reviewer', 'Mode: checkpoint.')]:
+            self.assertIn(mode, desc(base + '.md'))
+            self.assertIn(desc(variant + '.md'), desc(base + '.md'))
+            self.assertNotEqual(desc(base + '.md'), desc(variant + '.md'))
+
+    def test_codex_checkpoint_reviewer_runs_at_high_effort(self):
+        matrix = json.loads((PLUGIN / 'config/models.json').read_text())['codex']['code-reviewer']
+        self.assertEqual(matrix['presets']['checkpoint']['effort'], 'high')
+        data = tomllib.loads((PLUGIN / 'profiles/codex/orchestra_code_reviewer.toml').read_text())
+        self.assertEqual(data['model_reasoning_effort'], 'high')
+        self.assertFalse((PLUGIN / 'profiles/codex/orchestra_code_reviewer_checkpoint.toml').exists())
 
     def test_orchestrator_follows_the_user_selection(self):
         front = (PLUGIN / 'agents/orchestrator.md').read_text().split('---')[1]

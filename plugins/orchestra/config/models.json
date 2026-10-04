@@ -63,7 +63,7 @@
       "presets": {
         "checkpoint": {
           "model": "gpt-6.1-sol",
-          "effort": "medium"
+          "effort": "high"
         },
         "final": {
           "model": "gpt-6.1-sol",

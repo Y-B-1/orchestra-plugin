@@ -4,7 +4,7 @@ Orchestra 2.0.0 consolidates ten worker roles into six, rewrites the skills, rep
 
 ## Breaking changes
 
-- Roles. The engine accepts only the 2.0 role names below. A card or dispatch that names a 1.0.1 role is rejected as an unavailable role. A live 1.0.1 run cannot continue, and `start --new-run` cannot clear it after the upgrade. Before upgrading, end it with 1.0.1 still installed (see Install path from 1.0.1).
+- Roles. The engine accepts only the 2.0 role names below. A card or dispatch that names a 1.0.1 role is rejected as an unavailable role. A live 1.0.1 run cannot continue, and `start --new-run` cannot clear it after the upgrade. Before upgrading, end it with 1.0.1 still installed (see Install path from 1.0.1). A finished or interrupted 1.0.1 run only needs `start --new-run`.
 - Removed commands: `route`, `review-groups` and `audit-policy`. Calling one exits with an unknown-command error. The coordinator chooses lanes, groups reported cards and picks audit axes by hand, following the skill references.
 - Removed policy keys: `reserved_ports` and `denied_tools`. An old policy file that still carries them loads unchanged.
 - `status` and `board` no longer print the lease. `start` prints it once.
@@ -56,7 +56,7 @@ New builder mode `cleanup` applies a lean-and-simplify pass at the end of a run 
 
 ## Install path from 1.0.1
 
-Install the new version first, then publish with it. A marketplace name is unique, so uninstall and remove the 1.0.1 marketplace before adding the new one, in a plain terminal:
+A marketplace name is unique, so uninstall and remove the 1.0.1 marketplace before adding the new one, in a plain terminal:
 
 ```sh
 claude plugin uninstall orchestra@orchestra-distribution
@@ -66,7 +66,7 @@ claude plugin install orchestra@orchestra-distribution
 claude plugin list
 ```
 
-Before the uninstall, end any active run from its repository with 1.0.1 still installed: `python3.11 ~/.claude/plugins/cache/orchestra-distribution/orchestra/1.0.1/scripts/orchestra.py --lease LEASE interrupt` (or `finish`; LEASE is the value `start` printed). If you already upgraded with a run active, move that run's `state.json` out of its state directory by hand; the repository is then unarmed. The directory is `$ORCHESTRA_STATE_DIR` when set, otherwise `${XDG_STATE_HOME:-~/.local/state}/orchestra/<id>`, where `<id>` is the first 24 hex characters of the SHA-256 of the repository's absolute path.
+Before the uninstall, deal with any run left active. A 1.0.1 run that was finished or interrupted leaves the repository unarmed under 2.0.0; plain `start` and `status` say to run `start --new-run`, which archives the old state. A run still active must be ended with 1.0.1 first, from its repository, with 1.0.1 still installed. Claude Code: `python3.11 ~/.claude/plugins/cache/orchestra-distribution/orchestra/1.0.1/scripts/orchestra.py --lease LEASE interrupt` (or `finish`). Codex only: `python3.11 ~/.codex/plugins/cache/orchestra-distribution/orchestra/1.0.1/scripts/orchestra.py --lease LEASE interrupt`. LEASE is the value `start` printed; if you lost it, the same script's `status` prints the state and the lease is `session.lease`. If you already upgraded with a run active, move that run's `state.json` out of its state directory by hand; the repository is then unarmed. `orchestra.py where` from the repository prints the state directory. It is `$ORCHESTRA_STATE_DIR` when set, otherwise `${XDG_STATE_HOME:-~/.local/state}/orchestra/<id>`, where `<id>` is the first 24 hex characters of the SHA-256 of the repository's absolute path.
 
 Restart Claude Code and start a new run. For Codex, update the clone first, because `install-profiles` installs the profiles of the clone it runs from:
 
@@ -89,4 +89,8 @@ Review and trust the hook definition again in Codex if it asks. See the [README]
 - Caller-supplied actor names, leases and role markers are consistency checks, not authentication.
 - Hook trust is never written by the installer. Trusted automatic startup, live discovery and the interactive mods behavior are user checks, not established by the unit suite.
 - 2.0.0 has no automatic recovery for a run left active across the upgrade; use the manual `state.json` move in Install path from 1.0.1.
+- Edit or Write through a symlink into the protected marker or state directory is not caught by the mod's lexical path check; the Python `resolve()` check runs only when the mod is not live.
+- Classifying a long chain of here-strings is quadratic in its length.
+- `docs/models.md` is a hand copy of `config/models.json`; keep them in step by hand.
+- `plugins/orchestra/hooks/mod/fixtures/o17-cases.ts` duplicates corpus cases.
 - Windows is not supported by the POSIX locking core; use WSL.
