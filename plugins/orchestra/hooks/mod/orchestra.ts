@@ -9,7 +9,7 @@ import { HEARTBEAT_MS, markerJson, markerPath } from './marker.js';
 // load and leaves no marker).
 export const register: Register = (on: On) => {
   let current: string | null = null;
-  let cancel: (() => void) | null = null;
+  let timer: { cancel: () => void } | null = null;
   let version = '';
 
   on('session.start', async ($, e, next) => {
@@ -19,7 +19,7 @@ export const register: Register = (on: On) => {
       const xdg = await $.env.get('XDG_STATE_HOME');
       const home = await $.env.get('HOME');
       await $.fs.write(markerPath(xdg, home, current), markerJson(current, version, null, Date.now()));
-      cancel = $.clock.every(HEARTBEAT_MS, async () => {
+      timer = $.clock.every(HEARTBEAT_MS, async () => {
         const id = await $.session.id();
         if (current !== null && id !== current) {
           await $.fs.write(markerPath(xdg, home, current), markerJson(current, version, null, 0));
@@ -34,8 +34,8 @@ export const register: Register = (on: On) => {
   });
 
   on('session.end', async ($, e, next) => {
-    if (cancel) cancel();
-    cancel = null;
+    if (timer) timer.cancel();
+    timer = null;
     if (current !== null) {
       try {
         const xdg = await $.env.get('XDG_STATE_HOME');
