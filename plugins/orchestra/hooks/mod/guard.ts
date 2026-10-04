@@ -209,14 +209,7 @@ export function shlexSplit(s: string, comments: boolean): string[] {
           if (token !== '' || quoted) break;
           continue;
         }
-        if (comments && ch === '#') {
-          const end = s.indexOf('\n', i);
-          i = end < 0 ? n : end + 1;
-          state = ' ';
-          if (token !== '' || quoted) break;
-          continue;
-        }
-        if (ch === '"' || ch === "'") state = ch;
+        if (ch === '"' || ch === "'") state = ch; // A mid-word `#` is literal (SPEC A5, O27 and O33).
         else if (ch === '\\') {
           escapedState = 'a';
           state = ch;
@@ -309,7 +302,6 @@ function pipelines(command: string): string[][] {
 
 const MARK = '';
 const MARK_RE = /<<[0-9]+/g;
-const MARK_WORD_RE = /^<<[0-9]+$/;
 const REDIRECT_RE = /^(?:(?:[0-9]*|\{[A-Za-z_][A-Za-z0-9_]*\})(?:<<<|>&|<&|>>|>\||<>|>|<)|&>>?)([^\n]*)$/;
 const RMARK = ''; // Private-use mark markRedirects puts before each unquoted redirection operator.
 const REDIRECT_WORD_RE = /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(?:<<<|<<-?|<>|<&|<|>>|>&|>\||>|&>>?)/;
@@ -810,7 +802,8 @@ function substitutions(body: string): string[] {
 /**
  * SPEC A5 (O31): put a blank and RMARK before each redirection operator outside quotes (before its
  * descriptor prefix when a number or `{name}` is the whole word before it), so shlex starts a word there
- * that reads as a redirection. Mirrors guards._mark_redirects.
+ * that reads as a redirection. A `#` starts a comment only at the start of a word (O33); a `${...}`
+ * expansion is copied whole, nested braces included. Mirrors guards._mark_redirects.
  */
 function markRedirects(segment: string): string {
   if (!segment.includes('<') && !segment.includes('>')) return segment;
@@ -822,8 +815,11 @@ function markRedirects(segment: string): string {
   let start = 0; // Where the current word starts in out.
   let bare = true; // Whether the current word holds only bare characters.
   let here = 0; // 2 right after a `<<<`, 1 inside its operand word: a here-string operand is not word-split.
+  let blank = true; // The previous character is a blank (or there is none): a `#` here starts a comment.
   while (i < n) {
     const char = segment[i]!;
+    const atBlank = blank;
+    blank = false;
     if (q) {
       if (char === q) {
         q = null;
@@ -837,6 +833,7 @@ function markRedirects(segment: string): string {
       i += 1;
       start = out.length;
       bare = true;
+      blank = true;
       here = here === 2 ? 2 : 0;
       continue;
     } else if (char === '"' || char === "'") {
@@ -848,15 +845,14 @@ function markRedirects(segment: string): string {
       bare = false;
       here = here ? 1 : 0;
       continue;
-    } else if (char === '#') {
+    } else if (char === '#' && atBlank) {
       const found = segment.indexOf('\n', i);
       const end = found < 0 ? n : found;
       out.push(segment.slice(i, end));
       i = end;
       continue;
     } else if (segment.startsWith('${', i)) {
-      const found = segment.indexOf('}', i);
-      const end = found < 0 ? n : found + 1;
+      const end = braceEnd(segment, i);
       out.push(here ? escapeBlanks(segment.slice(i, end)) : segment.slice(i, end));
       here = here ? 1 : 0;
       i = end;
@@ -882,6 +878,25 @@ function markRedirects(segment: string): string {
     i += 1;
   }
   return out.join('');
+}
+
+/** Index just past the `}` closing the `${` at text[i], counting nested `${`; text.length when never closed. Mirrors guards._brace_end. */
+function braceEnd(text: string, i: number): number {
+  let depth = 0;
+  const n = text.length;
+  while (i < n) {
+    if (text.startsWith('${', i)) {
+      depth += 1;
+      i += 2;
+      continue;
+    }
+    if (text[i] === '}') {
+      depth -= 1;
+      if (!depth) return i + 1;
+    }
+    i += 1;
+  }
+  return n;
 }
 
 /** Escape the blanks of text that stand outside quotes, so shlex keeps it one word. */
@@ -922,9 +937,9 @@ function splitWords(segment: string): [string[], string[], string[]] {
       skip = null;
       continue;
     }
-    const match = marked && !MARK_WORD_RE.test(plain) ? REDIRECT_WORD_RE.exec(plain) : null;
+    const match = marked ? REDIRECT_WORD_RE.exec(plain) : null; // A heredoc operator is a redirection too (O33).
     if (!match) {
-      kept.push(plain); // A heredoc placeholder stays a word, as before O31.
+      kept.push(plain);
       continue;
     }
     const here = match[0].endsWith('<<<') ? '<<<' : '>';
@@ -1847,18 +1862,84 @@ function codePointLength(text: string): number {
   return n;
 }
 
+const SMARK = '\ue002'; // Private-use delimiter for the placeholder that stands in for an unquoted `$(...)` (O33).
+const SUB_RE = /\ue002([0-9]+)\ue002/g;
+const PURE_SUB_RE = /^(?:\ue002[0-9]+\ue002)+$/; // A word made only of substitutions.
+const FOLD_LEVELS = 8; // Substitution nesting levels folded (O33); deeper text is segmented as before.
+
+/**
+ * SPEC A5 (O33): text with each unquoted `$(...)` (backticks are rewritten to it first; `$((...))` included)
+ * replaced by a numbered placeholder, so a substitution never cuts its simple command. The inner texts are
+ * appended to subs. An unclosed `$(` and the text after it are left as they are. Mirrors guards._fold.
+ */
+function fold(text: string, subs: string[]): string {
+  const out: string[] = [];
+  let q: string | null = null;
+  let i = 0;
+  const n = text.length;
+  while (i < n) {
+    const char = text[i]!;
+    if (char === '\\' && q !== "'") {
+      out.push(text.slice(i, i + 2));
+      i += 2;
+      continue;
+    }
+    if (q) {
+      if (char === q) q = null;
+    } else if (char === '"' || char === "'") {
+      q = char;
+    } else if (text.startsWith('$(', i)) {
+      const end = balancedEnd(text, i + 2);
+      if (end < 0) {
+        out.push(text.slice(i));
+        break;
+      }
+      out.push(SMARK + String(subs.length) + SMARK);
+      subs.push(text.slice(i + 2, end - 1));
+      i = end;
+      continue;
+    }
+    out.push(char);
+    i += 1;
+  }
+  return out.join('');
+}
+
+/** The segments of text with its substitutions folded (O33), each followed by the segments of the substitutions it holds. Mirrors guards._folded_segments. */
+function foldedSegments(text: string, subs: string[], level = 0): string[] {
+  if (level >= FOLD_LEVELS) return segments(text);
+  const result: string[] = [];
+  for (const segment of segments(fold(text, subs))) {
+    result.push(segment);
+    for (const match of segment.matchAll(SUB_RE)) result.push(...foldedSegments(subs[Number(match[1])]!, subs, level + 1));
+  }
+  return result;
+}
+
 /** Classify a shell command (SPEC A5). Mirrors guards.classify_command. */
 export function classifyCommand(command: string, depth = 0): Decision {
   if (!(typeof command === 'string') || !strip(command) || codePointLength(command) > 131072 || depth > 8) return denyOf('Invalid or excessively nested command', 'malformed');
+  if (command.includes(RMARK) || command.includes(SMARK)) return denyOf('Malformed shell quoting', 'malformed'); // Reserved placeholder characters (R2k minor 4).
   const items: Item[] = [];
   try {
     const [stripped, docs] = stripHeredocs(command);
     const text = tickToDollar(dollarDecode(stripped));
-    const parsed = segments(text).map((segment) => splitWords(segment));
+    const subs: string[] = [];
+    const parsed = foldedSegments(text, subs).map((segment) => splitWords(segment));
+    const render = (word: string): string => word.replace(MARK_RE, '<<HEREDOC').replace(SUB_RE, (_m, k: string) => '$(' + subs[Number(k)]! + ')');
     for (const [rawOriginal, kept] of parsed) {
-      const original = rawOriginal.map((word) => word.replace(MARK_RE, '<<HEREDOC'));
-      const words = unwrap(kept.map((word) => word.replace(MARK_RE, '<<HEREDOC'))); // Redirections removed (O31).
-      if (words.length) items.push([classifySegment(words, depth), original, true]);
+      const heredoc = rawOriginal.some((word) => word.includes(MARK));
+      const original = rawOriginal.map(render);
+      const full = kept.map(render);
+      // Redirections removed (O31, heredocs included); a word made only of substitutions is removed too (O33).
+      let words = unwrap(full.filter((_w, k) => !PURE_SUB_RE.test(kept[k]!)));
+      if (words.length && (words[0] === 'eval' || SHELLS.has(posixName(words[0]!)))) {
+        const whole = unwrap(full); // Script text (an eval argument, a -c payload) keeps its substitutions.
+        if (whole.length && whole[0] === words[0]) words = whole;
+      }
+      if (words.length && words[0] === 'eval' && heredoc) items.push([denyOf('Malformed heredoc', 'malformed'), original, true]); // R2b F3 fail-safe.
+      else if (words.length) items.push([classifySegment(words, depth), original, true]);
+      else if (unwrap(full).length) items.push([dec(), original, true]); // Only substitutions: still a command of its own.
     }
     items.push(...heredocItems(docs, pipelines(text), depth));
     items.push(...streamItems(text, scanOps(text), depth));
