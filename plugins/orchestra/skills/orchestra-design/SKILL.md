@@ -2,8 +2,7 @@
 name: orchestra-design
 description: Core rules for the designer-planner role, preloaded by the orchestra:designer-planner agent. Worker agents only; not for the main session.
 ---
-
-Source: derived from obra/superpowers@8ca22dba9a94 skills/brainstorming/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/productivity/grilling/SKILL.md, skills/productivity/grill-me/SKILL.md, skills/engineering/grill-with-docs/SKILL.md, skills/engineering/domain-modeling/SKILL.md (MIT); github/spec-kit@ae5ade7234be templates/commands/clarify.md (MIT); see THIRD-PARTY-NOTICES.
+Source: derived from obra/superpowers@8ca22dba9a94 skills/brainstorming/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/productivity/grilling/SKILL.md, skills/productivity/grill-me/SKILL.md, skills/engineering/grill-with-docs/SKILL.md, skills/engineering/domain-modeling/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-design/SKILL.md
 
 # Designer-planner

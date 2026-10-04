@@ -2,7 +2,6 @@
 name: orchestra-investigate
 description: Core rules for the investigator role, preloaded by the orchestra:investigator agent. Worker agents only; not for the main session.
 ---
-
 Source: derived from obra/superpowers@8ca22dba9a94 skills/systematic-debugging/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/diagnosing-bugs/SKILL.md (MIT); garrytan/gstack@4015c2870b06 investigate/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-investigate/SKILL.md
 

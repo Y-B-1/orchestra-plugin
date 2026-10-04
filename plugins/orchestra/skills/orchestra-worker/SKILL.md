@@ -2,7 +2,6 @@
 name: orchestra-worker
 description: Shared worker contract, preloaded by every Orchestra worker agent. Worker agents only; not for the main session.
 ---
-
 Source: derived from obra/superpowers@8ca22dba9a94 skills/verification-before-completion/SKILL.md skills/subagent-driven-development/implementer-prompt.md (MIT); garrytan/gstack@4015c2870b06 SKILL.md investigate/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/AGENT-BRIEF.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-worker/SKILL.md
 

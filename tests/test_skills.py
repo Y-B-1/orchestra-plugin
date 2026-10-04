@@ -81,13 +81,13 @@ def source_header(rel):
 
 
 def header_in(text):
-    """The Source line, which must be the first non-blank line after any frontmatter (before Sentinel)."""
+    """The Source line, which must be the very first line after any frontmatter, with no blank line before it."""
     body = text.split('\n---\n', 1)[1] if text.startswith('---\n') else text
     lines = body.split('\n')
     found = [l for l in lines if l.startswith('Source:')]
     if not found:
         return None
-    first = next((l for l in lines if l.strip()), '')
+    first = lines[0]
     if found[0] != first or len(found) > 1:
         raise ValueError(f'Source header must be the first line after frontmatter, once: {found}')
     return first

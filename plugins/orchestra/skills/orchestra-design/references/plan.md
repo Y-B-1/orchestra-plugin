@@ -9,7 +9,7 @@ Output: one plan of tickets. Plan only. Edit no code and decide no product quest
 
 Begin from the approved spec, the research, the repository facts and the binding project rules. The brief states which spec the user approved. If it does not, or the spec has an open decision that a ticket depends on, stop and mark that dependent work blocked.
 
-Run a rules gate twice: before you slice, and again on the finished plan. Compare the plan with each binding project rule. A conflict returns to design.
+Run a rules gate twice: before you slice, and again on the finished plan. Compare the plan with each binding project rule.
 
 ## Map, then slice
 
@@ -46,7 +46,7 @@ Plans decide what an implementer cannot decide alone. Give a test its name and a
 
 Name the required checkpoint reviews for architectural foundations, the final integration review, the affected gate sets and every live check. A live check is a human step: write its exact steps. Optional full-suite testing stays on the project owner's trigger.
 
-Route failure. For each ticket, name where a blocked review returns it. A contradiction in the spec returns to design.
+Route failure. For each ticket, name where a blocked review returns it.
 
 ## Self-check, then return
 

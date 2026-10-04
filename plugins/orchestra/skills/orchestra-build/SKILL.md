@@ -2,7 +2,6 @@
 name: orchestra-build
 description: Core rules for the builder role, preloaded by the orchestra:builder agent. Worker agents only; not for the main session.
 ---
-
 Source: derived from obra/superpowers@8ca22dba9a94 skills/test-driven-development/SKILL.md skills/verification-before-completion/SKILL.md skills/subagent-driven-development/implementer-prompt.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/tdd/SKILL.md (MIT); garrytan/gstack@4015c2870b06 test-audit/SKILL.md SKILL.md investigate/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 
 Sentinel: orchestra-build/SKILL.md

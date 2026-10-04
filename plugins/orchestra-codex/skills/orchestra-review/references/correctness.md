@@ -28,11 +28,9 @@ Test a concrete counterexample when it is safe to run.
 
 ## Tests
 
-- Assertions check behavior, not internals. Read the test before you credit it.
 - The change has tests for what it must do and for what it must prevent. Invalid input is covered.
-- A regression test failed before the change. Say what you ran, or state the limit.
 - Evidence still matches the artifact. A check run before the last edit is stale.
-- Claims in the report, such as "all callers updated", are checked by search, not trusted.
+- A report claim such as "all callers updated" is checked by search.
 
 ## Standards
 
