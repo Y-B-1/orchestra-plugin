@@ -1,6 +1,29 @@
+Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/productivity/handoff/SKILL.md (MIT); garrytan/gstack@4015c2870b06 context-save/SKILL.md context-restore/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/references/handoff.md
-Stub: B4 skeleton; ticket S1 rewrites this file and removes this line.
 
-# Handoff and resume
+# Progress ledger, resume and handoff
 
-Resume protocol: progress ledger, status, worker liveness, artifact inspection, then re-dispatch.
+## Ledger
+
+`<state>/progress.md` is the run ledger. It survives compaction where conversation memory does not. The first line names the plan or run it belongs to; a ledger naming another plan is left alone. Append one line per event: card dispatched, reported, accepted, repair round (with its number), ruling. A ruling records what was decided, why, and the cost if it is wrong. Never rewrite earlier lines.
+
+## Resume
+
+Resume only on an explicit user request, never from a late report. Check in this order:
+
+1. The ledger, then `git log` and `git status` for the real artifact. After compaction both outrank recollection.
+2. Live worker state: a live process and a recent transcript write. A journal line records what started, not what still runs.
+3. Each card: a card with a completion line is never dispatched again. A card whose last line is a repair round resumes at the next round.
+
+Late reports from before the interruption stay historical. Re-inspect the artifact before accepting anything.
+
+## Handoff
+
+Write a handoff for a fresh agent into the temporary directory, outside the workspace. Use named sections:
+
+- Goal and current lane
+- Decisions made, each with its reason
+- Remaining work, in dependency order
+- Open risks and unavailable checks
+
+Point to specs, plans, issues, commits and diffs by path or URL instead of copying them. Tailor the document to what the next session will do. Redact credentials, tokens and personal data. End with the ledger path and the artifact identity.
