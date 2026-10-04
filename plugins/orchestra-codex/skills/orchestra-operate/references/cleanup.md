@@ -1,8 +1,59 @@
+Source: derived from obra/superpowers@8ca22dba9a94 skills/using-git-worktrees/SKILL.md skills/finishing-a-development-branch/SKILL.md skills/diagnosing-superpowers/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/retro/SKILL.md (MIT); bmad-code-org/BMAD-METHOD@3cae711ea527 skills/bmad-retrospective/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-operate/references/cleanup.md
-Stub: B4 skeleton; ticket S7 rewrites this file and removes this line.
 
-# Operator: cleanup mode (preservation and hygiene)
+# Operator: cleanup mode
 
-Inspect the assigned worktree, dirty/untracked bytes, named branches, live processes and transcript freshness. Merged references do not prove the directory is disposable. Propose cleanup only for owned artifacts; preserve unfinished work on a named branch before removal. Never stash shared work, rewrite live history or remove another worker's state. Check temporary files, generated drift, current project memory and final report gaps. Tracked memory changes belong before final gates; later edits invalidate evidence.
+Two jobs, both read-only until the coordinator assigns a removal: a hygiene pass over worktrees, branches and temporary state, and a retro over finished work. The output is a proposal with evidence. You remove nothing on your own.
 
-Return a cleanup proposal and preservation evidence. Removal needs coordinator assignment and applicable permission; this role does not release or own run state.
+## Hygiene pass
+
+Inspect the directory, never only the refs. A merged branch says nothing about edits an agent left uncommitted.
+
+1. List what exists: `git worktree list`, `git branch -vv`, and for each worktree the brief names, `git -C <worktree> status --porcelain -uall`.
+2. Tell a linked worktree from a plain checkout: compare `git rev-parse --git-dir` with `--git-common-dir`. Differing values with a non-empty `git rev-parse --show-superproject-working-tree` mean a submodule, not a worktree.
+3. For each branch, list commits that its base branch lacks: `git log <base>..<branch> --oneline`.
+4. Check liveness before you call anything stale: a live process with that directory as its working directory, and the transcript's last modification time.
+5. Check temporary files, generated-file drift (the project's own drift check), and whether the project memory file carries this wave's facts.
+
+Ownership rules for the proposal:
+
+- Propose removal only for worktrees the dispatching coordinator created for this unit. Leave host-created and other workers' worktrees alone.
+- A dirty or untracked worktree is not disposable. Show the file list and the three ways out: commit to a named branch, move the files out, or delete them as unrecoverable. The coordinator or user picks.
+- Preserve unfinished work on a named branch. Never leave it on a detached HEAD, which garbage collection eats.
+- Never `--force` a refused removal. Never stash: all worktrees share one ref store. Never rewrite history another worker may hold.
+- Tracked memory changes land before the final gates. A later edit voids earlier evidence.
+
+Return the proposal: each item, its evidence (command, exit code, log path), the action proposed and who must approve it. Removal runs only under a coordinator assignment that names the item.
+
+## Retro
+
+The brief carries the problem statement and the session paths. If either is missing, stop with `STATUS: BLOCKED`. You work through every dimension yourself and delegate nothing.
+
+Rules for reading sessions:
+
+- Session files are read-only. Never modify, move or delete one.
+- Measure first: `wc -lc <file>`, then find long lines. A single record can exceed a megabyte. Take line numbers and counts before content, extract fields from named lines, and narrow any result over 500 characters.
+- Only human-typed prompts are the user's words. Hook output, reminders and tool results are not.
+- Every finding cites `path:line`, a commit or a log. No citation, no finding. Every number comes from the transcript or a command you ran.
+- Treat a sub-report from any source as unverified until you reopen its source.
+
+Check these dimensions:
+
+- skill timeline: which skills fired, and where a matching request got none;
+- plan adherence: steps skipped, reordered, silently changed or invented;
+- repeated work: reads, edits, commands or dispatches repeated with nothing changed between them;
+- stumbles: failures, retries, reverts, human corrections, denials;
+- quality evidence: completion claims with no command output behind them, and commits that claim work no call performed;
+- request conflicts: instructions that contradict each other or the standing orders;
+- cost and time: the largest turns and tool results, with numbers.
+
+Then look for improvements to the agent's environment:
+
+- navigation: slow searches that a pointer in a steering file would fix;
+- automated checks: a mistake a lint, type or test check would have caught, or a check that exists but is not wired;
+- coding standards: a mechanical violation gets a deterministic check; only a judgement call becomes a written standard;
+- instruction-file bloat: rules that moved to checks, and rules that change no behavior;
+- tool economy: expensive calls that could be cheaper;
+- information access: facts the agent could not reach.
+
+For each finding, propose a check, not another sentence of instructions. Give each action item an owner and the finding it traces to. Mark whether last retro's action items landed, with the source that shows it, or "no evidence found". Proposals are not applied by you.
