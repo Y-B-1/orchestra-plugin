@@ -377,6 +377,7 @@ Owned paths:
 - `plugins/orchestra/hooks/mod/**`, except `autonomy.ts` and `autonomy.test.ts`
 - `plugins/orchestra/types/index.d.ts`
 - `plugins/orchestra/config/guard-corpus.json`: append only. New cases must pass `test_guard_corpus.py`. Changing an existing expectation is a B2 repair.
+- B5 reads the matching rule of each table key from the table's `_doc` object, and covers the A8 and A12 edit cases with TypeScript tests (SPEC 10.3, D3).
 
 Acceptance:
 - `claude plugin validate plugins/orchestra` (2.1.289) exits 0 and lists the six events of SPEC 10.
@@ -414,11 +415,13 @@ Acceptance:
 
 Owned paths:
 - New: `plugins/orchestra/THIRD-PARTY-NOTICES`.
-- `tests/test_skills.py`: the provenance tests only. They parse every `Source:` header under the SPEC 8.2 grammar; check that every SHA and every idea-level name in a header is credited in the notices; and check that every destination file named in `docs/SKILL-SOURCES.md` by a row with an upstream or idea-level source carries a header or a `Stub:` line. `orchestra/references/cli.md` is Orchestra text only and exempt: the provenance test skips it even when a row names it (SPEC 8.4).
+- `tests/test_skills.py`: the provenance tests only. They parse every `Source:` header under the SPEC 8.2 grammar; check that every SHA and every idea-level name in a header is credited in the notices; and check that every destination file named in `docs/SKILL-SOURCES.md` by a row with an upstream or idea-level source carries a header or a `Stub:` line. S0 also replaces the B4 assertions that require a `Stub:` line in every skill file (`test_sentinel_and_stub_lines`) and that split on `Stub:` (`test_worker_contract_phrases_do_not_repeat_in_role_skills`) with the SPEC 8.3 header-or-`Stub:` rule, so S1 to S7 can remove their `Stub:` lines (D3, R4 F1).
+- `plugins/orchestra/config/roles.json`: the code-reviewer prompt sentence only. "Final mode always covers all categories" becomes: final mode covers the categories of the lens its `Lens:` line names, and the four lens cards together cover every category (SPEC E7). Regenerate and commit the generated files (D3, R4 F2). `orchestra/references/cli.md` is Orchestra text only and exempt: the provenance test skips it even when a row names it (SPEC 8.4).
 
 Acceptance:
 - Every SHA and every idea-level name cited in `docs/SKILL-SOURCES.md` appears in the notices file, with its license text when the source is MIT at that SHA.
-- `python3 -m unittest discover -s tests -p 'test_skills.py'` exits 0 on the B4 stubs.
+- `python3 -m unittest discover -s tests -p 'test_skills.py'` exits 0 on the B4 stubs, and still exits 0 in a scratch copy where one skill file has a valid `Source:` header and no `Stub:` line.
+- `grep -n "always covers all categories" plugins/orchestra/config/roles.json plugins/orchestra/agents/code-reviewer*.md` prints nothing.
 - `python3 scripts/build_release.py --out "$SCRATCH/s0"` on the committed candidate exits 0.
 - `--check` exits 0 and the Codex package contains `THIRD-PARTY-NOTICES`.
 
@@ -637,6 +640,7 @@ Shared paths, each serialized by an edge:
 | `generate.py` | B1, B4 |
 | `tests/test_packaging.py` | B1, B4 |
 | `tests/test_skills.py` | B4, S0 |
+| `config/roles.json` | B4, S0 (code-reviewer prompt sentence only) |
 | `tests/test_engine.py` | B4, B3, B8, B9, B10 |
 | `tests/test_integration.py` | B2 (A15 test only), B3, B8, B9, B10 |
 | `tests/test_hooks.py` | B2, B3, B8, B10 |
