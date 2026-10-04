@@ -1101,6 +1101,49 @@ class ScopedEvidenceTests(EngineFixture):
         self.task('fix', mode='repair', repair_of='a', files=['c'])
         self.assertEqual(['a', 'c'], self.engine.scope_for(['fix']))
 
+    def test_stale_newer_blocked_receipt_does_not_restore_older_clean(self):
+        self.reported('a')
+        self.reported('b')
+        self.checkpoint('a')
+        report = self.root / 'wide.json'
+        self.review(report, tasks=['a', 'b'], findings=['bug in a'])
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a', 'b'], findings=['bug in a'])
+        with self.assertRaisesRegex(EngineError, 'findings'):
+            self.engine.accept('main', self.lease, 'a')
+        (self.repo / 'b').write_text('edit inside the newer scope only')
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
+
+    def test_stale_final_blocked_receipt_does_not_restore_scoped_clean(self):
+        self.reported('a')
+        self.checkpoint('a')
+        report = self.root / 'final-blocked.json'
+        self.review(report, tasks=['a'], findings=['bug in a'], final=True)
+        receipt = self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a'], final=True, findings=['bug in a'])
+        self.assertIsNone(receipt['scope'])
+        with self.assertRaisesRegex(EngineError, 'findings'):
+            self.engine.accept('main', self.lease, 'a')
+        (self.repo / 'b').write_text('edit outside the checkpoint scope')
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
+
+    def test_review_covering_a_no_file_task_uses_whole_repo_artifact(self):
+        self.reported('a')
+        self.reported('n', files=[])
+        self.assertIsNone(self.engine.scope_for(['a', 'n']))
+        report = self.root / 'mixed.json'
+        self.review(report, tasks=['a', 'n'])
+        receipt = self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a', 'n'])
+        self.assertIsNone(receipt['scope'])
+        self.assertNotIn('scope', receipt['artifact'])
+        (self.repo / 'b').write_text('edit outside [a]')
+        with self.assertRaisesRegex(EngineError, 'independent review'):
+            self.engine.accept('main', self.lease, 'n')
+        with self.assertRaisesRegex(EngineError, 'independent review'):
+            self.engine.accept('main', self.lease, 'a')
+
     def test_task_without_reserved_files_gets_whole_repo_artifact(self):
         self.reported('n', role='investigator', mode='code', files=[])
         self.assertIsNone(self.engine.scope_for(['n']))
