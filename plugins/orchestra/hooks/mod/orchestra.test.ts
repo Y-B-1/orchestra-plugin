@@ -342,6 +342,28 @@ const O20_ALLOW = [
   'echo $((1+2))',
 ];
 
+// O23 (SPEC A5): a command-position $(...) is scanned like a command-position backtick.
+const O23_DENY = [
+  '$(echo git reset --hard)',
+  'x=1 $(echo git reset --hard)',
+  '$(printf %s "git reset --hard")',
+  '{ $(echo git reset --hard); }',
+  'if true; then $(echo git reset --hard); fi',
+];
+const O23_ALLOW = ['$(which python3) -V', '"$(git rev-parse --show-toplevel)"/scripts/x.sh', 'echo $(date)', '$(echo ls)'];
+
+test('O23: a command-position $(...) producing a destructive command denies', () => {
+  loadRules(RULES_JSON);
+  const wrong = O23_DENY.filter((c) => klassOf(classifyCommand(c)) !== 'deny');
+  expect(wrong).toEqual([]);
+});
+
+test('O23: the benign command-position and argument substitutions allow', () => {
+  loadRules(RULES_JSON);
+  const wrong = O23_ALLOW.filter((c) => klassOf(classifyCommand(c)) !== 'allow');
+  expect(wrong).toEqual([]);
+});
+
 test('O20: function/coproc, top-level backticks, redirected groups, time case and heredocs in $(...) deny', () => {
   loadRules(RULES_JSON);
   const wrong = O20_DENY.filter((c) => klassOf(classifyCommand(c)) !== 'deny');
