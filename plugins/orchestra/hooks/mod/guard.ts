@@ -133,7 +133,6 @@ export function editTools(): string[] {
 
 const PY_WS = '\\t-\\r\\x1c-\\x20\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000';
 const STRIP_RE = new RegExp('^[' + PY_WS + ']+|[' + PY_WS + ']+$', 'g');
-const WS_START_RE = new RegExp('^[' + PY_WS + ']');
 const WS_OR_END_RE = new RegExp('^(?:[' + PY_WS + ']|$)');
 const DIGITS_RE = /^[\p{Nd}²³¹⁰⁴-⁹₀-₉①-⑨⑴-⑼⒈-⒐⓪⓵-⓽⓿❶-❾➀-➈➊-➒]+$/u;
 
@@ -1861,9 +1860,10 @@ function heredocItems(docs: Doc[], pipes: string[][], depth: number): Item[] {
     }
     if (modes.has('script') || modes.has('c')) items.push([bodyDecision(body, modes, depth), argv, false]);
     if (!quoted) {
+      // Rule (4): every class but malformed is kept and counts as a segment, as for O26.
       for (const content of substitutions(body)) {
         const decision = classifyCommand(content, depth + 1);
-        if (hardDeny(decision)) items.push([decision, argv, false]);
+        if (klassOf(decision) !== 'allow' && decision.category !== 'malformed') items.push([decision, argv, true]);
       }
     }
     const decision = scanLines(body, depth);

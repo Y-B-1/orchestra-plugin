@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -183,6 +184,11 @@ class GuardCorpusTest(unittest.TestCase):
         nested = [c for c in edits if c['input']['path'] == '.claude/hooks.json' and c['input']['cwd'].endswith('/.claude/plugins/x')]
         self.assertTrue(nested)
         self.assertTrue(all(c['class'] == 'deny' for c in nested))
+
+    def test_mod_fixtures_are_in_sync_with_the_corpus(self):
+        result = subprocess.run([sys.executable, str(PLUGIN / 'hooks/mod/fixtures/sync.py'), '--check'],
+                                capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class GuardDigestTest(unittest.TestCase):

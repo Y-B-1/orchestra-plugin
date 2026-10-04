@@ -76,39 +76,6 @@ export function utf8(text: string): Uint8Array {
   return Uint8Array.from(out);
 }
 
-/** UTF-8 decode (invalid sequences become U+FFFD). */
-export function fromUtf8(bytes: Uint8Array): string {
-  let out = '';
-  let i = 0;
-  while (i < bytes.length) {
-    const b = bytes[i]!;
-    let need = 0;
-    let c = 0;
-    if (b < 0x80) c = b;
-    else if (b >= 0xc2 && b < 0xe0) (need = 1), (c = b & 31);
-    else if (b >= 0xe0 && b < 0xf0) (need = 2), (c = b & 15);
-    else if (b >= 0xf0 && b < 0xf5) (need = 3), (c = b & 7);
-    else c = 0xfffd;
-    let ok = true;
-    for (let k = 1; k <= need; k++) {
-      const next = bytes[i + k];
-      if (next === undefined || (next & 0xc0) !== 0x80) {
-        ok = false;
-        break;
-      }
-      c = (c << 6) | (next & 63);
-    }
-    if (!ok || c > 0x10ffff || (c >= 0xd800 && c <= 0xdfff)) {
-      out += '\ufffd';
-      i += 1;
-      continue;
-    }
-    out += String.fromCodePoint(c);
-    i += need + 1;
-  }
-  return out;
-}
-
 const K = [
   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
   0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
