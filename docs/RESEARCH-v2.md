@@ -35,7 +35,7 @@ From https://code.claude.com/docs/en/sub-agents: "Full model ID: use a full mode
   - Common fields for every event include `session_id`, `transcript_path` and `cwd`. SessionEnd adds `reason`: `clear`, `resume`, `logout`, `prompt_input_exit` or `other`. Example: `{"session_id":"abc123","cwd":"/Users/my-project","hook_event_name":"SessionEnd","reason":"clear"}`.
   - `cwd` is defined as "Current working directory when the hook is invoked". Equality with the SessionStart `cwd` is not promised. UNKNOWN, not observed. If the session `cd`s, the two can differ.
   - Budget: "SessionEnd hooks share a 1.5-second budget", raised to a configured `timeout` up to 60 s.
-  - Resume and `/clear`: SessionEnd fires with `reason` `resume` or `clear`. SPEC B-F5 must not release a run that the same `session_id` continues.
+  - Resume and `/clear`: SessionEnd fires with `reason` `resume` or `clear`. Superseded premise: the mods API declaration says `/clear` continues under a new id, so SPEC B-F5 and O6 record a pending rebind on `clear` and `resume` and apply it at the next SessionStart instead of keying on an unchanged `session_id`.
 - **Subagent PreToolUse: DOCUMENTED.** The payload carries `agent_id` and `agent_type`. The docs say `session_id` is "Current session identifier". They do not state it is the parent's id, and there is no `parent_session_id` field. So parent `session_id` in subagents is UNKNOWN by docs. B3 should be checked by a live capture before the engine relies on it.
 
 ## Q5. Mods under `claude -p`: DOCUMENTED (local `plugin-authoring` skill reference, 2.1.286; not re-observed on 2.1.289)
