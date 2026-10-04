@@ -4,7 +4,7 @@ Orchestra 2.0.0 consolidates ten worker roles into six, rewrites the skills, rep
 
 ## Breaking changes
 
-- Roles. The engine accepts only the 2.0 role names below. A card or dispatch that names a 1.0.1 role is rejected as an unavailable role. A live 1.0.1 run cannot continue: after upgrading, run `start --new-run`, which archives the old state.
+- Roles. The engine accepts only the 2.0 role names below. A card or dispatch that names a 1.0.1 role is rejected as an unavailable role. A live 1.0.1 run cannot continue, and `start --new-run` cannot clear it after the upgrade. Before upgrading, end it with 1.0.1 still installed (see Install path from 1.0.1).
 - Removed commands: `route`, `review-groups` and `audit-policy`. Calling one exits with an unknown-command error. The coordinator chooses lanes, groups reported cards and picks audit axes by hand, following the skill references.
 - Removed policy keys: `reserved_ports` and `denied_tools`. An old policy file that still carries them loads unchanged.
 - `status` and `board` no longer print the lease. `start` prints it once.
@@ -51,7 +51,7 @@ New builder mode `cleanup` applies a lean-and-simplify pass at the end of a run 
 - `git stash list` and `git stash show` are allowed; other stash forms are denied. `git restore --staged` is allowed.
 - Heredoc and here-string bodies no longer raise a quoting error. They are classified as scripts when fed to a shell, `source`, `.`, `eval` or `xargs` running a shell, and always scanned for always-deny lines. Command runners (`xargs`, `find -exec`, `doas`, `stdbuf`, `watch`, `flock`) are unwrapped.
 - New command classes: `allow`, `deny`, `release`, `release-multi` and `boundary` (deletion or local merge). Boundaries matter only while autonomy is active.
-- `az` is release-class only for `deployment ... create`. `settings.json` is no longer a protected path. A linked worktree of an armed repository shares the main worktree's run state.
+- `az` is release-class only for `deployment ... create` and `repos pr update ... --status completed`. `settings.json` is no longer a protected path. A linked worktree of an armed repository shares the main worktree's run state.
 - One guard rules table and one test corpus keep the Python and TypeScript guards in step.
 
 ## Install path from 1.0.1
@@ -66,12 +66,15 @@ claude plugin install orchestra@orchestra-distribution
 claude plugin list
 ```
 
-Restart Claude Code and start a new run. For Codex:
+Before the uninstall, end any active run from its repository with 1.0.1 still installed: `python3.11 ~/.claude/plugins/cache/orchestra-distribution/orchestra/1.0.1/scripts/orchestra.py --lease LEASE interrupt` (or `finish`; LEASE is the value `start` printed). If you already upgraded with a run active, move that run's `state.json` out of its state directory by hand; the repository is then unarmed. The directory is `$ORCHESTRA_STATE_DIR` when set, otherwise `${XDG_STATE_HOME:-~/.local/state}/orchestra/<id>`, where `<id>` is the first 24 hex characters of the SHA-256 of the repository's absolute path.
+
+Restart Claude Code and start a new run. For Codex, update the clone first, because `install-profiles` installs the profiles of the clone it runs from:
 
 ```sh
 codex plugin marketplace upgrade orchestra-distribution
 codex plugin remove orchestra@orchestra-distribution
 codex plugin add orchestra@orchestra-distribution
+git -C orchestra-plugin pull --ff-only
 python3.11 orchestra-plugin/plugins/orchestra/scripts/orchestra.py install-profiles
 ```
 
@@ -85,4 +88,5 @@ Review and trust the hook definition again in Codex if it asks. See the [README]
 - `gh api` calls and MCP or terminal tools that push or merge are not guarded. Using them to get around the guard is forbidden by procedure, not enforced.
 - Caller-supplied actor names, leases and role markers are consistency checks, not authentication.
 - Hook trust is never written by the installer. Trusted automatic startup, live discovery and the interactive mods behavior are user checks, not established by the unit suite.
+- 2.0.0 has no automatic recovery for a run left active across the upgrade; use the manual `state.json` move in Install path from 1.0.1.
 - Windows is not supported by the POSIX locking core; use WSL.
