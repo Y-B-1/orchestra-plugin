@@ -574,7 +574,7 @@ Acceptance: each rule of E1 to E7 appears in exactly one skill file (orchestrato
   - On `e.reason` `clear`, the process continues under a new id and no `session.start` fires for it (declaration of `SessionEndInput`). The tick keeps running, and its next fire writes the marker for the new id. UNVERIFIED for `resume`: the declaration says only that the process continues under another id. The mod treats `resume` like `clear`; if `session.start` does fire, it cancels the old tick first, so no two ticks run. B5 records the observed behavior live.
   - On `prompt_input_exit`, `logout` and `other`, `session.end` also cancels the tick.
   - A resumed id that was retired earlier gets fresh markers again: the id change removes it from the retired set.
-- The tick callback catches its own errors. A failed tick writes nothing, so the marker goes stale and Python guards in full. The heartbeat time comes from `$.clock.now()`, so `claude plugin test` can control it.
+- The tick callback catches its own errors. A failed tick writes no fresh marker, so the marker goes stale and Python guards in full. The heartbeat time comes from `$.clock.now()`, so `claude plugin test` can control it.
 - If neither `XDG_STATE_HOME` nor `HOME` is set, the mod writes no marker and installs no guard.
 - `on('tool.call', {tool: 'Bash'|'Edit'|'Write'|'MultiEdit'})` classifies the input with a TypeScript port of the shared rules:
   - `deny` returns `{deny: reason}`;
