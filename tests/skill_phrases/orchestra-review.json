@@ -7,6 +7,14 @@
     "Sentinel: orchestra-review/references/architecture.md",
     "Sentinel: orchestra-review/references/security.md",
     "Sentinel: orchestra-review/references/cleanliness.md",
-    "Sentinel: orchestra-review/references/specialists.md"
+    "Sentinel: orchestra-review/references/specialists.md",
+    "requirements, correctness, tests, standards",
+    "A green test that mocks the boundary cannot prove the real boundary.",
+    "A final brief with no `Lens:` line is a blocker.",
+    "Review as the specialist the brief names.",
+    "Critical pass",
+    "deletion test",
+    "attack surface",
+    "delete, stdlib, native, speculative, shrink"
   ]
 }
