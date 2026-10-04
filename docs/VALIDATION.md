@@ -46,3 +46,12 @@ Final independent review and the checked candidate hash are recorded in BUILD-LE
 Inline assignments share worker ownership, dependency, capacity, lease and independent review checks. Codex uses only Sol/Luna; checked repair and red team use Sol high.
 
 Native Codex 0.159.0 hook discovery reproduced zero Orchestra hooks with the portable root manifest. Its native compatibility-only package returns all five events exactly once as untrusted. The Codex catalog now selects a generated copy of the canonical runtime that omits only unsupported/Claude packaging files. The canonical portable manifest remains schema-valid; Claude keeps its separate definition. The generator and parity test check every copied byte. No trust record changed.
+
+## 2.0.0 status
+
+Checked in the 2.0.0 candidate worktree, headless: the Python 3.14 unit and integration suite (326 tests), generator drift check (Claude agents, Codex profiles and Codex package match the canonical source), skill byte budgets and provenance tests, packaging and release-archive builds. The suite adds guard corpus parity, scoped-evidence, autonomy, SessionEnd and linked-worktree cases. The TypeScript guard and mods tests run through `claude plugin test` with function hooks enabled; their results belong in BUILD-LEDGER.md with the candidate hash, not here.
+
+Not established by the headless checks, and recorded separately as live user checks when performed: trusted automatic startup with exactly one SessionStart context, the mods heartbeat marker advancing in an interactive session, `/orchestra-board` and `/orchestra-autonomy` rendering, the SessionEnd release after `/exit`, `clear` and `resume` rebinding, the picker's model reaching the main session, native Codex hook discovery after the profile reinstall, and an autonomy run that stops at its pass cap. Treat any of these not listed as observed in the ledger as unperformed.
+
+Known limits are in the [release notes](RELEASE-NOTES-2.0.0.md).
+
