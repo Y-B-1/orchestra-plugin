@@ -377,7 +377,7 @@ Owned paths:
 - `plugins/orchestra/hooks/mod/**`, except `autonomy.ts` and `autonomy.test.ts`
 - `plugins/orchestra/types/index.d.ts`
 - `plugins/orchestra/config/guard-corpus.json`: append only. New cases must pass `test_guard_corpus.py`. Changing an existing expectation is a B2 repair.
-- B5 reads the matching rule of each table key from the table's `_doc` object, and covers the A8 and A12 edit cases with TypeScript tests (SPEC 10.3, D3).
+- B5 reads the matching rule of each table key from the table's `_doc` object, and covers the A8 and A12 edit cases with TypeScript tests (SPEC 10.3, D3). The TypeScript classifier lives in `hooks/mod/guard.ts`. The marker's `rules_sha256` becomes the SPEC 10.3 guard digest over the four files, computed in TypeScript; a `claude plugin test` case checks it equals the Python digest for the same root (D3-r1). B5 checks that `$.fs.read` reads `.py` files; if not, return to design.
 
 Acceptance:
 - `claude plugin validate plugins/orchestra` (2.1.289) exits 0 and lists the six events of SPEC 10.
@@ -409,18 +409,18 @@ Acceptance:
 
 | Field | Value |
 | --- | --- |
-| Goal | SPEC 8.2 licensing and 8.3 provenance: `THIRD-PARTY-NOTICES` with the MIT texts and SHAs of the sources the accepted matrix cites and the idea-level credits; the provenance tests in `tests/test_skills.py`. |
+| Goal | SPEC 8.2 licensing and 8.3 provenance: `THIRD-PARTY-NOTICES` with the MIT texts and SHAs of the sources the accepted matrix cites and the idea-level credits; the provenance tests in `tests/test_skills.py`; the header-or-`Stub:` test rule; the lens-scoped code-reviewer sentence in `roles.json` (SPEC E7). |
 | Role | builder/mechanical [v1 `orchestra:builder`] |
 | Deps | B4, I2, MXR |
 
 Owned paths:
 - New: `plugins/orchestra/THIRD-PARTY-NOTICES`.
-- `tests/test_skills.py`: the provenance tests only. They parse every `Source:` header under the SPEC 8.2 grammar; check that every SHA and every idea-level name in a header is credited in the notices; and check that every destination file named in `docs/SKILL-SOURCES.md` by a row with an upstream or idea-level source carries a header or a `Stub:` line. S0 also replaces the B4 assertions that require a `Stub:` line in every skill file (`test_sentinel_and_stub_lines`) and that split on `Stub:` (`test_worker_contract_phrases_do_not_repeat_in_role_skills`) with the SPEC 8.3 header-or-`Stub:` rule, so S1 to S7 can remove their `Stub:` lines (D3, R4 F1).
-- `plugins/orchestra/config/roles.json`: the code-reviewer prompt sentence only. "Final mode always covers all categories" becomes: final mode covers the categories of the lens its `Lens:` line names, and the four lens cards together cover every category (SPEC E7). Regenerate and commit the generated files (D3, R4 F2). `orchestra/references/cli.md` is Orchestra text only and exempt: the provenance test skips it even when a row names it (SPEC 8.4).
+- `tests/test_skills.py`: the provenance tests only. They parse every `Source:` header under the SPEC 8.2 grammar; check that every SHA and every idea-level name in a header is credited in the notices; and check that every destination file named in `docs/SKILL-SOURCES.md` by a row with an upstream or idea-level source carries a header or a `Stub:` line. `orchestra/references/cli.md` is Orchestra text only and exempt: the provenance test skips it even when a row names it (SPEC 8.4). S0 also replaces the B4 assertion that requires a `Stub:` line in every skill file (`test_sentinel_and_stub_lines`) with the SPEC 8.3 header-or-`Stub:` rule, and re-anchors `test_worker_contract_phrases_do_not_repeat_in_role_skills` on the `Sentinel:` line instead of the `Stub:` split, keeping its assertion that no phrase of `orchestra-worker/SKILL.md` appears in a role skill (SPEC 8.3). S1 to S7 can then remove their `Stub:` lines (D3, R4 F1; D3-r1, red team F6).
+- `plugins/orchestra/config/roles.json`: the code-reviewer prompt sentence only. "Final mode always covers all categories" becomes: final mode covers the categories of the lens its `Lens:` line names, and the four lens cards together cover every category (SPEC E7). Regenerate and commit the generated files (D3, R4 F2).
 
 Acceptance:
 - Every SHA and every idea-level name cited in `docs/SKILL-SOURCES.md` appears in the notices file, with its license text when the source is MIT at that SHA.
-- `python3 -m unittest discover -s tests -p 'test_skills.py'` exits 0 on the B4 stubs, and still exits 0 in a scratch copy where one skill file has a valid `Source:` header and no `Stub:` line.
+- `python3 -m unittest discover -s tests -p 'test_skills.py'` exits 0 on the B4 stubs, and still exits 0 in a scratch copy where the `Stub:` line is removed from `orchestra-worker/SKILL.md` and from one sourced skill file that has a valid `Source:` header.
 - `grep -n "always covers all categories" plugins/orchestra/config/roles.json plugins/orchestra/agents/code-reviewer*.md` prints nothing.
 - `python3 scripts/build_release.py --out "$SCRATCH/s0"` on the committed candidate exits 0.
 - `--check` exits 0 and the Codex package contains `THIRD-PARTY-NOTICES`.
@@ -623,11 +623,13 @@ Readiness from accepted prerequisites:
 - B11 is ready on B5 and B10. B7 is ready on B11 (its other prerequisites are accepted by then).
 - Every node becomes ready from accepted prerequisites, and none depends on an unknown ticket. The graph is acyclic: one topological order is P0, I2, MX, MXR, B1, B2, B4, S0, S1 to S8, SC, B3, B8, B5, B9, B10, B11, B7, INT, RF1 to RF4, CL, G1, A1 to A4, L1.
 
+Repair card B2-r1 (from R2 and D3-r1), owned paths within the B2 set: `guards.py` (A5 rules 1 to 5), `guard-rules.json` (`_doc`), `guard-corpus.json` (append only), `hooks.py` (the marker check uses the guard digest; `_main_worktree` without `--path-format`), `test_guard_corpus.py`, `test_hooks.py`, `test_integration.py` (the bare-common-dir A15 case). The mod's `marker.ts` keeps hashing the table alone until B5, so until B5 merges the Python digest never matches and Python guards in full, which is the safe direction.
+
 Parallel sets and their owned paths are disjoint:
 
 - B2 and B4: guards/hooks/run-hook/claude.json/guard config/test_hooks/test_guard_corpus/test_integration (A15 test) versus roles/models/generate/engine/skills/test_engine/test_packaging/test_skills/skill_phrases.
 - Integration is serial (0.3), so "parallel" means building at the same time in separate worktrees; merges never overlap.
-- B3 to B10 chain, B5, B11, S0 to S8: engine.py, orchestra.py, hooks.py, policy, autonomy template and their tests (chain); `hooks/mod/**` except autonomy files, types, corpus (B5, then B11 after it); one skill directory and one phrase file each (S1 to S7); `docs/roles.md` and `docs/models.md` (S8); the notices file and the `test_skills.py` provenance tests (S0, finished before S1 to S7 start); `docs/SKILL-SOURCES.md` (MX, finished before S0 starts). `skills/orchestra/references/cli.md` belongs to B8 and then B7, never to S1.
+- B3 to B10 chain, B5, B11, S0 to S8: engine.py, orchestra.py, hooks.py, policy, autonomy template and their tests (chain); `hooks/mod/**` except autonomy files, types, corpus (B5, then B11 after it); one skill directory and one phrase file each (S1 to S7); `docs/roles.md` and `docs/models.md` (S8); the notices file, the `test_skills.py` provenance tests and the `roles.json` code-reviewer sentence (S0, finished before S1 to S7 start); `docs/SKILL-SOURCES.md` (MX, finished before S0 starts). `skills/orchestra/references/cli.md` belongs to B8 and then B7, never to S1.
 
 Shared paths, each serialized by an edge:
 
