@@ -22,6 +22,10 @@ export type AutonomyState = {
   band: boolean;
   /** Bumped by `startSession`, so a read in flight from an earlier session is dropped. */
   epoch: number;
+  /** True when the state is not known: after `session.start`, or after a CLI arm seen in Bash. The next tick reads status. */
+  unknown: boolean;
+  /** Bumped when a command or a CLI arm changes the state, so a read that started before it is dropped. */
+  changes: number;
 };
 
 export type Cli = { ok: boolean; body: Json | null; error: string };
@@ -29,7 +33,7 @@ export type Cli = { ok: boolean; body: Json | null; error: string };
 export type Outcome = { text: string; band?: { text: string | undefined } };
 
 export function newAutonomy(): AutonomyState {
-  return { registered: false, active: false, lastRead: null, busy: false, band: false, epoch: 0 };
+  return { registered: false, active: false, lastRead: null, busy: false, band: false, epoch: 0, unknown: true, changes: 0 };
 }
 
 function parse(text: string): Json | null {
@@ -79,6 +83,7 @@ export function stopLine(status: Json): string {
 
 /** Applies one status read. `stopped` is true when it was active until now and is not in this read. */
 function apply(auto: AutonomyState, status: Json): { band: string | undefined; stopped: boolean } {
+  auto.unknown = false;
   if (status['active'] === true) {
     auto.active = true;
     return { band: bandText(status), stopped: false };
@@ -94,6 +99,7 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
   const body = res.body;
   if (sub === 'arm') {
     auto.active = body['active'] === true;
+    auto.unknown = false;
     auto.lastRead = null;
     const pre = parse(JSON.stringify(body['preconditions'] ?? null)) ?? {};
     const lines = [`Orchestra autonomy: armed. Ledger: ${String(body['ledger'] ?? '?')}`];
@@ -102,6 +108,7 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
   }
   if (sub === 'disarm') {
     auto.active = false;
+    auto.unknown = false;
     const text = String(body['text'] ?? '');
     const line = body['was_active'] === true ? `Orchestra autonomy: disarmed${text !== '' ? `\n${text}` : ''}` : 'Orchestra autonomy: disarmed (it was not active)';
     return { text: line, band: { text: undefined } };
@@ -116,7 +123,7 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
 
 /** Whether the tick may read status at `now`; takes the slot when it may. */
 export function pollDue(auto: AutonomyState, now: number): boolean {
-  if (!auto.active) return false;
+  if (!auto.active && !auto.unknown) return false;
   if (auto.lastRead !== null && now - auto.lastRead < POLL_MS) return false;
   auto.lastRead = now;
   return true;
@@ -133,6 +140,16 @@ export function pollOutcome(auto: AutonomyState, res: Cli): { band: string | und
 export function startSession(auto: AutonomyState): void {
   auto.epoch += 1;
   auto.active = false;
+  auto.unknown = true;
   auto.lastRead = null;
   auto.busy = false;
+}
+
+/** A change this process caused or saw (a command, a CLI arm): drops reads in flight; `unknown` also has the next tick read status. */
+export function noteChange(auto: AutonomyState, unknown: boolean): void {
+  auto.changes += 1;
+  if (unknown) {
+    auto.unknown = true;
+    auto.lastRead = null;
+  }
 }

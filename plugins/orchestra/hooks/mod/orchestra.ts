@@ -1,6 +1,6 @@
 import type { Hook, On, Register } from 'claude-code';
 
-import { AUTONOMY_COMMAND, cliResult, cliThrown, commandOutcome, newAutonomy, pollDue, pollOutcome, startSession, subOf, USAGE } from './autonomy.js';
+import { AUTONOMY_COMMAND, cliResult, cliThrown, commandOutcome, newAutonomy, noteChange, pollDue, pollOutcome, startSession, subOf, USAGE } from './autonomy.js';
 import type { AutonomyState, Cli, Sub } from './autonomy.js';
 import { classifyCommand, editDenied, editTools, klassOf, loadRules, shellTools } from './guard.js';
 import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, markerPath, sha256Hex, utf8 } from './marker.js';
@@ -31,20 +31,33 @@ function asJson(text: string): Json | null {
   }
 }
 
-/** The first of review, gate or accept after `orchestra.py`, skipping `--opt [value]` tokens. */
-function verdictSub(command: string): string | null {
+/** The first two words after `orchestra.py`, skipping `--opt [value]` tokens. */
+function subWords(command: string): string[] {
   const words = command.split(/\s+/).filter((w) => w !== '');
   const at = words.findIndex((w) => w.endsWith('orchestra.py'));
-  if (at < 0) return null;
-  for (let i = at + 1; i < words.length; i++) {
+  const found: string[] = [];
+  if (at < 0) return found;
+  for (let i = at + 1; i < words.length && found.length < 2; i++) {
     const w = words[i]!;
     if (w.startsWith('--')) {
       if (!w.includes('=') && i + 1 < words.length && !words[i + 1]!.startsWith('-')) i++;
       continue;
     }
-    return VERDICT_SUBS.includes(w) ? w : null;
+    found.push(w);
   }
-  return null;
+  return found;
+}
+
+/** The first of review, gate or accept after `orchestra.py`. */
+function verdictSub(command: string): string | null {
+  const first = subWords(command)[0];
+  return first !== undefined && VERDICT_SUBS.includes(first) ? first : null;
+}
+
+/** True for `orchestra.py ... autonomy arm`: the documented way to arm a run (SPEC 12.1). */
+function armsAutonomy(command: string): boolean {
+  const words = subWords(command);
+  return words[0] === 'autonomy' && words[1] === 'arm';
 }
 
 function toastText(sub: string, out: string): string | null {
@@ -120,7 +133,11 @@ async function autonomyCommand($: Dollar, auto: AutonomyState, args: string): Pr
   try {
     const sub = subOf(args);
     if (sub === null) return { text: USAGE };
-    const out = commandOutcome(auto, sub, await autonomyCli($, sub));
+    // Status reads that started before this command ended are stale: noteChange drops them.
+    noteChange(auto, false);
+    const res = await autonomyCli($, sub);
+    noteChange(auto, false);
+    const out = commandOutcome(auto, sub, res);
     if (out.band !== undefined) autonomyBand($, auto, out.band.text);
     return { text: out.text };
   } catch (error) {
@@ -130,14 +147,15 @@ async function autonomyCommand($: Dollar, auto: AutonomyState, args: string): Pr
 
 /** One step of the existing tick: reads status at most every 30 s while active; never throws. */
 async function autonomyPoll($: Dollar, auto: AutonomyState): Promise<void> {
-  if (!auto.active || auto.busy) return;
+  if ((!auto.active && !auto.unknown) || auto.busy) return;
   const epoch = auto.epoch;
+  const changes = auto.changes;
   auto.busy = true;
   try {
     const now = await $.clock.now();
     if (epoch !== auto.epoch || !pollDue(auto, now)) return;
     const res = await autonomyCli($, 'status');
-    if (epoch !== auto.epoch) return;
+    if (epoch !== auto.epoch || changes !== auto.changes) return;
     const out = pollOutcome(auto, res);
     if (!out.changed) return;
     autonomyBand($, auto, out.band);
@@ -362,6 +380,12 @@ export const register: Register = (on: On) => {
         }
       } catch {
         // A toast never changes the tool's answer.
+      }
+      try {
+        // SPEC 12.1: a run armed through Bash is not seen by the command path; the next tick reads status.
+        if (armsAutonomy(command)) noteChange(auto, true);
+      } catch {
+        // Autonomy UI never changes the tool's answer.
       }
       return result;
     }
