@@ -207,6 +207,25 @@ class LinkedWorktreeHook(unittest.TestCase):
                        capture_output=True,text=True,check=True)
         self.assertIsNone(self.hook(self.linked,command))
 
+    def test_bare_common_directory_stays_unarmed(self):
+        # A15: a worktree of a bare repository has no main worktree, so it is never armed,
+        # even with a run state sitting at the bare directory's parent.
+        bare=self.root/'bare.git'
+        subprocess.run(['git','clone','-q','--bare',str(self.repo),str(bare)],check=True,capture_output=True)
+        self.git(bare,'worktree','add','-q',str(self.root/'bare checkout'),'main')
+        subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start'],env=self.env,
+                       capture_output=True,text=True,check=True)
+        parent_state=subprocess.run([sys.executable,'-c',
+                                     'import sys;sys.path.insert(0,sys.argv[1]);'
+                                     'from orchestra_core.paths import state_location;from pathlib import Path;'
+                                     'print(state_location(Path(sys.argv[2])))',
+                                     str(CLI.parent),str(self.root)],env=self.env,capture_output=True,text=True,check=True).stdout.strip()
+        Path(parent_state).mkdir(parents=True)
+        (Path(parent_state)/'state.json').write_text('{}')
+        for command in ['git push origin main','git push origin main && git status']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(self.root/'bare checkout',command))
+
 
 if __name__=='__main__':
     unittest.main()

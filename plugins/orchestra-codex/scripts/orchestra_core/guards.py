@@ -4,13 +4,17 @@ The rules table (config/guard-rules.json) and the corpus (config/guard-corpus.js
 are shared with the TypeScript mod; the corpus is the parity contract.
 """
 from dataclasses import dataclass, replace
+import hashlib
 import json
 from pathlib import Path, PurePosixPath
 import re
 import shlex
 
 RULES_PATH = Path(__file__).resolve().parents[2] / 'config/guard-rules.json'
-RULES = json.loads(RULES_PATH.read_text(encoding='utf-8'))
+RULES = {key: value for key, value in json.loads(RULES_PATH.read_text(encoding='utf-8')).items()
+         if not key.startswith('_')}  # Underscore keys (_doc) are documentation only.
+GUARD_DIGEST_FILES = ('config/guard-rules.json', 'scripts/orchestra_core/guards.py',
+                      'scripts/orchestra_core/hooks.py', 'hooks/mod/guard.ts')
 _SHELLS = frozenset(RULES['shells'])
 _SHELL_VALUE_FLAGS = frozenset(RULES['shell_value_flags'])
 _WRAPPER_VALUES = {name: set(values) for name, values in RULES['wrappers'].items()}
@@ -18,6 +22,20 @@ _GIT = {key: (set(value) if isinstance(value, list) else value) for key, value i
 _RELEASE = RULES['release']
 _BOUNDARY = RULES['boundary']
 _MULTI = 'releasemulti'  # Decision.category of a release-class segment inside a multi-segment command.
+
+
+def guard_digest(root=None):
+    """SHA-256 over the plugin-root guard files (SPEC 10.3). Per file: relative path, NUL, decimal
+    byte length, NUL, bytes. A missing file counts as zero bytes. Computed at runtime, never stored."""
+    root = Path(root) if root is not None else Path(__file__).resolve().parents[2]
+    digest = hashlib.sha256()
+    for rel in GUARD_DIGEST_FILES:
+        try:
+            data = (root / rel).read_bytes()
+        except OSError:
+            data = b''
+        digest.update(rel.encode() + b'\0' + str(len(data)).encode() + b'\0' + data)
+    return digest.hexdigest()
 
 
 @dataclass(frozen=True)
@@ -45,8 +63,9 @@ def _deny(reason, category='destructiveGit'):
     return Decision('deny', reason, category)
 
 
-def _segments(command):
+def _split(command):
     # Split operators only outside quotes; quoted messages remain ordinary arguments.
+    # Yields (segment, operator that ended it); the last segment has operator ''.
     start, quote, escaped = 0, None, False
     for i, char in enumerate(command):
         if escaped:
@@ -63,18 +82,52 @@ def _segments(command):
         elif char == '|' and i and command[i - 1] == '>':
             continue
         elif char in ';|&()\n':
-            yield command[start:i]
+            yield command[start:i], char
             start = i + 1
-    yield command[start:]
+    yield command[start:], ''
 
 
+def _segments(command):
+    for segment, _ in _split(command):
+        yield segment
+
+
+def _pipelines(command):
+    """Group non-empty segments joined by a single `|` (or `|&`, or a pipe before a newline)."""
+    parts = list(_split(command))
+    pipelines, current, k = [], [], 0
+    while k < len(parts):
+        segment, op = parts[k]
+        if segment.strip():
+            current.append(segment)
+        join = False
+        if op == '|' and k + 1 < len(parts):
+            following, following_op = parts[k + 1]
+            if following.strip():
+                join = True
+            elif following_op in {'&', '\n'}:
+                join = True
+                k += 1
+        if not join and current:
+            pipelines.append(current)
+            current = []
+        k += 1
+    if current:
+        pipelines.append(current)
+    return pipelines
+
+
+_MARK = '\ue000'  # Private-use delimiter for the placeholder that stands in for a heredoc operator.
+_MARK_RE = re.compile('<<' + _MARK + r'\d+' + _MARK)
+_REDIRECT = re.compile(r'(?:[0-9]*(?:>&|<&|>>|>\||<>|>|<)|&>>?)(.*)')
 _HEREDOC = re.compile(r'<<(-?)[ \t]*("[^"\n]*"|\'[^\'\n]*\'|\\?[A-Za-z_0-9][A-Za-z_0-9.\-]*)')
 
 
 def _strip_heredocs(command):
-    """Remove heredoc bodies before segmentation. Returns (text, [(body, consumer_text)])."""
+    """Remove heredoc bodies before segmentation. Returns (text, [(body, quoted_delimiter)]).
+    Each operator becomes a numbered placeholder so the pipeline that consumes it can be found."""
     out, docs, pending = [], [], []
-    quote, escaped, seg, i, n = None, False, '', 0, len(command)
+    quote, escaped, i, n = None, False, 0, len(command)
     while i < n:
         char = command[i]
         if escaped:
@@ -91,17 +144,16 @@ def _strip_heredocs(command):
             # An all-digit word is shell arithmetic (1 << 2), not a heredoc.
             if match and not match.group(2).isdigit():
                 word = match.group(2)
+                quoted = word[0] in '\'"\\'
                 word = word[1:-1] if word[0] in '\'"' else word.removeprefix('\\')
-                pending.append((word, match.group(1) == '-', seg))
-                out.append('<<HEREDOC')
-                seg += '<<HEREDOC'
+                pending.append((word, match.group(1) == '-', quoted))
+                out.append('<<' + _MARK + str(len(docs) + len(pending) - 1) + _MARK)
                 i = match.end()
                 continue
         elif char == '\n':
             out.append(char)
-            seg = ''
             i += 1
-            for word, strip, consumer in pending:
+            for word, strip, quoted in pending:
                 body, found = [], False
                 while i < n:
                     end = command.find('\n', i)
@@ -113,16 +165,10 @@ def _strip_heredocs(command):
                     body.append(line)
                 if not found:
                     raise ValueError('Heredoc has no terminator')
-                docs.append(('\n'.join(body), consumer))
+                docs.append(('\n'.join(body), quoted))
             pending = []
             continue
-        elif char in ';|&()':
-            out.append(char)
-            seg = ''
-            i += 1
-            continue
         out.append(char)
-        seg += char
         i += 1
     if pending:
         raise ValueError('Heredoc has no terminator')
@@ -132,7 +178,7 @@ def _strip_heredocs(command):
 def _unwrap(words):
     while words:
         name = PurePosixPath(words[0]).name
-        redirect = re.fullmatch(r'(?:[0-9]*(?:>&|<&|>>|>\||<>|>|<)|&>>?)(.*)', words[0])
+        redirect = _REDIRECT.fullmatch(words[0])
         if redirect:
             words = words[1:] if redirect.group(1) else words[2:]
         elif re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]):
@@ -307,23 +353,135 @@ def _classify_segment(words, depth):
     return Decision()
 
 
+def _hard_deny(decision):
+    """An always-deny verdict: not a malformed payload and not a release-class multi-segment verdict."""
+    return decision.action == 'deny' and decision.category not in {'malformed', _MULTI}
+
+
+def _scan_lines(body, depth, keep_release=False):
+    """Classify each line of a body on its own (continuations joined). A line that fails to parse
+    is skipped, never denied as malformed. Returns the first always-deny verdict, else (if asked)
+    the first release-class verdict, else allow."""
+    release = Decision()
+    for line in body.replace('\\\n', '').split('\n'):
+        if not line.strip():
+            continue
+        decision = classify_command(line, depth + 1)
+        if _hard_deny(decision):
+            return decision
+        if keep_release and decision.action == 'release' and release.action == 'allow':
+            release = decision
+    return release
+
+
+def _substitutions(body):
+    """Command substitutions in an unquoted heredoc body. Quote characters are literal there, so the
+    scan is quote-blind; an escaped dollar or backtick and `$((` arithmetic are skipped."""
+    found, i, n = [], 0, len(body)
+    while i < n:
+        char = body[i]
+        if char == '\\':
+            i += 2
+        elif body.startswith('$((', i):
+            i += 3
+        elif body.startswith('$(', i):
+            depth, j = 1, i + 2
+            while j < n and depth:
+                if body[j] == '\\':
+                    j += 1
+                elif body[j] == '(':
+                    depth += 1
+                elif body[j] == ')':
+                    depth -= 1
+                j += 1
+            content = body[i + 2:j - 1 if depth == 0 else j]
+            found.append(content)
+            found.extend(_substitutions(content))
+            i = j
+        elif char == '`':
+            j = i + 1
+            while j < n and body[j] != '`':
+                j += 2 if body[j] == '\\' else 1
+            content = body[i + 1:j]
+            found.append(content)
+            found.extend(_substitutions(content))
+            i = j + 1
+        else:
+            i += 1
+    return found
+
+
+def _consumer_mode(segment):
+    """How a pipeline segment reads a heredoc: 'c' (shell with -c), 'script' (shell without -c,
+    source, `.` or eval) or None. Wrappers are unwrapped first."""
+    words = _unwrap(shlex.split(segment, comments=True))
+    kept, skip = [], False
+    for word in words:
+        if skip:
+            skip = False
+            continue
+        redirect = _REDIRECT.fullmatch(word)
+        if redirect:
+            skip = not redirect.group(1)
+        else:
+            kept.append(word)
+    if not kept:
+        return None
+    if PurePosixPath(kept[0]).name in _SHELLS:
+        return 'c' if _shell_payload(kept) is not None else 'script'
+    if kept[0] in {'.', 'source', 'eval'}:
+        return 'script'
+    return None
+
+
+def _heredoc_items(docs, pipelines, depth):
+    """SPEC A5 rules (1) to (5): extra (decision, argv, counts) items for each heredoc body."""
+    items = []
+    for index, (body, quoted) in enumerate(docs):
+        marker = '<<' + _MARK + str(index) + _MARK
+        modes, argv = set(), ()
+        for pipeline in pipelines:
+            where = next((i for i, segment in enumerate(pipeline) if marker in segment), None)
+            if where is not None:
+                argv = tuple(_MARK_RE.sub('<<HEREDOC', word) for word in shlex.split(pipeline[where], comments=True))
+                # Rules (1) to (3): the consumer and every later command of its pipeline.
+                modes = {_consumer_mode(segment) for segment in pipeline[where:]}
+                break
+        if 'script' in modes or 'c' in modes:
+            if not body.strip():
+                decision = Decision()
+            elif 'script' in modes:
+                decision = classify_command(body, depth + 1)
+            else:  # Under -c the body is not what the shell runs, so an unparsable body is ignored.
+                decision = classify_command(body, depth + 1)
+                if decision.category == 'malformed':
+                    decision = _scan_lines(body, depth, keep_release=True)
+            items.append((decision, argv, False))
+        if not quoted:  # Rule (4)
+            for content in _substitutions(body):
+                decision = classify_command(content, depth + 1)
+                if _hard_deny(decision):
+                    items.append((decision, argv, False))
+        decision = _scan_lines(body, depth)  # Rule (5)
+        if decision.action == 'deny':
+            items.append((decision, argv, False))
+    return items
+
+
 def classify_command(command: str, _depth=0) -> Decision:
     if not isinstance(command, str) or not command.strip() or len(command) > 131072 or _depth > 8:
         return _deny('Invalid or excessively nested command', 'malformed')
     try:
         text, docs = _strip_heredocs(command)
-        segments = [shlex.split(segment, comments=True) for segment in _segments(text)]
+        segments = [[_MARK_RE.sub('<<HEREDOC', word) for word in shlex.split(segment, comments=True)]
+                    for segment in _segments(text)]
         segments = [words for words in segments if words]
         items = []  # (decision, original words, counts as a segment)
         for original in segments:
             words = _unwrap(original.copy())
             if words:
                 items.append((_classify_segment(words, _depth), original, True))
-        for body, consumer in docs:
-            # A shell interpreter reading the heredoc runs the body as a script.
-            consumer_words = _unwrap(shlex.split(consumer, comments=True)) if consumer.strip() else []
-            if consumer_words and PurePosixPath(consumer_words[0]).name in _SHELLS and _shell_payload(consumer_words) is None:
-                items.append((classify_command(body, _depth + 1), shlex.split(consumer, comments=True), False))
+        items.extend(_heredoc_items(docs, _pipelines(text), _depth))
     except ValueError as exc:
         return _deny('Malformed heredoc' if str(exc).startswith('Heredoc') else 'Malformed shell quoting', 'malformed')
     for decision, _, _ in items:

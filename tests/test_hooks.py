@@ -13,8 +13,8 @@ from unittest import mock
 import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
-from orchestra_core.guards import classify_command, RULES, RULES_PATH
-from orchestra_core.hooks import handle_event, main
+from orchestra_core.guards import classify_command, guard_digest, RULES, RULES_PATH
+from orchestra_core.hooks import _main_worktree, handle_event, main
 
 PLUGIN = Path(__file__).resolve().parents[1] / 'plugins/orchestra'
 CLI = PLUGIN / 'scripts/orchestra.py'
@@ -97,12 +97,33 @@ HEREDOC_DENIED = ["bash <<'EOF'\ngit reset --hard\nEOF",
                   "env X=1 sh <<-EOF\n\tgit reset --hard\n\tEOF",
                   'cat <<EOF && git reset --hard\nbody\nEOF',
                   'cat <<EOF\nbody\nEOF\ngit reset --hard',
-                  'cat <<EOF\nnever ends']
+                  'cat <<EOF\nnever ends',
+                  # R2 F1 shapes (SPEC A5 rules 1 to 5, amended D3).
+                  "cat <<'EOF' | bash\ngit reset --hard\nEOF",
+                  "cat <<'EOF' | sudo bash\ngit reset --hard\nEOF",
+                  "bash -c \"$(cat)\" <<'EOF'\ngit reset --hard\nEOF",
+                  'cat <<EOF\n$(git reset --hard)\nEOF',
+                  "cat <<EOF\necho '$(git reset --hard)'\nEOF",
+                  'cat <<EOF\nrun `git reset --hard`\nEOF',
+                  "source /dev/stdin <<'EOF'\ngit reset --hard\nEOF",
+                  "cat <<'EOF' | . /dev/stdin\ngit reset --hard\nEOF",
+                  "cat <<'EOF' | eval\ngit reset --hard\nEOF",
+                  "bash -c \"$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"",
+                  "bash <(cat <<'EOF'\ngit reset --hard\nEOF\n)",
+                  # Rule 5: a bare destructive line denies whatever the consumer (accepted v1 cost).
+                  "cat <<'EOF'\ngit reset --hard\nEOF",
+                  'cat <<EOF\ngit reset --hard\nEOF',
+                  "bash -c 'cat' <<EOF\ngit reset --hard\nEOF",
+                  "bash -c 'cat' <<'EOF'\nit's data\ngit reset --hard\nEOF",
+                  "cat <<'EOF'\ngit reset \\\n--hard\nEOF"]
 HEREDOC_ALLOWED = ["cat <<'EOF'\nit's fine\nEOF",
-                   'cat <<EOF\ngit reset --hard\nEOF',
+                   "cat <<'EOF' > f\nit's fine\nEOF",
                    "git commit -F - <<'EOF'\nmessage with a quote's apostrophe\nEOF",
                    "cat <<-EOF\n\tit's tabbed\n\tEOF\ngit status",
-                   "bash -c 'cat' <<EOF\ngit reset --hard\nEOF",
+                   "cat <<EOF > f\nit's $(date)\nEOF",
+                   "bash -c 'cat > f' <<'EOF'\nit's data\nEOF",
+                   'cat <<EOF\necho "\\$(git reset --hard)" "$((1 + 2))"\nEOF',
+                   "cat <<'EOF'\n$(date)\nEOF",
                    'cat <<< "git reset --hard"',
                    'echo $((1 << 2))']
 LINKED_WORKTREE_COMMANDS = {'git push origin side': 'release', 'git -C ../linked push origin side': 'release',
@@ -213,6 +234,31 @@ class GuardsTest(unittest.TestCase):
                 self.assertEqual(classify_command(command).klass, 'allow')
         self.assertEqual(classify_command('bash <<EOF\ngit push origin x\nEOF').klass, 'release')
         self.assertEqual(classify_command('cat <<EOF\nnever ends').category, 'malformed')
+
+    def test_a5_f1_shapes_deny_and_apostrophe_bodies_allow(self):
+        hard = 'git reset ' + '--hard'
+        deny = ["cat <<'EOF' | bash\n" + hard + "\nEOF",
+                'bash -c "$(cat)" <<\'EOF\'\n' + hard + '\nEOF',
+                'cat <<EOF\nx $(' + hard + ')\nEOF',
+                "source /dev/stdin <<'EOF'\n" + hard + "\nEOF"]
+        for command in deny:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'deny')
+        self.assertEqual(classify_command("cat <<'EOF' > f\nit's fine\nEOF").klass, 'allow')
+        self.assertEqual(classify_command("bash <<'EOF'\n" + hard + "\nEOF").klass, 'deny')
+
+    def test_a5_unquoted_scan_is_quote_blind_but_skips_escapes_and_arithmetic(self):
+        hard = 'git reset ' + '--hard'
+        self.assertEqual(classify_command('cat <<EOF\n"$(' + hard + ')"\nEOF').klass, 'deny')
+        self.assertEqual(classify_command("cat <<EOF\n`" + hard + "` it's\nEOF").klass, 'deny')
+        self.assertEqual(classify_command('cat <<EOF\necho "\\$(' + hard + ')" "\\`' + hard + '\\`"\nEOF').klass, 'allow')
+        self.assertEqual(classify_command('cat <<EOF\necho "$((1+2))" it\'s\nEOF').klass, 'allow')
+        # A quoted delimiter performs no substitution; only rule 5 sees a bare line.
+        self.assertEqual(classify_command("cat <<'EOF'\necho '$(" + hard + ")'\nEOF").klass, 'allow')
+
+    def test_a5_unparsable_body_under_dash_c_is_ignored_not_denied(self):
+        self.assertEqual(classify_command("bash -c 'cat > f' <<'EOF'\nit's data\nEOF").klass, 'allow')
+        self.assertEqual(classify_command("bash <<'EOF'\nit's data\nEOF").category, 'malformed')
 
     def test_a6_az_release_needs_deployment_create(self):
         for command in AZ_ALLOWED:
@@ -494,7 +540,7 @@ class MarkerHandshakeTest(unittest.TestCase):
         self.mods = self.xdg / 'orchestra' / 'mods'
         self.mods.mkdir(parents=True)
         self.env = {'XDG_STATE_HOME': str(self.xdg)}
-        self.sha = hashlib.sha256(RULES_PATH.read_bytes()).hexdigest()
+        self.sha = guard_digest()
 
     def marker(self, session='s1', *, age_ms=0, sha=None, inner=None, name=None):
         data = {'session_id': inner or session, 'heartbeat_ms': int(time.time() * 1000) - age_ms,
@@ -673,6 +719,28 @@ class RunStateResolutionTest(unittest.TestCase):
         payload = {'cwd': str(self.linked), 'tool_name': 'Write', 'tool_input': {'file_path': str(state / 'state.json')}}
         code, output = run_main(payload)
         self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_f8_main_worktree_with_an_absolute_common_dir(self):
+        sub = self.linked / 'sub'
+        sub.mkdir()
+        self.assertEqual(_main_worktree(self.linked), self.repo)
+        self.assertEqual(_main_worktree(sub), self.repo)
+
+    def test_f8_main_worktree_joins_a_relative_common_dir_to_the_payload_cwd(self):
+        # Git before --path-format prints a path relative to the directory it ran in.
+        real, calls = subprocess.check_output, []
+        sub = self.linked / 'sub'
+        sub.mkdir()
+
+        def relative(argv, **kwargs):
+            calls.append(argv)
+            out = real(argv, **kwargs).decode().strip()
+            return os.path.relpath(out, argv[2]).encode()
+
+        for cwd in (self.linked, sub):
+            with self.subTest(cwd=cwd), mock.patch('orchestra_core.hooks.subprocess.check_output', side_effect=relative):
+                self.assertEqual(_main_worktree(cwd), self.repo)
+        self.assertFalse(any(arg.startswith('--path-format') for argv in calls for arg in argv))
 
     def test_a15_bare_common_directory_stays_unarmed(self):
         from orchestra_core.paths import state_location

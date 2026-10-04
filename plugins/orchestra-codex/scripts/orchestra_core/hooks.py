@@ -5,7 +5,6 @@ https://code.claude.com/docs/en/hooks (checked 2026-09-30).
 """
 import argparse
 from dataclasses import dataclass
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,7 +13,7 @@ import sys
 import subprocess
 import time
 
-from .guards import RULES, RULES_PATH, classify_command
+from .guards import RULES, classify_command, guard_digest
 
 _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
@@ -172,9 +171,9 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
 
 def _main_worktree(cwd):
     """A15: the main worktree of a linked worktree; None for a bare common directory."""
-    common = subprocess.check_output(['git', '-C', str(cwd), 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+    common = subprocess.check_output(['git', '-C', str(cwd), 'rev-parse', '--git-common-dir'],
                                      stderr=subprocess.PIPE).decode().strip()
-    path = Path(common).resolve()
+    path = (Path(cwd) / common).resolve()  # A relative result is relative to cwd; an absolute one wins the join.
     return path.parent if path.name == '.git' else None
 
 
@@ -200,7 +199,7 @@ def _mod_is_live(payload):
         age = int(time.time() * 1000) - marker['heartbeat_ms']
         return (marker['session_id'] == session and not isinstance(marker['heartbeat_ms'], bool)
                 and 0 <= age < _MARKER['fresh_ms']
-                and marker['rules_sha256'] == hashlib.sha256(RULES_PATH.read_bytes()).hexdigest())
+                and marker['rules_sha256'] == guard_digest())
     except (OSError, ValueError, KeyError, TypeError):
         return False
 
