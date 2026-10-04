@@ -284,9 +284,9 @@ Acceptance:
 | Checkpoint | R3, code-reviewer/checkpoint |
 
 Owned paths:
-- `plugins/orchestra/scripts/orchestra_core/engine.py`: optional `harness_session`, `end_harness_session`
+- `plugins/orchestra/scripts/orchestra_core/engine.py`: optional `harness_session`, `end_harness_session`, `mark_harness_rebind`, `apply_harness_rebind`
 - `plugins/orchestra/scripts/orchestra.py`: `start --harness-session`, `where`
-- `plugins/orchestra/scripts/orchestra_core/hooks.py`: SessionStart line, SessionEnd, SubagentStart (A11)
+- `plugins/orchestra/scripts/orchestra_core/hooks.py`: SessionStart line and rebind, SessionEnd, SubagentStart (A11)
 - `plugins/orchestra/hooks/claude.json`: SessionEnd entry with `"timeout": 10`
 - `tests/test_engine.py`, `tests/test_hooks.py` (including the `test_session_context_only` update), `tests/test_integration.py`
 
@@ -294,8 +294,9 @@ Acceptance:
 - `test_engine.py`, `test_hooks.py` and `test_integration.py` exit 0.
 - Integration: start with `--harness-session S`; SessionEnd with S and reason `prompt_input_exit`; `start --new-run` exits 0.
 - Further tests: reason `clear` and reason `resume` leave the run armed; another id leaves it armed; a run without a harness session is untouched; a repeated SessionEnd is idempotent; SubagentStart for a non-`orchestra:` agent returns `{}`.
+- Rebind tests (SPEC B-F5): SessionEnd `clear` with S, then SessionStart `clear` with S2, binds S2, and SessionEnd `prompt_input_exit` with S2 then releases and `start --new-run` exits 0 (integration); the same for `resume`; SessionStart `startup` with S2 after SessionEnd `clear` does not rebind; a `pending_rebind` older than 60 s does not rebind and is removed; SessionEnd `resume` with S then SessionStart `fork` with S2 rebinds; SessionStart `compact` after SessionEnd `clear` does not rebind; a Codex SessionStart `resume` does not rebind; a negative-age `pending_rebind` is stale; after a rebind, SessionEnd `prompt_input_exit` with the old id does not release; a second SessionStart `clear` does not rebind again; a release removes `pending_rebind` and keeps `harness_session`; SessionEnd `clear` with another id records nothing; a rebind error (unloadable state) still returns the SessionStart context. Rebind tests inject the clock.
 - `where` output has no `lease` key (test).
-- Live (0.6): the SessionEnd latency over 10 runs is recorded; the `session_id` before and after `/clear` and after `/resume` is recorded; start a run, `/exit`, then `status` in a new shell shows `session.active: false`.
+- Live (0.6): the SessionEnd latency over 10 runs is recorded; the `session_id` before and after `/clear`, `/resume` and `/branch` is recorded, with the SessionEnd `reason`, the `source` of the SessionStart that follows each and the gap between the two hooks, and `status` shows the rebound `harness_session`; start a run, `/exit`, then `status` in a new shell shows `session.active: false`.
 
 ### B8: engine trim and U3a
 
@@ -564,7 +565,7 @@ Deps: G1, RF1 to RF4, A1 to A4, all CLEAN on the frozen SHA. This build has no e
 - **B1/B5, function hooks do not run under `claude -p`** even with the env switch. Record it as accepted behavior: Python guards cover `-p` through the absent marker.
 - **B4, a live check shows a preload sentinel missing.** Read `claude --debug`; fix the name or file. If preload itself fails, return to design (SPEC 3.3 rests on it).
 - **B4, the Agent tool rejects the full model id.** Use the `opus` alias in the coordinator skill. Not a spec change.
-- **B3, `/clear` changes the `session_id`.** Return to design for O6 before B3 acceptance.
+- **B3, no classic SessionStart with `source` `clear`, `resume` or `fork` follows `/clear`, `/resume` or `/branch`, or `status` does not show the rebound `harness_session`.** Return to design for O6 before B3 acceptance. (A changed `session_id` alone is handled by the rebind, SPEC B-F5.)
 - **B3, SessionEnd latency exceeds 10 s.** Return to design (timeout or release path).
 - **B5, corpus parity fails.** Fix the TypeScript side. If the Python decision looks wrong, open a B2 repair card. B5 never changes existing expectations.
 - **B9, scoped evidence breaks an existing review flow.** Repair under E1. If the scope rule itself is wrong, return to design (O3 interpretation).
