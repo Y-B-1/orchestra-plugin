@@ -676,7 +676,7 @@ Skill prose naming the removed commands is removed in the same release: `skills/
 - A task with no reserved files gets the whole-repo artifact.
 - If any covered task has no reserved files, the non-final review uses the whole-repo artifact (scope None), so the no-file task keeps whole-repo evidence (O19).
 - The newest receipt per category that covers a task decides that category, even when it is stale; a stale newest receipt means no current verdict, never a fallback to an older receipt (O19).
-- If the newest receipt in any category covering a task is stale and not CLEAN, the task has no current verdict in any category until a newer receipt covers it; a stale CLEAN newest receipt only removes its own category (O22).
+- If the newest receipt in any category covering a task is stale and not CLEAN, the task has no current verdict in any category until a newer receipt in that category covers it; a stale CLEAN newest receipt only removes its own category (O22).
 - CLI: `orchestra.py artifact --tasks ID[,ID]` prints the scoped artifact, so a reviewer can echo it in review JSON. `artifact` without `--tasks` is unchanged.
 
 Acceptance for section 11:
