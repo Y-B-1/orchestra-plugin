@@ -69,3 +69,27 @@ From https://code.claude.com/docs/en/sub-agents: "Full model ID: use a full mode
   - Subagent `session_id` identity (Q4).
   - Default `-p` mod behaviour (Q5).
 - Routing: Q1 and Q4 UNKNOWNs go to implementation as live checks in B4 and B3, with the existing fallbacks. No SPEC "settled decision" is found infeasible.
+
+## I2. Upstream skill sources (accepted 2026-10-04)
+
+Fetched with `git clone --depth 1` of each default branch on 2026-10-04. The coordinator re-checked each SHA with `git rev-parse HEAD` and each LICENSE first line.
+
+| Repo | Pinned SHA | License at SHA |
+| --- | --- | --- |
+| obra/superpowers | 8ca22dba9a94f28898bbce59f2537ff4d87c747d | MIT (Jesse Vincent) |
+| mattpocock/skills | d81f3a183412e71a5b1e84ca21bc1a35eea03a60 | MIT (Matt Pocock) |
+| garrytan/gstack | 4015c2870b064644131ed6f7cfcc1469cfe9808c | MIT (Garry Tan); NOTICE.md lists Apache-2.0 design material, not in the skills used here |
+| github/spec-kit | ae5ade7234be5cb1d975f736c4e06dd46d1326d6 | MIT (GitHub, Inc.) |
+| bmad-code-org/BMAD-METHOD | 3cae711ea5274cf7c7cf6e173bb8d7f29cd71497 | MIT (BMad Code, LLC) plus a trademark notice; do not use the mark |
+
+- Claude Code built-ins `security-review` and `simplify`: no published license (`gh api repos/anthropics/claude-code/license` returned 404). Idea level only, own words.
+- Pocock layout: `handoff` and `writing-for-agents` live in `skills/productivity/`; `grill-me` and `grill-with-docs` wrap a `grilling` skill.
+- gstack has no diff-scope rules file. The scope gate is `bin/gstack-diff-scope` plus a scope line in each of 8 review specialist files.
+- Avoid-list text found: superpowers `using-superpowers` "1% chance" bootstrap; the never-pause rule in `executing-plans` and `subagent-driven-development`; gstack `ROOT-SKILL.md` preamble and telemetry.
+- Extra candidates for MX: Pocock `research`, `wayfinder`, `wizard`, `to-questionnaire`, `git-guardrails-claude-code`, `pr`; gstack `investigate`, `spec`, `careful`/`guard`/`freeze`, `test-audit`, `context-save`/`context-restore`, `retro`; superpowers `diagnosing-superpowers`.
+
+## Q1 follow-up. Skills preload and mode files: OBSERVED (coordinator probe, Claude Code 2.1.289, 2026-10-04)
+
+- Agent frontmatter `skills:` with two bare names preloads both into a plugin subagent with no tool call. An unknown name is skipped with no error.
+- A worker told to read `references/<Mode>.md` from its brief's `Mode:` line did so in 3 of 3 runs. A non-preloaded skill matching the task was invoked in 0 of 3 runs.
+- A Workflow `agent()` with `agentType` set to the plugin agent got both preloaded skills and read the mode file (1 of 1 run).
