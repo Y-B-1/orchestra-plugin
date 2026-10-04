@@ -19,20 +19,9 @@ Record each command in the report with:
 - the exact argv, as run, and the working directory;
 - the exit code, read straight from the checker;
 - the log path and its sha256;
-- the artifact before and after: full commit sha plus `git status --porcelain | shasum`.
+- the artifact before and after: the complete output of `python3 <plugin>/scripts/orchestra.py artifact`, where `<plugin>` is the plugin root the brief names.
 
-Write the log to the path the brief names. With none named, use a scratch path outside the repository. Capture the checker's whole stdout and stderr in the log. Read the exit code before any parser, `tail` or pipe touches the output, because a filter's exit hides the checker's. Count failures from the full log.
-
-## Claim only what a fresh run shows
-
-Before you write "passes", "fixed" or "built":
-
-1. Identify the command that proves the claim.
-2. Run it in full, now, on the assigned artifact.
-3. Read the whole output and the exit code.
-4. State the result with the evidence. If the evidence disagrees, state the actual status.
-
-An earlier run, a partial check, another artifact's result or a worker's success message proves nothing. A process still running has no result. A linter pass does not prove a build. If the artifact changed between runs, the earlier result is void and needs a new run.
+Write the log to the path the brief names. With none named, use a scratch path outside the repository. Capture the checker's whole stdout and stderr in the log. Read the exit code before any parser, `tail` or pipe touches the output, because a filter's exit hides the checker's. Count failures from the full log. A process still running has no result.
 
 ## Status words
 

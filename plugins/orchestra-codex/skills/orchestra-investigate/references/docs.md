@@ -18,6 +18,5 @@ Rules:
 - Check the project's lockfile or manifest for the version before reading any page. A page for another version is a lead.
 - Do not state a post-cutoff API from memory. If no source is reachable, the claim is UNKNOWN, and the report names the source to read.
 - Resolve conflicts between sources by version and date, and report the conflict.
-- Do the reading yourself; do not hand it to another agent.
 
 The coordinator caches the report as RESEARCH.md and expires it with the sprint. Say in the report which version or date change makes it stale.

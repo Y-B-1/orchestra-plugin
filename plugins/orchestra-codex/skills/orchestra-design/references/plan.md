@@ -17,7 +17,7 @@ Run a rules gate twice: before you slice, and again on the finished plan. Compar
 2. Cut vertical slices. Each slice is a narrow but complete path through every layer it needs, verifiable alone and small enough for one fresh context. The first ticket is the thinnest end-to-end slice. Do any prefactoring before the slices that need it.
 3. A wide mechanical change, such as a rename across many call sites, is the exception. Sequence it as expand, migrate in batches by blast radius, then contract. Each batch is a ticket blocked by the expand, and the contract is blocked by every batch.
 4. Give every slice its class:
-   - Spike: answers one named question with a throwaway probe and reports what it proved. Use it to turn a doubt about feasibility into evidence. The probe is never merged.
+   - Spike: throwaway code that answers one question and reports what it proved, so a doubt becomes evidence. It is never merged.
    - Bounded: changes code whose flow already exists.
    - Architectural: adds a subsystem or changes an interface others depend on. It gets a checkpoint review.
 

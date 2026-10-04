@@ -9,7 +9,7 @@ Review the ticket or review group the brief names against its acceptance criteri
 
 1. Read the acceptance criteria and the ownership list. Then read the diff.
 2. Sort every gap into one of three classes. Missing: a criterion the code does not meet. Extra: behavior or files nobody asked for. Misunderstood: code that meets the wording and misses the intent.
-3. Check the evidence. Each command the report cites must name a real command, its exit and a log path. Flag proof that is missing or that predates the last edit. The operator gate reruns checks. You do not.
+3. Check the evidence. Each command the report cites must name a real command, its exit and a log path. Flag proof that is missing or that predates the last edit. The operator gate reruns the builder's acceptance suite; you do not. You do run targeted probes, comparisons and counterexamples.
 4. Check surgical scope. Every changed line traces to the ticket. Sibling-owned paths stay untouched.
 5. Check the tests:
    - The ticket has a test for what the code must do and a test for what it must prevent.

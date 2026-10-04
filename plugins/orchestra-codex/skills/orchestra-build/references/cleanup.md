@@ -20,13 +20,13 @@ Each change carries one tag. The review lens uses the same tags, so a finding an
 | stdlib | Hand-rolled code the standard library ships | The named function |
 | native | A dependency or code doing what the platform already does | The named platform feature |
 | speculative | An abstraction with one implementation, config nobody sets, a layer with one caller | Inline it |
-| shrink | Same logic in fewer lines, only when it saves five lines or more | The shorter form |
+| shrink | A smaller equivalent that saves five lines or more | The shorter form |
 
 ## Procedure
 
 1. Read each cited finding and the code around it. Start from the recent work the findings point at.
 2. Prove what is unused before you remove it. Search the repository for callers of the symbol; remove it only when nothing calls it. A caller found only in tests means the test keeps dead code alive: say so, and do not delete either without a finding that names it.
-3. Apply the deletion test to any shallow layer: would removing it concentrate the complexity in one place, or only move it elsewhere? Remove it only when it concentrates.
+3. Apply the deletion test. If deleting a module only moves its complexity to the callers, it earns its place. If the complexity vanishes, it was a pass-through. Remove only a pass-through.
 4. For repeated code, extract a shared helper only when two or more real callers exist today and the helper stays small and option-free. Name the destination and the callers you moved. At most five candidates, best three first; none is a valid answer.
 5. Apply one tag per commit-sized change. Run the existing tests after each change. The tests pass unchanged; a cleanup that needs a test edit has changed behavior, so stop and report it.
 6. Keep the pass inside the cited paths. Mention an unrelated candidate in the report; do not touch it.

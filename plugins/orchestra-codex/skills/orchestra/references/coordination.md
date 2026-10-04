@@ -22,13 +22,9 @@ Route by readiness and consequence. A lane is a routing choice, never an approva
 
 Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets.
 
-## Executor choice
+## Inline work
 
-Choose the executor per ready item, separately from its lane: inline, single Agent dispatch, or Workflow. Inline fits when you already hold the context and the work costs less than a handoff. A single Agent dispatch fits one independent unit. Workflow is the default whenever the host has the Workflow tool, by the user's standing opt-in, for two or more independent units. Weigh risk, uncertainty, capacity and context cost; file count alone does not decide. State the choice for substantial work.
-
-Reserve every card before the script runs and record the reports after it; the script never touches coordinator state. Workflow mechanics: references/parallel.md.
-
-Inline work runs beside disjoint workers. Reserve it with `inline TASK`, then report under your real actor identity and returned token. The engine applies the same ownership, resource, dependency, capacity and lease checks as for a worker. Never edit a worker-owned file inline. The main never approves its own implementation: reviews and critiques stay with workers.
+Executor choice is in SKILL.md. Inline work runs beside disjoint workers. Reserve it with `inline TASK`, then report under your real actor identity and returned token. The engine applies the same ownership, resource, dependency, capacity and lease checks as for a worker. Never edit a worker-owned file inline.
 
 ## Kanban
 

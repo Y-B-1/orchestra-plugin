@@ -39,7 +39,7 @@ Synthesize from what is settled. Do not re-interview, and do not restate the dos
 - Test seams. Prefer an existing seam, and the highest one that works. List a seam no one has agreed to as an open decision.
 - Acceptance criteria: numbered, pass or fail, each checkable by a command or an observation. Never write "works correctly" or "handles edge cases".
 
-Keep prose free of file paths and code, which go stale. Quote a schema or type only where prose cannot fix the decision.
+Cite what you found by path in the spec. The summary prose you return to the user stays free of file paths and code, which go stale. Quote a schema or type only where prose cannot fix the decision.
 
 For visual work, name the host surfaces, themes, responsive states and motion rules. Acceptance requires inspected screenshots or live observation through the user's path. Tests do not prove appearance.
 

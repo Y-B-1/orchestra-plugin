@@ -24,7 +24,7 @@ Read `references/<Mode>.md` in this skill's directory before any work, where `<M
 - A green test that mocks the boundary cannot prove the real boundary.
 - A test that never failed before the change proves the mock, not the fix.
 - Read the test before you credit it with coverage. Name the assertion that would fail if the code were wrong.
-- A bug fix carries a regression test. If you cannot run the before and after comparison, use the evidence on hand and state the limit.
+- A bug fix carries a regression test. Run the before and after comparison; if you cannot, use the evidence on hand and state the limit.
 
 ## Findings
 

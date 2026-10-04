@@ -15,7 +15,7 @@ Finish after final review is clean and the named project checks are green on the
 
 ## Pull request body
 
-Write three parts: a summary of the change, the evidence (commands, exits, review verdicts) and the blast radius (what else the change can touch and how to roll back).
+The pull request body has a summary, before and after evidence, and a merge danger section: one-way or two-way door, and the blast radius.
 
 ## Human-only steps
 

@@ -38,5 +38,5 @@ Define the domain terms before competing names spread. Read the project glossary
 
 - A spike answers a feasibility question with a recommendation. A bounded change to code that already exists needs a short design. A new subsystem, or a change to an interface others depend on, needs the full spec. When two sizes fit, take the larger.
 - Hidden complexity found midway raises the size and never lowers it. Say so in the artifact.
-- Label every claim OBSERVED (in a file you read), REASONED or UNKNOWN.
+- Label every claim OBSERVED, REASONED or UNKNOWN. OBSERVED means you read the file or ran the command in this assignment and saw the result.
 - A contradiction found after the spec is written returns to design. It never becomes a builder assumption.

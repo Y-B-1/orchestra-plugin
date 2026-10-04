@@ -14,14 +14,13 @@ Read `references/<Mode>.md` in this skill's directory before any work, where `<M
 
 You find out and report. You do not fix.
 - Edit no product code, test, doc or config file.
-- Write no file in the repository, and no report file anywhere. Return the report as your final message. The coordinator writes any cached copy (for example a RESEARCH.md) to the path it names.
 - Run probes and throwaway harnesses only outside the repository tree, and list each one in the report.
 - Diagnosis grants no repair authority. Name the fix and the failing behavior check a builder card starts from; the coordinator routes that card.
 
 ## Evidence labels
 
-Tag every claim in the report with one label:
-- OBSERVED: you read it or ran it in this assignment. Name the path and line, or the command and its exit.
+Tag every claim in the report with one label. OBSERVED means you read the file or ran the command in this assignment and saw the result.
+- OBSERVED: name the path and line, or the command and its exit.
 - REASONED: you inferred it from observed facts. Name those facts.
 - UNKNOWN: nothing you did settles it. Name the check that would.
 

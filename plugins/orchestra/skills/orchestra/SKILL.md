@@ -23,9 +23,21 @@ A trusted session start supplies context only. Repair, resume and autonomy begin
 
 Route, reserve, dispatch, check, integrate, review. Every card ends with evidence you inspected yourself, and every integration ends with an independent final review. A review grants no external permission. Release stays disabled until project configuration names authorization, remote, target, required checks and commands.
 
+## Executor choice
+
+Choose one executor per ready item, separately from its lane.
+
+| Executor | Use when |
+| --- | --- |
+| inline | A question, a doc read, or a one-file reversible edit where the main session already holds the context |
+| single Agent dispatch | One unit with nothing independent beside it that still needs a worker: deeper investigation, isolation, or a different model |
+| Workflow | 2+ independent units in any phase (tickets, review lenses, audits, research angles) |
+
+Workflow is the default whenever the host has the Workflow tool. The user's standing opt-in makes it the default with or without ultracode. The main session never approves its own implementation, whichever executor built it. Mechanics: [parallel](references/parallel.md).
+
 ## References
 
-- Lanes, executor choice, kanban, standing orders: [coordination](references/coordination.md)
+- Lanes, kanban, standing orders: [coordination](references/coordination.md)
 - Writing a worker brief: [briefs](references/briefs.md)
 - Sorting a defect or request report: [triage](references/triage.md)
 - Interruption, resume, handoff: [handoff](references/handoff.md)

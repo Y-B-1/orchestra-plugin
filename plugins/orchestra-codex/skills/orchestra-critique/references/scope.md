@@ -21,7 +21,7 @@ Map requirements to tasks. A requirement with no task, and a task with no requir
 
 ## Out of scope
 
-Check each exclusion before you call something creep. When you find rejected scope, record it as one entry per concept: the decision, a durable reason (project focus, a technical constraint, a settled choice), and the requests it covers. A deferral for lack of time is not a rejection. You are read-only, so put the entry in your report for the coordinator to file.
+Check each exclusion before you call something creep. When you find rejected scope, record it as one entry per concept: the decision, a durable reason (project focus, a technical constraint, a settled choice), and the requests it covers. A deferral for lack of time is not a rejection. Put the entry in your report for the coordinator to file.
 
 ## Limits
 
