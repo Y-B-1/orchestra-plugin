@@ -55,6 +55,14 @@ def variants_of(matrix, claude=False):
                                   and not (claude and values.get('dispatch') == 'override')}}
 
 
+VARIANT_NOTES = {('investigator', 'code'): ' Mode: code. Read-only bounded code discovery.',
+                 ('code-reviewer', 'checkpoint'): ' Mode: checkpoint. Exact-diff checkpoint review of one reported ticket.'}
+
+
+def mode_note(role_id, preset):
+    return VARIANT_NOTES.get((role_id, preset), '')
+
+
 def generated(root=ROOT):
     roles = json.loads((root / 'config/roles.json').read_text())['roles']
     models = json.loads((root / 'config/models.json').read_text())
@@ -74,7 +82,7 @@ def generated(root=ROOT):
         preload = [role['skill']] if orchestrator else ['orchestra-worker', role['skill']]
         for preset, values in variants_of(models['claude'][role['id']], claude=True).items():
             name = role['id'] if preset == 'default' else role['id'] + '-' + preset
-            front = ['---', f'name: {name}', f"description: {json.dumps(role['description'])}",
+            front = ['---', f'name: {name}', f"description: {json.dumps(role['description'] + mode_note(role['id'], preset))}",
                      *selection_lines(values), f"skills: [{', '.join(preload)}]"]
             if role.get('read_only'):
                 front.append('disallowedTools: Agent, Edit, Write, NotebookEdit')

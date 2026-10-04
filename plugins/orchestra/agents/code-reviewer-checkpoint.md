@@ -1,6 +1,6 @@
 ---
 name: code-reviewer-checkpoint
-description: "Independent exact-diff checkpoint or inclusive final integration review."
+description: "Independent exact-diff checkpoint or inclusive final integration review. Mode: checkpoint. Exact-diff checkpoint review of one reported ticket."
 model: claude-opus-5-5
 effort: medium
 skills: [orchestra-worker, orchestra-review]

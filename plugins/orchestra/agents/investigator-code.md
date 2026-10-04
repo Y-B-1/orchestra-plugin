@@ -1,6 +1,6 @@
 ---
 name: investigator-code
-description: "Read-only source discovery or current primary-source research."
+description: "Read-only source discovery or current primary-source research. Mode: code. Read-only bounded code discovery."
 model: claude-sonnet-5-5
 effort: low
 skills: [orchestra-worker, orchestra-investigate]
