@@ -146,6 +146,8 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
     if event == 'Stop':
         if engine is None:
             return HookResult({})
+        if _other_session(engine, payload.get('session_id')):
+            return HookResult({})  # O37: a Stop from another harness session neither continues nor spends a pass
         try:
             reason = engine.hook_stop()
             return HookResult({'decision': 'block', 'reason': reason}) if isinstance(reason, str) and reason else HookResult({})
@@ -231,6 +233,17 @@ def _raw_autonomy_active(state_file):
         return True
     auto = data.get('autonomy') if isinstance(data, dict) else None
     return isinstance(auto, dict) and auto.get('active') is True
+
+
+def _other_session(engine, session_id):
+    """O37: the run is bound to a harness session and the payload names a different one. Either missing: False."""
+    if not isinstance(session_id, str) or not session_id:
+        return False
+    try:
+        bound = engine.status()['session'].get('harness_session')
+    except Exception:
+        return False  # Opaque adapters and unreadable sessions keep the Stop behavior they had.
+    return isinstance(bound, str) and bool(bound) and bound != session_id
 
 
 def _raw_session_active(state_file):
@@ -356,7 +369,8 @@ def main(argv=None):
                 engine = Engine(state_dir, repo, policy=load_policy(state_dir))
         except Exception as exc:
             engine = None  # Unloadable state: SessionStart still returns context; a lost lease is recovered by hand
-            if args.event == 'SessionEnd' and state_dir is not None and (Path(state_dir) / 'state.json').is_file():
+            if (args.event == 'SessionEnd' and state_dir is not None and (Path(state_dir) / 'state.json').is_file()
+                    and _raw_session_active(Path(state_dir) / 'state.json')):  # O35: an ended run has nothing to record
                 build_error = exc
     result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed,
                           autonomy=autonomy)

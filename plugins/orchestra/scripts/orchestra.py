@@ -12,7 +12,7 @@ import subprocess
 import sys
 import uuid
 
-from orchestra_core.engine import Engine, EngineError
+from orchestra_core.engine import ACTIVE_MISMATCH, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import load_policy, repository, state_location
 from orchestra_core.profiles import atomic, install, uninstall
@@ -77,7 +77,7 @@ def parser():
     return p
 
 
-def archive_inactive(state):
+def archive_inactive(state,engine):
     with (state/'state.lock').open('a') as stream:
         fcntl.flock(stream,fcntl.LOCK_EX)
         source = state/'state.json'
@@ -85,6 +85,8 @@ def archive_inactive(state):
             return
         old = read_json(source)
         if old.get('session',{}).get('active'):
+            if old.get('repo') != str(engine.repo) or old.get('policy') != engine.policy_hash:
+                raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives
             raise EngineError('Stop or finish the active run before starting another')
         archive = {'state':old,'policy':load_policy(state)}
         atomic(state/'history'/('run-'+uuid.uuid4().hex+'.json'),json.dumps(archive,indent=2).encode())
@@ -106,7 +108,7 @@ def execute(args):
     engine = Engine(state,repo,policy)
     if args.command=='start':
         if args.new_run:
-            archive_inactive(state)
+            archive_inactive(state,engine)
         lease = engine.open_session(args.actor,args.harness_session)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())

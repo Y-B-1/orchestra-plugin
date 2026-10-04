@@ -323,10 +323,18 @@ class HarnessSessionIntegration(unittest.TestCase):
     def test_new_run_refuses_an_active_run_under_a_changed_policy(self):
         self.cli('start')
         self.foreign_policy()
-        self.assertIn('active run',self.cli('start','--new-run',expected=2))
+        refused=self.cli('start','--new-run',expected=2)  # FX6: the engine's recovery steps, not interrupt/finish
+        self.assertIn('version that started',refused)
+        self.assertIn('state.json',refused)
+        self.assertNotIn('Stop or finish',refused)
         self.assertFalse((self.state/'history').exists())
         push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
         self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'deny')
+
+    def test_new_run_refuses_an_active_run_under_the_current_policy(self):
+        self.cli('start')
+        self.assertIn('Stop or finish the active run',self.cli('start','--new-run',expected=2))
+        self.assertFalse((self.state/'history').exists())
 
     def test_clear_and_resume_rebind_then_exit_releases(self):
         for reason in ('clear','resume'):

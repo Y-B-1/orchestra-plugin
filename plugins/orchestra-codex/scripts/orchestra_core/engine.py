@@ -23,6 +23,11 @@ from datetime import datetime, timezone
 from .guards import classify_command
 
 
+ACTIVE_MISMATCH = ('Repository or policy changed while a run is active, so a new run is refused. '
+                   'End it with the version that started it, or move state.json out of the state '
+                   'directory (README, Upgrade from 1.0.1)')
+
+
 class EngineError(ValueError):
     pass
 
@@ -317,9 +322,7 @@ class Engine:
                     session = state.get('session')
                     if session is None or (isinstance(session, dict) and session.get('active') is False):
                         raise EngineError('Repository or policy changed; run `start --new-run`')
-                    raise EngineError('Repository or policy changed while a run is active, so a new run is refused. '
-                                      'End it with the version that started it, or move state.json out of the state '
-                                      'directory (README, Upgrade from 1.0.1)')
+                    raise EngineError(ACTIVE_MISMATCH)
             else:
                 state = dict(version=1, repo=str(self.repo), policy=self.policy_hash,
                              session=None, tasks={}, reviews=[], gates=[], permits=[], autonomy=None)
