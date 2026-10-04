@@ -3172,6 +3172,260 @@
     "command": "echo `echo `echo hi``"
    },
    "class": "allow"
+  },
+  {
+   "id": "inline-r8-1",
+   "input": {
+    "command": "echo \"$(git reset --hard)\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-2",
+   "input": {
+    "command": "cd \"$(git reset --hard)\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-3",
+   "input": {
+    "command": "ls \"$(rm -rf /)\""
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r8-4",
+   "input": {
+    "command": "printf \"%s\" \"$(git clean -fdx)\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-5",
+   "input": {
+    "command": "echo \"x $(git reset --hard) y\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-6",
+   "input": {
+    "command": "echo \"${X:-$(git reset --hard)}\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-7",
+   "input": {
+    "command": "echo $(echo \"$(git reset --hard)\")"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-8",
+   "input": {
+    "command": "echo \"$(gh pr merge 1)\""
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "inline-r8-9",
+   "input": {
+    "command": "echo \"$(git branch -d foo)\""
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r8-10",
+   "input": {
+    "command": "echo `echo \"$(git reset --hard)\"`"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-11",
+   "input": {
+    "command": "cd \"$(git rev-parse --show-toplevel)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-12",
+   "input": {
+    "command": "git commit -m \"$(cat msg.txt)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-13",
+   "input": {
+    "command": "\"$(npm bin)\"/eslint ."
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-14",
+   "input": {
+    "command": "echo \"$(date)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-15",
+   "input": {
+    "command": "echo \"$((1+2))\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-16",
+   "input": {
+    "command": "echo '$(git reset --hard)'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-17",
+   "input": {
+    "command": "echo \"\\$(git reset --hard)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-18",
+   "input": {
+    "command": "make # don't care\ngit reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-19",
+   "input": {
+    "command": "echo hi # it's broken\ngit reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-20",
+   "input": {
+    "command": "ls # \"unclosed\ngit reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-21",
+   "input": {
+    "command": "echo \"a # b's\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-22",
+   "input": {
+    "command": "echo a#b"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-23",
+   "input": {
+    "command": "echo 'it'\"'\"'s' # fine"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-24",
+   "input": {
+    "command": "git log --format='%h # %s'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-25",
+   "input": {
+    "command": "time $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-26",
+   "input": {
+    "command": ">f $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-27",
+   "input": {
+    "command": "env -i $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-28",
+   "input": {
+    "command": "sudo $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-29",
+   "input": {
+    "command": "case x in x) $(echo git reset --hard);; esac"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-30",
+   "input": {
+    "command": "2>/dev/null $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-31",
+   "input": {
+    "command": "nohup $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-32",
+   "input": {
+    "command": "timeout 5 $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-33",
+   "input": {
+    "command": "coproc $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r8-34",
+   "input": {
+    "command": "echo a\\; $(echo git reset --hard)"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-35",
+   "input": {
+    "command": "echo { $(echo git reset --hard)"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r8-36",
+   "input": {
+    "command": "echo \"a;b\" $(echo git reset --hard)"
+   },
+   "class": "allow"
   }
  ]
 }
