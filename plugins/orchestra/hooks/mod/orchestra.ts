@@ -1,5 +1,7 @@
 import type { Hook, On, Register } from 'claude-code';
 
+import { AUTONOMY_COMMAND, cliResult, cliThrown, commandOutcome, newAutonomy, pollDue, pollOutcome, startSession, subOf, USAGE } from './autonomy.js';
+import type { AutonomyState, Cli, Sub } from './autonomy.js';
 import { classifyCommand, editDenied, editTools, klassOf, loadRules, shellTools } from './guard.js';
 import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, markerPath, sha256Hex, utf8 } from './marker.js';
 
@@ -7,8 +9,8 @@ import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, 
 // orders, the board and verdict toasts. The Python hook stays the authority for release, release-multi
 // and boundary commands; this module delegates them and fails closed.
 //
-// Autonomy (B11) is not here. Its seam: a later card adds `autonomy.ts` and calls it from the
-// `session.start` and `session.end` handlers below, at the marked comments.
+// Autonomy (SPEC 12.7): `autonomy.ts` holds the pure logic. The engine's module validator follows `$` only
+// into a function declared in the same file, so the `$` calls for it are the autonomy* functions below.
 
 const DELEGATED = ['release', 'release-multi', 'boundary'];
 // SPEC 10.3: the tools the mod guards; known without loaded rules, so a not-ready guard still delegates them (O24).
@@ -84,6 +86,69 @@ async function readWhere($: Dollar): Promise<Where | null> {
   return { repo: String(body['repo'] ?? ''), state: String(body['state'] ?? ''), standingOrders: body['standing_orders'] === true };
 }
 
+async function autonomyCli($: Dollar, sub: Sub): Promise<Cli> {
+  try {
+    const cwd = await $.session.cwd();
+    const run = await runHook($, ['--cli', 'autonomy', sub], undefined, cwd);
+    return cliResult(run.exitCode, run.stdout, run.stderr);
+  } catch (error) {
+    return cliThrown(error);
+  }
+}
+
+function autonomyBand($: Dollar, auto: AutonomyState, text: string | undefined): void {
+  if (text === undefined && !auto.band) return;
+  try {
+    $.ui.status(text);
+    auto.band = text !== undefined;
+  } catch {
+    // The band is a convenience (SPEC 10.2): a missing or failing API skips it.
+  }
+}
+
+async function autonomyRegister($: Dollar, auto: AutonomyState): Promise<void> {
+  if (auto.registered) return;
+  auto.registered = true;
+  try {
+    await $.command.register({ name: AUTONOMY_COMMAND, description: 'Arm, disarm or show the Orchestra autonomous loop', argumentHint: 'on|off|status' });
+  } catch {
+    auto.registered = false;
+  }
+}
+
+async function autonomyCommand($: Dollar, auto: AutonomyState, args: string): Promise<{ text: string }> {
+  try {
+    const sub = subOf(args);
+    if (sub === null) return { text: USAGE };
+    const out = commandOutcome(auto, sub, await autonomyCli($, sub));
+    if (out.band !== undefined) autonomyBand($, auto, out.band.text);
+    return { text: out.text };
+  } catch (error) {
+    return { text: `Orchestra autonomy: ${String(error instanceof Error ? error.message : error)}` };
+  }
+}
+
+/** One step of the existing tick: reads status at most every 30 s while active; never throws. */
+async function autonomyPoll($: Dollar, auto: AutonomyState): Promise<void> {
+  if (!auto.active || auto.busy) return;
+  const epoch = auto.epoch;
+  auto.busy = true;
+  try {
+    const now = await $.clock.now();
+    if (epoch !== auto.epoch || !pollDue(auto, now)) return;
+    const res = await autonomyCli($, 'status');
+    if (epoch !== auto.epoch) return;
+    const out = pollOutcome(auto, res);
+    if (!out.changed) return;
+    autonomyBand($, auto, out.band);
+    if (out.toast !== null) $.ui.toast(out.toast);
+  } catch {
+    // A failed read is retried at the next interval; a tick never throws.
+  } finally {
+    if (epoch === auto.epoch) auto.busy = false;
+  }
+}
+
 export const register: Register = (on: On) => {
   let tick: { cancel: () => void } | null = null;
   let gen = 0;
@@ -101,6 +166,7 @@ export const register: Register = (on: On) => {
   let boardRegistered = false;
   let boardTimer: { cancel: () => void } | null = null;
   let boardStatus: Json | null = null;
+  const auto = newAutonomy();
   let writers: { fresh: (sid: string) => () => Promise<void>; zero: (sid: string) => () => Promise<void> } | null = null;
 
   const enqueue = (job: () => Promise<void>): Promise<void> => {
@@ -199,6 +265,8 @@ export const register: Register = (on: On) => {
               lastSeen = current;
             }
             enqueue(fresh(current));
+            // SPEC 12.7: the autonomy read rides this tick (no second timer) and never blocks the marker.
+            void autonomyPoll($, auto);
           });
         }
         return true;
@@ -224,7 +292,13 @@ export const register: Register = (on: On) => {
     } catch {
       // The board is a convenience; it never takes the guard down.
     }
-    // B11 seam: autonomy startup goes here (autonomy.ts is owned by that card).
+    try {
+      startSession(auto);
+      autonomyBand($, auto, undefined);
+      await autonomyRegister($, auto);
+    } catch {
+      // Autonomy UI is a convenience; it never takes the guard down.
+    }
     return next(e);
   });
 
@@ -232,7 +306,10 @@ export const register: Register = (on: On) => {
     const reason: string = e.reason;
     if (reason !== 'clear' && reason !== 'resume') cancelTick();
     try {
-      // B11 seam: autonomy shutdown goes here.
+      if (reason !== 'clear' && reason !== 'resume') {
+        auto.active = false;
+        autonomyBand($, auto, undefined);
+      }
       const sid = e.sessionId ? e.sessionId : lastSeen;
       if (sid && writers) {
         retired.add(sid);
@@ -345,6 +422,8 @@ export const register: Register = (on: On) => {
     }
     return {};
   });
+
+  on('command.run', { command: AUTONOMY_COMMAND }, async ($, e) => autonomyCommand($, auto, e.args));
 
   on('ui.close', { id: BOARD }, async (_$, e, next) => {
     const result = await next(e);
