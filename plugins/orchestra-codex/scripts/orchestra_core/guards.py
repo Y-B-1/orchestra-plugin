@@ -135,7 +135,50 @@ _REDIRECT_WORD = re.compile(r'(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(?:<<<|<<-?|
 _REDIRECT_OP = re.compile(r'<<<|<<-?|<>|<&|<|>>|>&|>\||>|&>>?')
 _FD_WORD = re.compile(r'[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\}')
 _SHLEX_BLANK = ' \t\r\n'
+_SMARK = ''  # Private-use delimiter for the placeholder that stands in for an unquoted `$(...)` (O33).
+_SUB_RE = re.compile(_SMARK + r'(\d+)' + _SMARK)
+_PURE_SUB = re.compile('(?:' + _SMARK + r'\d+' + _SMARK + ')+')  # A word made only of substitutions.
 _HEREDOC = re.compile(r'<<(-?)[ \t]*("[^"\n]*"|\'[^\'\n]*\'|\\?[A-Za-z_0-9][A-Za-z_0-9.\-]*)')
+
+
+def _shlex_words(text):
+    """shlex.split(text, comments=True), except that a `#` begins a comment only at the start of a word:
+    a mid-word `#` is literal (SPEC A5, O27 and O33). Word-start comments are cut here and shlex reads
+    the rest with comments off."""
+    if '#' not in text:
+        return shlex.split(text, comments=True)
+    out, quote, start, i, last, n = [], None, True, 0, 0, len(text)
+    while i < n:
+        char = text[i]
+        if char == '\\' and quote != "'":
+            i += 2
+            start = False
+            continue
+        if quote:
+            quote = None if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif char == '#' and start:
+            end = text.find('\n', i)
+            end = n if end < 0 else end
+            out.append(text[last:i])  # A comment: its quotes are literal and it is dropped.
+            i = last = end
+            continue
+        start = not quote and char in _SHLEX_BLANK
+        i += 1
+    out.append(text[last:])
+    return _plain_split(''.join(out))
+
+
+_PLAIN_WORD = re.compile(r'(?:\\[\s\S]|[^ \t\r\n\\])+')
+_PLAIN_ESCAPE = re.compile(r'\\([\s\S])')
+
+
+def _plain_split(text):
+    """shlex.split(text) without comments; quote-free text takes an equivalent regex path (speed only)."""
+    if '"' in text or "'" in text or text.endswith('\\') and _PLAIN_WORD.sub('', text).endswith('\\'):
+        return shlex.split(text)
+    return [_PLAIN_ESCAPE.sub(r'\1', word) for word in _PLAIN_WORD.findall(text)]
 
 
 def _strip_heredocs(command):
@@ -575,17 +618,19 @@ def _substitutions(body):
 def _mark_redirects(segment):
     """SPEC A5 (O31): put a blank and _RMARK before each redirection operator outside quotes (before its
     descriptor prefix when a number or `{name}` is the whole word before it), so shlex starts a word there
-    that reads as a redirection. Quotes, escapes and `#` comments follow shlex.split(comments=True); a
-    `${...}` expansion is copied whole."""
+    that reads as a redirection. Quotes, escapes and `#` comments follow _shlex_words (a `#` starts a
+    comment only at the start of a word, O33); a `${...}` expansion is copied whole, nested braces included."""
     if '<' not in segment and '>' not in segment:
         return segment
     if _RMARK in segment:
         raise ValueError('Reserved character in command')
     out, quote, i, n = [], None, 0, len(segment)
     start, bare = 0, True  # Where the current word starts in out; whether it holds only bare characters.
+    blank = True  # The previous character is a blank (or there is none): a `#` here starts a comment.
     here = 0  # 2 right after a `<<<`, 1 inside its operand word: a here-string operand is not word-split.
     while i < n:
         char = segment[i]
+        at_blank, blank = blank, False
         if quote:
             if char == quote:
                 quote = None
@@ -596,7 +641,7 @@ def _mark_redirects(segment):
         elif char in _SHLEX_BLANK:
             out.append(char)
             i += 1
-            start, bare = len(out), True
+            start, bare, blank = len(out), True, True
             here = 2 if here == 2 else 0
             continue
         elif char in "\"'":
@@ -606,15 +651,14 @@ def _mark_redirects(segment):
             i += 2
             bare, here = False, 1 if here else 0
             continue
-        elif char == '#':
+        elif char == '#' and at_blank:
             end = segment.find('\n', i)
             end = n if end < 0 else end
             out.append(segment[i:end])
             i = end
             continue
         elif segment.startswith('${', i):
-            end = segment.find('}', i)
-            end = n if end < 0 else end + 1
+            end = _brace_end(segment, i)
             out.append(_escape_blanks(segment[i:end]) if here else segment[i:end])
             here = 1 if here else 0
             i = end
@@ -640,6 +684,23 @@ def _mark_redirects(segment):
     return ''.join(out)
 
 
+def _brace_end(text, i):
+    """Index just past the `}` that closes the `${` at text[i], counting nested `${` (R2k minor 5); the
+    end of text when it is never closed."""
+    depth, n = 0, len(text)
+    while i < n:
+        if text.startswith('${', i):
+            depth += 1
+            i += 2
+            continue
+        if text[i] == '}':
+            depth -= 1
+            if not depth:
+                return i + 1
+        i += 1
+    return n
+
+
 def _escape_blanks(text):
     """Escape the blanks of text that stand outside quotes, so shlex keeps it one word."""
     out, quote = [], None
@@ -657,9 +718,10 @@ def _escape_blanks(text):
 def _words(segment):
     """SPEC A5 (O31): the shlex words of a segment (comments dropped) as (all words, the words without
     redirections, the here-string operands). A redirection is an unquoted operator, with or without a
-    descriptor prefix, together with its operand word, glued or spaced, wherever it stands."""
+    descriptor prefix, together with its operand word, glued or spaced, wherever it stands. A heredoc
+    operator is one too (O33): its placeholder is dropped from the words without redirections."""
     marked_text = _mark_redirects(segment)
-    words = shlex.split(marked_text, comments=True)
+    words = _shlex_words(marked_text)
     if _RMARK not in marked_text:
         return words, words.copy(), []
     original, kept, operands, skip = [], [], [], None
@@ -672,8 +734,8 @@ def _words(segment):
                 operands.append(plain)
             skip = None
             continue
-        match = _REDIRECT_WORD.match(plain) if marked and not _MARK_RE.fullmatch(plain) else None
-        if not match:  # A heredoc placeholder stays a word, as before O31.
+        match = _REDIRECT_WORD.match(plain) if marked else None
+        if not match:
             kept.append(plain)
             continue
         here = '<<<' if match.group().endswith('<<<') else '>'
@@ -689,7 +751,7 @@ def _command_words(segment, operands=None):
     """The command words of a segment: redirections dropped, wrappers unwrapped. Here-string operands
     are added to operands when given (rule 6b still scans them as producer text)."""
     if '<' not in segment and '>' not in segment:
-        return _unwrap(shlex.split(segment, comments=True))
+        return _unwrap(_shlex_words(segment))
     _, words, here = _words(segment)
     if operands is not None:
         operands.extend(here)
@@ -1529,7 +1591,7 @@ def _heredoc_items(docs, pipelines, depth):
         for pipeline in pipelines:
             where = next((i for i, segment in enumerate(pipeline) if marker in segment), None)
             if where is not None:
-                argv = tuple(_MARK_RE.sub('<<HEREDOC', word) for word in shlex.split(pipeline[where], comments=True))
+                argv = tuple(_MARK_RE.sub('<<HEREDOC', word) for word in _shlex_words(pipeline[where]))
                 # Rules (1) to (3): the consumer and every later command of its pipeline.
                 modes = {_consumer_mode(segment) for segment in pipeline[where:]}
                 break
@@ -1547,19 +1609,81 @@ def _heredoc_items(docs, pipelines, depth):
     return items
 
 
+_FOLD_LEVELS = 8  # Substitution nesting levels folded (O33); deeper text is segmented as before.
+
+
+def _fold(text, subs):
+    """SPEC A5 (O33): text with each unquoted `$(...)` (backticks are rewritten to it first; `$((...))`
+    included) replaced by a numbered placeholder, so a substitution never cuts its simple command. The
+    inner texts are appended to subs. An unclosed `$(` and the text after it are left as they are."""
+    out, quote, i, n = [], None, 0, len(text)
+    while i < n:
+        char = text[i]
+        if char == '\\' and quote != "'":
+            out.append(text[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            quote = None if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif text.startswith('$(', i):
+            end = _balanced_end(text, i + 2)
+            if end < 0:
+                out.append(text[i:])
+                break
+            out.append(_SMARK + str(len(subs)) + _SMARK)
+            subs.append(text[i + 2:end - 1])
+            i = end
+            continue
+        out.append(char)
+        i += 1
+    return ''.join(out)
+
+
+def _folded_segments(text, subs, level=0):
+    """The segments of text with its substitutions folded (O33), each followed by the segments of the
+    substitutions it holds, so their content is still classified."""
+    if level >= _FOLD_LEVELS:
+        return list(_segments(text))
+    result = []
+    for segment in _segments(_fold(text, subs)):
+        result.append(segment)
+        for match in _SUB_RE.finditer(segment):
+            result.extend(_folded_segments(subs[int(match.group(1))], subs, level + 1))
+    return result
+
+
 def classify_command(command: str, _depth=0) -> Decision:
     if not isinstance(command, str) or not command.strip() or len(command) > 131072 or _depth > 8:
         return _deny('Invalid or excessively nested command', 'malformed')
+    if _RMARK in command or _SMARK in command:  # Reserved placeholder characters (R2k minor 4).
+        return _deny('Malformed shell quoting', 'malformed')
     try:
         text, docs = _strip_heredocs(command)
         text = _tick_to_dollar(_dollar_decode(text))
-        segments = [_words(segment)[:2] for segment in _segments(text)]
+        subs = []
+        segments = [_words(segment)[:2] for segment in _folded_segments(text, subs)]
+
+        def render(word):  # The placeholders of a word back to their text.
+            return _SUB_RE.sub(lambda m: '$(' + subs[int(m.group(1))] + ')', _MARK_RE.sub('<<HEREDOC', word))
+
         items = []  # (decision, original words, counts as a segment)
-        for original, words in segments:
-            original = [_MARK_RE.sub('<<HEREDOC', word) for word in original]
-            words = _unwrap([_MARK_RE.sub('<<HEREDOC', word) for word in words])  # Redirections removed (O31).
-            if words:
+        for original, kept in segments:
+            heredoc = any(_MARK in word for word in original)
+            original = [render(word) for word in original]
+            full = [render(word) for word in kept]
+            # Redirections removed (O31, heredocs included); a word made only of substitutions is removed too (O33).
+            words = _unwrap([word for word, raw in zip(full, kept) if not _PURE_SUB.fullmatch(raw)])
+            if words and (words[0] == 'eval' or PurePosixPath(words[0]).name in _SHELLS):
+                whole = _unwrap(full)  # Script text (an eval argument, a -c payload) keeps its substitutions.
+                words = whole if whole and whole[0] == words[0] else words
+            if words and words[0] == 'eval' and heredoc:
+                items.append((_deny('Malformed heredoc', 'malformed'), original, True))  # R2b F3 fail-safe.
+            elif words:
                 items.append((_classify_segment(words, _depth), original, True))
+            elif _unwrap(full):
+                items.append((Decision(), original, True))  # Only substitutions: still a command of its own.
         items.extend(_heredoc_items(docs, _pipelines(text), _depth))
         items.extend(_stream_items(text, _scan_ops(text), _depth))
         raw_hit = _raw_scan(text, _depth) or _backtick_scan(text, _depth)

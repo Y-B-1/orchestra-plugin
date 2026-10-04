@@ -4200,6 +4200,370 @@
     "command": "git >\"\" reset --hard"
    },
    "class": "deny"
+  },
+  {
+   "id": "inline-r11-1",
+   "input": {
+    "command": "git <<EOF reset --hard\nbody\nEOF"
+   },
+   "class": "deny",
+   "_doc": "O33: a heredoc operator between the command name and its subcommand is a redirection."
+  },
+  {
+   "id": "inline-r11-2",
+   "input": {
+    "command": "git <<'EOF' reset --hard\nb\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-3",
+   "input": {
+    "command": "git <<-EOF reset --hard\n\tb\n\tEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-4",
+   "input": {
+    "command": "git <<\"EOF\" reset --hard\nb\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-5",
+   "input": {
+    "command": "bash <<EOF -c 'git reset --hard'\nb\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-6",
+   "input": {
+    "command": "gh pr <<EOF merge 1\nb\nEOF"
+   },
+   "class": "release",
+   "_doc": "O33: the release twin gets its real class."
+  },
+  {
+   "id": "inline-r11-7",
+   "input": {
+    "command": "git <<EOF branch -d x\nb\nEOF"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r11-8",
+   "input": {
+    "command": "eval echo hi <<EOF\nb\nEOF"
+   },
+   "class": "deny",
+   "_doc": "R2b F3 fail-safe: an eval segment with a heredoc operator stays malformed."
+  },
+  {
+   "id": "inline-r11-9",
+   "input": {
+    "command": "<<EOF eval echo hi\nb\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-10",
+   "input": {
+    "command": "git <<EOF\nb\nEOF\ngit status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-11",
+   "input": {
+    "command": "cat <<EOF > f\nhello\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-12",
+   "input": {
+    "command": "git 2>$(mktemp) reset --hard"
+   },
+   "class": "deny",
+   "_doc": "O33: a substitution in a redirect operand does not split the simple command."
+  },
+  {
+   "id": "inline-r11-13",
+   "input": {
+    "command": "git 2>$(echo /dev/null) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-14",
+   "input": {
+    "command": "git > $(echo f) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-15",
+   "input": {
+    "command": "git >$(echo f) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-16",
+   "input": {
+    "command": "git 2>`mktemp` reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-17",
+   "input": {
+    "command": "git >$((1 + 2)) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-18",
+   "input": {
+    "command": "git >$((1+2)) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-19",
+   "input": {
+    "command": "git <<<$(echo a b) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-20",
+   "input": {
+    "command": "git reset >$(mktemp) --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-21",
+   "input": {
+    "command": "git 2>$(echo /dev/null) push --force origin main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-22",
+   "input": {
+    "command": "gh pr >$(mktemp) merge 1"
+   },
+   "class": "release-multi",
+   "_doc": "O33: release class; the substitution content is its own segment, as in `gh pr merge 1 2>$(mktemp)`."
+  },
+  {
+   "id": "inline-r11-23",
+   "input": {
+    "command": "git 2>$(mktemp) branch -d x"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r11-24",
+   "input": {
+    "command": "make 2>$(mktemp)"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-25",
+   "input": {
+    "command": "x=a#b git reset --hard"
+   },
+   "class": "deny",
+   "_doc": "O33: a mid-word `#` never starts a comment."
+  },
+  {
+   "id": "inline-r11-26",
+   "input": {
+    "command": "env A=1#2 git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-27",
+   "input": {
+    "command": "git -c a=b#c reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-28",
+   "input": {
+    "command": "x=a#b 2>f git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-29",
+   "input": {
+    "command": "x=\"a\"#b git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-30",
+   "input": {
+    "command": "echo hi # git reset --hard"
+   },
+   "class": "allow",
+   "_doc": "A word-start `#` still begins a comment."
+  },
+  {
+   "id": "inline-r11-31",
+   "input": {
+    "command": "echo hi #x\ngit reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-32",
+   "input": {
+    "command": "echo hi 2>f # it's\ngit reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-33",
+   "input": {
+    "command": "git log --format=%H#%s"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-34",
+   "input": {
+    "command": "curl https://x/y#frag"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-35",
+   "input": {
+    "command": "git $(true) reset --hard"
+   },
+   "class": "deny",
+   "_doc": "O33: a pure-substitution word may expand to nothing."
+  },
+  {
+   "id": "inline-r11-36",
+   "input": {
+    "command": "git `true` reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-37",
+   "input": {
+    "command": "gh pr $(true) merge 1"
+   },
+   "class": "release-multi",
+   "_doc": "O33: release class; as `gh pr merge $(echo 1)`, the substitution content counts as a segment."
+  },
+  {
+   "id": "inline-r11-38",
+   "input": {
+    "command": "git $(true)$(true) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-39",
+   "input": {
+    "command": "git $((0)) reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-40",
+   "input": {
+    "command": "git reset $(true) --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-41",
+   "input": {
+    "command": "git $(true) branch -d x"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r11-42",
+   "input": {
+    "command": "bash -c $(cat f)"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-43",
+   "input": {
+    "command": "echo $(date) done"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-44",
+   "input": {
+    "command": "git log $(git merge-base HEAD main)..HEAD"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-45",
+   "input": {
+    "command": "git commit -m \"$(cat msg)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r11-46",
+   "input": {
+    "command": "git push origin ma\ue001in"
+   },
+   "class": "deny",
+   "_doc": "R2k minor: a literal U+E001 is malformed, never stripped from a release argv."
+  },
+  {
+   "id": "inline-r11-47",
+   "input": {
+    "command": "echo \ue001"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-48",
+   "input": {
+    "command": "<<< ${x:-${y} b} git reset --hard"
+   },
+   "class": "deny",
+   "_doc": "R2k minor: nested braces in a here-string operand."
+  },
+  {
+   "id": "inline-r11-49",
+   "input": {
+    "command": "git <<< ${x:-${y} b} reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r11-50",
+   "input": {
+    "command": "cat <<< ${x:-${y} b}"
+   },
+   "class": "allow"
   }
  ]
 }
