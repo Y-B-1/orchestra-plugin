@@ -382,6 +382,7 @@ Acceptance:
 - `claude plugin validate plugins/orchestra` (2.1.289) exits 0 and lists the six events of SPEC 10.
 - `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test plugins/orchestra` exits 0, including corpus parity over every case.
 - `test_guard_corpus.py` and `test_hooks.py` exit 0.
+- Marker lifecycle (SPEC 10.3, from R1 F1 to F5), each case covered in `claude plugin test` with the mock clock: `session.end` with reason `clear` retires the old id and the next tick writes the new id; any other reason cancels the tick; a tick in flight never overwrites a retired marker; a throwing tick writes nothing; no `XDG_STATE_HOME` and no `HOME` writes no marker.
 - Live (0.6): the SPEC 10 live list, each item recorded, with a screenshot of `/orchestra-board`. A scratch copy with an invalid rules file leaves Python guarding: `git stash` is still denied.
 
 ### B11: autonomy mod surface

@@ -566,7 +566,12 @@ Acceptance: each rule of E1 to E7 appears in exactly one skill file (orchestrato
 
 - At `session.start` the mod reads `${$.plugin.root}/config/guard-rules.json` with `$.fs.read` and computes `rules_sha256`. It writes the liveness marker `${XDG_STATE_HOME:-$HOME/.local/state}/orchestra/mods/<session_id>.json` containing `{session_id, heartbeat_ms, plugin_version, rules_sha256}`.
 - A `$.clock.every` tick of 5 s re-reads `$.session.id()` each time and refreshes the marker for the current id. If the id changed since the last tick, the mod writes the new id's marker and sets the old one's `heartbeat_ms` to 0.
-- `session.end` only retires the heartbeat: it stops the tick and overwrites the marker with `heartbeat_ms: 0`, which the Python check treats as stale. It does not touch the lease (O2).
+- `session.end` retires the ending session's marker: it overwrites `<e.sessionId>.json` with `heartbeat_ms: 0`, which the Python check treats as stale. It does not touch the lease (O2).
+  - On `e.reason` `clear` or `resume`, the process continues under a new session id and no `session.start` fires for it (API declaration of `SessionEndInput`). The tick keeps running, and its next fire writes the marker for the new id.
+  - On every other reason, `session.end` also cancels the tick.
+  - A tick already in flight when its id is retired must not overwrite the retired marker: the mod records retired ids and the tick checks that set before each write.
+- The tick callback catches its own errors. A failed tick writes nothing, so the marker goes stale and Python guards in full. The heartbeat time comes from `$.clock.now()`, so `claude plugin test` can control it.
+- If neither `XDG_STATE_HOME` nor `HOME` is set, the mod writes no marker and installs no guard.
 - `on('tool.call', {tool: 'Bash'|'Edit'|'Write'|'MultiEdit'})` classifies the input with a TypeScript port of the shared rules:
   - `deny` returns `{deny: reason}`;
   - `allow` calls `next(e)`;
