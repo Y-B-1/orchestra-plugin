@@ -589,6 +589,12 @@ def _dollar_decode(text):
 
 def _read_balanced(text, i):
     """Index just past the `)` that closes a `(` already consumed before text[i] (quote-aware)."""
+    end = _balanced_end(text, i)
+    return len(text) if end < 0 else end
+
+
+def _balanced_end(text, i):
+    """Like _read_balanced, but -1 when the `(` is never closed."""
     depth, quote, n = 1, None, len(text)
     while i < n:
         char = text[i]
@@ -607,7 +613,7 @@ def _read_balanced(text, i):
             if depth == 0:
                 return i + 1
         i += 1
-    return n
+    return -1
 
 
 def _skip_double(text, i):
@@ -690,6 +696,124 @@ def _scan_ops(text):
     return herestrings, procsubs
 
 
+def _raw_substitutions(text):
+    """Quote-aware scan of raw text (SPEC A5 rule 6b) for the `$(...)` and backtick substitutions the
+    outer shell runs: unquoted or inside double quotes, never inside single quotes. Nested quotes and
+    substitutions are tracked, so the text is not cut the way shlex or _split cut it. Returns
+    (contents of the outermost substitutions, False when one is never closed). `$((` is arithmetic."""
+    found, closed, i, n, quote = [], True, 0, len(text), False
+
+    def command(i):  # text[i] starts `$(` or a backtick; returns the index to resume from.
+        nonlocal closed
+        if text[i] == '`':
+            j = i + 1
+            while j < n and text[j] != '`':
+                j += 2 if text[j] == '\\' else 1
+            closed = closed and j < n
+            found.append(text[i + 1:min(j, n)])
+            return j + 1
+        end = _balanced_end(text, i + 2)
+        closed = closed and end >= 0
+        found.append(text[i + 2:n if end < 0 else end - 1])
+        return n if end < 0 else end
+
+    while i < n:
+        char = text[i]
+        if char == '\\':
+            i += 2
+        elif quote:
+            if char == '"':
+                quote = False
+                i += 1
+            elif char == '`' or (text.startswith('$(', i) and not text.startswith('$((', i)):
+                i = command(i)
+            else:
+                i += 1
+        elif char == "'":
+            close = text.find("'", i + 1)
+            i = n if close < 0 else close + 1
+        elif char == '"':
+            quote = True
+            i += 1
+        elif text.startswith('$((', i):
+            i += 3
+        elif char == '`' or text.startswith('$(', i):
+            i = command(i)
+        else:
+            i += 1
+    return found, closed
+
+
+def _raw_commands(text):
+    """Split raw text into commands of raw words, cutting on `; | & ( )` and newlines outside quotes and
+    outside substitutions (unlike _split). A word keeps its quotes. A descriptor number glues to its
+    redirection. Returns a list of word lists."""
+    commands, words, i, n = [], [], 0, len(text)
+    while i < n:
+        char = text[i]
+        if char in ' \t':
+            i += 1
+        elif char == '#':
+            end = text.find('\n', i)
+            i = n if end < 0 else end
+        elif char in ';|&()\n':
+            glued = (char == '&' and ((i and text[i - 1] in '<>') or text[i + 1:i + 2] == '>')) or (
+                char == '|' and i and text[i - 1] == '>')
+            if not glued:
+                commands.append(words)
+                words = []
+            i += 1
+        elif char in '<>':
+            end = i
+            while end < n and text[end] in '<>':
+                end += 1
+            words.append(text[i:end])
+            i = end
+        else:
+            end = max(_read_word(text, i), i + 1)
+            if text[i:end].isdigit() and text[end:end + 1] in {'<', '>'}:
+                while end < n and text[end] in '<>':
+                    end += 1
+            words.append(text[i:end])
+            i = end
+    commands.append(words)
+    return [command for command in commands if command]
+
+
+def _raw_scan(text, depth):
+    """Rule (6b) for a `-c` payload or `eval` argument that shlex or _split would cut mid-substitution:
+    find the substitutions in the raw command text and scan each as producer text. An unbalanced
+    substitution there denies as malformed (fail-safe). Returns a Decision or None."""
+    if depth > 8:
+        return None
+    for raws in _raw_commands(text):
+        values = []
+        for raw in raws:
+            try:
+                parts = shlex.split(raw)
+            except ValueError:
+                parts = []
+            values.append(parts[0] if len(parts) == 1 else raw)
+        try:
+            words = _unwrap(values)
+        except ValueError:
+            continue
+        if not words:
+            continue
+        name = PurePosixPath(words[0]).name
+        if not (name == 'eval' or (name in _SHELLS and _shell_payload_rest(words) is not None)):
+            continue
+        for raw in raws:
+            contents, closed = _raw_substitutions(raw)
+            if not closed:
+                return _deny('Unbalanced command substitution', 'malformed')
+            for content in contents:
+                hit = _scan_text(content, depth + 1, as_command=True)
+                if hit:
+                    return hit
+    return None
+
+
 def _pipe_joins(parts, k):
     """True when the `|` that ends parts[k] continues the pipeline (`|&` and a following group included)."""
     following = parts[k + 1] if k + 1 < len(parts) else None
@@ -706,6 +830,10 @@ def _chains(text):
     def flush():
         nonlocal cur
         if cur:
+            for _, seen, feeder in reversed(frames):
+                if feeder and state['flushes'] != seen:  # Later commands of a piped group read the same pipe.
+                    cur = feeder + cur
+                    break
             chains.append(cur)
             state['flushes'] += 1
         cur = []
@@ -721,27 +849,29 @@ def _chains(text):
         state['carry'] = False
         if re.match(r'\{(\s|$)', s):
             s = s[1:].strip()
-            frames.append(([], state['flushes']))
+            frames.append(([], state['flushes'], list(cur) if state['pipe_before'] else None))
         closes = s == '}'
         if closes:
             s = ''
         if s:
             cur.append(s)
-            for members, _ in frames:
+            for members, _, _ in frames:
                 members.append(s)
         if closes and frames:
-            members, seen = frames.pop()
+            members, seen, _ = frames.pop()
             if state['flushes'] != seen:
                 cur = list(members)
         if op == '(':
             if not state['pipe_before']:
                 flush()
-            frames.append(([], state['flushes']))
+            frames.append(([], state['flushes'], list(cur) if state['pipe_before'] else None))
         elif op == ')':
             if frames:
-                members, seen = frames.pop()
+                members, seen, feeder = frames.pop()
                 if state['flushes'] != seen and pipe_follows(k):
                     cur = list(members)
+                elif feeder and state['flushes'] != seen and cur:
+                    cur = feeder + cur  # The group's last command still reads the pipe that fed it.
             if not pipe_follows(k):
                 flush()
         elif op == '|' and _pipe_joins(parts, k):
@@ -793,6 +923,10 @@ def _scan_text(text, depth, as_command=False):
         decision = classify_command(text, depth + 1)
         if _hard_deny(decision):
             return decision
+    for content in _raw_substitutions(text)[0]:
+        hit = _scan_text(content, depth + 1, as_command=True)
+        if hit:
+            return hit
     for segment in _segments(text):
         try:
             words = _command_words(segment)
@@ -889,6 +1023,9 @@ def classify_command(command: str, _depth=0) -> Decision:
                 items.append((_classify_segment(words, _depth), original, True))
         items.extend(_heredoc_items(docs, _pipelines(text), _depth))
         items.extend(_stream_items(text, _scan_ops(text), _depth))
+        raw_hit = _raw_scan(text, _depth)
+        if raw_hit:
+            items.append((raw_hit, (), False))
     except ValueError as exc:
         return _deny('Malformed heredoc' if str(exc).startswith('Heredoc') else 'Malformed shell quoting', 'malformed')
     for decision, _, _ in items:
