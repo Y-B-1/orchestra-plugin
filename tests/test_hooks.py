@@ -986,6 +986,22 @@ class HarnessSessionHookTest(unittest.TestCase):
         self.assertFalse(self.session()['active'])
         self.assertEqual(handle_event('Interrupt', {}, harness='claude', engine=self.engine).output, {})
 
+    def foreign_policy(self):
+        data = json.loads(self.engine.state_path.read_text())
+        data['policy'] = '0' * 64
+        self.engine.state_path.write_text(json.dumps(data))
+
+    def test_session_end_of_an_ended_run_under_a_changed_policy_is_silent(self):
+        self.engine.interrupt('main', json.loads(self.engine.state_path.read_text())['session']['lease'])
+        self.foreign_policy()
+        result = self.end('S', 'logout')
+        self.assertEqual((result.exit_code, result.output), (0, {}))
+
+    def test_session_end_of_an_active_run_under_a_changed_policy_is_still_reported(self):
+        self.foreign_policy()
+        result = self.end('S', 'logout')
+        self.assertIn('could not be recorded', result.output['systemMessage'])
+
     def test_session_end_error_is_reported_not_raised(self):
         self.engine.state_path.write_text('{not json')
         result = self.end('S', 'logout')

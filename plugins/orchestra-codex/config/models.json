@@ -1,10 +1,6 @@
 {
   "schema_version": 1,
   "codex": {
-    "orchestrator": {
-      "model": "gpt-6.1-sol",
-      "effort": "high"
-    },
     "investigator": {
       "model": "gpt-6.1-sol",
       "effort": "medium",

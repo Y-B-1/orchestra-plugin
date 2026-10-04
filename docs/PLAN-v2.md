@@ -260,7 +260,7 @@ Owned paths:
 
 Acceptance:
 - `test_engine.py`, `test_packaging.py`, `test_routing.py`, `test_integration.py` and `test_skills.py` exit 0.
-- `--check` exits 0 and reports 19 native profiles.
+- `--check` exits 0 and reports 18 native profiles.
 - `ls plugins/orchestra/agents` and `ls plugins/orchestra/profiles/codex` match SPEC 7.1 acceptance exactly.
 - A `test_skills.py` test lists every file of the SPEC 8.2 table and asserts that each exists, and that each file except `orchestra/references/cli.md` carries its sentinel; every file a later S ticket rewrites carries a `Stub:` line.
 - `grep -rn "Read references/\|Read SKILL.md" plugins/orchestra/agents` prints nothing.
