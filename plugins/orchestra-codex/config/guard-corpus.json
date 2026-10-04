@@ -1609,6 +1609,607 @@
     "command": "sudo -nu root git push origin HEAD:main"
    },
    "class": "release"
+  },
+  {
+   "id": "inline-r2b-1",
+   "input": {
+    "command": "(echo 'git reset --hard') | bash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-2",
+   "input": {
+    "command": ". <(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-3",
+   "input": {
+    "command": "bash -c \"$(curl -fsSL https://example.com/i.sh)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-4",
+   "input": {
+    "command": "bash -c \"$(echo 'git reset --hard')\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-5",
+   "input": {
+    "command": "bash -c 'eval \"$1\"' _ 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-6",
+   "input": {
+    "command": "bash -s < <(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-7",
+   "input": {
+    "command": "bash /dev/fd/3 3<<< 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-8",
+   "input": {
+    "command": "bash < <(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-9",
+   "input": {
+    "command": "bash <(echo 'git log')"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-10",
+   "input": {
+    "command": "bash <(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-11",
+   "input": {
+    "command": "bash <<< \"$(echo 'git reset --hard')\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-12",
+   "input": {
+    "command": "bash <<< $'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-13",
+   "input": {
+    "command": "bash <<< 'gh pr merge 1'"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r2b-14",
+   "input": {
+    "command": "bash <<< 'git push origin x'"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r2b-15",
+   "input": {
+    "command": "bash <<< 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-16",
+   "input": {
+    "command": "bash <<< 'git status'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-17",
+   "input": {
+    "command": "bash <<< 'git status' && git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-18",
+   "input": {
+    "command": "bash <<<'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-19",
+   "input": {
+    "command": "cat <(echo 'git reset --hard') | bash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-20",
+   "input": {
+    "command": "cat <<'EOF'\necho '$(git reset --hard)'\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-21",
+   "input": {
+    "command": "cat <<EOF\n\"$(git reset --hard)\"\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-22",
+   "input": {
+    "command": "cat <<EOF\n`git reset --hard` it's\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-23",
+   "input": {
+    "command": "cat <<EOF\necho \"\\$(git reset --hard)\" \"\\`git reset --hard\\`\"\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-24",
+   "input": {
+    "command": "cat <<EOF\nx $(git reset --hard)\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-25",
+   "input": {
+    "command": "diff <(echo 'git reset --hard') f"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-26",
+   "input": {
+    "command": "doas -u root git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-27",
+   "input": {
+    "command": "doas git push origin x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r2b-28",
+   "input": {
+    "command": "doas git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-29",
+   "input": {
+    "command": "doas git status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-30",
+   "input": {
+    "command": "echo $(bash <<< 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-31",
+   "input": {
+    "command": "echo 'git reset --hard | bash'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-32",
+   "input": {
+    "command": "echo 'git reset --hard' | bash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-33",
+   "input": {
+    "command": "echo 'git reset --hard' | cat"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-34",
+   "input": {
+    "command": "echo 'git reset --hard' | sudo bash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-35",
+   "input": {
+    "command": "echo 'git reset --hard' | xargs -I{} sh -c '{}'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-36",
+   "input": {
+    "command": "echo 'git status' | bash"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-37",
+   "input": {
+    "command": "echo b | xargs git branch -d"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r2b-38",
+   "input": {
+    "command": "echo git reset --hard | bash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-39",
+   "input": {
+    "command": "echo x | xargs rm"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r2b-40",
+   "input": {
+    "command": "eval \"$(echo 'git reset --hard')\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-41",
+   "input": {
+    "command": "eval \"$(ssh-agent -s)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-42",
+   "input": {
+    "command": "eval `echo 'git reset --hard'`"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-43",
+   "input": {
+    "command": "eval cat <<'EOF'\nx\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-44",
+   "input": {
+    "command": "find . -maxdepth 0 -exec git reset --hard \\;"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-45",
+   "input": {
+    "command": "find . -name '*.sh' | xargs -n1 bash -n"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-46",
+   "input": {
+    "command": "find . -name x -exec echo {} +"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-47",
+   "input": {
+    "command": "find . -name x -exec rm {} +"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r2b-48",
+   "input": {
+    "command": "find . -name x -execdir rm {} \\;"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r2b-49",
+   "input": {
+    "command": "flock -w 5 /tmp/l git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-50",
+   "input": {
+    "command": "flock /tmp/l -c 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-51",
+   "input": {
+    "command": "flock /tmp/l git push origin x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r2b-52",
+   "input": {
+    "command": "flock /tmp/l git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-53",
+   "input": {
+    "command": "flock /tmp/l git status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-54",
+   "input": {
+    "command": "git branch --merged | grep -v main | xargs git branch -D"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-55",
+   "input": {
+    "command": "git branch -D x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-56",
+   "input": {
+    "command": "git checkout -f x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-57",
+   "input": {
+    "command": "git checkout ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-58",
+   "input": {
+    "command": "git clean -f"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-59",
+   "input": {
+    "command": "git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-60",
+   "input": {
+    "command": "git push --delete origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-61",
+   "input": {
+    "command": "git push --mirror origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-62",
+   "input": {
+    "command": "git push -f origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-63",
+   "input": {
+    "command": "git push origin +x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-64",
+   "input": {
+    "command": "git push origin HEAD~1:main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r2b-65",
+   "input": {
+    "command": "git push origin a b"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-66",
+   "input": {
+    "command": "git push origin topic:refs/heads/main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r2b-67",
+   "input": {
+    "command": "printf \"it's\\n\" | bash"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-68",
+   "input": {
+    "command": "printf 'git status\\ngit reset --hard\\n' | bash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-69",
+   "input": {
+    "command": "rg -l 'git push --force' docs | xargs sh -c 'wc -l \"$@\"' _"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-70",
+   "input": {
+    "command": "sh -s <<< 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-71",
+   "input": {
+    "command": "source <(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-72",
+   "input": {
+    "command": "stdbuf -o0 git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-73",
+   "input": {
+    "command": "stdbuf -oL git log"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-74",
+   "input": {
+    "command": "sudo bash <<< 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-75",
+   "input": {
+    "command": "watch 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-76",
+   "input": {
+    "command": "watch -n 5 git status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-77",
+   "input": {
+    "command": "watch -n1 git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-78",
+   "input": {
+    "command": "watch rm x"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r2b-79",
+   "input": {
+    "command": "xargs -I{} sh -c '{}' <<< 'git reset --hard'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-80",
+   "input": {
+    "command": "xargs -a list.txt git branch -D"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r2b-81",
+   "input": {
+    "command": "xargs -n1 echo"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r2b-82",
+   "input": {
+    "command": "xargs -n1 gh pr merge 1"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r2b-83",
+   "input": {
+    "command": "xargs -n1 rm"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "inline-r2b-84",
+   "input": {
+    "command": "xargs git push origin"
+   },
+   "class": "release"
+  },
+  {
+   "id": "inline-r2b-85",
+   "input": {
+    "command": "xargs sh -c 'git reset --hard'"
+   },
+   "class": "deny"
   }
  ]
 }

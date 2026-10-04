@@ -21,6 +21,11 @@ _WRAPPER_VALUES = {name: set(values) for name, values in RULES['wrappers'].items
 _GIT = {key: (set(value) if isinstance(value, list) else value) for key, value in RULES['git'].items()}
 _RELEASE = RULES['release']
 _BOUNDARY = RULES['boundary']
+_RUNNERS = RULES['runners']
+_ATTACHED = {name: set(values) for name, values in _RUNNERS['attached_value_flags'].items()}
+_EXEC_FLAGS = set(_RUNNERS['watch_exec_flags'])
+_COMMAND_FLAGS = set(_RUNNERS['flock_command_flags'])
+_FIND_EXEC = set(_RUNNERS['find_exec_actions'])
 _MULTI = 'releasemulti'  # Decision.category of a release-class segment inside a multi-segment command.
 
 
@@ -175,50 +180,75 @@ def _strip_heredocs(command):
     return ''.join(out), docs
 
 
+_ASSIGNMENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*=.*')
+
+
+def _eat_options(wrapper, words):
+    """Consume a wrapper's leading options. Returns (remaining words, found) where found says whether
+    a watch exec flag was seen and holds the flock shell string, if any."""
+    found = {'exec': False, 'command': None}
+    values, attached = _WRAPPER_VALUES[wrapper], _ATTACHED.get(wrapper, ())
+    while words and (words[0].startswith('-') or _ASSIGNMENT.fullmatch(words[0])):
+        option = words.pop(0)
+        if option == '--':
+            break
+        value = None
+        value_option = option
+        if option.startswith('--') and '=' in option:
+            value_option, value = option.split('=', 1)
+        elif option.startswith('-') and not option.startswith('--'):
+            # A value-taking short flag ends the cluster; its suffix is its value.
+            for i, char in enumerate(option[1:], 1):
+                if '-' + char in attached:
+                    break  # Its value, if any, is attached and ends the cluster.
+                if '-' + char in values:
+                    value_option = '-' + char
+                    value = option[i + 1:] or None
+                    break
+                if wrapper == 'watch' and '-' + char in _EXEC_FLAGS:
+                    found['exec'] = True
+        if wrapper == 'watch' and option in _EXEC_FLAGS:
+            found['exec'] = True
+        if value_option in values:
+            if value is None:
+                if not words:
+                    raise ValueError('Missing wrapper option value')
+                value = words.pop(0)
+            if wrapper == 'env' and value_option in {'-S', '--split-string'}:
+                words = shlex.split(value) + words
+                break
+            if wrapper == 'flock' and value_option in _COMMAND_FLAGS:
+                found['command'] = value
+    return words, found
+
+
 def _unwrap(words):
     while words:
         name = PurePosixPath(words[0]).name
         redirect = _REDIRECT.fullmatch(words[0])
         if redirect:
             words = words[1:] if redirect.group(1) else words[2:]
-        elif re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0]):
+        elif _ASSIGNMENT.fullmatch(words[0]):
             words = words[1:]
         elif name in _WRAPPER_VALUES:
             wrapper = name
-            words = words[1:]
-            while words and (words[0].startswith('-') or
-                             re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[0])):
-                option = words.pop(0)
-                if option == '--':
-                    break
-                value = None
-                value_option = option
-                if option.startswith('--') and '=' in option:
-                    value_option, value = option.split('=', 1)
-                elif option.startswith('-') and not option.startswith('--'):
-                    # A value-taking short flag ends the cluster; its suffix is its value.
-                    for i, char in enumerate(option[1:], 1):
-                        if '-' + char in _WRAPPER_VALUES[wrapper]:
-                            value_option = '-' + char
-                            value = option[i + 1:] or None
-                            break
-                if value_option in _WRAPPER_VALUES[wrapper]:
-                    if value is None:
-                        if not words:
-                            raise ValueError('Missing wrapper option value')
-                        value = words.pop(0)
-                    if wrapper == 'env' and value_option in {'-S', '--split-string'}:
-                        words = shlex.split(value) + words
-                        break
+            words, found = _eat_options(wrapper, words[1:])
             if wrapper == 'timeout' and words:
                 words.pop(0)
+            elif wrapper == 'watch' and not found['exec'] and words:
+                words = ['sh', '-c', ' '.join(words)]  # Without -x, watch runs its words as a shell string.
+            elif wrapper == 'flock':
+                if found['command'] is None and words:
+                    words, found = _eat_options(wrapper, words[1:])  # The lock file, then later options.
+                if found['command'] is not None:
+                    words = ['sh', '-c', found['command']]
         else:
             return words
     return words
 
 
-def _shell_payload(words):
-    """Return the literal -c argument, ignoring long flags and option values."""
+def _shell_payload_rest(words):
+    """Return (the literal -c argument, the words after it), ignoring long flags and option values."""
     i = 1
     while i < len(words):
         token = words[i]
@@ -228,9 +258,14 @@ def _shell_payload(words):
             i += 2
             continue
         if re.fullmatch(r'-[A-Za-z]+', token) and 'c' in token[1:]:
-            return words[i + 1] if i + 1 < len(words) else ''
+            return (words[i + 1], words[i + 2:]) if i + 1 < len(words) else ('', [])
         i += 1
     return None
+
+
+def _shell_payload(words):
+    found = _shell_payload_rest(words)
+    return found[0] if found else None
 
 
 def _boundary(kind, reason):
@@ -336,21 +371,62 @@ def _is_release(name, words):
             (name in _RELEASE['deploy_tools'] and any(x in words[1:] for x in _RELEASE['deploy_words'])))
 
 
+def _find_exec(words, depth):
+    """Decisions for the commands a `find` runs through -exec, -execdir, -ok and -okdir."""
+    decisions, i = [], 1
+    while i < len(words):
+        if words[i] in _FIND_EXEC:
+            j, command = i + 1, []
+            while j < len(words) and not (words[j] == ';' or (words[j] == '+' and words[j - 1] == '{}')):
+                command.append(words[j])
+                j += 1
+            command = _unwrap(command)
+            if command:
+                decisions.append(_classify_segment(command, depth))
+            i = j
+        i += 1
+    return decisions
+
+
+def _first_by_severity(decisions, base):
+    """The deny, else release, else boundary decision among the runner's commands, else the find itself."""
+    for test in (lambda d: d.action == 'deny' and d.category != _MULTI, lambda d: d.action == 'release',
+                 lambda d: bool(d.boundary)):
+        for decision in decisions:
+            if test(decision):
+                return decision
+    return base
+
+
 def _classify_segment(words, depth):
     name = PurePosixPath(words[0]).name
     if name in _SHELLS:
-        payload = _shell_payload(words)
-        return classify_command(payload, depth + 1) if payload is not None else Decision()
+        found = _shell_payload_rest(words)
+        if found is None:
+            return Decision()
+        payload, rest = found
+        decision = classify_command(payload, depth + 1)
+        if _hard_deny(decision):
+            return decision
+        # Rule (6b): substitutions in the payload and the arguments after it.
+        return _scan_substitutions(payload, depth) or _scan_pieces(rest, depth) or decision
     if name == 'eval':
-        return classify_command(' '.join(words[1:]), depth + 1)
+        text = ' '.join(words[1:])
+        decision = classify_command(text, depth + 1)
+        if _hard_deny(decision):
+            return decision
+        return _scan_substitutions(text, depth) or decision
     if name == 'git':
         return _git(words)
     if _is_release(name, words):
         return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=tuple(words))
+    base = Decision()
     if (name in _BOUNDARY['delete_commands'] or (name == 'find' and _BOUNDARY['find_delete_flag'] in words[1:]) or
             (name == 'gh' and words[1:3] in _BOUNDARY['gh'])):
-        return _boundary('delete', 'Deletion is a boundary action')
-    return Decision()
+        base = _boundary('delete', 'Deletion is a boundary action')
+    if name == 'find':
+        return _first_by_severity(_find_exec(words, depth), base)
+    return base
 
 
 def _hard_deny(decision):
@@ -411,9 +487,8 @@ def _substitutions(body):
     return found
 
 
-def _consumer_mode(segment):
-    """How a pipeline segment reads a heredoc: 'c' (shell with -c), 'script' (shell without -c,
-    source, `.` or eval) or None. Wrappers are unwrapped first."""
+def _command_words(segment):
+    """The command words of a segment: wrappers unwrapped, redirections dropped."""
     words = _unwrap(shlex.split(segment, comments=True))
     kept, skip = [], False
     for word in words:
@@ -425,13 +500,350 @@ def _consumer_mode(segment):
             skip = not redirect.group(1)
         else:
             kept.append(word)
+    return kept
+
+
+def _consumer_mode(segment, allow_eval=True):
+    """How a pipeline segment reads a heredoc: 'c' (shell with -c), 'script' (shell without -c,
+    source, `.` or eval) or None. Wrappers (xargs included) are unwrapped first."""
+    kept = _command_words(segment)
     if not kept:
         return None
     if PurePosixPath(kept[0]).name in _SHELLS:
         return 'c' if _shell_payload(kept) is not None else 'script'
-    if kept[0] in {'.', 'source', 'eval'}:
+    if kept[0] in {'.', 'source'} or (allow_eval and kept[0] == 'eval'):
         return 'script'
     return None
+
+
+def _body_decision(body, modes, depth):
+    """Classify text a shell consumer reads, as SPEC A5 rule (1): under -c an unparsable body is ignored."""
+    if not body.strip():
+        return Decision()
+    decision = classify_command(body, depth + 1)
+    if 'script' not in modes and decision.category == 'malformed':
+        decision = _scan_lines(body, depth, keep_release=True)
+    return decision
+
+
+_ANSI = {'a': '\a', 'b': '\b', 'e': '\x1b', 'E': '\x1b', 'f': '\f', 'n': '\n', 'r': '\r', 't': '\t',
+         'v': '\v', '\\': '\\', "'": "'", '"': '"', '?': '?'}
+_ANSI_NUMERIC = (('x', re.compile(r'[0-9A-Fa-f]{1,2}'), 16), ('u', re.compile(r'[0-9A-Fa-f]{1,4}'), 16),
+                 ('U', re.compile(r'[0-9A-Fa-f]{1,8}'), 16))
+_ANSI_OCTAL = re.compile(r'[0-7]{1,3}')
+
+
+def _ansi_escape(text, i):
+    """Decode the escape that starts at text[i] (a backslash). Returns (decoded text, next index)."""
+    char = text[i + 1]
+    if char in _ANSI:
+        return _ANSI[char], i + 2
+    try:
+        for letter, pattern, base in _ANSI_NUMERIC:
+            match = pattern.match(text, i + 2) if char == letter else None
+            if match:
+                return chr(int(match.group(), base)), match.end()
+        match = _ANSI_OCTAL.match(text, i + 1)
+        if match:
+            return chr(int(match.group(), 8)), match.end()
+    except (ValueError, OverflowError):
+        pass
+    return '\\' + char, i + 2
+
+
+def _dollar_decode(text):
+    """Quote-aware: replace each unquoted $'...' word part by its decoded, re-quoted text."""
+    if "$'" not in text:
+        return text
+    out, quote, escaped, i, n = [], None, False, 0, len(text)
+    while i < n:
+        char = text[i]
+        if escaped:
+            escaped = False
+        elif char == '\\' and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char == '$' and text.startswith("$'", i):
+            j, buf = i + 2, []
+            while j < n and text[j] != "'":
+                if text[j] == '\\' and j + 1 < n:
+                    decoded, j = _ansi_escape(text, j)
+                    buf.append(decoded)
+                else:
+                    buf.append(text[j])
+                    j += 1
+            if j >= n:
+                out.append(text[i:])
+                break
+            out.append(shlex.quote(''.join(buf)))
+            i = j + 1
+            continue
+        out.append(char)
+        i += 1
+    return ''.join(out)
+
+
+def _read_balanced(text, i):
+    """Index just past the `)` that closes a `(` already consumed before text[i] (quote-aware)."""
+    depth, quote, n = 1, None, len(text)
+    while i < n:
+        char = text[i]
+        if char == '\\' and quote != "'":
+            i += 2
+            continue
+        if quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char == '(':
+            depth += 1
+        elif char == ')':
+            depth -= 1
+            if depth == 0:
+                return i + 1
+        i += 1
+    return n
+
+
+def _skip_double(text, i):
+    """Index just past the double quote that closes a string opened before text[i]."""
+    n = len(text)
+    while i < n:
+        if text[i] == '\\':
+            i += 2
+        elif text[i] == '"':
+            return i + 1
+        elif text.startswith('$(', i):
+            i = _read_balanced(text, i + 2)
+        elif text[i] == '`':
+            close = text.find('`', i + 1)
+            i = n if close < 0 else close + 1
+        else:
+            i += 1
+    return n
+
+
+def _read_word(text, i):
+    """Index just past the shell word that starts at text[i]."""
+    n = len(text)
+    while i < n:
+        char = text[i]
+        if char in ' \t\n;|&<>()':
+            break
+        if char == '\\':
+            i += 2
+        elif char == "'":
+            close = text.find("'", i + 1)
+            i = n if close < 0 else close + 1
+        elif char == '"':
+            i = _skip_double(text, i + 1)
+        elif text.startswith('$(', i):
+            i = _read_balanced(text, i + 2)
+        elif char == '`':
+            close = text.find('`', i + 1)
+            i = n if close < 0 else close + 1
+        else:
+            i += 1
+    return min(i, n)
+
+
+def _scan_ops(text):
+    """Quote-aware pre-pass (SPEC A5 rule 6) that finds here-strings and process substitutions without
+    changing the text. Returns ([(command text around a here-string, its word)], [(text before a
+    `<(`, its inner text)]). The command text is the segment the operator sits in, as `_split` cuts it."""
+    herestrings, procsubs, pending = [], [], []
+    start, quote, escaped, n = 0, None, False, len(text)
+    for i, char in enumerate(text):
+        if escaped:
+            escaped = False
+        elif char == '\\' and quote != "'":
+            escaped = True
+        elif quote:
+            if char == quote:
+                quote = None
+        elif char in "\"'":
+            quote = char
+        elif char == '<' and text.startswith('<<<', i) and (i == 0 or text[i - 1] != '<'):
+            j = i + 3
+            while j < n and text[j] in ' \t':
+                j += 1
+            end = _read_word(text, j)
+            pending.append((text[start:i], text[j:end], end))
+        elif char == '<' and text.startswith('<(', i) and (i == 0 or text[i - 1] not in '<>'):
+            close = _read_balanced(text, i + 2)
+            inner = text[i + 2:close - 1] if text[close - 1:close] == ')' else text[i + 2:close]
+            procsubs.append((text[start:i], inner))
+        elif char == '&' and ((i and text[i - 1] in '<>') or text[i + 1:i + 2] == '>'):
+            continue
+        elif char == '|' and i and text[i - 1] == '>':
+            continue
+        elif char in ';|&()\n':
+            herestrings.extend((before + ' ' + (text[end:i] if i >= end else ''), word) for before, word, end in pending)
+            pending = []
+            start = i + 1
+    herestrings.extend((before + ' ' + text[end:], word) for before, word, end in pending)
+    return herestrings, procsubs
+
+
+def _pipe_joins(parts, k):
+    """True when the `|` that ends parts[k] continues the pipeline (`|&` and a following group included)."""
+    following = parts[k + 1] if k + 1 < len(parts) else None
+    return following is not None and bool(following[0].strip() or following[1] in {'&', '\n', '('})
+
+
+def _chains(text):
+    """Pipelines as flat lists of segments, with `(...)` and `{ ...; }` groups transparent to a pipe on
+    either side. Separate from `_pipelines`, which rules (1) to (3) keep using unchanged."""
+    parts = list(_split(text))
+    chains, cur, frames = [], [], []
+    state = {'carry': False, 'pipe_before': False, 'flushes': 0}
+
+    def flush():
+        nonlocal cur
+        if cur:
+            chains.append(cur)
+            state['flushes'] += 1
+        cur = []
+
+    def pipe_follows(k):  # A blank part holding only a continuing `|` comes right after parts[k].
+        return k + 1 < len(parts) and not parts[k + 1][0].strip() and parts[k + 1][1] == '|' and _pipe_joins(parts, k + 1)
+
+    for k, (seg, op) in enumerate(parts):
+        s = seg.strip()
+        if state['carry'] and not s and op in {'&', '\n'}:
+            state['carry'] = False
+            continue
+        state['carry'] = False
+        if re.match(r'\{(\s|$)', s):
+            s = s[1:].strip()
+            frames.append(([], state['flushes']))
+        closes = s == '}'
+        if closes:
+            s = ''
+        if s:
+            cur.append(s)
+            for members, _ in frames:
+                members.append(s)
+        if closes and frames:
+            members, seen = frames.pop()
+            if state['flushes'] != seen:
+                cur = list(members)
+        if op == '(':
+            if not state['pipe_before']:
+                flush()
+            frames.append(([], state['flushes']))
+        elif op == ')':
+            if frames:
+                members, seen = frames.pop()
+                if state['flushes'] != seen and pipe_follows(k):
+                    cur = list(members)
+            if not pipe_follows(k):
+                flush()
+        elif op == '|' and _pipe_joins(parts, k):
+            state['carry'] = not parts[k + 1][0].strip() and parts[k + 1][1] in {'&', '\n'}
+            state['pipe_before'] = True
+            continue
+        else:
+            flush()
+        state['pipe_before'] = False if op != '(' else state['pipe_before']
+    flush()
+    return chains
+
+
+def _scan_substitutions(text, depth):
+    """Rule (6b): each `$(...)` and backtick substitution in text is producer text and a command."""
+    if depth > 8:
+        return None
+    for content in _substitutions(text):
+        hit = _scan_text(content, depth + 1, as_command=True)
+        if hit:
+            return hit
+    return None
+
+
+def _scan_pieces(args, depth):
+    """Rule (6b) pieces of an argument list: each word and the words joined, split on newlines, on a
+    literal backslash-n and on `;`, each classified; plus the substitutions inside each word."""
+    if depth > 8 or not args:
+        return None
+    for word in args:
+        hit = _scan_substitutions(word, depth)
+        if hit:
+            return hit
+    for text in [*args, ' '.join(args)]:
+        for piece in re.split(r'\n|\\n|;', text):
+            if piece.strip():
+                decision = classify_command(piece.strip(), depth + 1)
+                if _hard_deny(decision):
+                    return decision
+    return None
+
+
+def _scan_text(text, depth, as_command=False):
+    """Rule (6b): an always-deny verdict hidden in producer text. A piece that fails to parse is skipped."""
+    if depth > 8:
+        return None
+    text = _dollar_decode(text)
+    if as_command:
+        decision = classify_command(text, depth + 1)
+        if _hard_deny(decision):
+            return decision
+    for segment in _segments(text):
+        try:
+            words = _command_words(segment)
+        except ValueError:
+            continue
+        hit = _scan_pieces(words[1:], depth)
+        if hit:
+            return hit
+    return None
+
+
+def _stream_items(text, ops, depth):
+    """SPEC A5 rule (6): script text fed to a shell without a heredoc. Returns (decision, argv, counts) items."""
+    items = []
+    herestrings, procsubs = ops
+
+    def consumer(command_text, allow_eval):
+        try:
+            return _consumer_mode(command_text, allow_eval), tuple(_command_words(command_text))
+        except ValueError:
+            return None, ()
+
+    for command_text, word in herestrings:  # (6a)
+        mode, argv = consumer(command_text, False)
+        if mode is None:
+            continue
+        try:
+            value = ' '.join(shlex.split(word))
+        except ValueError:
+            continue
+        items.append((_body_decision(value, {mode}, depth), argv, False))
+        hit = _scan_substitutions(value, depth)
+        if hit:
+            items.append((hit, argv, False))
+    for before, inner in procsubs:  # (6b) process substitution given to, or redirected into, a shell
+        mode, argv = consumer(before, False)
+        if mode is not None:
+            hit = _scan_text(inner, depth, as_command=True)
+            if hit:
+                items.append((hit, argv, False))
+    for chain in _chains(text):  # (6b) pipeline with a later shell consumer
+        for index, segment in enumerate(chain):
+            mode, argv = consumer(segment, True)
+            if mode is None:
+                continue
+            for producer in chain[:index]:
+                hit = _scan_text(producer, depth)
+                if hit:
+                    items.append((hit, argv, False))
+            break
+    return items
 
 
 def _heredoc_items(docs, pipelines, depth):
@@ -448,15 +860,8 @@ def _heredoc_items(docs, pipelines, depth):
                 modes = {_consumer_mode(segment) for segment in pipeline[where:]}
                 break
         if 'script' in modes or 'c' in modes:
-            if not body.strip():
-                decision = Decision()
-            elif 'script' in modes:
-                decision = classify_command(body, depth + 1)
-            else:  # Under -c the body is not what the shell runs, so an unparsable body is ignored.
-                decision = classify_command(body, depth + 1)
-                if decision.category == 'malformed':
-                    decision = _scan_lines(body, depth, keep_release=True)
-            items.append((decision, argv, False))
+            # Under -c the body is not what the shell runs, so an unparsable body is ignored.
+            items.append((_body_decision(body, modes, depth), argv, False))
         if not quoted:  # Rule (4)
             for content in _substitutions(body):
                 decision = classify_command(content, depth + 1)
@@ -473,6 +878,7 @@ def classify_command(command: str, _depth=0) -> Decision:
         return _deny('Invalid or excessively nested command', 'malformed')
     try:
         text, docs = _strip_heredocs(command)
+        text = _dollar_decode(text)
         segments = [[_MARK_RE.sub('<<HEREDOC', word) for word in shlex.split(segment, comments=True)]
                     for segment in _segments(text)]
         segments = [words for words in segments if words]
@@ -482,6 +888,7 @@ def classify_command(command: str, _depth=0) -> Decision:
             if words:
                 items.append((_classify_segment(words, _depth), original, True))
         items.extend(_heredoc_items(docs, _pipelines(text), _depth))
+        items.extend(_stream_items(text, _scan_ops(text), _depth))
     except ValueError as exc:
         return _deny('Malformed heredoc' if str(exc).startswith('Heredoc') else 'Malformed shell quoting', 'malformed')
     for decision, _, _ in items:

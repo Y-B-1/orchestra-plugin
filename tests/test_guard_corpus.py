@@ -81,6 +81,63 @@ class GuardCorpusTest(unittest.TestCase):
             "self.call(command='d four')\n")
         self.assertEqual(inline_commands(source), {'a one', 'b two', 'c three', 'd four'})
 
+    def test_inline_walker_resolves_names_concatenations_lists_and_loops(self):
+        source = (
+            "def one():\n"
+            "    hard = 'git reset ' + '--hard'\n"
+            "    classify_command(hard)\n"
+            "    classify_command('cat <<EOF\\nx ' + hard + '\\nEOF')\n"
+            "def two():\n"
+            "    a, b = 'git push ', 'origin'\n"
+            "    pair = 'p ' + 'one'\n"
+            "    self.bash(cwd, pair)\n"
+            "def three():\n"
+            "    for command in ['l one', 'l two' + ' x']:\n"
+            "        classify_command(command)\n"
+            "    for command in ('t one',):\n"
+            "        self.call(command=command)\n"
+            "    names = ['n one', 'n two']\n"
+            "    for command in names:\n"
+            "        x = {'tool_input': {'command': command}}\n"
+            "def four():\n"
+            "    for refspec, source, target in [('main', 'm', 'm'), ('HEAD~1:main', 'H', 'm')]:\n"
+            "        classify_command('git push origin ' + refspec)\n"
+            "def five():\n"
+            "    for command in unknown():\n"
+            "        classify_command(command)\n"
+            "    classify_command(not_bound)\n")
+        self.assertEqual(inline_commands(source), {
+            'git reset --hard', 'cat <<EOF\nx git reset --hard\nEOF', 'p one',
+            'l one', 'l two x', 't one', 'n one', 'n two',
+            'git push origin main', 'git push origin HEAD~1:main'})
+
+    def test_inline_walker_scopes_names_to_their_function(self):
+        source = (
+            "def one():\n"
+            "    x = 'bound in one'\n"
+            "def two():\n"
+            "    classify_command(x)\n")
+        self.assertEqual(inline_commands(source), set())
+
+    def test_inline_walker_finds_the_loop_and_concatenated_commands_in_test_hooks(self):
+        found = inline_commands((Path(test_hooks.__file__)).read_text())
+        loop = ['git push --force origin x', 'git push -f origin x', 'git push --mirror origin',
+                'git push origin +x', 'git push --all origin', 'git push --tags origin',
+                'git push --delete origin x', 'git push origin a b', 'git reset --hard',
+                'git clean -f', 'git branch -D x', 'git add -A', 'git commit -a -m x',
+                'git checkout .', 'git checkout -f x', 'git restore .']
+        hard = 'git reset ' + '--hard'
+        concatenated = ['cat <<EOF\nx $(' + hard + ')\nEOF',
+                        'cat <<EOF\n"$(' + hard + ')"\nEOF',
+                        "cat <<EOF\n`" + hard + "` it's\nEOF",
+                        'cat <<EOF\necho "\\$(' + hard + ')" "\\`' + hard + '\\`"\nEOF',
+                        "cat <<'EOF'\necho '$(" + hard + ")'\nEOF"]
+        refspec = ['git push origin ' + r for r in ['main', 'HEAD:main', 'topic:refs/heads/main', 'HEAD~1:main']]
+        self.assertEqual(len(loop + concatenated), 21)
+        for command in loop + concatenated + refspec:
+            with self.subTest(command=command):
+                self.assertIn(command, found)
+
     def test_pre_b2_inline_commands_are_in_the_corpus(self):
         commands = {case['input'].get('command') for case in CORPUS}
         for command in PRE_B2_INLINE_COMMANDS:
@@ -196,35 +253,101 @@ PRE_B2_INLINE_COMMANDS = [
 
 
 def inline_commands(source):
-    """Command-like string literals: classify_command(...) arguments, payload `command`/`cmd` values,
-    `command=` keywords and the second argument of a `bash(cwd, command)` helper. Patch payloads
-    sent as `apply_patch` input are not shell commands."""
+    """Command-like string values reaching a sink: `classify_command(...)` arguments, payload
+    `command`/`cmd` values, `command=` keywords and the second argument of a `bash(cwd, command)`
+    helper. A value is a literal, a `+` concatenation of values, or a name bound in the same
+    function (or an enclosing scope) to those, to a list of them, or by a `for` loop over a list
+    (a tuple target takes the matching tuple element). Patch payloads sent as `apply_patch` input
+    are not shell commands."""
     tree = ast.parse(source)
     patch_dicts = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Call) and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == 'apply_patch':
             patch_dicts.update(id(arg) for arg in node.args[1:])
     found = set()
+    functions = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)
 
-    def literal(node):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str):
-            found.add(node.value)
+    def own_nodes(scope):
+        """Nodes of this scope, not descending into nested function scopes."""
+        stack = list(ast.iter_child_nodes(scope))
+        while stack:
+            node = stack.pop()
+            yield node
+            if not isinstance(node, functions):
+                stack.extend(ast.iter_child_nodes(node))
 
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call):
-            func = node.func
-            name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ''
-            if name == 'classify_command' and node.args:
-                literal(node.args[0])
-            if name == 'bash' and len(node.args) > 1:
-                literal(node.args[1])
-            for keyword in node.keywords:
-                if keyword.arg == 'command':
-                    literal(keyword.value)
-        elif isinstance(node, ast.Dict) and id(node) not in patch_dicts:
-            for key, value in zip(node.keys, node.values):
-                if isinstance(key, ast.Constant) and key.value in ('command', 'cmd'):
-                    literal(value)
+    def values(node, env):
+        """The set of strings the expression can take, or None when it is not statically known."""
+        if isinstance(node, ast.Constant):
+            return {node.value} if isinstance(node.value, str) else None
+        if isinstance(node, ast.Name):
+            return env.get(node.id)
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = values(node.left, env), values(node.right, env)
+            return {a + b for a in left for b in right} if left and right else None
+        return None
+
+    def items(node, env):
+        """The elements of an iterable expression: a list, tuple or a name bound to one."""
+        if isinstance(node, ast.Name):
+            return env.get(('list', node.id))
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return list(node.elts)
+        return None
+
+    def bind(env, name, strings):
+        if strings:
+            env.setdefault(name, set()).update(strings)
+
+    def scope_env(scope, parent):
+        env = {key: set(value) if isinstance(value, set) else list(value) for key, value in parent.items()}
+        nodes = list(own_nodes(scope))
+        for _ in range(3):  # Bindings may depend on later ones; a few passes settle the chains.
+            for node in nodes:
+                if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
+                    name = node.targets[0].id
+                    bind(env, name, values(node.value, env))
+                    if isinstance(node.value, (ast.List, ast.Tuple)):
+                        env[('list', name)] = list(node.value.elts)
+                elif isinstance(node, (ast.For, ast.comprehension)):
+                    elements = items(node.iter, env)
+                    if elements is None:
+                        continue
+                    if isinstance(node.target, ast.Name):
+                        for element in elements:
+                            bind(env, node.target.id, values(element, env))
+                    elif isinstance(node.target, ast.Tuple):
+                        for element in elements:
+                            if isinstance(element, (ast.Tuple, ast.List)) and len(element.elts) == len(node.target.elts):
+                                for target, part in zip(node.target.elts, element.elts):
+                                    if isinstance(target, ast.Name):
+                                        bind(env, target.id, values(part, env))
+        return env, nodes
+
+    def literal(node, env):
+        found.update(values(node, env) or ())
+
+    def visit(scope, parent):
+        env, nodes = scope_env(scope, parent)
+        for node in nodes:
+            if isinstance(node, ast.Call):
+                func = node.func
+                name = func.id if isinstance(func, ast.Name) else func.attr if isinstance(func, ast.Attribute) else ''
+                if name == 'classify_command' and node.args:
+                    literal(node.args[0], env)
+                if name == 'bash' and len(node.args) > 1:
+                    literal(node.args[1], env)
+                for keyword in node.keywords:
+                    if keyword.arg == 'command':
+                        literal(keyword.value, env)
+            elif isinstance(node, ast.Dict) and id(node) not in patch_dicts:
+                for key, value in zip(node.keys, node.values):
+                    if isinstance(key, ast.Constant) and key.value in ('command', 'cmd'):
+                        literal(value, env)
+            if isinstance(node, functions):
+                visit(node, env)
+
+    visit(tree, {})
     return found
 
 
