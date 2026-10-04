@@ -1883,6 +1883,7 @@ const SMARK = '\ue002'; // Private-use delimiter for the placeholder that stands
 const SUB_RE = /\ue002([0-9]+)\ue002/g;
 const PURE_SUB_RE = /^(?:\ue002[0-9]+\ue002)+$/; // A word made only of substitutions.
 const FOLD_LEVELS = 16; // Substitution nesting levels folded (O33); a substitution nested deeper denies (O34).
+const SUFFIX_CAP = 32; // Command readings after pure-substitution words in one segment (FX4); more denies.
 const RANK: Record<string, number> = { deny: 4, 'release-multi': 3, release: 2, boundary: 1 };
 
 /** The stricter of two verdicts (O34); first on a tie. Mirrors guards._stricter. */
@@ -1983,6 +1984,15 @@ export function classifyCommand(command: string, depth = 0): Decision {
         if (full.slice(0, pure.indexOf(true)).some((word) => WRAPPER_VALUES.has(posixName(word)))) {
           // After a wrapper it may also fill an option value and the next slot (two words).
           readings.push(unwrap(full.flatMap((word, k) => (pure[k] ? [word, word] : [word]))));
+          // Or fill an option value while a later one expands to nothing (FX4): the words after
+          // each pure-substitution word are also read as the command. A suffix that starts with
+          // another pure substitution or an option names no new command; past the cap it denies.
+          const heads = pure.flatMap((sub, k) => (sub && k + 1 < pure.length && !pure[k + 1] && !full[k + 1]!.startsWith('-') ? [k] : []));
+          if (heads.length > SUFFIX_CAP) throw new ValueError('Too many substitution words');
+          for (const k of heads) {
+            const rest = unwrap(full.slice(k + 1));
+            readings.push(pure.slice(k + 1).includes(true) ? removedReading(full.slice(k + 1), kept.slice(k + 1), rest) : rest);
+          }
         }
       }
       let decision: Decision | null = null;
