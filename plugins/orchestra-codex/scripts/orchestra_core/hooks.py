@@ -134,9 +134,7 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
     if event == 'Interrupt':
         if engine is not None:
             try:
-                session = engine.status()['session']
-                if session.get('active'):
-                    engine.interrupt(session['actor'], session['lease'])
+                engine.interrupt_active()
             except (OSError, ValueError, KeyError, RuntimeError) as exc:
                 return HookResult({'systemMessage': 'Orchestra interruption could not be recorded: ' + str(exc)})
         return HookResult({})
@@ -247,6 +245,7 @@ def main(argv=None):
     state_dir = os.environ.get('ORCHESTRA_STATE_DIR')
     engine = None
     armed = False
+    build_error = None
     if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         try:
             from .paths import load_policy
@@ -276,9 +275,15 @@ def main(argv=None):
             repo, state_dir = _run_location(payload['cwd'])
             if (state_dir / 'state.json').is_file():
                 engine = Engine(state_dir, repo, policy=load_policy(state_dir))
-        except Exception:
+        except Exception as exc:
             engine = None  # Unloadable state: SessionStart still returns context; a lost lease is recovered by hand
+            if args.event == 'SessionEnd' and state_dir is not None and (Path(state_dir) / 'state.json').is_file():
+                build_error = exc
     result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed)
+    if build_error is not None and not result.output:
+        result = HookResult({'systemMessage': 'Orchestra session end could not be recorded: ' + str(build_error)
+                             + '. A run that holds a lost lease is recovered by hand with '
+                             + '`orchestra.py --actor A --lease L interrupt` (A and L from the start receipt).'})
     print(json.dumps(result.output))
     if result.exit_code == 2:
         print(result.output['hookSpecificOutput']['permissionDecisionReason'], file=sys.stderr)

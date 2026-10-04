@@ -40,7 +40,7 @@ The final code review always checks requirements, correctness, security, tests, 
 
 ## Run the workflow
 
-Read [the CLI guide](docs/cli.md) for task and review schemas. Run state lives under the user state directory, outside the application checkout. Use `route` with inspected facts, `review-groups` with reported cards, and `audit-policy` with conformance facts. The core enforces dependencies, reservations, capacity, lifecycle and evidence freshness; the coordinator supplies semantic facts and checks findings.
+Read [the CLI guide](docs/cli.md) for task and review schemas. Run state lives under the user state directory, outside the application checkout. The core enforces dependencies, reservations, capacity, lifecycle and evidence freshness; the coordinator supplies semantic facts and checks findings.
 
 ```sh
 python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project start

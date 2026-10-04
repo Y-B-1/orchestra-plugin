@@ -293,26 +293,88 @@ class IntegrationRepairTests(EngineFixture):
         with self.assertRaises(EngineError):
             self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], final=True)
 
-    def test_method_missing_and_changed_contract_invalidates_run(self):
-        from unittest.mock import patch
+    def package_copy(self):
         import shutil
         package = self.root / 'package'
-        source = pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra'
-        shutil.copytree(source, package)
+        shutil.copytree(pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra', package)
+        return package
+
+    def test_method_missing_and_changed_contract_invalidates_run(self):
+        from unittest.mock import patch
+        package = self.package_copy()
         with patch('orchestra_core.engine.PACKAGE_ROOT', package):
             engine = Engine(self.root / 'contracts', self.repo)
             lease = engine.open_session('main')
             task = dict(id='a', role='builder', mode='implementation', inputs=['https://example.com'], acceptance=['done'], files=['a'], resources=[], dependencies=[])
             engine.add_task('main', lease, task)
             method = package / 'skills/orchestra-build/SKILL.md'
+            # An edited method keeps the live run (SPEC 11.1 item 5).
             method.write_text(method.read_text() + '\nNew binding rule.\n')
-            with self.assertRaises(EngineError):
-                engine.dispatch('main', lease, 'a', 'worker')
-            with self.assertRaises(EngineError):
-                Engine(self.root / 'contracts', self.repo).status()
+            engine.dispatch('main', lease, 'a', 'worker')
+            self.assertEqual('running', Engine(self.root / 'contracts', self.repo).status()['tasks']['a']['state'])
+            # A missing method still fails validation.
             method.unlink()
             with self.assertRaises(EngineError):
+                engine.status()
+            with self.assertRaises(EngineError):
                 Engine(self.root / 'new-contracts', self.repo)
+
+    def test_added_mode_invalidates_run(self):
+        from unittest.mock import patch
+        package = self.package_copy()
+        with patch('orchestra_core.engine.PACKAGE_ROOT', package):
+            engine = Engine(self.root / 'contracts', self.repo)
+            lease = engine.open_session('main')
+            roles = json.loads((package / 'config/roles.json').read_text())
+            next(r for r in roles['roles'] if r['id'] == 'builder')['modes'].append('extra-mode')
+            (package / 'config/roles.json').write_text(json.dumps(roles))
+            with self.assertRaisesRegex(EngineError, 'start a new run'):
+                engine.status()
+            with self.assertRaisesRegex(EngineError, 'start a new run'):
+                engine.add_task('main', lease, dict(id='a', role='builder', mode='implementation', inputs=['x'], acceptance=['y'], files=['a'], resources=[], dependencies=[]))
+
+    def test_status_has_no_lease_key_anywhere(self):
+        self.task('a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'worker')
+        self.assertNotIn('"lease"', json.dumps(self.engine.status()))
+        self.assertTrue(self.engine.status()['session']['active'])
+        self.assertEqual('running', self.engine.status()['tasks']['a']['state'])
+        # The stored state keeps both leases; redaction is on the read path only.
+        raw = json.loads(self.engine.state_path.read_text())
+        self.assertEqual(self.lease, raw['session']['lease'])
+        self.assertEqual(self.lease, raw['tasks']['a']['lease'])
+        self.engine.report('worker', token, 'checked')
+
+    def test_narrowed_categories_accepted_and_empty_or_unknown_rejected(self):
+        for bad in ([], ['nonsense'], ['correctness', 'nonsense'], 'correctness', None):
+            with self.assertRaises(EngineError):
+                Engine(self.root / 'bad', self.repo, {'required_review_categories': bad})
+        def accepted(engine, lease):
+            task = dict(id='a', role='investigator', mode='code', inputs=['spec'], acceptance=['check'], files=['a'], resources=[], dependencies=[])
+            engine.add_task('main', lease, task)
+            engine.report('worker', engine.dispatch('main', lease, 'a', 'worker'), 'checked')
+            engine.accept('main', lease, 'a')
+
+        report = self.root / 'final.json'
+        policy = {'required_review_categories': ['correctness', 'tests']}
+        engine = Engine(self.root / 'narrow', self.repo, policy)
+        lease = engine.open_session('main')
+        accepted(engine, lease)
+        self.review(report, categories=['correctness', 'tests'], tasks=['a'], final=True, engine=engine)
+        engine.record_review('main', lease, 'reviewer', report, ['correctness', 'tests'], ['a'], final=True)
+        engine.check_completion('main', lease)
+        # A narrowed policy still demands its own categories.
+        engine2 = Engine(self.root / 'narrow2', self.repo, policy)
+        lease2 = engine2.open_session('main')
+        accepted(engine2, lease2)
+        self.review(report, categories=['correctness'], tasks=['a'], final=True, engine=engine2)
+        engine2.record_review('main', lease2, 'reviewer', report, ['correctness'], ['a'], final=True)
+        with self.assertRaisesRegex(EngineError, 'coverage'):
+            engine2.check_completion('main', lease2)
+
+    def test_old_policy_with_removed_keys_still_loads(self):
+        engine = Engine(self.root / 'old', self.repo, {'reserved_ports': [1], 'denied_tools': ['x']})
+        engine.open_session('main')
 
     def test_invalid_timeout_and_optional_brief(self):
         for timeout in [0, -1, True, '300', float('inf')]:
@@ -791,18 +853,67 @@ class HarnessSessionTests(EngineFixture):
         """A fresh active run bound to harness session S."""
         self.now[0] = 1000.0
         if self.engine.status()['session']['active']:
-            self.engine.interrupt('main', self.session()['lease'])
+            self.engine.interrupt('main', self.raw_lease())
         self.lease = self.engine.open_session('main', harness_session='S')
 
     def session(self):
         return self.engine.status()['session']
+
+    def raw_lease(self):
+        return json.loads(self.engine.state_path.read_text())['session']['lease']
+
+    def test_interrupt_active_needs_no_lease_and_is_idempotent(self):
+        self.assertTrue(self.engine.interrupt_active())
+        self.assertFalse(self.session()['active'])
+        self.assertFalse(self.engine.interrupt_active())
+        with self.assertRaisesRegex(EngineError, 'lease'):
+            self.engine.validate_lease('main', self.lease)
+
+    def test_interrupt_active_clears_permits_and_autonomy(self):
+        state = json.loads(self.engine.state_path.read_text())
+        state['permits'] = [dict(id='p', action='release', remote='r', target='t', argv=[], artifact={}, lease=self.lease)]
+        self.engine.state_path.write_text(json.dumps(state))
+        self.engine.interrupt_active()
+        state = self.engine.status()
+        self.assertEqual((state['permits'], state['autonomy']), ([], None))
+        self.assertEqual(json.loads(self.engine.state_path.read_text())['permits'], [])
+
+    def test_interrupt_active_with_no_state_file_does_not_create_one(self):
+        engine = Engine(self.root / 'fresh', self.repo)
+        self.assertFalse(engine.interrupt_active())
+        self.assertFalse(engine.state_path.exists())
+
+    def stat(self):
+        info = self.engine.state_path.stat()
+        return (info.st_ino, info.st_mtime_ns)
+
+    def test_no_op_session_end_and_rebind_do_not_rewrite_state(self):
+        before = self.stat()
+        self.assertFalse(self.engine.end_harness_session('other'))
+        self.assertFalse(self.engine.mark_harness_rebind('other'))
+        self.assertEqual(before, self.stat())
+        self.engine.interrupt_active()
+        before = self.stat()
+        self.assertFalse(self.engine.end_harness_session('S'))
+        self.assertFalse(self.engine.mark_harness_rebind('S'))
+        self.assertEqual(before, self.stat())
+        self.engine.open_session('main')  # unbound run
+        before = self.stat()
+        self.assertFalse(self.engine.end_harness_session('S'))
+        self.assertFalse(self.engine.mark_harness_rebind('S'))
+        self.assertEqual(before, self.stat())
+
+    def test_matching_session_end_still_writes(self):
+        before = self.stat()
+        self.assertTrue(self.engine.end_harness_session('S'))
+        self.assertNotEqual(before, self.stat())
 
     def test_open_session_records_harness_session_and_keeps_it_optional(self):
         self.assertEqual(self.session()['harness_session'], 'S')
         self.engine.interrupt('main', self.lease)
         self.engine.open_session('main')
         self.assertNotIn('harness_session', self.session())
-        self.engine.interrupt('main', self.session()['lease'])
+        self.engine.interrupt('main', self.raw_lease())
         for bad in ('', 5, True):
             with self.assertRaises(EngineError):
                 self.engine.open_session('main', harness_session=bad)

@@ -117,8 +117,11 @@ class WorkflowIntegration(unittest.TestCase):
             self.cli('add',str(self.write(ident+'.json',task)),lease=True)
             token=self.cli('dispatch',ident,'worker-'+ident,lease=True)[1]['assignment']
             self.cli('report','worker-'+ident,token,str(self.write(ident+'.txt','Inspected fixture; no source change needed.')))
-        groups=self.cli('review-groups')[1]
-        self.assertEqual(groups[0]['tasks'],['B1','B2'])
+        self.assertNotIn('lease',json.dumps(self.cli('status')[1]))
+        for removed in ('route','audit-policy','review-groups'):
+            result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--state',str(self.state),removed],
+                                  capture_output=True,text=True,timeout=25)
+            self.assertNotEqual(result.returncode,0,removed)
         self.cli('finish',lease=True,expected=2)
         self.review(['B1','B2'])
         for ident in ['B1','B2']:

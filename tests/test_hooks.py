@@ -510,9 +510,12 @@ class HooksTest(unittest.TestCase):
 
     def test_interrupt_and_bounded_adapter(self):
         engine = mock.Mock()
-        engine.status.return_value = {'session': {'active': True, 'actor': 'main', 'lease': 'a'}}
         handle_event('Interrupt', {}, engine=engine)
-        engine.interrupt.assert_called_once_with('main', 'a')
+        engine.interrupt_active.assert_called_once_with()
+        engine.status.assert_not_called()
+        engine.interrupt.assert_not_called()
+        engine.interrupt_active.side_effect = ValueError('corrupt')
+        self.assertIn('could not be recorded', handle_event('Interrupt', {}, engine=engine).output['systemMessage'])
         engine.hook_stop.return_value = 'Continue one authorized bounded pass'
         self.assertEqual(handle_event('Stop', {}, engine=engine).output['decision'], 'block')
         engine.hook_stop.side_effect = ValueError('corrupt')
@@ -878,7 +881,7 @@ class HarnessSessionHookTest(unittest.TestCase):
         self.end('other', 'clear')
         self.assertTrue(self.session()['active'])
         self.assertNotIn('pending_rebind', self.session())
-        self.engine.interrupt('main', self.session()['lease'])
+        self.engine.interrupt_active()
         self.engine.open_session('main')
         before = self.engine.state_path.read_bytes()
         self.end('S', 'prompt_input_exit')
@@ -975,11 +978,62 @@ class HarnessSessionHookTest(unittest.TestCase):
         self.assertIn('main coordinator', context)
         self.assertIn('--harness-session S2', context)
 
+    def test_interrupt_event_interrupts_an_active_run_through_interrupt_active(self):
+        with mock.patch.object(self.engine, 'interrupt_active', wraps=self.engine.interrupt_active) as spy, \
+                mock.patch.object(self.engine, 'interrupt', side_effect=AssertionError('lease path used')):
+            self.assertEqual(handle_event('Interrupt', {}, harness='claude', engine=self.engine).output, {})
+        spy.assert_called_once_with()
+        self.assertFalse(self.session()['active'])
+        self.assertEqual(handle_event('Interrupt', {}, harness='claude', engine=self.engine).output, {})
+
     def test_session_end_error_is_reported_not_raised(self):
         self.engine.state_path.write_text('{not json')
         result = self.end('S', 'logout')
         self.assertEqual(result.exit_code, 0)
         self.assertIn('could not be recorded', result.output['systemMessage'])
+
+
+class SessionEndBuildErrorTest(unittest.TestCase):
+    """R3 F3: an engine that cannot be built at SessionEnd is reported, not silent."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        patcher = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root / 'xdg')})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop('ORCHESTRA_STATE_DIR', None)
+        self.repo = self.root / 'repo'
+        self.repo.mkdir()
+        git(self.repo, 'init', '-q', '-b', 'main')
+        git(self.repo, 'config', 'user.name', 'T')
+        git(self.repo, 'config', 'user.email', 't@example.invalid')
+        (self.repo / 'f').write_text('x')
+        git(self.repo, 'add', 'f')
+        git(self.repo, 'commit', '-q', '-m', 'f')
+
+    def session_end(self, session_id='S', reason='prompt_input_exit'):
+        payload = {'session_id': session_id, 'reason': reason, 'cwd': str(self.repo)}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+            code = main(['SessionEnd', '--harness', 'claude'])
+        return code, json.loads(output.getvalue())
+
+    def test_malformed_policy_names_the_error_and_manual_recovery(self):
+        from orchestra_core.paths import state_location
+        subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), 'start', '--harness-session', 'S'],
+                       env=os.environ, capture_output=True, text=True, check=True)
+        (state_location(self.repo) / 'policy.json').write_text('{not json')
+        code, output = self.session_end()
+        self.assertEqual(code, 0)
+        message = output['systemMessage']
+        self.assertIn('could not be recorded', message)
+        self.assertIn('Expecting property name', message)
+        self.assertIn('--actor A --lease L interrupt', message)
+
+    def test_no_state_file_stays_silent(self):
+        self.assertEqual(self.session_end(), (0, {}))
 
 
 class RunHookScriptTest(unittest.TestCase):

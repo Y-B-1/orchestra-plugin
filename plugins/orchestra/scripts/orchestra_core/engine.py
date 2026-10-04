@@ -35,14 +35,13 @@ DEFAULT = dict(max_workers=20, required_checks=[], required_review_categories=CA
 
 
 def _contracts():
-    """Canonical role definitions and every referenced method bind run evidence."""
+    """The role-to-modes map binds a run. Method files must exist but their text does not bind it."""
     try:
         path = PACKAGE_ROOT / 'config/roles.json'
         raw = path.read_bytes()
         roles = json.loads(raw)['roles']
-        result, hashes = {}, {'roles.json': _hash(raw)}
+        result = {}
         root = (PACKAGE_ROOT / 'skills').resolve()
-        hashes['orchestra/SKILL.md'] = _hash((root / 'orchestra/SKILL.md').read_bytes())
         for role in roles:
             name, modes, methods = role['id'], role['modes'], role['methods']
             if (not isinstance(name, str) or name in result or not modes or not methods
@@ -53,9 +52,8 @@ def _contracts():
                 target = (root / method).resolve()
                 if root not in target.parents or not target.is_file():
                     raise ValueError('Missing required method: ' + method)
-                hashes[method] = _hash(target.read_bytes())
         result.pop('orchestrator', None)
-        return result, _digest(hashes)
+        return result, _digest(result)
     except (OSError, ValueError, TypeError, KeyError) as exc:
         raise EngineError('Invalid canonical role/method contract: ' + str(exc)) from exc
 
@@ -89,6 +87,10 @@ class Engine:
                 raise EngineError('Invalid policy ' + key)
         if not isinstance(self.policy['required_checks'], list):
             raise EngineError('Invalid required checks')
+        categories = self.policy['required_review_categories']
+        if (not isinstance(categories, list) or not categories
+                or any(not isinstance(c, str) or c not in CATEGORIES for c in categories)):
+            raise EngineError('required_review_categories must be a non-empty list of known categories')
         self.modes, self.contract_hash = _contracts()
         self.policy_hash = _digest(dict(policy=self.policy, contracts=self.contract_hash))
         self._git('rev-parse', '--show-toplevel')
@@ -246,9 +248,18 @@ class Engine:
             if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', brief.read_text(errors='replace'), re.M):
                 raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
 
+    @staticmethod
+    def _redact_leases(value):
+        if isinstance(value, dict):
+            return {k: Engine._redact_leases(v) for k, v in value.items() if k != 'lease'}
+        if isinstance(value, list):
+            return [Engine._redact_leases(v) for v in value]
+        return value
+
     def status(self):
+        """The run state without any lease: the board and `where` never see one (SPEC 11.2)."""
         with self._state(False) as state:
-            return copy.deepcopy(state)
+            return self._redact_leases(copy.deepcopy(state))
 
     @staticmethod
     def _lease(state, actor, lease):
@@ -288,6 +299,19 @@ class Engine:
             state['permits'] = []
             state['autonomy'] = None
 
+    def interrupt_active(self):
+        """Interrupt the active session without a caller-supplied lease. Python only, for the Interrupt hook."""
+        with self._state(False) as state:
+            if not (state['session'] and state['session']['active']):
+                return False  # Read-only unless there is a session to interrupt
+        with self._state() as state:
+            if not (state['session'] and state['session']['active']):
+                return False
+            state['session']['active'] = False
+            state['permits'] = []
+            state['autonomy'] = None
+            return True
+
     @staticmethod
     def _bound_to(state, session_id):
         session = state['session']
@@ -295,6 +319,9 @@ class Engine:
 
     def end_harness_session(self, session_id):
         """The bound harness session ended: what interrupt does, with outcome 'ended'. Idempotent."""
+        with self._state(False) as state:
+            if not self._bound_to(state, session_id):
+                return False  # A no-op never rewrites state.json
         with self._state() as state:
             if not self._bound_to(state, session_id):
                 return False
@@ -306,6 +333,9 @@ class Engine:
 
     def mark_harness_rebind(self, session_id):
         """/clear or /resume: the process continues under a new id; record the pending hand-over."""
+        with self._state(False) as state:
+            if not self._bound_to(state, session_id):
+                return False  # A no-op never rewrites state.json
         with self._state() as state:
             if not self._bound_to(state, session_id):
                 return False
@@ -673,7 +703,7 @@ class Engine:
         for task_id in state['tasks']:
             if any(r['findings'] for r in self._review_verdicts(state, artifact, task_id=task_id).values()):
                 raise EngineError('Current task review has findings: ' + task_id)
-        required_categories = set(CATEGORIES) | set(self.policy['required_review_categories'])
+        required_categories = set(self.policy['required_review_categories'])
         if (require_review or state['tasks']) and not required_categories <= categories:
             raise EngineError('Current final review coverage is incomplete')
         checks = list(self.policy['required_checks'])
