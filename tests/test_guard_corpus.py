@@ -163,7 +163,7 @@ class GuardCorpusTest(unittest.TestCase):
 
     def test_corpus_covers_the_a_row_cases(self):
         by_command = {case['input'].get('command'): case for case in CORPUS}
-        for name in ['UNARMED_RELEASES', 'MULTI_RELEASES', 'STASH_ALLOWED', 'STASH_DENIED', 'RESTORE_ALLOWED',
+        for name in ['UNARMED_RELEASES', 'MULTI_RELEASES', 'STASH_DENIED', 'DENY_GIT_21', 'ALLOW_GIT_21', 'RESTORE_ALLOWED',
                      'RESTORE_DENIED', 'SWITCH_DENIED', 'AZ_ALLOWED', 'HEREDOC_DENIED', 'HEREDOC_ALLOWED']:
             for command in getattr(test_hooks, name):
                 with self.subTest(list=name, command=command):

@@ -62,4 +62,4 @@ Outside an armed run, the guard allows a non-force push of one branch or tag, `g
 
 ## Other commands
 
-`classify "SHELL COMMAND"` prints the guard's verdict for a command string without running it. `install-profiles` and `uninstall-profiles` (optional `--codex-home DIR`) manage the Codex user profiles. `status` prints cards and session state with no lease; `board` groups card ids by role and state, `ready` lists dispatchable cards; `scan` runs the configured secret scan.
+`classify "SHELL COMMAND"` prints the guard's verdict for a command string without running it. `status` prints cards and session state with no lease; `board` groups card ids by role and state, `ready` lists dispatchable cards; `scan` runs the configured secret scan.

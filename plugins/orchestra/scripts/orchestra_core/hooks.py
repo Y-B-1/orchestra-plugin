@@ -88,14 +88,14 @@ def _patch_paths(command):
     return paths
 
 
-def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None, armed=False, autonomy=False):
+def handle_event(event, payload, *, harness='claude', state_dir=None, engine=None, armed=False, autonomy=False):
     """Decide output; optional engine adapter owns locked state operations.
 
     `armed` marks a run whose state could not be loaded: release classes deny (fail closed).
     `autonomy` marks such a state whose raw autonomy flag is true or unreadable (O29): the
     autonomy-active column applies to every class. A loaded engine implies an armed run; neither means unarmed.
     """
-    if harness not in {'codex', 'claude'}:
+    if harness != 'claude':
         raise ValueError('Unsupported harness')
     if not isinstance(payload, dict):
         return _deny('Malformed hook payload', True) if event == 'PreToolUse' else HookResult({})
@@ -323,7 +323,7 @@ def _mod_is_live(payload):
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd'])
-    parser.add_argument('--harness', choices=['codex', 'claude'], default='codex')
+    parser.add_argument('--harness', choices=['claude'], default='claude')
     parser.add_argument('--from-mod', action='store_true')
     args = parser.parse_args(argv)
     try:

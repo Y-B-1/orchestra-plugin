@@ -4,14 +4,13 @@ One classifier and two native adapters replace duplicated provider guards. Comma
 
 | Event | Effect | Does not do |
 | --- | --- | --- |
-| SessionStart | Supply main or worker contract and skill path; on Claude, add the session id for `start --harness-session`; show a pending autonomy morning report | Seed state, repair files, resume, arm autonomy |
+| SessionStart | Supply main or worker contract and skill path; add the session id for `start --harness-session`; show a pending autonomy morning report | Seed state, repair files, resume, arm autonomy |
 | SubagentStart | Supply worker boundaries to agents whose type starts with `orchestra:`; return nothing for any other agent | Veto native startup or authenticate identity |
 | PreToolUse | Classify the call and deny covered destructive Git, stash, wholesale staging, protected state/config patches; check recognizable releases and, under autonomy, approval boundaries | Interpret arbitrary scripts, aliases, stdin or all provider tools |
 | Stop | Continue only an existing explicitly armed intact ledger, within pass, stall and deadline limits | Start an unrequested loop or continue corrupt state |
-| SessionEnd, Claude | Release the run bound to the ending session (see below) | Release on `clear` or `resume`; release a run started without `--harness-session` |
-| Interrupt, Codex | Invalidate dispatch and continuation lease | Undo an external action or guarantee every child process stopped |
+| SessionEnd | Release the run bound to the ending session (see below) | Release on `clear` or `resume`; release a run started without `--harness-session` |
 
-On Claude the PreToolUse matcher is `Bash|Edit|Write|MultiEdit|Agent|Task`; an Agent or Task call carrying `agent_id` (made inside a subagent) is denied with "Workers do not delegate", and a fresh mod marker never skips the Python hook for those two tools. Codex keeps its broad matcher.
+The PreToolUse matcher is `Bash|Edit|Write|MultiEdit|Agent|Task`; an Agent or Task call carrying `agent_id` (made inside a subagent) is denied with "Workers do not delegate", and a fresh mod marker never skips the Python hook for those two tools.
 
 ## Session end and the lease
 
@@ -31,7 +30,7 @@ The guard sorts every shell command into one class. Classification does not depe
 | `release-multi` | A release-class command inside a multi-command line | allow | deny | deny |
 | `boundary` | Deletion (`rm`, `git branch -d`, `git worktree remove` and similar) or local merge, pull, rebase, cherry-pick | allow | allow | deny; a local merge is allowed on a non-default branch |
 
-Always denied whatever the state: force or mirror push, `+refspec`, `--all`, `--tags`, `--delete`, several destinations, `reset --hard`, `clean -f` without `-n`, `branch -D`, wholesale `add`, `commit -a`, wholesale checkout or restore, `switch -f`, and every `git stash` form except `list` and `show`. `git restore --staged` is allowed. Outside an armed run, release-class commands are allowed so ordinary pushes and pull request merges work; inside one, the engine permit applies. A state file that exists but cannot be loaded (policy or repository changed, malformed) counts as armed with no permit, and as autonomy-active when its raw flag says so or it is not valid JSON. The one exception is a state that parses with `session` null or `session.active` false: that ended run is unarmed.
+Always denied whatever the state: force or mirror push, `+refspec`, `--all`, `--tags`, `--delete`, several destinations, `reset --hard`, `clean -f` without `-n`, `branch -D`, wholesale `add`, `commit -a`, wholesale checkout or restore, `switch -f`, and every `git stash` form, `list` and `show` included. `git restore --staged` is allowed. Outside an armed run, release-class commands are allowed so ordinary pushes and pull request merges work; inside one, the engine permit applies. A state file that exists but cannot be loaded (policy or repository changed, malformed) counts as armed with no permit, and as autonomy-active when its raw flag says so or it is not valid JSON. The one exception is a state that parses with `session` null or `session.active` false: that ended run is unarmed.
 
 Shell parsing removes heredoc bodies and redirections first. A heredoc or here-string body is classified as a script when its consumer is a shell, `source`, `.`, `eval` or `xargs` running a shell, and is scanned for always-deny lines whatever the consumer. Command runners (`xargs`, `find -exec`, `doas`, `stdbuf`, `watch`, `flock`, `sudo`, `env` and similar) are unwrapped so the real command gets its class. Accepted costs: a data heredoc or producer that contains a bare destructive line denies, and a runner that ends in `-c` with no payload denies as malformed.
 
@@ -57,4 +56,4 @@ Workers retain documentation/browser tools and relevant state reads. Native prof
 
 Opening a session never installs old charter healers, stale-state rewrites, fixed product ports, relay forwarding, automatic rollback or source deployment recipes. ActionNotch and Orca integrations remain separate.
 
-Codex does not automatically trust bundled hooks. Review and trust the current definition in the host interface; updates can need another review. Installer code never edits trust or uses a trust bypass. [Codex hooks](https://developers.openai.com/codex/hooks), [plugin hook packaging](https://developers.openai.com/plugins/build/plugins#bundled-mcp-servers-and-lifecycle-hooks).
+Claude Code does not automatically trust bundled hooks. Review and trust the current definition in the host interface; updates can need another review. Installer code never edits trust or uses a trust bypass.

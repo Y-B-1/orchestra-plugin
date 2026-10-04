@@ -130,7 +130,7 @@ class WorkflowIntegration(unittest.TestCase):
         self.review(['B1','B2'],True)
         self.cli('permit','fixture-remote','main',lease=True)
         payload=json.dumps({'cwd':str(self.repo),'tool_name':'Bash','tool_input':{'command':'git push fixture-remote main'}})
-        result=subprocess.run(['/bin/sh',str(HOOK),'PreToolUse','--harness','codex'],input=payload,capture_output=True,text=True,
+        result=subprocess.run(['/bin/sh',str(HOOK),'PreToolUse','--harness','claude'],input=payload,capture_output=True,text=True,
                               env={**os.environ,'ORCHESTRA_STATE_DIR':str(self.state)},timeout=15)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertNotIn('permissionDecision',result.stdout)
@@ -209,7 +209,7 @@ class LinkedWorktreeHook(unittest.TestCase):
 
     def hook(self,cwd,command):
         payload={'cwd':str(cwd),'tool_name':'Bash','tool_input':{'command':command}}
-        result=subprocess.run(['/bin/sh',str(HOOK),'PreToolUse','--harness','codex'],input=json.dumps(payload),
+        result=subprocess.run(['/bin/sh',str(HOOK),'PreToolUse','--harness','claude'],input=json.dumps(payload),
                               capture_output=True,text=True,env=self.env,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
         return json.loads(result.stdout).get('hookSpecificOutput',{}).get('permissionDecision')

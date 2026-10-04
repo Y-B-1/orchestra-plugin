@@ -5,15 +5,11 @@
 | Check | Result |
 | --- | --- |
 | Python 3.11 unit/integration suite | 89 tests pass (1.0.1 refresh) |
-| Canonical native profile drift | 27 generated files match: 13 Codex, 14 Claude |
+| Canonical agent drift | 14 generated Claude files match |
 | Skill Creator frontmatter check | Pass |
 | Claude plugin manifest, strict | Pass, no warnings |
 | Claude marketplace manifest, strict | Pass, no warnings |
-| Codex marketplace add/install/list/remove, isolated CODEX_HOME | All exit 0; correct plugin ID/version discovered |
-| Bundled Codex CLI 0.159.0 model smoke, isolated configuration | Sol medium returns the requested response, exit 0 |
-| Native named custom worker round trip, Codex CLI 0.159.0 | Sol medium delegates to installed orchestra_investigator_code; Luna high returns the correct fixture finding, exit 0; session records show both model/effort settings |
 | Claude marketplace add/install/list/uninstall/remove, isolated configuration | All exit 0; correct plugin ID/version discovered |
-| User profile install/update/uninstall | Pass; unrelated files preserved; collisions and symlinked locations rejected |
 | Paths with spaces | Native installation, hooks and local release pass |
 | Real local release | Structured CLI pushed only a disposable bare Git target; remote full HEAD matched the candidate |
 | Dirty/stale evidence rejection | Pass; changed reports/logs, wrong metadata, incomplete coverage and invalidated artifacts reject |
@@ -27,15 +23,11 @@ The suite includes actual subprocess commands, locking/concurrency, schema rejec
 
 ## Native limits observed
 
-Codex CLI 0.158.0 accepted native packaging and installation but rejected an authenticated gpt-6.1-sol request with HTTP 400. The desktop-bundled CLI 0.159.0 subsequently ran that model at medium successfully using isolated configuration. Use a current compatible client; metadata installation alone does not prove account/model availability. The 2026-09-30 matrix uses only Sol and Luna; red team/checked repair use Sol high and bounded discovery/hygiene use Luna high.
-
-The first native custom-worker check timed out at 55 seconds after loading Luna high. A second check allowed 150 seconds and completed successfully: the named worker read one fixture file and returned the correct cited finding. Native turn records show Sol medium and Luna high. This proves profile discovery and that bounded round trip; it is not a benchmark, a successful Claude model session or proof of trusted startup hooks. Temporary authentication copies were removed; global credentials were unchanged.
-
 Claude Code 2.1.284 accepted packaging and installation. A live print-mode attempt failed before model execution because its OAuth session expired and could not refresh. Authentication needs renewal before live model testing. No login or global credential change was performed.
 
 Hook adapters were exercised with native-shaped payloads and real package entrypoints, including allowed/denied directions. Persisted native hook trust was neither written nor bypassed. Trusted automatic startup in a user's normal session remains a user trust check, not an established smoke-test result.
 
-Claude's validator accepts manifest JSON paths and supported directories. Passing an individual agent Markdown path makes that command parse the file as JSON; those exploratory invocations failed for command-shape reasons and do not validate agent content. Directory invocations returned no component records. Canonical references, model settings, generated TOML and worker contracts were checked separately; do not mistake an empty validator result for a semantic agent test.
+Claude's validator accepts manifest JSON paths and supported directories. Passing an individual agent Markdown path makes that command parse the file as JSON; those exploratory invocations failed for command-shape reasons and do not validate agent content. Directory invocations returned no component records. Canonical references, model settings, generated agent files and worker contracts were checked separately; do not mistake an empty validator result for a semantic agent test.
 
 Other harness adapters, native Windows, production releases and deployed-system checks are outside this validation. GitHub distribution is separate from universal public-directory approval. Shell guards do not interpret arbitrary scripts, stdin, aliases or authenticate worker identities.
 
@@ -43,15 +35,13 @@ Final independent review and the checked candidate hash are recorded in BUILD-LE
 
 ## 1.0.1 refresh
 
-Inline assignments share worker ownership, dependency, capacity, lease and independent review checks. Codex uses only Sol/Luna; checked repair and red team use Sol high.
-
-Native Codex 0.159.0 hook discovery reproduced zero Orchestra hooks with the portable root manifest. Its native compatibility-only package returns all five events exactly once as untrusted. The Codex catalog now selects a generated copy of the canonical runtime that omits only unsupported/Claude packaging files. The canonical portable manifest remains schema-valid; Claude keeps its separate definition. The generator and parity test check every copied byte. No trust record changed.
+Inline assignments share worker ownership, dependency, capacity, lease and independent review checks.
 
 ## 2.0.0 status
 
-Checked in the 2.0.0 candidate worktree, headless: the Python 3.14 unit and integration suite (338 tests), generator drift check (Claude agents, Codex profiles and Codex package match the canonical source), skill byte budgets and provenance tests, packaging and release-archive builds. The suite adds guard corpus parity, scoped-evidence, autonomy, SessionEnd and linked-worktree cases. The TypeScript guard and mods tests run through `claude plugin test` with function hooks enabled; their results belong in BUILD-LEDGER.md with the candidate hash, not here.
+Checked in the 2.0.0 candidate worktree, headless: the Python 3.14 unit and integration suite (338 tests), generator drift check (Claude agents match the canonical source), skill byte budgets and provenance tests, packaging and release-archive builds. The suite adds guard corpus parity, scoped-evidence, autonomy, SessionEnd and linked-worktree cases. The TypeScript guard and mods tests run through `claude plugin test` with function hooks enabled; their results belong in BUILD-LEDGER.md with the candidate hash, not here.
 
-Not established by the headless checks, and recorded separately as live user checks when performed: trusted automatic startup with exactly one SessionStart context, the mods heartbeat marker advancing in an interactive session, `/orchestra-board` and `/orchestra-autonomy` rendering, the SessionEnd release after `/exit`, `clear` and `resume` rebinding, the picker's model reaching the main session, native Codex hook discovery after the profile reinstall, and an autonomy run that stops at its pass cap. Treat any of these not listed as observed in the ledger as unperformed.
+Not established by the headless checks, and recorded separately as live user checks when performed: trusted automatic startup with exactly one SessionStart context, the mods heartbeat marker advancing in an interactive session, `/orchestra-board` and `/orchestra-autonomy` rendering, the SessionEnd release after `/exit`, `clear` and `resume` rebinding, the picker's model reaching the main session, and an autonomy run that stops at its pass cap. Treat any of these not listed as observed in the ledger as unperformed.
 
 Known limits are in the [release notes](RELEASE-NOTES-2.0.0.md).
 

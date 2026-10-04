@@ -8,11 +8,11 @@
       "name": "orchestra",
       "source": "./plugins/orchestra",
       "description": "Coordinate independent coding agents with explicit ownership, evidence and release checks.",
-      "version": "2.0.1",
+      "version": "2.1.0",
       "author": {
         "name": "Orchestra contributors"
       }
     }
   ],
-  "description": "Portable parallel coding-agent orchestration for Codex and Claude Code."
+  "description": "Portable parallel coding-agent orchestration for Claude Code."
 }

@@ -639,32 +639,32 @@
    "class": "allow"
   },
   {
-   "id": "allow-stash-1",
+   "id": "deny-stash-20-1",
    "input": {
     "command": "git stash list"
    },
-   "class": "allow"
+   "class": "deny"
   },
   {
-   "id": "allow-stash-2",
+   "id": "deny-stash-20-2",
    "input": {
     "command": "git stash show"
    },
-   "class": "allow"
+   "class": "deny"
   },
   {
-   "id": "allow-stash-3",
+   "id": "deny-stash-20-3",
    "input": {
     "command": "git stash show -p stash@{1}"
    },
-   "class": "allow"
+   "class": "deny"
   },
   {
-   "id": "allow-stash-4",
+   "id": "deny-stash-20-4",
    "input": {
     "command": "git stash show --stat"
    },
-   "class": "allow"
+   "class": "deny"
   },
   {
    "id": "allow-restore-1",
@@ -1265,7 +1265,7 @@
    "id": "edit-4",
    "input": {
     "tool": "Write",
-    "path": ".codex/hooks.json",
+    "path": ".claude/hooks.json",
     "cwd": "/work/proj"
    },
    "class": "deny"
@@ -1274,7 +1274,7 @@
    "id": "edit-5",
    "input": {
     "tool": "Write",
-    "path": ".codex/config.toml",
+    "path": ".claude/config.toml",
     "cwd": "/work/proj/.claude/plugins/x"
    },
    "class": "deny"
@@ -1283,7 +1283,7 @@
    "id": "edit-6",
    "input": {
     "tool": "Write",
-    "path": ".codex/agents/orchestra_builder.toml",
+    "path": ".claude/agents/orchestra_builder.md",
     "cwd": "/work/proj"
    },
    "class": "deny"
@@ -5377,6 +5377,4367 @@
     "command": "sudo -u $(whoami) git stash"
    },
    "class": "deny"
+  },
+  {
+   "id": "deny-git21-1",
+   "input": {
+    "command": "(git --git-dir .git stash clear)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-2",
+   "input": {
+    "command": "(git --git-dir=.git stash list)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-3",
+   "input": {
+    "command": "(git --git-dir=a --work-tree=b add .)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-4",
+   "input": {
+    "command": "(git --work-tree b add -u)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-5",
+   "input": {
+    "command": "(git --work-tree=. stash drop)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-6",
+   "input": {
+    "command": "(git -C wt add -A)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-7",
+   "input": {
+    "command": "(git -C wt commit -am x)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-8",
+   "input": {
+    "command": "(git -C wt stash list)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-9",
+   "input": {
+    "command": "(git -c core.pager=cat stash show)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-10",
+   "input": {
+    "command": "(git -c core.x=y add .)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-11",
+   "input": {
+    "command": "(git add \"*\")"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-12",
+   "input": {
+    "command": "(git add '*')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-13",
+   "input": {
+    "command": "(git add *)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-14",
+   "input": {
+    "command": "(git add -- .)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-15",
+   "input": {
+    "command": "(git add -- ../)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-16",
+   "input": {
+    "command": "(git add --all)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-17",
+   "input": {
+    "command": "(git add --no-ignore-removal)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-18",
+   "input": {
+    "command": "(git add --update)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-19",
+   "input": {
+    "command": "(git add -A)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-20",
+   "input": {
+    "command": "(git add -Av)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-21",
+   "input": {
+    "command": "(git add -f .)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-22",
+   "input": {
+    "command": "(git add -nu)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-23",
+   "input": {
+    "command": "(git add -u)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-24",
+   "input": {
+    "command": "(git add -v -u src)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-25",
+   "input": {
+    "command": "(git add -vA)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-26",
+   "input": {
+    "command": "(git add .)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-27",
+   "input": {
+    "command": "(git add ..)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-28",
+   "input": {
+    "command": "(git add ../)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-29",
+   "input": {
+    "command": "(git add ./)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-30",
+   "input": {
+    "command": "(git add :/)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-31",
+   "input": {
+    "command": "(git add :/.)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-32",
+   "input": {
+    "command": "(git add src/a.ts --all)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-33",
+   "input": {
+    "command": "(git add src/a.ts -A)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-34",
+   "input": {
+    "command": "(git add src/a.ts .)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-35",
+   "input": {
+    "command": "(git commit --all -m x)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-36",
+   "input": {
+    "command": "(git commit --all)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-37",
+   "input": {
+    "command": "(git commit -a -m x)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-38",
+   "input": {
+    "command": "(git commit -a)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-39",
+   "input": {
+    "command": "(git commit -am x)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-40",
+   "input": {
+    "command": "(git commit -m x -a)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-41",
+   "input": {
+    "command": "(git commit -sam x)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-42",
+   "input": {
+    "command": "(git stash list)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-43",
+   "input": {
+    "command": "(git stash pop)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-44",
+   "input": {
+    "command": "(git stash push -m x)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-45",
+   "input": {
+    "command": "(git stash show -p stash@{1})"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-46",
+   "input": {
+    "command": "(git stash show)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-47",
+   "input": {
+    "command": "(git stash)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-48",
+   "input": {
+    "command": "FOO=1 git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-49",
+   "input": {
+    "command": "FOO=1 git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-50",
+   "input": {
+    "command": "FOO=1 git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-51",
+   "input": {
+    "command": "FOO=1 git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-52",
+   "input": {
+    "command": "FOO=1 git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-53",
+   "input": {
+    "command": "FOO=1 git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-54",
+   "input": {
+    "command": "FOO=1 git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-55",
+   "input": {
+    "command": "FOO=1 git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-56",
+   "input": {
+    "command": "FOO=1 git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-57",
+   "input": {
+    "command": "FOO=1 git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-58",
+   "input": {
+    "command": "FOO=1 git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-59",
+   "input": {
+    "command": "FOO=1 git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-60",
+   "input": {
+    "command": "FOO=1 git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-61",
+   "input": {
+    "command": "FOO=1 git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-62",
+   "input": {
+    "command": "FOO=1 git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-63",
+   "input": {
+    "command": "FOO=1 git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-64",
+   "input": {
+    "command": "FOO=1 git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-65",
+   "input": {
+    "command": "FOO=1 git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-66",
+   "input": {
+    "command": "FOO=1 git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-67",
+   "input": {
+    "command": "FOO=1 git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-68",
+   "input": {
+    "command": "FOO=1 git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-69",
+   "input": {
+    "command": "FOO=1 git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-70",
+   "input": {
+    "command": "FOO=1 git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-71",
+   "input": {
+    "command": "FOO=1 git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-72",
+   "input": {
+    "command": "FOO=1 git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-73",
+   "input": {
+    "command": "FOO=1 git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-74",
+   "input": {
+    "command": "FOO=1 git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-75",
+   "input": {
+    "command": "FOO=1 git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-76",
+   "input": {
+    "command": "FOO=1 git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-77",
+   "input": {
+    "command": "FOO=1 git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-78",
+   "input": {
+    "command": "FOO=1 git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-79",
+   "input": {
+    "command": "FOO=1 git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-80",
+   "input": {
+    "command": "FOO=1 git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-81",
+   "input": {
+    "command": "FOO=1 git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-82",
+   "input": {
+    "command": "FOO=1 git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-83",
+   "input": {
+    "command": "FOO=1 git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-84",
+   "input": {
+    "command": "FOO=1 git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-85",
+   "input": {
+    "command": "FOO=1 git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-86",
+   "input": {
+    "command": "FOO=1 git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-87",
+   "input": {
+    "command": "FOO=1 git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-88",
+   "input": {
+    "command": "FOO=1 git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-89",
+   "input": {
+    "command": "FOO=1 git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-90",
+   "input": {
+    "command": "FOO=1 git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-91",
+   "input": {
+    "command": "FOO=1 git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-92",
+   "input": {
+    "command": "FOO=1 git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-93",
+   "input": {
+    "command": "FOO=1 git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-94",
+   "input": {
+    "command": "FOO=1 git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-95",
+   "input": {
+    "command": "cd sub && git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-96",
+   "input": {
+    "command": "cd sub && git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-97",
+   "input": {
+    "command": "cd sub && git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-98",
+   "input": {
+    "command": "cd sub && git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-99",
+   "input": {
+    "command": "cd sub && git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-100",
+   "input": {
+    "command": "cd sub && git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-101",
+   "input": {
+    "command": "cd sub && git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-102",
+   "input": {
+    "command": "cd sub && git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-103",
+   "input": {
+    "command": "cd sub && git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-104",
+   "input": {
+    "command": "cd sub && git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-105",
+   "input": {
+    "command": "cd sub && git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-106",
+   "input": {
+    "command": "cd sub && git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-107",
+   "input": {
+    "command": "cd sub && git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-108",
+   "input": {
+    "command": "cd sub && git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-109",
+   "input": {
+    "command": "cd sub && git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-110",
+   "input": {
+    "command": "cd sub && git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-111",
+   "input": {
+    "command": "cd sub && git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-112",
+   "input": {
+    "command": "cd sub && git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-113",
+   "input": {
+    "command": "cd sub && git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-114",
+   "input": {
+    "command": "cd sub && git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-115",
+   "input": {
+    "command": "cd sub && git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-116",
+   "input": {
+    "command": "cd sub && git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-117",
+   "input": {
+    "command": "cd sub && git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-118",
+   "input": {
+    "command": "cd sub && git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-119",
+   "input": {
+    "command": "cd sub && git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-120",
+   "input": {
+    "command": "cd sub && git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-121",
+   "input": {
+    "command": "cd sub && git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-122",
+   "input": {
+    "command": "cd sub && git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-123",
+   "input": {
+    "command": "cd sub && git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-124",
+   "input": {
+    "command": "cd sub && git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-125",
+   "input": {
+    "command": "cd sub && git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-126",
+   "input": {
+    "command": "cd sub && git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-127",
+   "input": {
+    "command": "cd sub && git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-128",
+   "input": {
+    "command": "cd sub && git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-129",
+   "input": {
+    "command": "cd sub && git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-130",
+   "input": {
+    "command": "cd sub && git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-131",
+   "input": {
+    "command": "cd sub && git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-132",
+   "input": {
+    "command": "cd sub && git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-133",
+   "input": {
+    "command": "cd sub && git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-134",
+   "input": {
+    "command": "cd sub && git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-135",
+   "input": {
+    "command": "cd sub && git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-136",
+   "input": {
+    "command": "cd sub && git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-137",
+   "input": {
+    "command": "cd sub && git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-138",
+   "input": {
+    "command": "cd sub && git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-139",
+   "input": {
+    "command": "cd sub && git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-140",
+   "input": {
+    "command": "cd sub && git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-141",
+   "input": {
+    "command": "cd sub && git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-142",
+   "input": {
+    "command": "command git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-143",
+   "input": {
+    "command": "command git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-144",
+   "input": {
+    "command": "command git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-145",
+   "input": {
+    "command": "command git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-146",
+   "input": {
+    "command": "command git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-147",
+   "input": {
+    "command": "command git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-148",
+   "input": {
+    "command": "command git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-149",
+   "input": {
+    "command": "command git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-150",
+   "input": {
+    "command": "command git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-151",
+   "input": {
+    "command": "command git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-152",
+   "input": {
+    "command": "command git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-153",
+   "input": {
+    "command": "command git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-154",
+   "input": {
+    "command": "command git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-155",
+   "input": {
+    "command": "command git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-156",
+   "input": {
+    "command": "command git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-157",
+   "input": {
+    "command": "command git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-158",
+   "input": {
+    "command": "command git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-159",
+   "input": {
+    "command": "command git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-160",
+   "input": {
+    "command": "command git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-161",
+   "input": {
+    "command": "command git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-162",
+   "input": {
+    "command": "command git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-163",
+   "input": {
+    "command": "command git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-164",
+   "input": {
+    "command": "command git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-165",
+   "input": {
+    "command": "command git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-166",
+   "input": {
+    "command": "command git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-167",
+   "input": {
+    "command": "command git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-168",
+   "input": {
+    "command": "command git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-169",
+   "input": {
+    "command": "command git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-170",
+   "input": {
+    "command": "command git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-171",
+   "input": {
+    "command": "command git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-172",
+   "input": {
+    "command": "command git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-173",
+   "input": {
+    "command": "command git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-174",
+   "input": {
+    "command": "command git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-175",
+   "input": {
+    "command": "command git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-176",
+   "input": {
+    "command": "command git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-177",
+   "input": {
+    "command": "command git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-178",
+   "input": {
+    "command": "command git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-179",
+   "input": {
+    "command": "command git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-180",
+   "input": {
+    "command": "command git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-181",
+   "input": {
+    "command": "command git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-182",
+   "input": {
+    "command": "command git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-183",
+   "input": {
+    "command": "command git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-184",
+   "input": {
+    "command": "command git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-185",
+   "input": {
+    "command": "command git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-186",
+   "input": {
+    "command": "command git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-187",
+   "input": {
+    "command": "command git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-188",
+   "input": {
+    "command": "command git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-189",
+   "input": {
+    "command": "echo x | git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-190",
+   "input": {
+    "command": "echo x | git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-191",
+   "input": {
+    "command": "echo x | git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-192",
+   "input": {
+    "command": "echo x | git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-193",
+   "input": {
+    "command": "echo x | git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-194",
+   "input": {
+    "command": "echo x | git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-195",
+   "input": {
+    "command": "echo x | git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-196",
+   "input": {
+    "command": "echo x | git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-197",
+   "input": {
+    "command": "echo x | git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-198",
+   "input": {
+    "command": "echo x | git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-199",
+   "input": {
+    "command": "echo x | git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-200",
+   "input": {
+    "command": "echo x | git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-201",
+   "input": {
+    "command": "echo x | git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-202",
+   "input": {
+    "command": "echo x | git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-203",
+   "input": {
+    "command": "echo x | git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-204",
+   "input": {
+    "command": "echo x | git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-205",
+   "input": {
+    "command": "echo x | git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-206",
+   "input": {
+    "command": "echo x | git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-207",
+   "input": {
+    "command": "echo x | git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-208",
+   "input": {
+    "command": "echo x | git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-209",
+   "input": {
+    "command": "echo x | git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-210",
+   "input": {
+    "command": "echo x | git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-211",
+   "input": {
+    "command": "echo x | git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-212",
+   "input": {
+    "command": "echo x | git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-213",
+   "input": {
+    "command": "echo x | git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-214",
+   "input": {
+    "command": "echo x | git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-215",
+   "input": {
+    "command": "echo x | git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-216",
+   "input": {
+    "command": "echo x | git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-217",
+   "input": {
+    "command": "echo x | git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-218",
+   "input": {
+    "command": "echo x | git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-219",
+   "input": {
+    "command": "echo x | git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-220",
+   "input": {
+    "command": "echo x | git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-221",
+   "input": {
+    "command": "echo x | git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-222",
+   "input": {
+    "command": "echo x | git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-223",
+   "input": {
+    "command": "echo x | git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-224",
+   "input": {
+    "command": "echo x | git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-225",
+   "input": {
+    "command": "echo x | git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-226",
+   "input": {
+    "command": "echo x | git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-227",
+   "input": {
+    "command": "echo x | git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-228",
+   "input": {
+    "command": "echo x | git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-229",
+   "input": {
+    "command": "echo x | git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-230",
+   "input": {
+    "command": "echo x | git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-231",
+   "input": {
+    "command": "echo x | git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-232",
+   "input": {
+    "command": "echo x | git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-233",
+   "input": {
+    "command": "echo x | git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-234",
+   "input": {
+    "command": "echo x | git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-235",
+   "input": {
+    "command": "echo x | git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-236",
+   "input": {
+    "command": "echo x; git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-237",
+   "input": {
+    "command": "echo x; git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-238",
+   "input": {
+    "command": "echo x; git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-239",
+   "input": {
+    "command": "echo x; git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-240",
+   "input": {
+    "command": "echo x; git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-241",
+   "input": {
+    "command": "echo x; git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-242",
+   "input": {
+    "command": "echo x; git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-243",
+   "input": {
+    "command": "echo x; git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-244",
+   "input": {
+    "command": "echo x; git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-245",
+   "input": {
+    "command": "echo x; git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-246",
+   "input": {
+    "command": "echo x; git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-247",
+   "input": {
+    "command": "echo x; git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-248",
+   "input": {
+    "command": "echo x; git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-249",
+   "input": {
+    "command": "echo x; git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-250",
+   "input": {
+    "command": "echo x; git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-251",
+   "input": {
+    "command": "echo x; git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-252",
+   "input": {
+    "command": "echo x; git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-253",
+   "input": {
+    "command": "echo x; git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-254",
+   "input": {
+    "command": "echo x; git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-255",
+   "input": {
+    "command": "echo x; git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-256",
+   "input": {
+    "command": "echo x; git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-257",
+   "input": {
+    "command": "echo x; git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-258",
+   "input": {
+    "command": "echo x; git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-259",
+   "input": {
+    "command": "echo x; git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-260",
+   "input": {
+    "command": "echo x; git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-261",
+   "input": {
+    "command": "echo x; git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-262",
+   "input": {
+    "command": "echo x; git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-263",
+   "input": {
+    "command": "echo x; git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-264",
+   "input": {
+    "command": "echo x; git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-265",
+   "input": {
+    "command": "echo x; git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-266",
+   "input": {
+    "command": "echo x; git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-267",
+   "input": {
+    "command": "echo x; git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-268",
+   "input": {
+    "command": "echo x; git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-269",
+   "input": {
+    "command": "echo x; git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-270",
+   "input": {
+    "command": "echo x; git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-271",
+   "input": {
+    "command": "echo x; git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-272",
+   "input": {
+    "command": "echo x; git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-273",
+   "input": {
+    "command": "echo x; git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-274",
+   "input": {
+    "command": "echo x; git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-275",
+   "input": {
+    "command": "echo x; git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-276",
+   "input": {
+    "command": "echo x; git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-277",
+   "input": {
+    "command": "echo x; git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-278",
+   "input": {
+    "command": "echo x; git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-279",
+   "input": {
+    "command": "echo x; git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-280",
+   "input": {
+    "command": "echo x; git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-281",
+   "input": {
+    "command": "echo x; git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-282",
+   "input": {
+    "command": "echo x; git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-283",
+   "input": {
+    "command": "env X=1 git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-284",
+   "input": {
+    "command": "env X=1 git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-285",
+   "input": {
+    "command": "env X=1 git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-286",
+   "input": {
+    "command": "env X=1 git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-287",
+   "input": {
+    "command": "env X=1 git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-288",
+   "input": {
+    "command": "env X=1 git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-289",
+   "input": {
+    "command": "env X=1 git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-290",
+   "input": {
+    "command": "env X=1 git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-291",
+   "input": {
+    "command": "env X=1 git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-292",
+   "input": {
+    "command": "env X=1 git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-293",
+   "input": {
+    "command": "env X=1 git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-294",
+   "input": {
+    "command": "env X=1 git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-295",
+   "input": {
+    "command": "env X=1 git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-296",
+   "input": {
+    "command": "env X=1 git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-297",
+   "input": {
+    "command": "env X=1 git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-298",
+   "input": {
+    "command": "env X=1 git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-299",
+   "input": {
+    "command": "env X=1 git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-300",
+   "input": {
+    "command": "env X=1 git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-301",
+   "input": {
+    "command": "env X=1 git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-302",
+   "input": {
+    "command": "env X=1 git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-303",
+   "input": {
+    "command": "env X=1 git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-304",
+   "input": {
+    "command": "env X=1 git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-305",
+   "input": {
+    "command": "env X=1 git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-306",
+   "input": {
+    "command": "env X=1 git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-307",
+   "input": {
+    "command": "env X=1 git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-308",
+   "input": {
+    "command": "env X=1 git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-309",
+   "input": {
+    "command": "env X=1 git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-310",
+   "input": {
+    "command": "env X=1 git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-311",
+   "input": {
+    "command": "env X=1 git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-312",
+   "input": {
+    "command": "env X=1 git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-313",
+   "input": {
+    "command": "env X=1 git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-314",
+   "input": {
+    "command": "env X=1 git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-315",
+   "input": {
+    "command": "env X=1 git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-316",
+   "input": {
+    "command": "env X=1 git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-317",
+   "input": {
+    "command": "env X=1 git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-318",
+   "input": {
+    "command": "env X=1 git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-319",
+   "input": {
+    "command": "env X=1 git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-320",
+   "input": {
+    "command": "env X=1 git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-321",
+   "input": {
+    "command": "env X=1 git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-322",
+   "input": {
+    "command": "env X=1 git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-323",
+   "input": {
+    "command": "env X=1 git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-324",
+   "input": {
+    "command": "env X=1 git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-325",
+   "input": {
+    "command": "env X=1 git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-326",
+   "input": {
+    "command": "env X=1 git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-327",
+   "input": {
+    "command": "env X=1 git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-328",
+   "input": {
+    "command": "env X=1 git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-329",
+   "input": {
+    "command": "env X=1 git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-330",
+   "input": {
+    "command": "false || git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-331",
+   "input": {
+    "command": "false || git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-332",
+   "input": {
+    "command": "false || git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-333",
+   "input": {
+    "command": "false || git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-334",
+   "input": {
+    "command": "false || git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-335",
+   "input": {
+    "command": "false || git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-336",
+   "input": {
+    "command": "false || git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-337",
+   "input": {
+    "command": "false || git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-338",
+   "input": {
+    "command": "false || git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-339",
+   "input": {
+    "command": "false || git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-340",
+   "input": {
+    "command": "false || git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-341",
+   "input": {
+    "command": "false || git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-342",
+   "input": {
+    "command": "false || git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-343",
+   "input": {
+    "command": "false || git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-344",
+   "input": {
+    "command": "false || git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-345",
+   "input": {
+    "command": "false || git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-346",
+   "input": {
+    "command": "false || git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-347",
+   "input": {
+    "command": "false || git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-348",
+   "input": {
+    "command": "false || git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-349",
+   "input": {
+    "command": "false || git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-350",
+   "input": {
+    "command": "false || git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-351",
+   "input": {
+    "command": "false || git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-352",
+   "input": {
+    "command": "false || git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-353",
+   "input": {
+    "command": "false || git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-354",
+   "input": {
+    "command": "false || git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-355",
+   "input": {
+    "command": "false || git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-356",
+   "input": {
+    "command": "false || git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-357",
+   "input": {
+    "command": "false || git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-358",
+   "input": {
+    "command": "false || git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-359",
+   "input": {
+    "command": "false || git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-360",
+   "input": {
+    "command": "false || git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-361",
+   "input": {
+    "command": "false || git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-362",
+   "input": {
+    "command": "false || git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-363",
+   "input": {
+    "command": "false || git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-364",
+   "input": {
+    "command": "false || git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-365",
+   "input": {
+    "command": "false || git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-366",
+   "input": {
+    "command": "false || git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-367",
+   "input": {
+    "command": "false || git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-368",
+   "input": {
+    "command": "false || git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-369",
+   "input": {
+    "command": "false || git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-370",
+   "input": {
+    "command": "false || git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-371",
+   "input": {
+    "command": "false || git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-372",
+   "input": {
+    "command": "false || git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-373",
+   "input": {
+    "command": "false || git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-374",
+   "input": {
+    "command": "false || git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-375",
+   "input": {
+    "command": "false || git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-376",
+   "input": {
+    "command": "false || git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-377",
+   "input": {
+    "command": "git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-378",
+   "input": {
+    "command": "git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-379",
+   "input": {
+    "command": "git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-380",
+   "input": {
+    "command": "git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-381",
+   "input": {
+    "command": "git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-382",
+   "input": {
+    "command": "git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-383",
+   "input": {
+    "command": "git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-384",
+   "input": {
+    "command": "git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-385",
+   "input": {
+    "command": "git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-386",
+   "input": {
+    "command": "git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-387",
+   "input": {
+    "command": "git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-388",
+   "input": {
+    "command": "git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-389",
+   "input": {
+    "command": "git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-390",
+   "input": {
+    "command": "git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-391",
+   "input": {
+    "command": "git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-392",
+   "input": {
+    "command": "git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-393",
+   "input": {
+    "command": "git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-394",
+   "input": {
+    "command": "git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-395",
+   "input": {
+    "command": "git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-396",
+   "input": {
+    "command": "git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-397",
+   "input": {
+    "command": "git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-398",
+   "input": {
+    "command": "git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-399",
+   "input": {
+    "command": "git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-400",
+   "input": {
+    "command": "git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-401",
+   "input": {
+    "command": "git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-402",
+   "input": {
+    "command": "git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-403",
+   "input": {
+    "command": "git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-404",
+   "input": {
+    "command": "git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-405",
+   "input": {
+    "command": "git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-406",
+   "input": {
+    "command": "git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-407",
+   "input": {
+    "command": "git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-408",
+   "input": {
+    "command": "git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-409",
+   "input": {
+    "command": "git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-410",
+   "input": {
+    "command": "git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-411",
+   "input": {
+    "command": "git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-412",
+   "input": {
+    "command": "git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-413",
+   "input": {
+    "command": "git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-414",
+   "input": {
+    "command": "git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-415",
+   "input": {
+    "command": "git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-416",
+   "input": {
+    "command": "nohup git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-417",
+   "input": {
+    "command": "nohup git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-418",
+   "input": {
+    "command": "nohup git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-419",
+   "input": {
+    "command": "nohup git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-420",
+   "input": {
+    "command": "nohup git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-421",
+   "input": {
+    "command": "nohup git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-422",
+   "input": {
+    "command": "nohup git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-423",
+   "input": {
+    "command": "nohup git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-424",
+   "input": {
+    "command": "nohup git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-425",
+   "input": {
+    "command": "nohup git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-426",
+   "input": {
+    "command": "nohup git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-427",
+   "input": {
+    "command": "nohup git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-428",
+   "input": {
+    "command": "nohup git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-429",
+   "input": {
+    "command": "nohup git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-430",
+   "input": {
+    "command": "nohup git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-431",
+   "input": {
+    "command": "nohup git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-432",
+   "input": {
+    "command": "nohup git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-433",
+   "input": {
+    "command": "nohup git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-434",
+   "input": {
+    "command": "nohup git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-435",
+   "input": {
+    "command": "nohup git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-436",
+   "input": {
+    "command": "nohup git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-437",
+   "input": {
+    "command": "nohup git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-438",
+   "input": {
+    "command": "nohup git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-439",
+   "input": {
+    "command": "nohup git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-440",
+   "input": {
+    "command": "nohup git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-441",
+   "input": {
+    "command": "nohup git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-442",
+   "input": {
+    "command": "nohup git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-443",
+   "input": {
+    "command": "nohup git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-444",
+   "input": {
+    "command": "nohup git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-445",
+   "input": {
+    "command": "nohup git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-446",
+   "input": {
+    "command": "nohup git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-447",
+   "input": {
+    "command": "nohup git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-448",
+   "input": {
+    "command": "nohup git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-449",
+   "input": {
+    "command": "nohup git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-450",
+   "input": {
+    "command": "nohup git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-451",
+   "input": {
+    "command": "nohup git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-452",
+   "input": {
+    "command": "nohup git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-453",
+   "input": {
+    "command": "nohup git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-454",
+   "input": {
+    "command": "nohup git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-455",
+   "input": {
+    "command": "nohup git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-456",
+   "input": {
+    "command": "nohup git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-457",
+   "input": {
+    "command": "nohup git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-458",
+   "input": {
+    "command": "nohup git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-459",
+   "input": {
+    "command": "nohup git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-460",
+   "input": {
+    "command": "nohup git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-461",
+   "input": {
+    "command": "nohup git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-462",
+   "input": {
+    "command": "nohup git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-463",
+   "input": {
+    "command": "sudo -u root git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-464",
+   "input": {
+    "command": "sudo -u root git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-465",
+   "input": {
+    "command": "sudo -u root git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-466",
+   "input": {
+    "command": "sudo -u root git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-467",
+   "input": {
+    "command": "sudo -u root git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-468",
+   "input": {
+    "command": "sudo -u root git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-469",
+   "input": {
+    "command": "sudo -u root git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-470",
+   "input": {
+    "command": "sudo -u root git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-471",
+   "input": {
+    "command": "sudo -u root git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-472",
+   "input": {
+    "command": "sudo -u root git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-473",
+   "input": {
+    "command": "sudo -u root git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-474",
+   "input": {
+    "command": "sudo -u root git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-475",
+   "input": {
+    "command": "sudo -u root git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-476",
+   "input": {
+    "command": "sudo -u root git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-477",
+   "input": {
+    "command": "sudo -u root git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-478",
+   "input": {
+    "command": "sudo -u root git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-479",
+   "input": {
+    "command": "sudo -u root git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-480",
+   "input": {
+    "command": "sudo -u root git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-481",
+   "input": {
+    "command": "sudo -u root git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-482",
+   "input": {
+    "command": "sudo -u root git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-483",
+   "input": {
+    "command": "sudo -u root git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-484",
+   "input": {
+    "command": "sudo -u root git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-485",
+   "input": {
+    "command": "sudo -u root git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-486",
+   "input": {
+    "command": "sudo -u root git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-487",
+   "input": {
+    "command": "sudo -u root git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-488",
+   "input": {
+    "command": "sudo -u root git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-489",
+   "input": {
+    "command": "sudo -u root git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-490",
+   "input": {
+    "command": "sudo -u root git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-491",
+   "input": {
+    "command": "sudo -u root git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-492",
+   "input": {
+    "command": "sudo -u root git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-493",
+   "input": {
+    "command": "sudo -u root git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-494",
+   "input": {
+    "command": "sudo -u root git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-495",
+   "input": {
+    "command": "sudo -u root git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-496",
+   "input": {
+    "command": "sudo -u root git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-497",
+   "input": {
+    "command": "sudo -u root git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-498",
+   "input": {
+    "command": "sudo -u root git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-499",
+   "input": {
+    "command": "sudo -u root git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-500",
+   "input": {
+    "command": "sudo -u root git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-501",
+   "input": {
+    "command": "sudo -u root git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-502",
+   "input": {
+    "command": "sudo -u root git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-503",
+   "input": {
+    "command": "sudo -u root git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-504",
+   "input": {
+    "command": "sudo -u root git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-505",
+   "input": {
+    "command": "sudo -u root git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-506",
+   "input": {
+    "command": "sudo -u root git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-507",
+   "input": {
+    "command": "sudo -u root git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-508",
+   "input": {
+    "command": "sudo -u root git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-509",
+   "input": {
+    "command": "sudo -u root git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-510",
+   "input": {
+    "command": "sudo git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-511",
+   "input": {
+    "command": "sudo git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-512",
+   "input": {
+    "command": "sudo git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-513",
+   "input": {
+    "command": "sudo git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-514",
+   "input": {
+    "command": "sudo git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-515",
+   "input": {
+    "command": "sudo git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-516",
+   "input": {
+    "command": "sudo git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-517",
+   "input": {
+    "command": "sudo git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-518",
+   "input": {
+    "command": "sudo git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-519",
+   "input": {
+    "command": "sudo git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-520",
+   "input": {
+    "command": "sudo git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-521",
+   "input": {
+    "command": "sudo git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-522",
+   "input": {
+    "command": "sudo git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-523",
+   "input": {
+    "command": "sudo git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-524",
+   "input": {
+    "command": "sudo git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-525",
+   "input": {
+    "command": "sudo git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-526",
+   "input": {
+    "command": "sudo git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-527",
+   "input": {
+    "command": "sudo git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-528",
+   "input": {
+    "command": "sudo git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-529",
+   "input": {
+    "command": "sudo git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-530",
+   "input": {
+    "command": "sudo git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-531",
+   "input": {
+    "command": "sudo git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-532",
+   "input": {
+    "command": "sudo git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-533",
+   "input": {
+    "command": "sudo git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-534",
+   "input": {
+    "command": "sudo git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-535",
+   "input": {
+    "command": "sudo git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-536",
+   "input": {
+    "command": "sudo git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-537",
+   "input": {
+    "command": "sudo git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-538",
+   "input": {
+    "command": "sudo git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-539",
+   "input": {
+    "command": "sudo git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-540",
+   "input": {
+    "command": "sudo git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-541",
+   "input": {
+    "command": "sudo git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-542",
+   "input": {
+    "command": "sudo git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-543",
+   "input": {
+    "command": "sudo git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-544",
+   "input": {
+    "command": "sudo git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-545",
+   "input": {
+    "command": "sudo git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-546",
+   "input": {
+    "command": "sudo git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-547",
+   "input": {
+    "command": "sudo git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-548",
+   "input": {
+    "command": "sudo git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-549",
+   "input": {
+    "command": "sudo git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-550",
+   "input": {
+    "command": "sudo git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-551",
+   "input": {
+    "command": "sudo git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-552",
+   "input": {
+    "command": "sudo git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-553",
+   "input": {
+    "command": "sudo git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-554",
+   "input": {
+    "command": "sudo git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-555",
+   "input": {
+    "command": "sudo git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-556",
+   "input": {
+    "command": "sudo git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-557",
+   "input": {
+    "command": "true && git --git-dir .git stash clear"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-558",
+   "input": {
+    "command": "true && git --git-dir=.git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-559",
+   "input": {
+    "command": "true && git --git-dir=a --work-tree=b add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-560",
+   "input": {
+    "command": "true && git --work-tree b add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-561",
+   "input": {
+    "command": "true && git --work-tree=. stash drop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-562",
+   "input": {
+    "command": "true && git -C wt add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-563",
+   "input": {
+    "command": "true && git -C wt commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-564",
+   "input": {
+    "command": "true && git -C wt stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-565",
+   "input": {
+    "command": "true && git -c core.pager=cat stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-566",
+   "input": {
+    "command": "true && git -c core.x=y add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-567",
+   "input": {
+    "command": "true && git add \"*\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-568",
+   "input": {
+    "command": "true && git add '*'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-569",
+   "input": {
+    "command": "true && git add *"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-570",
+   "input": {
+    "command": "true && git add -- ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-571",
+   "input": {
+    "command": "true && git add -- ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-572",
+   "input": {
+    "command": "true && git add --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-573",
+   "input": {
+    "command": "true && git add --no-ignore-removal"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-574",
+   "input": {
+    "command": "true && git add --update"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-575",
+   "input": {
+    "command": "true && git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-576",
+   "input": {
+    "command": "true && git add -Av"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-577",
+   "input": {
+    "command": "true && git add -f ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-578",
+   "input": {
+    "command": "true && git add -nu"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-579",
+   "input": {
+    "command": "true && git add -u"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-580",
+   "input": {
+    "command": "true && git add -v -u src"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-581",
+   "input": {
+    "command": "true && git add -vA"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-582",
+   "input": {
+    "command": "true && git add ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-583",
+   "input": {
+    "command": "true && git add .."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-584",
+   "input": {
+    "command": "true && git add ../"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-585",
+   "input": {
+    "command": "true && git add ./"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-586",
+   "input": {
+    "command": "true && git add :/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-587",
+   "input": {
+    "command": "true && git add :/."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-588",
+   "input": {
+    "command": "true && git add src/a.ts --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-589",
+   "input": {
+    "command": "true && git add src/a.ts -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-590",
+   "input": {
+    "command": "true && git add src/a.ts ."
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-591",
+   "input": {
+    "command": "true && git commit --all"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-592",
+   "input": {
+    "command": "true && git commit --all -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-593",
+   "input": {
+    "command": "true && git commit -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-594",
+   "input": {
+    "command": "true && git commit -a -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-595",
+   "input": {
+    "command": "true && git commit -am x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-596",
+   "input": {
+    "command": "true && git commit -m x -a"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-597",
+   "input": {
+    "command": "true && git commit -sam x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-598",
+   "input": {
+    "command": "true && git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-599",
+   "input": {
+    "command": "true && git stash list"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-600",
+   "input": {
+    "command": "true && git stash pop"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-601",
+   "input": {
+    "command": "true && git stash push -m x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-602",
+   "input": {
+    "command": "true && git stash show"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-git21-603",
+   "input": {
+    "command": "true && git stash show -p stash@{1}"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "allow-git21-1",
+   "input": {
+    "command": "git add src/a.ts docs/b.md"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-2",
+   "input": {
+    "command": "git add ./src/x.ts"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-3",
+   "input": {
+    "command": "git add src/*.ts"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-4",
+   "input": {
+    "command": "git add docs/"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-5",
+   "input": {
+    "command": "git add .gitignore"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-6",
+   "input": {
+    "command": "git add ..foo"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-7",
+   "input": {
+    "command": "git add -p src/a.ts"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-8",
+   "input": {
+    "command": "git add -f src/a.ts"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-9",
+   "input": {
+    "command": "git commit -m \"never run git add -A or git stash\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-10",
+   "input": {
+    "command": "git commit -m 'git add . && git commit -a'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-11",
+   "input": {
+    "command": "git commit -m \"git stash list\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-12",
+   "input": {
+    "command": "git commit -m \"-a --all\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-13",
+   "input": {
+    "command": "git commit -F msg.txt"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-14",
+   "input": {
+    "command": "git commit -m done"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-15",
+   "input": {
+    "command": "git clean -n -f"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-16",
+   "input": {
+    "command": "echo git stash"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-17",
+   "input": {
+    "command": "echo \"git add -A\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-18",
+   "input": {
+    "command": "FOO=1 git add src/a.ts"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-19",
+   "input": {
+    "command": "sudo git commit -m \"use git add . later\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-git21-20",
+   "input": {
+    "command": "true && git add ./src/x.ts && git commit -m \"no git stash here\""
+   },
+   "class": "allow"
   }
  ]
 }

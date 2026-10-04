@@ -74,10 +74,33 @@ UNARMED_RELEASES = ['git push origin feat/v2-roles-guard-mods', 'git push origin
 MULTI_RELEASES = ['git push origin x && gh pr create', 'git push origin a && git push origin b',
                   'git tag v2.0.0 && git push origin v2.0.0', 'cd sub && git push origin x',
                   'gh pr merge 3 --squash; echo done']
-STASH_ALLOWED = ['git stash list', 'git stash show', 'git stash show -p stash@{1}', 'git stash show --stat']
 STASH_DENIED = ['git stash', 'git stash push', 'git stash pop', 'git stash apply', 'git stash drop',
                 'git stash clear', 'git stash save wip', 'git stash branch topic', 'git stash create',
-                'git stash store abc']
+                'git stash store abc', 'git stash list', 'git stash show', 'git stash show -p stash@{1}',
+                'git stash show --stat']
+# Plugin 2.1.0: every stash form, wholesale add and commit -a deny at any command boundary or prefix.
+_BOUNDARIES = ['{}', 'FOO=1 {}', 'sudo {}', 'sudo -u root {}', 'env X=1 {}', 'command {}', 'nohup {}',
+               'true && {}', 'false || {}', 'echo x; {}', 'echo x | {}', '({})', 'cd sub && {}']
+_STASH_FORMS = ['git stash', 'git stash list', 'git stash show', 'git stash show -p stash@{1}', 'git stash pop',
+                'git stash push -m x', 'git -C wt stash list', 'git -c core.pager=cat stash show',
+                'git --git-dir=.git stash list', 'git --work-tree=. stash drop', 'git --git-dir .git stash clear']
+_ADD_FORMS = ['git add -A', 'git add --all', 'git add -u', 'git add --update', 'git add --no-ignore-removal',
+              'git add -Av', 'git add -vA', 'git add -nu', 'git add -v -u src', 'git add src/a.ts -A',
+              'git add src/a.ts --all', 'git add .', 'git add ./', 'git add ..', 'git add ../', 'git add :/',
+              'git add :/.', 'git add *', "git add '*'", 'git add "*"', 'git add src/a.ts .', 'git add -- .',
+              'git add -f .', 'git add -- ../', 'git -C wt add -A', 'git -c core.x=y add .',
+              'git --git-dir=a --work-tree=b add .', 'git --work-tree b add -u']
+_COMMIT_FORMS = ['git commit -a', 'git commit --all', 'git commit --all -m x', 'git commit -am x',
+                 'git commit -m x -a', 'git commit -sam x', 'git -C wt commit -am x', 'git commit -a -m x']
+DENY_GIT_21 = sorted({b.format(f) for f in _STASH_FORMS + _ADD_FORMS + _COMMIT_FORMS for b in _BOUNDARIES})
+ALLOW_GIT_21 = ['git add src/a.ts docs/b.md', 'git add ./src/x.ts', 'git add src/*.ts', 'git add docs/',
+                'git add .gitignore', 'git add ..foo', 'git add -p src/a.ts', 'git add -f src/a.ts',
+                'git add -- -A', 'git commit -m "never run git add -A or git stash"',
+                "git commit -m 'git add . && git commit -a'", 'git commit -m "git stash list"',
+                'git commit -m "-a --all"', 'git commit -F msg.txt', 'git commit -m done',
+                'git clean -n -f', 'git status', 'echo git stash', 'echo "git add -A"',
+                'FOO=1 git add src/a.ts', 'sudo git commit -m "use git add . later"',
+                'true && git add ./src/x.ts && git commit -m "no git stash here"']
 RESTORE_ALLOWED = ['git restore --staged .', 'git restore -S .', 'git restore --staged src/a.py',
                    'git restore --staged :/']
 RESTORE_DENIED = ['git restore --staged --worktree .', 'git restore -SW .', 'git restore -W .',
@@ -211,13 +234,20 @@ class GuardsTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).klass, 'deny')
 
-    def test_a3_stash_list_and_show(self):
-        for command in STASH_ALLOWED:
-            with self.subTest(command=command):
-                self.assertEqual(classify_command(command).klass, 'allow')
+    def test_a3_every_stash_form_denies(self):
         for command in STASH_DENIED:
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).klass, 'deny')
+
+    def test_git_21_stash_wholesale_add_and_commit_all_deny(self):
+        for command in DENY_GIT_21:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'deny', command)
+
+    def test_git_21_explicit_paths_and_message_words_still_allow(self):
+        for command in ALLOW_GIT_21:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'allow', command)
 
     def test_a4_restore_staged(self):
         for command in RESTORE_ALLOWED:
@@ -364,10 +394,11 @@ class HooksTest(unittest.TestCase):
         return handle_event('PreToolUse', payload, **kw)
 
     def test_native_deny(self):
-        for harness in ['codex', 'claude']:
-            result = self.pre('Bash', {'command': 'git stash'}, harness=harness)
-            self.assertEqual(result.output['hookSpecificOutput']['permissionDecision'], 'deny')
-            self.assertEqual(result.exit_code, 0)
+        result = self.pre('Bash', {'command': 'git stash'}, harness='claude')
+        self.assertEqual(result.output['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertEqual(result.exit_code, 0)
+        with self.assertRaises(ValueError):
+            self.pre('Bash', {'command': 'git status'}, harness='other')
 
     def test_malformed_relevant(self):
         for payload in [None, [], {}, {'tool_name': 'Bash'},
@@ -433,8 +464,8 @@ class HooksTest(unittest.TestCase):
     def test_protected_patch_paths(self):
         with tempfile.TemporaryDirectory() as cwd:
             for patch in ['*** Begin Patch\n*** Update File: .orchestra/state.json\n@@\n-x\n+y\n*** End Patch',
-                          '*** Begin Patch\n*** Update File: a\n*** Move to: .codex/agents/orchestra-builder.toml\n*** End Patch',
-                          '*** Begin Patch\n*** Update File: .codex/hooks.json\n@@\n-x\n+y\n*** End Patch']:
+                          '*** Begin Patch\n*** Update File: a\n*** Move to: .claude/agents/orchestra-builder.md\n*** End Patch',
+                          '*** Begin Patch\n*** Update File: .claude/hooks.json\n@@\n-x\n+y\n*** End Patch']:
                 self.assertEqual(decision_of(self.pre('apply_patch', {'command': patch}, cwd=cwd)), 'deny')
             self.assertEqual(self.pre('apply_patch', {'command': 'bad patch'}, cwd=cwd).exit_code, 2)
             self.assertEqual(decision_of(self.pre('Write', {'file_path': '.claude/agents/orchestra-builder.md', 'content': 'x'}, cwd=cwd)), 'deny')
@@ -447,17 +478,17 @@ class HooksTest(unittest.TestCase):
             cwd.mkdir(parents=True)
             for tool, key in [('Edit', 'file_path'), ('Write', 'file_path'), ('MultiEdit', 'file_path')]:
                 self.assertEqual(decision_of(self.pre(tool, {key: '.claude/hooks.json'}, cwd=cwd)), 'deny', tool)
-            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.codex/config.toml'}, cwd=cwd)), 'deny')
-            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.codex/agents/orchestra_builder.toml'}, cwd=cwd)), 'deny')
+            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.claude/config.toml'}, cwd=cwd)), 'deny')
+            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.claude/agents/orchestra_builder.md'}, cwd=cwd)), 'deny')
             self.assertEqual(self.pre('Write', {'file_path': 'notes.md'}, cwd=cwd).output, {})
             self.assertEqual(self.pre('Write', {'file_path': '.claude/plugins/x/readme.md'}, cwd=cwd).output, {})
 
     def test_a8_settings_json_is_no_longer_protected(self):
         with tempfile.TemporaryDirectory() as cwd:
-            for path in ['.claude/settings.json', '.codex/settings.json', '.claude/settings.local.json']:
+            for path in ['.claude/settings.json', '.claude/settings.local.json']:
                 with self.subTest(path=path):
                     self.assertEqual(self.pre('Write', {'file_path': path}, cwd=cwd).output, {})
-            for path in ['.claude/hooks.json', '.codex/hooks.json', '.codex/config.toml', '.orchestra/x']:
+            for path in ['.claude/hooks.json', '.claude/config.toml', '.orchestra/x']:
                 with self.subTest(path=path):
                     self.assertEqual(decision_of(self.pre('Write', {'file_path': path}, cwd=cwd)), 'deny')
 
@@ -590,7 +621,7 @@ class HooksTest(unittest.TestCase):
 
     def test_underscore_profile_protected(self):
         with tempfile.TemporaryDirectory() as cwd:
-            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.codex/agents/orchestra_builder.toml'}, cwd=cwd)), 'deny')
+            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.claude/agents/orchestra_builder.md'}, cwd=cwd)), 'deny')
 
     def test_stop_continues_until_engine_cap(self):
         engine = mock.Mock()
@@ -605,15 +636,13 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'], 'deny')
 
-    def test_a9_claude_matcher_is_narrow_and_codex_is_unchanged(self):
+    def test_a9_claude_matcher_is_narrow(self):
         claude = json.loads((PLUGIN / 'hooks/claude.json').read_text())
         matcher = claude['hooks']['PreToolUse'][0]['matcher']
         self.assertEqual(matcher, RULES['tools']['claude_matcher'])
         for tool in ['Bash', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task']:
             self.assertRegex(tool, '^(?:' + matcher + ')$')
         self.assertNotRegex('Read', '^(?:' + matcher + ')$')
-        codex = json.loads((PLUGIN / 'hooks/codex.json').read_text())
-        self.assertEqual(codex['hooks']['PreToolUse'][0]['matcher'], '.*')
 
     def test_mod_tools_match_orchestra_ts_guarded(self):
         """_MOD_TOOLS hand-mirrors GUARDED in the TypeScript mod; drift would reopen a marker skip."""
@@ -714,10 +743,6 @@ class MarkerHandshakeTest(unittest.TestCase):
     def test_from_mod_skips_the_marker_check(self):
         self.marker()
         self.assertGuards(self.call('s1', '--from-mod'))
-
-    def test_marker_applies_only_to_claude(self):
-        self.marker()
-        self.assertGuards(self.call(harness='codex'))
 
     def test_marker_applies_only_to_pre_tool_use(self):
         self.marker()
@@ -965,12 +990,6 @@ class HarnessSessionHookTest(unittest.TestCase):
             self.assertIn('--harness-session S2', ctx)  # the context line is still the payload id
             self.assertEqual(self.session()['harness_session'], 'S')
             self.assertIn('pending_rebind', self.session())  # left alone by every other path
-
-    def test_codex_session_start_never_rebinds(self):
-        self.end('S', 'clear')
-        self.start('S2', 'resume', harness='codex')
-        self.assertEqual(self.session()['harness_session'], 'S')
-        self.assertIn('pending_rebind', self.session())
 
     def test_worker_session_start_never_rebinds(self):
         self.end('S', 'clear')

@@ -16,7 +16,6 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
-import tomllib
 import uuid
 from datetime import datetime, timezone
 
@@ -77,7 +76,6 @@ AUTONOMY_FIXED = (
 )
 AUTONOMY_KEEP_AWAKE = 'User step: enable keep-awake in Claude Desktop (or keep the machine awake) for an overnight run.'
 CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
-CODEX_PROMPT_FREE_POLICIES = ('never',)
 PARKABLE = ('queued', 'running', 'reported')
 TASK_STATES = ('queued', 'running', 'reported', 'repairing', 'accepted', 'parked')
 
@@ -164,17 +162,7 @@ def autonomy_preconditions(repo, home=None):
         mode = '%s (%s settings)' % found
     else:
         mode = '%s (%s settings); WARNING: this mode can stall on prompts' % found
-    try:
-        policy = tomllib.loads((home / '.codex' / 'config.toml').read_text()).get('approval_policy')
-    except (OSError, ValueError):
-        policy = None
-    if not isinstance(policy, str) or not policy:
-        codex = 'unknown (no approval_policy in ~/.codex/config.toml)'
-    elif policy in CODEX_PROMPT_FREE_POLICIES:
-        codex = policy
-    else:
-        codex = policy + '; WARNING: this policy can stall on prompts'
-    return dict(permission_mode=mode, codex_approval_policy=codex, keep_awake=AUTONOMY_KEEP_AWAKE)
+    return dict(permission_mode=mode, keep_awake=AUTONOMY_KEEP_AWAKE)
 
 
 def _hash(data):

@@ -51,7 +51,14 @@ test('classifier: malformed input denies, size and depth caps', () => {
   expect(classifyCommand('cat <<EOF\nno end').reason).toBe('Malformed heredoc');
   expect(klassOf(classifyCommand('echo ' + 'a'.repeat(131100)))).toBe('deny');
   expect(klassOf(classifyCommand('git stash'))).toBe('deny');
-  expect(klassOf(classifyCommand('git stash list'))).toBe('allow');
+  expect(klassOf(classifyCommand('git stash list'))).toBe('deny');
+  expect(klassOf(classifyCommand('git stash show -p stash@{1}'))).toBe('deny');
+  expect(klassOf(classifyCommand('git add --no-ignore-removal'))).toBe('deny');
+  expect(klassOf(classifyCommand("git add '*'"))).toBe('deny');
+  expect(klassOf(classifyCommand('git add ../'))).toBe('deny');
+  expect(klassOf(classifyCommand('git add -vA'))).toBe('deny');
+  expect(klassOf(classifyCommand('git add ./src/x.ts'))).toBe('allow');
+  expect(klassOf(classifyCommand('git commit -m "never run git add -A or git stash"'))).toBe('allow');
 });
 
 test('FX6: crafted nested shells deny well inside the hook timeout (reading budget)', () => {
@@ -77,14 +84,14 @@ test('FX6: a wrapper option substitution before a dash word is dropped as a read
 
 test('A8: settings.json is not protected; hooks.json, config.toml and .orchestra are', () => {
   const env = { stateDir: null, xdg: '/state', home: '/home/u' };
-  for (const p of ['.claude/settings.json', '.codex/settings.json', '.claude/settings.local.json']) {
+  for (const p of ['.claude/settings.json', '.claude/settings.local.json']) {
     expect(editDenied(p, '/work', env)).toBe(false);
   }
-  for (const p of ['.claude/hooks.json', '.codex/hooks.json', '.codex/config.toml', '.orchestra/x']) {
+  for (const p of ['.claude/hooks.json', '.claude/config.toml', '.orchestra/x']) {
     expect(editDenied(p, '/work', env)).toBe(true);
   }
   expect(editDenied('.claude/agents/orchestra-builder.md', '/work', env)).toBe(true);
-  expect(editDenied('.codex/agents/orchestra_builder.toml', '/work', env)).toBe(true);
+  expect(editDenied('.claude/agents/orchestra_builder.md', '/work', env)).toBe(true);
   expect(editDenied('.claude/agents/other.md', '/work', env)).toBe(false);
   expect(editDenied(undefined, '/work', env)).toBe(true);
   expect(editDenied('', '/work', env)).toBe(true);
@@ -94,7 +101,7 @@ test('A8: nested harness directory, B-F4', () => {
   const env = { stateDir: null, xdg: '/state', home: '/home/u' };
   const cwd = '/work/.claude/plugins/x';
   expect(editDenied('.claude/hooks.json', cwd, env)).toBe(true);
-  expect(editDenied('.codex/config.toml', cwd, env)).toBe(true);
+  expect(editDenied('.claude/config.toml', cwd, env)).toBe(true);
   expect(editDenied('notes.md', cwd, env)).toBe(false);
   expect(editDenied('.claude/plugins/x/readme.md', cwd, env)).toBe(false);
 });

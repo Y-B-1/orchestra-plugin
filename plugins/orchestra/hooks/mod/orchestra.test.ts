@@ -40,7 +40,7 @@ function bottom(on: On, r: Rig) {
 
 const deny = (reason: string) => `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":${JSON.stringify(reason)}}}`;
 
-test('tool.call: git stash is denied in TypeScript with no Python run; git stash list runs', async ($, on) => {
+test('tool.call: every git stash form is denied in TypeScript with no Python run; git status runs', async ($, on) => {
   const r = rig(on);
   const b = bottom(on, r);
   await $.session.start(start);
@@ -48,7 +48,10 @@ test('tool.call: git stash is denied in TypeScript with no Python run; git stash
   expect('deny' in denied).toBe(true);
   expect(b.calls.length).toBe(0);
   expect(r.runs.length).toBe(0);
-  const ok = await $.tool.call({ tool: 'Bash', tool_use_id: 't2', command: 'git stash list' });
+  const listed = await $.tool.call({ tool: 'Bash', tool_use_id: 't3', command: 'git stash list' });
+  expect('deny' in listed).toBe(true);
+  expect(b.calls.length).toBe(0);
+  const ok = await $.tool.call({ tool: 'Bash', tool_use_id: 't2', command: 'git status' });
   expect('deny' in ok).toBe(false);
   expect(b.calls.length).toBe(1);
   expect(r.runs.length).toBe(0);
