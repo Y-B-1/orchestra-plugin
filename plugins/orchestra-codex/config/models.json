@@ -19,15 +19,11 @@
         }
       }
     },
-    "founder-mind": {
-      "model": "gpt-6.1-sol",
-      "effort": "high"
-    },
     "designer-planner": {
       "model": "gpt-6.1-sol",
       "effort": "high"
     },
-    "red-teamer": {
+    "critic": {
       "model": "gpt-6.1-sol",
       "effort": "high"
     },
@@ -54,6 +50,10 @@
         "repair": {
           "model": "gpt-6.1-sol",
           "effort": "high"
+        },
+        "cleanup": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
         }
       }
     },
@@ -71,27 +71,28 @@
         }
       }
     },
-    "auditor": {
+    "operator": {
       "model": "gpt-6.1-sol",
-      "effort": "high"
-    },
-    "gatekeeper": {
-      "model": "gpt-6.1-sol",
-      "effort": "medium"
-    },
-    "janitor": {
-      "model": "gpt-6-luna",
-      "effort": "high"
-    },
-    "releaser": {
-      "model": "gpt-6.1-sol",
-      "effort": "medium"
+      "effort": "medium",
+      "presets": {
+        "gate": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        },
+        "cleanup": {
+          "model": "gpt-6-luna",
+          "effort": "high"
+        },
+        "release": {
+          "model": "gpt-6.1-sol",
+          "effort": "medium"
+        }
+      }
     }
   },
   "claude": {
     "orchestrator": {
-      "model": "claude-opus-5-5",
-      "effort": "high"
+      "selection": "user"
     },
     "investigator": {
       "model": "claude-sonnet-5-5",
@@ -107,15 +108,11 @@
         }
       }
     },
-    "founder-mind": {
-      "model": "claude-opus-5-5",
-      "effort": "high"
-    },
     "designer-planner": {
       "model": "claude-opus-5-5",
       "effort": "high"
     },
-    "red-teamer": {
+    "critic": {
       "model": "claude-opus-5-5",
       "effort": "high"
     },
@@ -141,6 +138,11 @@
         },
         "repair": {
           "model": "claude-opus-5-5",
+          "effort": "medium",
+          "dispatch": "override"
+        },
+        "cleanup": {
+          "model": "claude-sonnet-5-5",
           "effort": "medium"
         }
       }
@@ -159,19 +161,7 @@
         }
       }
     },
-    "auditor": {
-      "model": "claude-opus-5-5",
-      "effort": "high"
-    },
-    "gatekeeper": {
-      "model": "claude-sonnet-5-5",
-      "effort": "medium"
-    },
-    "janitor": {
-      "model": "claude-sonnet-5-5",
-      "effort": "medium"
-    },
-    "releaser": {
+    "operator": {
       "model": "claude-sonnet-5-5",
       "effort": "medium"
     }

@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -112,9 +113,77 @@ class NativeTests(unittest.TestCase):
                 if selection['model'] == 'gpt-6-luna':
                     small.append((role, preset))
                     self.assertEqual(selection['effort'], 'high')
-        self.assertEqual(matrix['red-teamer']['model'], 'gpt-6.1-sol')
+        self.assertEqual(matrix['critic']['model'], 'gpt-6.1-sol')
         self.assertEqual(matrix['builder']['presets']['repair'], {'model': 'gpt-6.1-sol', 'effort': 'high'})
-        self.assertEqual(small, [('investigator', 'code'), ('janitor', 'default')])
+        self.assertEqual(small, [('investigator', 'code'), ('operator', 'cleanup')])
+
+    def test_role_matrix_files_and_read_only_enforcement(self):
+        claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
+        self.assertEqual(claude, {f'{n}.md' for n in [
+            'builder', 'code-reviewer', 'code-reviewer-checkpoint', 'critic', 'designer-planner',
+            'investigator', 'investigator-code', 'operator', 'orchestrator']})
+        codex = {p.name for p in (PLUGIN / 'profiles/codex').glob('*.toml')}
+        self.assertEqual(codex, {f'orchestra_{n}.toml' for n in [
+            'builder', 'builder_repair', 'code_reviewer', 'code_reviewer_checkpoint', 'critic', 'designer_planner',
+            'investigator', 'investigator_code', 'operator', 'operator_cleanup']})
+        read_only = ('investigator', 'critic', 'code-reviewer')
+        for name in claude - {'orchestrator.md'}:
+            front = (PLUGIN / 'agents' / name).read_text().split('---')[1]
+            want = 'Agent, Edit, Write, NotebookEdit' if name.startswith(read_only) else 'Agent'
+            self.assertIn(f'disallowedTools: {want}\n', front, name)
+        for name in codex:
+            data = tomllib.loads((PLUGIN / 'profiles/codex' / name).read_text())
+            self.assertEqual(data.get('sandbox_mode'), 'read-only' if name.startswith(
+                tuple('orchestra_' + r.replace('-', '_') for r in read_only)) else None, name)
+
+    def test_claude_repair_preset_is_override_dispatch_with_no_variant_file(self):
+        matrix = json.loads((PLUGIN / 'config/models.json').read_text())['claude']
+        self.assertEqual(matrix['builder']['presets']['repair']['dispatch'], 'override')
+        self.assertFalse((PLUGIN / 'agents/builder-repair.md').exists())
+        self.assertTrue((PLUGIN / 'profiles/codex/orchestra_builder_repair.toml').is_file())
+
+    def test_orchestrator_follows_the_user_selection(self):
+        front = (PLUGIN / 'agents/orchestrator.md').read_text().split('---')[1]
+        self.assertNotIn('model:', front)
+        self.assertNotIn('effort:', front)
+        self.assertIn('skills: [orchestra]\n', front)
+        self.assertNotIn('disallowedTools', front)
+
+    def test_every_codex_worker_profile_carries_worker_and_role_skill_sentinels(self):
+        roles = {r['id']: r['skill'] for r in json.loads((PLUGIN / 'config/roles.json').read_text())['roles']
+                 if r['id'] != 'orchestrator'}
+        for path in sorted((PLUGIN / 'profiles/codex').glob('*.toml')):
+            text = tomllib.loads(path.read_text())['developer_instructions']
+            role = next(r for r in roles if path.name.startswith('orchestra_' + r.replace('-', '_')))
+            self.assertIn('Sentinel: orchestra-worker/SKILL.md', text, path.name)
+            self.assertIn(f'Sentinel: {roles[role]}/SKILL.md', text, path.name)
+
+    def test_generate_refuses_unresolved_preload_skill_and_missing_mode_file(self):
+        def copy_plugin(temp):
+            copy = Path(temp) / 'orchestra'
+            shutil.copytree(PLUGIN, copy, ignore=shutil.ignore_patterns('__pycache__'))
+            return copy
+
+        cases = {
+            'unresolved skill name': (lambda c: shutil.rmtree(c / 'skills/orchestra-operate'), 'orchestra-operate'),
+            'preload blocked by disable-model-invocation': (
+                lambda c: (c / 'skills/orchestra-worker/SKILL.md').write_text(
+                    '---\nname: orchestra-worker\ndescription: x\ndisable-model-invocation: true\n---\nbody\n'),
+                'disable-model-invocation'),
+            'declared mode without a file': (lambda c: (c / 'skills/orchestra-build/references/cleanup.md').unlink(),
+                                            'cleanup'),
+        }
+        for label, (damage, needle) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as temp:
+                copy = copy_plugin(temp)
+                damage(copy)
+                with self.assertRaises(ValueError) as caught:
+                    generate.generated(root=copy)
+                self.assertIn(needle, str(caught.exception))
+                result = subprocess.run([sys.executable, str(copy / 'scripts/generate.py'), '--check'],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('Generate refused', result.stderr)
 
     def test_codex_package_matches_canonical_runtime(self):
         package = ROOT/'plugins/orchestra-codex'
