@@ -1,34 +1,19 @@
 # Orchestra
 
-Orchestra packages a main coordinator and six worker roles for Codex and Claude Code. It routes work into lanes, dispatches ready independent cards, reviews returned work, and checks evidence before release. No classifier API key, daemon or Charge installation is needed. Version 2.0.0 is a breaking release; see [release notes](docs/RELEASE-NOTES-2.0.0.md).
+Orchestra packages a main coordinator and six worker roles for Claude Code. It routes work into lanes, dispatches ready independent cards, reviews returned work, and checks evidence before release. No classifier API key, daemon or Charge installation is needed. Version 2.0.0 was a breaking release; see [release notes](docs/RELEASE-NOTES-2.0.0.md). Version 2.1.0 is Claude-native only and tightens the Git guard; see the [changelog](CHANGELOG.md).
 
 The role count does not limit useful concurrency. Multiple instances of the same role can run on disjoint files and resources. The portable core defaults to 20 workers; actual harness limits and machine capacity still apply.
 
 ## Install
 
-Prerequisites: Python 3.11 or later, Git, and a supported Codex or Claude Code client. Native checks used Codex CLI 0.159.0 and Claude Code 2.1.289. Windows is not supported by the POSIX locking core; use WSL. Other harnesses can use the portable CLI and contracts but need their own native adapter.
-
-Codex:
-
-```sh
-codex plugin marketplace add Y-B-1/orchestra-plugin --ref main
-codex plugin add orchestra@orchestra-distribution
-git clone https://github.com/Y-B-1/orchestra-plugin.git
-python3.11 orchestra-plugin/plugins/orchestra/scripts/orchestra.py install-profiles
-```
-
-Codex installs the generated native package; Claude installs the canonical package. The generator checks both against the same source.
-
-The last command installs namespaced worker profiles once in the user configuration. Plugin installation alone does not discover plugin-local Codex agent files. The installer preserves unrelated profiles and records file hashes. Rerun after updates. Keep the clone while profiles refer to its method paths.
-
-Claude Code:
+Prerequisites: Python 3.11 or later, Git, and Claude Code. Native checks used Claude Code 2.1.289. Windows is not supported by the POSIX locking core; use WSL. Other harnesses can use the portable CLI and contracts but need their own native adapter, which this repository does not ship.
 
 ```sh
 claude plugin marketplace add Y-B-1/orchestra-plugin
 claude plugin install orchestra@orchestra-distribution
 ```
 
-Restart the client after installation. Enable the plugin and review its hook definition in the native trust interface. Codex skips untrusted hooks; installation does not grant trust. Once enabled and trusted, startup supplies the main coordinator contract. Claude also uses the plugin's default main agent, whose model and effort follow your picker. Explicit user or managed settings can override defaults.
+Restart the client after installation. Enable the plugin and review its hook definition in the native trust interface; installation does not grant trust. Once enabled and trusted, startup supplies the main coordinator contract. The plugin's default main agent follows your model and effort picker. Explicit user or managed settings can override defaults.
 
 No installer changes application instructions, restores symlinks, resumes old work, grants release rights or writes hook trust. Existing project rules remain applicable. Port a project's old Orchestra enforcement separately to avoid competing coordinators.
 
@@ -36,7 +21,7 @@ No installer changes application instructions, restores symlinks, resumes old wo
 
 A 1.0.1 run that was finished or interrupted leaves the repository unarmed under 2.0.0. Plain `start` and `status` then say to run `start --new-run`, which archives the old state and starts a fresh run.
 
-A run left active across the upgrade is different. Old role names are rejected, so a live 1.0.1 run cannot continue, and 2.0.0 cannot clear it: its policy hash differs, so `interrupt`, `finish` and `start --new-run` all refuse it. End it with 1.0.1 first, from its repository, with 1.0.1 still installed. Claude Code: `python3.11 ~/.claude/plugins/cache/orchestra-distribution/orchestra/1.0.1/scripts/orchestra.py --lease LEASE interrupt` (or `finish`). Codex only: `python3.11 ~/.codex/plugins/cache/orchestra-distribution/orchestra/1.0.1/scripts/orchestra.py --lease LEASE interrupt`. LEASE is the value `start` printed; if you lost it, the same script's `status` prints the state, and the lease is `session.lease` in that output. If you already upgraded with a run active, move that run's `state.json` out of the state directory by hand; the repository is then unarmed. 1.0.1 has no `where` command; after installing 2.0.0, run its `orchestra.py where` from the repository to print the state directory, or compute the path yourself. It is `$ORCHESTRA_STATE_DIR` when set, otherwise `${XDG_STATE_HOME:-~/.local/state}/orchestra/<id>`, where `<id>` is the first 24 hex characters of the SHA-256 of the repository's absolute path. Then reinstall from the marketplace, restart the client, and rerun `install-profiles` from an updated clone for Codex so the new profiles replace the old ones.
+A run left active across the upgrade is different. Old role names are rejected, so a live 1.0.1 run cannot continue, and 2.0.0 cannot clear it: its policy hash differs, so `interrupt`, `finish` and `start --new-run` all refuse it. End it with 1.0.1 first, from its repository, with 1.0.1 still installed. Claude Code: `python3.11 ~/.claude/plugins/cache/orchestra-distribution/orchestra/1.0.1/scripts/orchestra.py --lease LEASE interrupt` (or `finish`). LEASE is the value `start` printed; if you lost it, the same script's `status` prints the state, and the lease is `session.lease` in that output. If you already upgraded with a run active, move that run's `state.json` out of the state directory by hand; the repository is then unarmed. 1.0.1 has no `where` command; after installing 2.0.0, run its `orchestra.py where` from the repository to print the state directory, or compute the path yourself. It is `$ORCHESTRA_STATE_DIR` when set, otherwise `${XDG_STATE_HOME:-~/.local/state}/orchestra/<id>`, where `<id>` is the first 24 hex characters of the SHA-256 of the repository's absolute path. Then reinstall from the marketplace and restart the client.
 
 ```sh
 claude plugin uninstall orchestra@orchestra-distribution
@@ -44,14 +29,6 @@ claude plugin marketplace remove orchestra-distribution
 claude plugin marketplace add Y-B-1/orchestra-plugin
 claude plugin install orchestra@orchestra-distribution
 claude plugin list
-```
-
-```sh
-codex plugin marketplace upgrade orchestra-distribution
-codex plugin remove orchestra@orchestra-distribution
-codex plugin add orchestra@orchestra-distribution
-git -C orchestra-plugin pull --ff-only
-python3.11 orchestra-plugin/plugins/orchestra/scripts/orchestra.py install-profiles
 ```
 
 ### Install a checkout first
@@ -74,7 +51,7 @@ On Claude Code the plugin also registers a function-hook module that classifies 
 
 ## Roles and models
 
-[Role contracts](docs/roles.md) describe responsibilities and the v1 to v2 mapping. [Model matrix](docs/models.md) lists provider settings. The coordinator runs in the main session and never as a worker. The six worker roles are investigator, designer-planner, critic, builder, code-reviewer and operator; each role has one skill and loads one mode file for its brief's `Mode:` line. The generator produces 9 Codex worker profiles and 8 Claude worker agents plus the orchestrator.
+[Role contracts](docs/roles.md) describe responsibilities and the v1 to v2 mapping. [Model matrix](docs/models.md) lists model and effort settings. The coordinator runs in the main session and never as a worker. The six worker roles are investigator, designer-planner, critic, builder, code-reviewer and operator; each role has one skill and loads one mode file for its brief's `Mode:` line. The generator produces 8 Claude worker agents plus the orchestrator.
 
 Every final integration review covers requirements, correctness, security, tests, architecture, standards and cleanup, in four lenses (correctness, architecture, security, cleanliness). A critic runs a separate pass for each needed conformance axis. The operator runs actual commands and executes only a configured authorized release. A reviewer cannot approve their own work.
 

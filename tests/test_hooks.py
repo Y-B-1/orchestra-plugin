@@ -394,10 +394,11 @@ class HooksTest(unittest.TestCase):
         return handle_event('PreToolUse', payload, **kw)
 
     def test_native_deny(self):
-        for harness in ['codex', 'claude']:
-            result = self.pre('Bash', {'command': 'git stash'}, harness=harness)
-            self.assertEqual(result.output['hookSpecificOutput']['permissionDecision'], 'deny')
-            self.assertEqual(result.exit_code, 0)
+        result = self.pre('Bash', {'command': 'git stash'}, harness='claude')
+        self.assertEqual(result.output['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertEqual(result.exit_code, 0)
+        with self.assertRaises(ValueError):
+            self.pre('Bash', {'command': 'git status'}, harness='other')
 
     def test_malformed_relevant(self):
         for payload in [None, [], {}, {'tool_name': 'Bash'},
@@ -463,8 +464,8 @@ class HooksTest(unittest.TestCase):
     def test_protected_patch_paths(self):
         with tempfile.TemporaryDirectory() as cwd:
             for patch in ['*** Begin Patch\n*** Update File: .orchestra/state.json\n@@\n-x\n+y\n*** End Patch',
-                          '*** Begin Patch\n*** Update File: a\n*** Move to: .codex/agents/orchestra-builder.toml\n*** End Patch',
-                          '*** Begin Patch\n*** Update File: .codex/hooks.json\n@@\n-x\n+y\n*** End Patch']:
+                          '*** Begin Patch\n*** Update File: a\n*** Move to: .claude/agents/orchestra-builder.md\n*** End Patch',
+                          '*** Begin Patch\n*** Update File: .claude/hooks.json\n@@\n-x\n+y\n*** End Patch']:
                 self.assertEqual(decision_of(self.pre('apply_patch', {'command': patch}, cwd=cwd)), 'deny')
             self.assertEqual(self.pre('apply_patch', {'command': 'bad patch'}, cwd=cwd).exit_code, 2)
             self.assertEqual(decision_of(self.pre('Write', {'file_path': '.claude/agents/orchestra-builder.md', 'content': 'x'}, cwd=cwd)), 'deny')
@@ -477,17 +478,17 @@ class HooksTest(unittest.TestCase):
             cwd.mkdir(parents=True)
             for tool, key in [('Edit', 'file_path'), ('Write', 'file_path'), ('MultiEdit', 'file_path')]:
                 self.assertEqual(decision_of(self.pre(tool, {key: '.claude/hooks.json'}, cwd=cwd)), 'deny', tool)
-            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.codex/config.toml'}, cwd=cwd)), 'deny')
-            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.codex/agents/orchestra_builder.toml'}, cwd=cwd)), 'deny')
+            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.claude/config.toml'}, cwd=cwd)), 'deny')
+            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.claude/agents/orchestra_builder.md'}, cwd=cwd)), 'deny')
             self.assertEqual(self.pre('Write', {'file_path': 'notes.md'}, cwd=cwd).output, {})
             self.assertEqual(self.pre('Write', {'file_path': '.claude/plugins/x/readme.md'}, cwd=cwd).output, {})
 
     def test_a8_settings_json_is_no_longer_protected(self):
         with tempfile.TemporaryDirectory() as cwd:
-            for path in ['.claude/settings.json', '.codex/settings.json', '.claude/settings.local.json']:
+            for path in ['.claude/settings.json', '.claude/settings.local.json']:
                 with self.subTest(path=path):
                     self.assertEqual(self.pre('Write', {'file_path': path}, cwd=cwd).output, {})
-            for path in ['.claude/hooks.json', '.codex/hooks.json', '.codex/config.toml', '.orchestra/x']:
+            for path in ['.claude/hooks.json', '.claude/config.toml', '.orchestra/x']:
                 with self.subTest(path=path):
                     self.assertEqual(decision_of(self.pre('Write', {'file_path': path}, cwd=cwd)), 'deny')
 
@@ -620,7 +621,7 @@ class HooksTest(unittest.TestCase):
 
     def test_underscore_profile_protected(self):
         with tempfile.TemporaryDirectory() as cwd:
-            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.codex/agents/orchestra_builder.toml'}, cwd=cwd)), 'deny')
+            self.assertEqual(decision_of(self.pre('Write', {'file_path': '.claude/agents/orchestra_builder.md'}, cwd=cwd)), 'deny')
 
     def test_stop_continues_until_engine_cap(self):
         engine = mock.Mock()
@@ -635,15 +636,13 @@ class HooksTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(json.loads(result.stdout)['hookSpecificOutput']['permissionDecision'], 'deny')
 
-    def test_a9_claude_matcher_is_narrow_and_codex_is_unchanged(self):
+    def test_a9_claude_matcher_is_narrow(self):
         claude = json.loads((PLUGIN / 'hooks/claude.json').read_text())
         matcher = claude['hooks']['PreToolUse'][0]['matcher']
         self.assertEqual(matcher, RULES['tools']['claude_matcher'])
         for tool in ['Bash', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task']:
             self.assertRegex(tool, '^(?:' + matcher + ')$')
         self.assertNotRegex('Read', '^(?:' + matcher + ')$')
-        codex = json.loads((PLUGIN / 'hooks/codex.json').read_text())
-        self.assertEqual(codex['hooks']['PreToolUse'][0]['matcher'], '.*')
 
     def test_mod_tools_match_orchestra_ts_guarded(self):
         """_MOD_TOOLS hand-mirrors GUARDED in the TypeScript mod; drift would reopen a marker skip."""
@@ -744,10 +743,6 @@ class MarkerHandshakeTest(unittest.TestCase):
     def test_from_mod_skips_the_marker_check(self):
         self.marker()
         self.assertGuards(self.call('s1', '--from-mod'))
-
-    def test_marker_applies_only_to_claude(self):
-        self.marker()
-        self.assertGuards(self.call(harness='codex'))
 
     def test_marker_applies_only_to_pre_tool_use(self):
         self.marker()
@@ -995,12 +990,6 @@ class HarnessSessionHookTest(unittest.TestCase):
             self.assertIn('--harness-session S2', ctx)  # the context line is still the payload id
             self.assertEqual(self.session()['harness_session'], 'S')
             self.assertIn('pending_rebind', self.session())  # left alone by every other path
-
-    def test_codex_session_start_never_rebinds(self):
-        self.end('S', 'clear')
-        self.start('S2', 'resume', harness='codex')
-        self.assertEqual(self.session()['harness_session'], 'S')
-        self.assertIn('pending_rebind', self.session())
 
     def test_worker_session_start_never_rebinds(self):
         self.end('S', 'clear')

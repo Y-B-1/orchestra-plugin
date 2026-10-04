@@ -14,8 +14,7 @@ import uuid
 
 from orchestra_core.engine import ACTIVE_MISMATCH, Engine, EngineError
 from orchestra_core.guards import classify_command
-from orchestra_core.paths import load_policy, repository, state_location
-from orchestra_core.profiles import atomic, install, uninstall
+from orchestra_core.paths import atomic, load_policy, repository, state_location
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,9 +68,6 @@ def parser():
     park.add_argument('--reason', required=True)
     unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
     unpark.add_argument('task_id')
-    for name in ['install-profiles','uninstall-profiles']:
-        profile = sub.add_parser(name)
-        profile.add_argument('--codex-home',default=os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
     route = sub.add_parser('classify')
     route.add_argument('shell_command')
     return p
@@ -94,10 +90,6 @@ def archive_inactive(state,engine):
 
 
 def execute(args):
-    if args.command == 'install-profiles':
-        return install(ROOT,args.codex_home),0
-    if args.command == 'uninstall-profiles':
-        return uninstall(args.codex_home),0
     if args.command == 'classify':
         return classify_command(args.shell_command).__dict__,0
     repo = repository(args.repo)

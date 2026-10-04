@@ -5,142 +5,41 @@ import subprocess
 from pathlib import Path
 import sys
 import tempfile
-import tomllib
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'plugins/orchestra'
 sys.path.insert(0, str(PLUGIN / 'scripts'))
-from orchestra_core import profiles
 import generate
 
 
-class InstallTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='Orchestra package with spaces ')
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name) / 'Plugin with spaces'
-        self.home = Path(self.temp.name) / 'config'
-        (self.root / 'profiles/codex').mkdir(parents=True)
-        self.source = self.root / 'profiles/codex/orchestra_builder.toml'
-        self.source.write_text('name="orchestra_builder"\ndeveloper_instructions="Root __ORCHESTRA_ROOT__"\n')
-
-    def test_install_upgrade_uninstall_preserves_unowned_files(self):
-        (self.home / 'agents').mkdir(parents=True)
-        untouched = self.home / 'agents/personal.toml'
-        untouched.write_text('name="personal"')
-        profiles.install(self.root, self.home)
-        target = self.home / 'agents/orchestra_builder.toml'
-        self.assertIn(str(self.root), tomllib.loads(target.read_text())['developer_instructions'])
-        self.source.write_text('name="orchestra_builder"\ndeveloper_instructions="New __ORCHESTRA_ROOT__"\n')
-        profiles.install(self.root, self.home)
-        self.assertIn('New', target.read_text())
-        profiles.uninstall(self.home)
-        self.assertFalse(target.exists())
-        self.assertEqual(untouched.read_text(), 'name="personal"')
-
-    def test_collision_and_changed_receipt_block_before_any_write(self):
-        profiles.install(self.root, self.home)
-        target = self.home / 'agents/orchestra_builder.toml'
-        target.write_text('my edits')
-        for operation in [lambda: profiles.install(self.root, self.home), lambda: profiles.uninstall(self.home)]:
-            with self.assertRaises(ValueError):
-                operation()
-        self.assertEqual(target.read_text(), 'my edits')
-
-    def test_unowned_target_is_never_overwritten(self):
-        (self.home / 'agents').mkdir(parents=True)
-        target = self.home / 'agents/orchestra_builder.toml'
-        target.write_text('unowned')
-        with self.assertRaises(ValueError):
-            profiles.install(self.root, self.home)
-        self.assertEqual(target.read_text(), 'unowned')
-
-    def test_symlink_and_receipt_traversal_are_rejected(self):
-        profiles.install(self.root, self.home)
-        target = self.home / 'agents/orchestra_builder.toml'
-        original = target.read_bytes()
-        target.unlink()
-        other = self.home / 'unrelated'
-        other.write_bytes(original)
-        target.symlink_to(other)
-        with self.assertRaises(ValueError):
-            profiles.uninstall(self.home)
-        target.unlink()
-        receipt = self.home / 'orchestra/profiles-receipt.json'
-        receipt.write_text(json.dumps({'schema_version':1,'files':{'../unrelated':'a'*64}}))
-        with self.assertRaises(ValueError):
-            profiles.uninstall(self.home)
-        self.assertEqual(other.read_bytes(), original)
-
-    def test_symlinked_install_locations_reject_before_writes(self):
-        for relative in ['', 'agents', 'orchestra', 'orchestra/profiles-receipt.json', 'orchestra/profiles.lock']:
-            for operation in [profiles.install, profiles.uninstall]:
-                with self.subTest(relative=relative, operation=operation.__name__), tempfile.TemporaryDirectory() as directory:
-                    home = Path(directory) / 'home'
-                    other = Path(directory) / 'unrelated'
-                    other.mkdir()
-                    link = home / relative if relative else home
-                    link.parent.mkdir(parents=True, exist_ok=True)
-                    destination = other
-                    if relative.endswith(('.json', '.lock')):
-                        destination = other / 'file'
-                        destination.write_text('{"schema_version":1,"files":{}}')
-                    link.symlink_to(destination)
-                    before = sorted((str(p.relative_to(other)), p.read_bytes() if p.is_file() else None) for p in other.rglob('*'))
-                    with self.assertRaises(ValueError):
-                        operation(self.root, home) if operation is profiles.install else operation(home)
-                    after = sorted((str(p.relative_to(other)), p.read_bytes() if p.is_file() else None) for p in other.rglob('*'))
-                    self.assertEqual(before, after)
-
-
 class NativeTests(unittest.TestCase):
-    def test_generated_assets_match_and_profiles_pin_settings(self):
+    def test_generated_agents_match_the_canonical_source(self):
         for name, content in generate.generated().items():
             self.assertEqual((PLUGIN / name).read_text(), content, name)
-            if name.endswith('.toml'):
-                data = tomllib.loads(content)
-                self.assertIn(data['model'], ['gpt-6.1-sol','gpt-6-luna'])
-                self.assertIn(data['model_reasoning_effort'], ['low','medium','high'])
-                self.assertFalse(data['agents']['enabled'])
 
-    def test_codex_cost_policy_limits_frontier_and_small_model_assignments(self):
-        matrix = json.loads((PLUGIN / 'config/models.json').read_text())['codex']
-        small = []
-        for role, values in matrix.items():
-            for preset, selection in [('default', values), *values.get('presets', {}).items()]:
-                self.assertIn(selection['model'], ['gpt-6.1-sol', 'gpt-6-luna'])
-                if selection['model'] == 'gpt-6-luna':
-                    small.append((role, preset))
-                    self.assertEqual(selection['effort'], 'high')
-        self.assertEqual(matrix['critic']['model'], 'gpt-6.1-sol')
-        self.assertEqual(matrix['builder']['presets']['repair'], {'model': 'gpt-6.1-sol', 'effort': 'high'})
-        self.assertEqual(small, [('investigator', 'code'), ('operator', 'cleanup')])
+    def test_models_json_holds_only_the_claude_profile_with_claude_model_ids(self):
+        matrix = json.loads((PLUGIN / 'config/models.json').read_text())
+        self.assertEqual(set(matrix), {'schema_version', 'claude'})
+        models = {sel['model'] for values in matrix['claude'].values() if values.get('selection') != 'user'
+                  for sel in [values, *values.get('presets', {}).values()]}
+        self.assertTrue(models <= {'claude-opus-5-5', 'claude-sonnet-5-5'}, models)
 
     def test_role_matrix_files_and_read_only_enforcement(self):
         claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
         self.assertEqual(claude, {f'{n}.md' for n in [
             'builder', 'code-reviewer', 'code-reviewer-checkpoint', 'critic', 'designer-planner',
             'investigator', 'investigator-code', 'operator', 'orchestrator']})
-        codex = {p.name for p in (PLUGIN / 'profiles/codex').glob('*.toml')}
-        self.assertEqual(codex, {f'orchestra_{n}.toml' for n in [
-            'builder', 'builder_repair', 'code_reviewer', 'critic', 'designer_planner',
-            'investigator', 'investigator_code', 'operator', 'operator_cleanup']})
         read_only = ('investigator', 'critic', 'code-reviewer')
         for name in claude - {'orchestrator.md'}:
             front = (PLUGIN / 'agents' / name).read_text().split('---')[1]
             want = 'Agent, Edit, Write, NotebookEdit' if name.startswith(read_only) else 'Agent'
             self.assertIn(f'disallowedTools: {want}\n', front, name)
-        for name in codex:
-            data = tomllib.loads((PLUGIN / 'profiles/codex' / name).read_text())
-            self.assertEqual(data.get('sandbox_mode'), 'read-only' if name.startswith(
-                tuple('orchestra_' + r.replace('-', '_') for r in read_only)) else None, name)
 
     def test_claude_repair_preset_is_override_dispatch_with_no_variant_file(self):
         matrix = json.loads((PLUGIN / 'config/models.json').read_text())['claude']
         self.assertEqual(matrix['builder']['presets']['repair']['dispatch'], 'override')
         self.assertFalse((PLUGIN / 'agents/builder-repair.md').exists())
-        self.assertTrue((PLUGIN / 'profiles/codex/orchestra_builder_repair.toml').is_file())
 
     def test_claude_variant_descriptions_name_their_mode(self):
         def desc(name):
@@ -153,28 +52,12 @@ class NativeTests(unittest.TestCase):
             self.assertIn(desc(variant + '.md'), desc(base + '.md'))
             self.assertNotEqual(desc(base + '.md'), desc(variant + '.md'))
 
-    def test_codex_checkpoint_reviewer_runs_at_high_effort(self):
-        matrix = json.loads((PLUGIN / 'config/models.json').read_text())['codex']['code-reviewer']
-        self.assertEqual(matrix['presets']['checkpoint']['effort'], 'high')
-        data = tomllib.loads((PLUGIN / 'profiles/codex/orchestra_code_reviewer.toml').read_text())
-        self.assertEqual(data['model_reasoning_effort'], 'high')
-        self.assertFalse((PLUGIN / 'profiles/codex/orchestra_code_reviewer_checkpoint.toml').exists())
-
     def test_orchestrator_follows_the_user_selection(self):
         front = (PLUGIN / 'agents/orchestrator.md').read_text().split('---')[1]
         self.assertNotIn('model:', front)
         self.assertNotIn('effort:', front)
         self.assertIn('skills: [orchestra]\n', front)
         self.assertNotIn('disallowedTools', front)
-
-    def test_every_codex_worker_profile_carries_worker_and_role_skill_sentinels(self):
-        roles = {r['id']: r['skill'] for r in json.loads((PLUGIN / 'config/roles.json').read_text())['roles']
-                 if r['id'] != 'orchestrator'}
-        for path in sorted((PLUGIN / 'profiles/codex').glob('*.toml')):
-            text = tomllib.loads(path.read_text())['developer_instructions']
-            role = next(r for r in roles if path.name.startswith('orchestra_' + r.replace('-', '_')))
-            self.assertIn('Sentinel: orchestra-worker/SKILL.md', text, path.name)
-            self.assertIn(f'Sentinel: {roles[role]}/SKILL.md', text, path.name)
 
     def test_generate_refuses_unresolved_preload_skill_and_missing_mode_file(self):
         def copy_plugin(temp):
@@ -203,63 +86,24 @@ class NativeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stderr)
                 self.assertIn('Generate refused', result.stderr)
 
-    def test_codex_package_matches_canonical_runtime(self):
-        package = ROOT/'plugins/orchestra-codex'
-        self.assertFalse((package/'plugin.json').exists())
-        for name, data in generate.codex_package().items():
-            self.assertEqual((package/name).read_bytes(), data, name)
-        self.assertEqual(generate.sync_codex_package(True, generate.generated()), len(generate.codex_package()))
-
-    def test_separate_hook_definitions_and_contained_catalogs(self):
-        root = json.loads((PLUGIN / 'plugin.json').read_text())
-        claude = json.loads((PLUGIN / '.claude-plugin/plugin.json').read_text())
-        self.assertNotEqual(root['extensions']['com.openai']['hooks'], claude['hooks'])
-        self.assertFalse((PLUGIN / 'hooks/hooks.json').exists())
-        self.assertNotIn('hooks', root)
-        compat = json.loads((PLUGIN / '.codex-plugin/plugin.json').read_text())
-        for path in [ROOT/'.agents/plugins/marketplace.json', ROOT/'.claude-plugin/marketplace.json']:
-            source = json.loads(path.read_text())['plugins'][0]['source']
-            relative = source['path'] if isinstance(source, dict) else source
-            expected = ROOT/'plugins/orchestra-codex' if '.agents/' in str(path) else PLUGIN
-            self.assertEqual((ROOT/relative).resolve(), expected.resolve())
-
-    def test_five_manifest_versions_are_equal(self):
+    def test_manifest_versions_are_equal(self):
         versions = {
             name: json.loads((ROOT / name).read_text())['version']
-            for name in [
-                'plugins/orchestra/plugin.json',
-                'plugins/orchestra/.claude-plugin/plugin.json',
-                'plugins/orchestra/.codex-plugin/plugin.json',
-                'plugins/orchestra-codex/.codex-plugin/plugin.json',
-            ]
+            for name in ['plugins/orchestra/plugin.json', 'plugins/orchestra/.claude-plugin/plugin.json']
         }
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
         versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
         self.assertEqual(len(set(versions.values())), 1, versions)
+        self.assertEqual(set(versions.values()), {'2.1.0'})
 
-    def test_mod_files_exist_and_are_excluded_from_codex_package(self):
+    def test_mod_files_exist(self):
         claude = json.loads((PLUGIN / '.claude-plugin/plugin.json').read_text())
         self.assertEqual(claude['hooks'], ['./hooks/claude.json', './hooks/mods.json'])
         self.assertEqual(claude['types'], './types/index.d.ts')
         self.assertEqual(json.loads((PLUGIN / 'hooks/mods.json').read_text()), {'modules': ['./mod/orchestra.ts']})
         for name in ['hooks/mod/orchestra.ts', 'hooks/mod/marker.ts', 'types/index.d.ts']:
             self.assertTrue((PLUGIN / name).is_file(), name)
-        package = generate.codex_package()
-        leaked = [n for n in package if n == 'hooks/mods.json' or n.startswith(('hooks/mod/', 'types/'))]
-        self.assertEqual(leaked, [])
-        self.assertIn('hooks/codex.json', package)
-        for name in ['hooks/mods.json', 'hooks/mod', 'types']:
-            self.assertFalse((ROOT / 'plugins/orchestra-codex' / name).exists(), name)
 
-    def test_host_written_tsconfig_is_ignored_by_codex_package(self):
-        # Claude Code writes plugins/orchestra/tsconfig.json when it loads a plugin with `types`.
-        with tempfile.TemporaryDirectory() as temp:
-            copy = Path(temp) / 'orchestra'
-            shutil.copytree(PLUGIN, copy, ignore=shutil.ignore_patterns('__pycache__'))
-            (copy / 'tsconfig.json').write_text('{"extends": "./.claude-plugin/types/tsconfig.json"}\n')
-            self.assertNotIn('tsconfig.json', generate.codex_package(root=copy))
-        ignored = (ROOT / '.gitignore').read_text().splitlines()
-        self.assertIn('plugins/orchestra/tsconfig.json', ignored)
 
 
 if __name__ == '__main__':

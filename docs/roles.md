@@ -18,12 +18,12 @@ Each worker role skill lives at `plugins/orchestra/skills/<skill>/SKILL.md`. Its
 
 ## Two-skill preload
 
-Every worker agent file preloads exactly two skills: `skills: [orchestra-worker, <role skill>]`. Variant files (such as the checkpoint reviewer) preload the same two as their base role. `orchestra-worker` holds the shared contract: you are not alone, preserve sibling edits, never delegate or change coordinator state, the `STATUS:`/`ARTIFACT:` report shape and the `Mode:` line rule. Role skills do not restate it. The orchestrator file preloads only `orchestra`. Codex profiles have no preload mechanism, so their `developer_instructions` embed the same two skill bodies and workers read mode files by plugin-root path.
+Every worker agent file preloads exactly two skills: `skills: [orchestra-worker, <role skill>]`. Variant files (such as the checkpoint reviewer) preload the same two as their base role. `orchestra-worker` holds the shared contract: you are not alone, preserve sibling edits, never delegate or change coordinator state, the `STATUS:`/`ARTIFACT:` report shape and the `Mode:` line rule. Role skills do not restate it. The orchestrator file preloads only `orchestra`. Workers read mode files by plugin-root path.
 
 ## Tool restrictions and independence
 
 - Every non-orchestrator agent file sets `disallowedTools` containing `Agent`. A worker therefore cannot dispatch any agent. This structurally meets the 1(f) clause on refusing reviewer dispatch by the builder's own session: a builder cannot dispatch a reviewer, or anything else. No spawn-time refusal is needed.
-- Read-only roles (investigator, critic, code-reviewer, including variants) additionally disallow `Edit, Write, NotebookEdit`. Their Codex profiles set `sandbox_mode = "read-only"`. Their report is returned as the final message and the coordinator records it. Bash can still write files on Claude, so this is partial protection only.
+- Read-only roles (investigator, critic, code-reviewer, including variants) additionally disallow `Edit, Write, NotebookEdit`. Their report is returned as the final message and the coordinator records it. Bash can still write files, so this is partial protection only.
 - Workers never mutate coordinator state or acquire release permission through their role name. Release authority comes only from configured project authorization and an explicit bounded `operator` assignment with `Mode: release`. A CLEAN review adds no permission.
 - The builder that made a change never approves it; reviewers and critics are independent assignments.
 

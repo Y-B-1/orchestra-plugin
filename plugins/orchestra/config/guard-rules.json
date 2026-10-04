@@ -73,7 +73,7 @@
     "gh": [["repo", "delete"], ["release", "delete"]]
   },
   "protected": {
-    "harness_dirs": [".codex", ".claude"],
+    "harness_dirs": [".claude"],
     "files": ["hooks.json", "config.toml"],
     "agents_prefixes": ["orchestra-", "orchestra_"],
     "component": ".orchestra",

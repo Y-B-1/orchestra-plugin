@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate native role profiles from the portable contracts."""
+"""Generate the Claude agent files from the role contracts."""
 import argparse
 import json
 from pathlib import Path
@@ -46,13 +46,13 @@ def selection_lines(values):
     return [f"model: {values['model']}", f"effort: {values['effort']}"]
 
 
-def variants_of(matrix, claude=False):
+def variants_of(matrix):
     if matrix.get('selection') == 'user':
         return {'default': matrix}
     default = (matrix['model'], matrix['effort'])
     return {'default': matrix, **{name: values for name, values in matrix.get('presets', {}).items()
                                   if (values['model'], values['effort']) != default
-                                  and not (claude and values.get('dispatch') == 'override')}}
+                                  and values.get('dispatch') != 'override'}}
 
 
 VARIANT_NOTES = {('investigator', 'code'): ' Mode: code. Read-only bounded code discovery.',
@@ -80,7 +80,7 @@ def generated(root=ROOT):
                              '<root>/scripts/orchestra.py. Your launch brief must carry a Mode: line, objective, '
                              'ownership, prerequisites and acceptance checks.')
         preload = [role['skill']] if orchestrator else ['orchestra-worker', role['skill']]
-        for preset, values in variants_of(models['claude'][role['id']], claude=True).items():
+        for preset, values in variants_of(models['claude'][role['id']]).items():
             name = role['id'] if preset == 'default' else role['id'] + '-' + preset
             front = ['---', f'name: {name}', f"description: {json.dumps(role['description'] + mode_note(role['id'], preset))}",
                      *selection_lines(values), f"skills: [{', '.join(preload)}]"]
@@ -90,62 +90,7 @@ def generated(root=ROOT):
                 front.append('disallowedTools: Agent')
             front += ['---', '', instructions.replace('__ORCHESTRA_ROOT__', '${CLAUDE_PLUGIN_ROOT}')]
             output[f'agents/{name}.md'] = '\n'.join(front) + '\n'
-        if orchestrator:
-            continue
-        codex_instructions = instructions
-        for name in preload:
-            codex_instructions += '\n\n' + split_frontmatter((skills / name / 'SKILL.md').read_text())[1].rstrip('\n')
-        matrix = models['codex'][role['id']]
-        for preset, values in variants_of(matrix).items():
-            name = 'orchestra_' + role['id'].replace('-', '_')
-            if preset != 'default':
-                name += '_' + preset.replace('-', '_')
-            prompt = codex_instructions + f'\nNative preset: {preset}. Keep the selected model and effort fixed.'
-            fields = {'name': name, 'description': role['description'] + f' ({preset})',
-                      'model': values['model'], 'model_reasoning_effort': values['effort']}
-            if role.get('read_only'):
-                fields['sandbox_mode'] = 'read-only'
-            fields['developer_instructions'] = prompt
-            body = '\n'.join(f'{k} = {json.dumps(v)}' for k, v in fields.items())
-            body += '\n\n[agents]\nenabled = false\n'
-            output[f'profiles/codex/{name}.toml'] = body
     return output
-
-
-def codex_package(root=ROOT, profiles=None):
-    """Derive a legacy-native package without the unsupported portable root manifest."""
-    profiles = generated(root) if profiles is None else profiles
-    output = {}
-    for path in root.rglob('*'):
-        relative = path.relative_to(root).as_posix()
-        if not path.is_file() or path.is_symlink():
-            continue
-        if ('__pycache__' in path.parts or path.name == '.DS_Store' or
-            relative == 'plugin.json' or relative.startswith(('agents/', '.claude-plugin/')) or
-            relative in {'hooks/claude.json', 'hooks/mods.json', 'scripts/generate.py', 'tsconfig.json'} or
-            relative.startswith(('hooks/mod/', 'types/'))):
-            continue
-        output[relative] = profiles[relative].encode() if relative in profiles else path.read_bytes()
-    return output
-
-
-def sync_codex_package(check, profiles):
-    target = ROOT.parent / 'orchestra-codex'
-    expected = codex_package(profiles=profiles)
-    actual = {p.relative_to(target).as_posix() for p in target.rglob('*') if p.is_file()}
-    stale = actual - set(expected)
-    mismatch = {name for name, data in expected.items()
-                if not (target/name).is_file() or (target/name).read_bytes() != data}
-    if check and (stale or mismatch):
-        raise ValueError('Native Codex package drift: ' + ', '.join(sorted(stale | mismatch)))
-    if not check:
-        for name in stale:
-            (target/name).unlink()
-        for name, data in expected.items():
-            path = target/name
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_bytes(data)
-    return len(expected)
 
 
 def main():
@@ -156,8 +101,7 @@ def main():
         expected = generated()
     except ValueError as error:
         parser.exit(1, 'Generate refused: ' + str(error) + '\n')
-    actual = {str(p.relative_to(ROOT)) for directory, glob in [('agents', '*.md'), ('profiles/codex', '*.toml')]
-              for p in (ROOT / directory).glob(glob)}
+    actual = {str(p.relative_to(ROOT)) for p in (ROOT / 'agents').glob('*.md')}
     stale = actual - set(expected)
     mismatches = [name for name, content in expected.items()
                   if not (ROOT / name).exists() or (ROOT / name).read_text() != content]
@@ -171,9 +115,7 @@ def main():
             path = ROOT / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
-    package_count = sync_codex_package(args.check, expected)
-    print(f'{package_count} Codex package files checked' if args.check else f'{package_count} Codex package files generated')
-    print(f'{len(expected)} native profiles checked' if args.check else f'{len(expected)} native profiles generated')
+    print(f'{len(expected)} agent files checked' if args.check else f'{len(expected)} agent files generated')
 
 
 if __name__ == '__main__':

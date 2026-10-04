@@ -1716,7 +1716,7 @@ class AutonomyPreconditionsTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.home = Path(self.tmp.name) / 'home'
         self.repo = Path(self.tmp.name) / 'repo'
-        for d in (self.home / '.claude', self.repo / '.claude', self.home / '.codex'):
+        for d in (self.home / '.claude', self.repo / '.claude'):
             d.mkdir(parents=True)
 
     def report(self):
@@ -1756,16 +1756,8 @@ class AutonomyPreconditionsTests(unittest.TestCase):
         self.assertIn('bypassPermissions', self.report()['permission_mode'])
         self.assertEqual(before, sorted(p.name for p in self.repo.rglob('*')))
 
-    def test_codex_approval_policy(self):
-        config = self.home / '.codex/config.toml'
-        self.assertTrue(self.report()['codex_approval_policy'].startswith('unknown'))
-        config.write_text('approval_policy = "on-request"\n')
-        self.assertIn('on-request', self.report()['codex_approval_policy'])
-        self.assertIn('warning', self.report()['codex_approval_policy'].lower())
-        config.write_text('approval_policy = "never"\n')
-        self.assertNotIn('warning', self.report()['codex_approval_policy'].lower())
-        config.write_text('not = = toml')
-        self.assertTrue(self.report()['codex_approval_policy'].startswith('unknown'))
+    def test_report_names_only_the_claude_permission_mode_and_keep_awake(self):
+        self.assertEqual(sorted(self.report()), ['keep_awake', 'permission_mode'])
 
 
 if __name__ == '__main__':

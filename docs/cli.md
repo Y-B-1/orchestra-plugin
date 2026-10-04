@@ -14,8 +14,6 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `report WORKER TOKEN FILE` | Record a worker's result file against its assignment token. | no |
 | `autonomy arm\|disarm\|status` | Arm, disarm or inspect the autonomous loop. | no |
 | `classify "SHELL COMMAND"` | Print the guard verdict for a command string without running it. | no |
-| `install-profiles [--codex-home DIR]` | Install namespaced Codex worker profiles. | no |
-| `uninstall-profiles [--codex-home DIR]` | Remove only the profiles the installer recorded. | no |
 | `ready` | List cards that can be dispatched now. | yes |
 | `add TASK.json` | Add a card. | yes |
 | `dispatch TASK WORKER` | Reserve a card for a worker. | yes |

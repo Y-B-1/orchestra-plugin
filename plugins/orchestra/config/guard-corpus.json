@@ -1265,7 +1265,7 @@
    "id": "edit-4",
    "input": {
     "tool": "Write",
-    "path": ".codex/hooks.json",
+    "path": ".claude/hooks.json",
     "cwd": "/work/proj"
    },
    "class": "deny"
@@ -1274,7 +1274,7 @@
    "id": "edit-5",
    "input": {
     "tool": "Write",
-    "path": ".codex/config.toml",
+    "path": ".claude/config.toml",
     "cwd": "/work/proj/.claude/plugins/x"
    },
    "class": "deny"
@@ -1283,7 +1283,7 @@
    "id": "edit-6",
    "input": {
     "tool": "Write",
-    "path": ".codex/agents/orchestra_builder.toml",
+    "path": ".claude/agents/orchestra_builder.md",
     "cwd": "/work/proj"
    },
    "class": "deny"
