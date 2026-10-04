@@ -306,6 +306,20 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.assertEqual(len(list((self.state/'history').glob('run-*.json'))),1)
         self.assertTrue(self.session()['active'])
 
+    def test_changed_policy_message_depends_on_whether_the_run_is_active(self):
+        lease=self.cli('start')['lease']
+        self.foreign_policy()
+        active=self.cli('status',expected=2)
+        self.assertNotIn('start --new-run',active)
+        self.assertIn('state.json',active)
+        self.assertIn('version that started',active)
+        self.cli('start','--new-run',expected=2)
+        path=self.state/'state.json'
+        data=json.loads(path.read_text())
+        data['session']['active']=False
+        path.write_text(json.dumps(data))
+        self.assertIn('start --new-run',self.cli('status',expected=2))
+
     def test_new_run_refuses_an_active_run_under_a_changed_policy(self):
         self.cli('start')
         self.foreign_policy()

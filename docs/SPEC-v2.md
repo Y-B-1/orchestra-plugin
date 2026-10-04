@@ -295,7 +295,7 @@ Acceptance: `python3 -m unittest discover -s tests -p 'test_hooks.py'`, `-p 'tes
 | code-reviewer | checkpoint, final | opus-5-5 high | `code-reviewer-checkpoint` (opus medium) | sol high | none (checkpoint = default, sol high; final wave a2, FX3) | Agent, Edit, Write, NotebookEdit |
 | operator | gate, cleanup, release | sonnet-5-5 medium | none | sol medium | `orchestra_operator_cleanup` (luna high) | Agent |
 
-The result is 7 roles, 9 Claude agent files (down from 14) and 9 Codex profiles (down from 13): the 6 role defaults other than orchestrator (Codex generates no orchestrator profile, OBSERVED) plus the 3 named variants. The builder `cleanup` preset equals the builder default on both harnesses, so it adds no file. `generate.py --check` therefore reports 19 native profiles instead of 27.
+The result is 7 roles, 9 Claude agent files (down from 14) and 9 Codex profiles (down from 13): the 6 role defaults other than orchestrator (Codex generates no orchestrator profile, OBSERVED) plus the 3 named variants. The builder `cleanup` preset equals the builder default on both harnesses, so it adds no file. `generate.py --check` therefore reports 18 native profiles instead of 27.
 
 Model mapping checks against the current matrix:
 - Every former Opus-high worker role (founder-mind, red-teamer, auditor) maps to an Opus-high role.
@@ -517,8 +517,8 @@ Acceptance:
 ## 9. Area E: borrowed procedures (prose in skills; no engine features)
 
 - **E1 Fix-round cap.** Rounds are counted per ticket from the first independently checked BLOCKED review.
-  - Rounds 1 to 3: `builder` `repair` cards at the role default (Claude Sonnet 5.5 medium; Codex Sol medium). The same builder agent is resumed when the harness allows it, and is otherwise re-dispatched with the prior report.
-  - Round 4: `builder` `repair` with a dispatch override. Claude uses `claude-opus-5-5`; Codex uses the `orchestra_builder_repair` profile (Sol high).
+  - Rounds 1 to 3: `builder` `repair` cards at the role default on Claude (Sonnet 5.5 medium); on Codex, the `orchestra_builder_repair` profile. The same builder agent is resumed when the harness allows it, and is otherwise re-dispatched with the prior report.
+  - Round 4: `builder` `repair` with a dispatch override on Claude, which uses `claude-opus-5-5`. On Codex every repair round, rounds 1 to 4, uses the `orchestra_builder_repair` profile (Sol high).
   - Round 5, the breaker: no further repair. The ticket goes to critic `judge`, then to design or planning, and the user is told.
   - The coordinator records the round number in the progress ledger. The engine does not enforce the cap (exclusion X3).
 - **E2 Progress ledger and resume.**

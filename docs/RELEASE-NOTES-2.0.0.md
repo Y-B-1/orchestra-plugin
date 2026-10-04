@@ -46,7 +46,7 @@ New builder mode `cleanup` applies a lean-and-simplify pass at the end of a run 
 
 ## Guard changes
 
-- Outside an armed run, release-class commands are allowed: non-force push of one branch or tag, `gh pr merge`, `gh release create`, package publish and provider deploys. Inside an armed run the permit applies; with autonomy active they are denied. A state file that cannot be loaded fails closed.
+- Outside an armed run, release-class commands are allowed: non-force push of one branch or tag, `gh pr merge`, `gh release create`, package publish and provider deploys. Inside an armed run the permit applies; with autonomy active they are denied. A state file that cannot be loaded fails closed (armed, no permit), unless it parses with `session` null or `session.active` false: that ended run is unarmed.
 - Always denied, armed or not: force and mirror push, `+refspec`, `--all`, `--tags`, `--delete`, several destinations, `reset --hard`, `clean -f`, `branch -D`, wholesale `add`, `commit -a`, wholesale checkout or restore, `switch -f`.
 - `git stash list` and `git stash show` are allowed; other stash forms are denied. `git restore --staged` is allowed.
 - Heredoc and here-string bodies no longer raise a quoting error. They are classified as scripts when fed to a shell, `source`, `.`, `eval` or `xargs` running a shell, and always scanned for always-deny lines. Command runners (`xargs`, `find -exec`, `doas`, `stdbuf`, `watch`, `flock`) are unwrapped.

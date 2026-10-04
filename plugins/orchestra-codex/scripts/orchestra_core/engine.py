@@ -314,7 +314,12 @@ class Engine:
                 except (ValueError, TypeError, KeyError, OSError) as exc:
                     raise EngineError('Malformed run state: ' + str(exc)) from exc
                 if state['repo'] != str(self.repo) or state['policy'] != self.policy_hash:
-                    raise EngineError('Repository or policy changed; run `start --new-run`')
+                    session = state.get('session')
+                    if session is None or (isinstance(session, dict) and session.get('active') is False):
+                        raise EngineError('Repository or policy changed; run `start --new-run`')
+                    raise EngineError('Repository or policy changed while a run is active, so a new run is refused. '
+                                      'End it with the version that started it, or move state.json out of the state '
+                                      'directory (README, Upgrade from 1.0.1)')
             else:
                 state = dict(version=1, repo=str(self.repo), policy=self.policy_hash,
                              session=None, tasks={}, reviews=[], gates=[], permits=[], autonomy=None)
@@ -1105,11 +1110,7 @@ class Engine:
                 if auto['passes'] > 0:  # the arming turn is not a pass
                     auto['stalls'] = 0 if set(accepted) - set(auto['accepted']) else auto['stalls'] + 1
                 auto['accepted'] = accepted
-                # O30: a card whose open repair card is parked counts as parked, not live.
-                held = [t for t in state['tasks'].values() if t['state'] == 'reported' and t.get('repaired_by')
-                        and self._open_repair(state, t)['state'] == 'parked']
-                live = (any(t['state'] == 'running' or (t['state'] == 'reported' and t not in held)
-                            for t in state['tasks'].values())
+                live = (any(t['state'] in ('running', 'reported') for t in state['tasks'].values())
                         or bool(self._ready(state)))
                 if auto['stalls'] >= auto['max_stalls']:
                     reason = 'cap-stalls'

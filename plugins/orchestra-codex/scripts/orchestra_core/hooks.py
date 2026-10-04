@@ -132,6 +132,8 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
             else:
                 engine.end_harness_session(session_id)
         except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            if not _raw_session_active(engine.state_path):
+                return HookResult({})  # O35: an ended run has nothing to record
             return HookResult({'systemMessage': 'Orchestra session end could not be recorded: ' + str(exc)})
         return HookResult({})
     if event == 'Interrupt':
@@ -214,11 +216,18 @@ def _autonomy_active(engine):
         return True  # O29: an error while reading autonomy status counts as active.
 
 
+def _raw_state(state_file):
+    """The unvalidated state of a file the engine cannot load; None when it is unreadable or unparseable."""
+    try:
+        return json.loads(Path(state_file).read_text())
+    except (OSError, ValueError, UnicodeError):
+        return None
+
+
 def _raw_autonomy_active(state_file):
     """O29: the unvalidated `autonomy.active` flag of a state file the engine cannot load; unparseable counts as active."""
-    try:
-        data = json.loads(Path(state_file).read_text())
-    except (OSError, ValueError, UnicodeError):
+    data = _raw_state(state_file)
+    if data is None:
         return True
     auto = data.get('autonomy') if isinstance(data, dict) else None
     return isinstance(auto, dict) and auto.get('active') is True
@@ -226,12 +235,9 @@ def _raw_autonomy_active(state_file):
 
 def _raw_session_active(state_file):
     """O35: an ended run under a changed policy is unarmed; an unparseable or active state stays armed."""
-    try:
-        data = json.loads(Path(state_file).read_text())
-    except (OSError, ValueError, UnicodeError):
-        return True
+    data = _raw_state(state_file)
     if not isinstance(data, dict) or 'session' not in data:
-        return True  # Not a recorded session: fail closed.
+        return True  # Unparseable or not a recorded session: fail closed.
     session = data['session']
     return not (session is None or (isinstance(session, dict) and session.get('active') is False))
 
