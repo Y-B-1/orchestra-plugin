@@ -309,7 +309,13 @@ function pipelines(command: string): string[][] {
 
 const MARK = '';
 const MARK_RE = /<<[0-9]+/g;
-const REDIRECT_RE = /^(?:[0-9]*(?:>&|<&|>>|>\||<>|>|<)|&>>?)([^\n]*)$/;
+const MARK_WORD_RE = /^<<[0-9]+$/;
+const REDIRECT_RE = /^(?:(?:[0-9]*|\{[A-Za-z_][A-Za-z0-9_]*\})(?:<<<|>&|<&|>>|>\||<>|>|<)|&>>?)([^\n]*)$/;
+const RMARK = ''; // Private-use mark markRedirects puts before each unquoted redirection operator.
+const REDIRECT_WORD_RE = /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})?(?:<<<|<<-?|<>|<&|<|>>|>&|>\||>|&>>?)/;
+const REDIRECT_OP_RE = /<<<|<<-?|<>|<&|<|>>|>&|>\||>|&>>?/y;
+const FD_WORD_RE = /^(?:[0-9]+|\{[A-Za-z_][A-Za-z0-9_]*\})$/;
+const SHLEX_BLANK = ' \t\r\n';
 const HEREDOC_RE = /<<(-?)[ \t]*("[^"\n]*"|'[^'\n]*'|\\?[A-Za-z_0-9][A-Za-z_0-9.\-]*)/y;
 
 /** HEREDOC_RE matched at text[i], or null. */
@@ -323,6 +329,9 @@ type Doc = [string, boolean];
 
 const WORD_START = ' \t\n;&|()<>'; // A `#` right after one of these (or at the start) begins a comment.
 const COMMENT_BLANK = /['"\\]/g;
+const KEYWORD_STOP = ' \t\n;&|()<>"\'\\$`#'; // Characters that cannot begin a bare word (case-keyword tracking, O27).
+const BARE_WORD_RE = /[^ \t\n;&|()<>"'\\$`]*/y;
+const WORD_GLUE = new Set(['"', "'", '\\', '$', '`']); // A bare word glued to one of these is not a keyword.
 
 /** True when the character at i follows an odd run of backslashes: it is escaped, so it is no word start. */
 function backslashed(text: string, i: number): boolean {
@@ -342,27 +351,54 @@ function stripHeredocs(command: string): [string, Doc[]] {
   let tick = false; // Inside a backtick substitution.
   const parens: [string, number][] = []; // Open `(` as [kind, index].
   let noStart = -1; // The index where a `#` cannot start a word.
+  const cases: [string, number][] = []; // Open `case` as [state, parens.length] (SPEC A5, O27).
+  let start = true; // At a command position.
+  const caseTop = (): [string, number] | null => {
+    const top = cases[cases.length - 1];
+    return top !== undefined && top[1] === parens.length ? top : null;
+  };
   while (i < n) {
     const char = command[i]!;
     if (escaped) {
       escaped = false;
-      noStart = i + 1; // SPEC A5 (O27): a character after an unescaped backslash is not a word start.
+      // SPEC A5 (O27): a character after an unescaped backslash is not a word start. A backslash-newline
+      // pair is deleted, so the character after it is a word start exactly when the backslash was one.
+      const glued = char !== '\n' || i - 1 === noStart || (i > 1 && !WORD_START.includes(command[i - 2]!));
+      noStart = glued ? i + 1 : -1;
+      start = start && !glued;
     } else if (char === '\\' && q !== "'") {
       escaped = true;
     } else if (q) {
       if (char === q) q = null;
     } else if (char === '"' || char === "'") {
       q = char;
+      start = false;
     } else if (char === '(') {
-      const prev = i > 0 ? command[i - 1]! : '';
-      const last = parens[parens.length - 1];
-      const sub = i > 0 && ('$<>'.includes(prev) || (prev === '(' && last !== undefined && last[0] === 'sub' && last[1] === i - 1));
-      parens.push([sub ? 'sub' : 'plain', i]);
+      const top = caseTop();
+      if (!(top && top[0] === 'pattern')) {
+        // In a case pattern the opening parenthesis is optional.
+        const prev = i > 0 ? command[i - 1]! : '';
+        const last = parens[parens.length - 1];
+        const sub = i > 0 && ('$<>='.includes(prev) || (prev === '(' && last !== undefined && last[0] === 'sub' && last[1] === i - 1));
+        parens.push([sub ? 'sub' : 'plain', i]); // `=(` opens an array assignment, inside a word.
+      }
+      start = true;
     } else if (char === ')') {
-      const popped = parens.pop();
-      if (popped && popped[0] === 'sub') noStart = i + 1; // The `)` of `$(`, `$((` or `<(` ends part of a word, not a command.
+      const top = caseTop();
+      if (top && top[0] === 'pattern') {
+        top[0] = 'body'; // The `)` of a case pattern closes no group, so it cannot pop an enclosing `$(`.
+      } else {
+        const popped = parens.pop();
+        if (popped && popped[0] === 'sub') noStart = i + 1; // The `)` of `$(`, `$((`, `<(` or `a=(` ends part of a word, not a command.
+      }
+      start = true;
     } else if (char === '`') {
       tick = !tick;
+      start = tick;
+    } else if (char === ';' || char === '&' || char === '|') {
+      const top = caseTop();
+      if (top && top[0] === 'body' && (command.startsWith(';;', i) || command.startsWith(';&', i))) top[0] = 'pattern';
+      start = true;
     } else if (char === '#' && i !== noStart && (i === 0 || WORD_START.includes(command[i - 1]!) || (tick && command[i - 1] === '`'))) {
       // SPEC A5 (O27): a comment runs to the newline. Its quotes and backslashes are literal, so they
       // are blanked: no later scanner can read them as opening a quote or escaping the newline.
@@ -390,9 +426,23 @@ function stripHeredocs(command: string): [string, Doc[]] {
         i = match.index + match[0].length;
         continue;
       }
+    } else if (!KEYWORD_STOP.includes(char) && i !== noStart && (i === 0 || WORD_START.includes(command[i - 1]!))) {
+      BARE_WORD_RE.lastIndex = i;
+      BARE_WORD_RE.exec(command);
+      const end = BARE_WORD_RE.lastIndex;
+      const word = WORD_GLUE.has(command.slice(end, end + 1)) ? '' : command.slice(i, end);
+      const top = caseTop();
+      if (word === 'in' && top && top[0] === 'head') top[0] = 'pattern';
+      else if (word === 'case' && start) cases.push(['head', parens.length]);
+      else if (word === 'esac' && start && top && top[0] !== 'head') cases.pop();
+      start = CASE_PREV.has(word);
+      out.push(command.slice(i, end));
+      i = end;
+      continue;
     } else if (char === '\n') {
       out.push(char);
       i += 1;
+      start = true;
       for (const [word, stripTabs, quoted] of pending) {
         const body: string[] = [];
         let found = false;
@@ -411,6 +461,8 @@ function stripHeredocs(command: string): [string, Doc[]] {
       }
       pending = [];
       continue;
+    } else if (char !== ' ' && char !== '\t') {
+      start = false;
     }
     out.push(char);
     i += 1;
@@ -755,20 +807,143 @@ function substitutions(body: string): string[] {
   return found;
 }
 
-function commandWords(segment: string): string[] {
-  const words = unwrap(shlexSplit(segment, true));
+/**
+ * SPEC A5 (O31): put a blank and RMARK before each redirection operator outside quotes (before its
+ * descriptor prefix when a number or `{name}` is the whole word before it), so shlex starts a word there
+ * that reads as a redirection. Mirrors guards._mark_redirects.
+ */
+function markRedirects(segment: string): string {
+  if (!segment.includes('<') && !segment.includes('>')) return segment;
+  if (segment.includes(RMARK)) throw new ValueError('Reserved character in command');
+  const out: string[] = [];
+  let q: string | null = null;
+  let i = 0;
+  const n = segment.length;
+  let start = 0; // Where the current word starts in out.
+  let bare = true; // Whether the current word holds only bare characters.
+  let here = 0; // 2 right after a `<<<`, 1 inside its operand word: a here-string operand is not word-split.
+  while (i < n) {
+    const char = segment[i]!;
+    if (q) {
+      if (char === q) {
+        q = null;
+      } else if (char === '\\' && q === '"') {
+        out.push(segment.slice(i, i + 2));
+        i += 2;
+        continue;
+      }
+    } else if (SHLEX_BLANK.includes(char)) {
+      out.push(char);
+      i += 1;
+      start = out.length;
+      bare = true;
+      here = here === 2 ? 2 : 0;
+      continue;
+    } else if (char === '"' || char === "'") {
+      q = char;
+      bare = false;
+    } else if (char === '\\') {
+      out.push(segment.slice(i, i + 2));
+      i += 2;
+      bare = false;
+      here = here ? 1 : 0;
+      continue;
+    } else if (char === '#') {
+      const found = segment.indexOf('\n', i);
+      const end = found < 0 ? n : found;
+      out.push(segment.slice(i, end));
+      i = end;
+      continue;
+    } else if (segment.startsWith('${', i)) {
+      const found = segment.indexOf('}', i);
+      const end = found < 0 ? n : found + 1;
+      out.push(here ? escapeBlanks(segment.slice(i, end)) : segment.slice(i, end));
+      here = here ? 1 : 0;
+      i = end;
+      bare = false;
+      continue;
+    } else if (char === '<' || char === '>' || char === '&') {
+      REDIRECT_OP_RE.lastIndex = i;
+      const match = REDIRECT_OP_RE.exec(segment);
+      if (match) {
+        if (bare && FD_WORD_RE.test(out.slice(start).join(''))) out.splice(start, 0, ' ' + RMARK);
+        else out.push(' ' + RMARK);
+        out.push(match[0]);
+        i += match[0].length;
+        if (i < n && !SHLEX_BLANK.includes(segment[i]!)) out.push(RMARK); // A second mark right after the operator says its operand is glued.
+        start = out.length;
+        bare = false; // A glued operand is never a descriptor prefix.
+        here = match[0] === '<<<' ? 2 : 0;
+        continue;
+      }
+    }
+    here = here ? 1 : 0;
+    out.push(char);
+    i += 1;
+  }
+  return out.join('');
+}
+
+/** Escape the blanks of text that stand outside quotes, so shlex keeps it one word. */
+function escapeBlanks(text: string): string {
+  const out: string[] = [];
+  let q: string | null = null;
+  for (const char of text) {
+    if (q) {
+      if (char === q) q = null;
+    } else if (char === '"' || char === "'") {
+      q = char;
+    } else if (SHLEX_BLANK.includes(char)) {
+      out.push('\\');
+    }
+    out.push(char);
+  }
+  return out.join('');
+}
+
+/**
+ * SPEC A5 (O31): the shlex words of a segment (comments dropped) as [all words, the words without
+ * redirections, the here-string operands]. Mirrors guards._words.
+ */
+function splitWords(segment: string): [string[], string[], string[]] {
+  const original: string[] = [];
   const kept: string[] = [];
-  let skip = false;
+  const operands: string[] = [];
+  let skip: string | null = null;
+  const markedText = markRedirects(segment);
+  const words = shlexSplit(markedText, true);
+  if (!markedText.includes(RMARK)) return [words, words.slice(), []];
   for (const word of words) {
+    const marked = word.startsWith(RMARK);
+    const plain = word.split(RMARK).join('');
+    original.push(plain);
     if (skip) {
-      skip = false;
+      if (skip === '<<<') operands.push(plain);
+      skip = null;
       continue;
     }
-    const redirect = REDIRECT_RE.exec(word);
-    if (redirect) skip = !redirect[1];
-    else kept.push(word);
+    const match = marked && !MARK_WORD_RE.test(plain) ? REDIRECT_WORD_RE.exec(plain) : null;
+    if (!match) {
+      kept.push(plain); // A heredoc placeholder stays a word, as before O31.
+      continue;
+    }
+    const here = match[0].endsWith('<<<') ? '<<<' : '>';
+    if (word.startsWith(RMARK, 1 + match[0].length)) {
+      // Glued operand (even an empty one, as in `<<<""`).
+      if (here === '<<<') operands.push(plain.slice(match[0].length));
+    } else {
+      skip = here;
+    }
   }
-  return kept;
+  return [original, kept, operands];
+}
+
+/** The command words of a segment: redirections dropped, wrappers unwrapped. Here-string operands are added to operands when given. */
+function commandWords(segment: string, operands: string[] | null = null): string[] {
+  if (!segment.includes('<') && !segment.includes('>')) return unwrap(shlexSplit(segment, true));
+  const [, words, here] = splitWords(segment);
+  if (operands !== null) operands.push(...here);
+  return unwrap(words);
 }
 
 function consumerMode(segment: string, allowEval = true): string | null {
@@ -1133,7 +1308,7 @@ function rawCommands(text: string): string[][] {
     } else {
       let end = Math.max(readWord(text, i), i + 1);
       const next = text.slice(end, end + 1);
-      if (isDigit(text.slice(i, end)) && (next === '<' || next === '>')) {
+      if ((isDigit(text.slice(i, end)) || FD_WORD_RE.test(text.slice(i, end))) && (next === '<' || next === '>')) {
         while (end < n && (text[end] === '<' || text[end] === '>')) end += 1;
       }
       words.push(text.slice(i, end));
@@ -1158,9 +1333,17 @@ function rawScan(text: string, depth: number): Decision | null {
       }
       values.push(parts.length === 1 ? parts[0]! : raw);
     }
+    const kept: string[] = [];
+    let skip = false;
+    raws.forEach((raw, k) => {
+      // SPEC A5 (O31): unquoted redirections and their operands.
+      const redirect = skip ? null : REDIRECT_RE.exec(raw);
+      if (!skip && !redirect) kept.push(values[k]!);
+      skip = !!redirect && !redirect[1];
+    });
     let words: string[];
     try {
-      words = unwrap(values);
+      words = unwrap(kept);
     } catch (e) {
       if (!(e instanceof ValueError)) throw e;
       continue;
@@ -1322,7 +1505,7 @@ function commandPositions(text: string, ats: number[]): boolean[] {
     } else {
       end = Math.max(readWord(text, i), i + 1);
       const after = text.slice(end, end + 2);
-      if (isDigit(text.slice(i, end)) && (text.slice(end, end + 1) === '<' || text.slice(end, end + 1) === '>') && after !== '<(' && after !== '>(') {
+      if ((isDigit(text.slice(i, end)) || FD_WORD_RE.test(text.slice(i, end))) && (text.slice(end, end + 1) === '<' || text.slice(end, end + 1) === '>') && after !== '<(' && after !== '>(') {
         while (end < n && (text[end] === '<' || text[end] === '>')) end += 1;
         if (text.slice(end, end + 1) === '&' || (text.slice(end, end + 1) === '|' && text[end - 1] === '>')) end += 1;
         token = 'redirect';
@@ -1567,13 +1750,14 @@ function scanText(textIn: string, depth: number, asCommand = false): Decision | 
   }
   for (const segment of segments(text)) {
     let words: string[];
+    const operands: string[] = [];
     try {
-      words = commandWords(segment);
+      words = commandWords(segment, operands);
     } catch (e) {
       if (!(e instanceof ValueError)) throw e;
       continue;
     }
-    const hit = scanPieces(words.slice(1), depth);
+    const hit = scanPieces(words.slice(1).concat(operands), depth);
     if (hit) return hit;
   }
   return null;
@@ -1670,11 +1854,10 @@ export function classifyCommand(command: string, depth = 0): Decision {
   try {
     const [stripped, docs] = stripHeredocs(command);
     const text = tickToDollar(dollarDecode(stripped));
-    const parsed = segments(text)
-      .map((segment) => shlexSplit(segment, true).map((word) => word.replace(MARK_RE, '<<HEREDOC')))
-      .filter((words) => words.length);
-    for (const original of parsed) {
-      const words = unwrap(original.slice());
+    const parsed = segments(text).map((segment) => splitWords(segment));
+    for (const [rawOriginal, kept] of parsed) {
+      const original = rawOriginal.map((word) => word.replace(MARK_RE, '<<HEREDOC'));
+      const words = unwrap(kept.map((word) => word.replace(MARK_RE, '<<HEREDOC'))); // Redirections removed (O31).
       if (words.length) items.push([classifySegment(words, depth), original, true]);
     }
     items.push(...heredocItems(docs, pipelines(text), depth));
