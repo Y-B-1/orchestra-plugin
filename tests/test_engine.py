@@ -1538,6 +1538,32 @@ class AutonomyParkTests(AutonomyFixture):
         with self.assertRaises(EngineError):
             self.engine.park('main', self.lease, 'a', 'why')
 
+    def repaired(self):
+        """A reported card whose repair card `repair-of-a` has reported too: `a` is reported with `repaired_by`."""
+        self.task('a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'w')
+        self.engine.report('w', token, 'Implemented a.')
+        report = self.root / 'r.json'
+        self.review(report, tasks=['a'], findings=['bug'])
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a'], findings=['bug'])
+        self.task('repair-of-a', mode='repair', files=['fix'], repair_of='a')
+        token = self.engine.dispatch('main', self.lease, 'repair-of-a', 'w2')
+        self.engine.report('w2', token, 'Repaired a.')
+        self.assertEqual(self.engine.status()['tasks']['a']['state'], 'reported')
+
+    def test_o30_parking_a_reported_card_under_repair_names_its_open_repair(self):
+        self.repaired()
+        with self.assertRaisesRegex(EngineError, 'repair-of-a'):
+            self.engine.park('main', self.lease, 'a', 'why')
+        self.assertEqual(self.engine.status()['tasks']['a']['state'], 'reported')
+
+    def test_o30_a_card_whose_open_repair_is_parked_stops_parked_only(self):
+        self.arm(passes='9')
+        self.repaired()
+        self.engine.park('main', self.lease, 'repair-of-a', 'needs a push')
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.auto()['last_stop_reason'], 'parked-only')
+
     def test_parked_cards_block_finish(self):
         self.task('a', role='investigator', mode='code')
         self.engine.park('main', self.lease, 'a', 'why')

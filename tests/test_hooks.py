@@ -1076,10 +1076,6 @@ class RunHookScriptTest(unittest.TestCase):
         self.assertEqual(json.loads(result.stdout)['action'], 'allow')
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class AutonomyHookTest(unittest.TestCase):
     """SPEC 12: the autonomy columns of the PreToolUse mapping, Stop and the SessionStart report."""
 
@@ -1144,10 +1140,94 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertIn('--reason', reason)
 
     def test_release_is_denied_while_active_even_with_a_permit(self):
+        from orchestra_core.engine import Engine
+        unit = [sys.executable, '-c', 'print("passed")']
+        policy = {'schema_version': 1, 'required_checks': [{'name': 'unit', 'argv': unit}],
+                  'release': {'enabled': True, 'authorization': 'user request', 'remote': 'origin', 'target': 'side',
+                              'argv': ['git', 'push', 'origin', 'side']}}
+        (self.state / 'state.json').unlink()  # a fresh run under the release policy the hook loads
+        (self.state / 'policy.json').write_text(json.dumps(policy))
+        self.engine = Engine(self.state, self.repo, policy=policy, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main')
+        categories = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
+        report = self.root / 'final.json'
+        report.write_text(json.dumps(dict(reviewer='reviewer', categories=categories, tasks=[], findings=[], final=True,
+                                          verdict='CLEAN', artifact=self.engine.artifact(),
+                                          summary='Behavior checked against acceptance criteria.')))
+        self.engine.record_review('main', self.lease, 'reviewer', report, categories, final=True)
+        self.engine.run_gate('main', self.lease, 'unit', unit)
+        self.engine.release_permit('main', self.lease, 'origin', 'side')
+        self.assertIsNone(self.hook(self.repo, 'git push origin side'))  # the permit is real and current
         self.arm()
         for command in ['git push origin side', 'git push origin side && git status', 'gh release create v1 --verify-tag']:
             with self.subTest(command=command):
-                self.assertEqual(self.hook(self.repo, command), 'deny')
+                code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                decision = output['hookSpecificOutput']
+                self.assertEqual(decision['permissionDecision'], 'deny')
+                self.assertTrue(decision['permissionDecisionReason'].startswith('Autonomy is active: '),
+                                decision['permissionDecisionReason'])
+
+    def break_policy(self):
+        """A plugin contract or policy change: the stored policy hash no longer matches, so the engine cannot load."""
+        data = json.loads((self.state / 'state.json').read_text())
+        data['policy'] = '0' * 64
+        (self.state / 'state.json').write_text(json.dumps(data))
+
+    def truncate_state(self):
+        text = (self.state / 'state.json').read_text()
+        (self.state / 'state.json').write_text(text[:len(text) // 2])
+
+    def stop_main(self, cwd):
+        payload = {'cwd': str(cwd), 'session_id': 's-1'}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            self.assertEqual(main(['Stop', '--harness', 'claude']), 0)
+        return json.loads(out.getvalue())
+
+    def assert_unloadable_active_state_denies(self):
+        for cwd in (self.repo, self.linked):
+            with self.subTest(cwd=cwd.name):
+                self.assertEqual(self.hook(cwd, 'rm -rf build'), 'deny')
+                self.assertEqual(self.hook(cwd, 'git push origin side'), 'deny')
+                self.assertIsNone(self.hook(cwd, 'git status'))
+                self.assertEqual(self.stop_main(cwd), {})
+        self.assertEqual(self.hook(self.repo, 'git merge topic'), 'deny')  # main checkout on the default branch
+        self.assertIsNone(self.hook(self.linked, 'git merge topic'))  # linked worktree on `side`
+        git(self.repo, 'checkout', '-q', '--detach')
+        git(self.linked, 'checkout', '-q', 'main')
+        self.assertEqual(self.hook(self.linked, 'git merge topic'), 'deny')  # linked worktree on the default branch
+
+    def test_o29_policy_change_while_active_denies_boundaries(self):
+        self.arm()
+        self.break_policy()
+        self.assert_unloadable_active_state_denies()
+
+    def test_o29_truncated_state_denies_boundaries(self):
+        self.arm()
+        self.truncate_state()
+        self.assert_unloadable_active_state_denies()
+
+    def test_o29_policy_change_with_autonomy_inactive_is_armed_autonomy_off(self):
+        self.arm()
+        self.engine.disarm_autonomy()
+        self.break_policy()
+        for cwd in (self.repo, self.linked):
+            with self.subTest(cwd=cwd.name):
+                self.assertIsNone(self.hook(cwd, 'rm -rf build'))
+                self.assertEqual(self.hook(cwd, 'git push origin side'), 'deny')  # A1: armed, no permit
+                self.assertEqual(self.stop_main(cwd), {})
+        self.assertIsNone(self.hook(self.repo, 'git merge topic'))
+        never_armed = json.loads((self.state / 'state.json').read_text())
+        never_armed.pop('autonomy', None)
+        (self.state / 'state.json').write_text(json.dumps(never_armed))
+        self.assertIsNone(self.hook(self.repo, 'rm -rf build'))
+
+    def test_o29_autonomy_status_error_counts_as_active(self):
+        engine = mock.Mock()
+        engine.autonomy_active.side_effect = RuntimeError('state changed')
+        payload = {'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'rm -rf build'}}
+        result = handle_event('PreToolUse', payload, harness='claude', engine=engine)
+        self.assertEqual(result.output['hookSpecificOutput']['permissionDecision'], 'deny')
 
     def test_merge_denied_on_the_default_branch_and_allowed_on_another(self):
         self.arm()
@@ -1249,3 +1329,7 @@ class AutonomyHookTest(unittest.TestCase):
             context = handle_event('SessionStart', {'session_id': 's-1'}, harness='claude',
                                    engine=engine).output['hookSpecificOutput']['additionalContext']
         self.assertNotIn('Autonomy report', context)
+
+
+if __name__ == '__main__':
+    unittest.main()

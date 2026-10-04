@@ -87,11 +87,12 @@ def _patch_paths(command):
     return paths
 
 
-def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None, armed=False):
+def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None, armed=False, autonomy=False):
     """Decide output; optional engine adapter owns locked state operations.
 
     `armed` marks a run whose state could not be loaded: release classes deny (fail closed).
-    A loaded engine implies an armed run; neither means unarmed.
+    `autonomy` marks such a state whose raw autonomy flag is true or unreadable (O29): the
+    autonomy-active column applies to every class. A loaded engine implies an armed run; neither means unarmed.
     """
     if harness not in {'codex', 'claude'}:
         raise ValueError('Unsupported harness')
@@ -181,6 +182,14 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
     klass = decision.klass
     if klass == 'deny':
         return _deny(decision.reason, decision.category == 'malformed')
+    if (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy):
+        # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
+        if klass in {'release', 'release-multi'}:
+            return _deny('Autonomy is active: ' + _PARK_HINT)
+        if decision.category == 'boundary' and decision.boundary == 'delete':
+            return _deny('Approval boundary under autonomy: ' + _PARK_HINT)
+        if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
+            return _deny('Approval boundary under autonomy: no merge on the default branch. ' + _PARK_HINT)
     if klass in {'release', 'release-multi'} and (engine is not None or armed):
         if klass == 'release-multi':
             return _deny(decision.reason)
@@ -192,13 +201,6 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
                 raise ValueError('No current release permit')
         except (OSError, ValueError, KeyError, RuntimeError, AttributeError) as exc:
             return _deny('Release denied: ' + str(exc))
-    if engine is not None and _autonomy_active(engine):
-        if klass in {'release', 'release-multi'}:
-            return _deny('Autonomy is active: ' + _PARK_HINT)
-        if decision.category == 'boundary' and decision.boundary == 'delete':
-            return _deny('Approval boundary under autonomy: ' + _PARK_HINT)
-        if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
-            return _deny('Approval boundary under autonomy: no merge on the default branch. ' + _PARK_HINT)
     return HookResult({})  # allow, boundary (autonomy off) and unarmed release classes
 
 
@@ -209,7 +211,17 @@ def _autonomy_active(engine):
     try:
         return engine.autonomy_active() is True  # Strict: an opaque adapter never reads as active.
     except Exception:
-        return False
+        return True  # O29: an error while reading autonomy status counts as active.
+
+
+def _raw_autonomy_active(state_file):
+    """O29: the unvalidated `autonomy.active` flag of a state file the engine cannot load; unparseable counts as active."""
+    try:
+        data = json.loads(Path(state_file).read_text())
+    except (OSError, ValueError, UnicodeError):
+        return True
+    auto = data.get('autonomy') if isinstance(data, dict) else None
+    return isinstance(auto, dict) and auto.get('active') is True
 
 
 def _report_context(engine):
@@ -291,6 +303,7 @@ def main(argv=None):
     state_dir = os.environ.get('ORCHESTRA_STATE_DIR')
     engine = None
     armed = False
+    autonomy = False
     build_error = None
     if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         try:
@@ -309,6 +322,7 @@ def main(argv=None):
                         pass  # Opaque engine adapters stay armed.
                 except Exception:
                     engine = None
+                    autonomy = _raw_autonomy_active(state_dir / 'state.json')
                 if args.event == 'PreToolUse' and not armed:
                     engine = None  # An inactive session is an unarmed run.
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
@@ -325,7 +339,8 @@ def main(argv=None):
             engine = None  # Unloadable state: SessionStart still returns context; a lost lease is recovered by hand
             if args.event == 'SessionEnd' and state_dir is not None and (Path(state_dir) / 'state.json').is_file():
                 build_error = exc
-    result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed)
+    result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed,
+                          autonomy=autonomy)
     if build_error is not None and not result.output:
         result = HookResult({'systemMessage': 'Orchestra session end could not be recorded: ' + str(build_error)
                              + '. A run that holds a lost lease is recovered by hand with '
