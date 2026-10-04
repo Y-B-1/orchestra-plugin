@@ -617,11 +617,21 @@ class Engine:
         with self._state() as state:
             self._lease(state, actor, lease)
             task = state['tasks'].get(task_id)
-            if not task or task['state'] not in PARKABLE or task.get('repaired_by'):
-                raise EngineError('Only a queued, running or reported card without a repair can be parked')
+            if task and task.get('repaired_by'):  # O30: park the open repair card instead
+                raise EngineError('A card under repair cannot be parked; park its open repair card '
+                                  + self._open_repair(state, task)['id'])
+            if not task or task['state'] not in PARKABLE:
+                raise EngineError('Only a queued, running or reported card can be parked')
             task.update(state='parked', parked_reason=reason.strip())
             for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact'):
                 task.pop(key, None)
+
+    @staticmethod
+    def _open_repair(state, task):
+        """The last card of a repair chain: the one without `repaired_by`."""
+        while task.get('repaired_by'):
+            task = state['tasks'][task['repaired_by']]
+        return task
 
     def unpark(self, actor, lease, task_id):
         with self._state() as state:
@@ -1093,7 +1103,11 @@ class Engine:
                 if auto['passes'] > 0:  # the arming turn is not a pass
                     auto['stalls'] = 0 if set(accepted) - set(auto['accepted']) else auto['stalls'] + 1
                 auto['accepted'] = accepted
-                live = (any(t['state'] in ('running', 'reported') for t in state['tasks'].values())
+                # O30: a card whose open repair card is parked counts as parked, not live.
+                held = [t for t in state['tasks'].values() if t['state'] == 'reported' and t.get('repaired_by')
+                        and self._open_repair(state, t)['state'] == 'parked']
+                live = (any(t['state'] == 'running' or (t['state'] == 'reported' and t not in held)
+                            for t in state['tasks'].values())
                         or bool(self._ready(state)))
                 if auto['stalls'] >= auto['max_stalls']:
                     reason = 'cap-stalls'
