@@ -34,7 +34,7 @@ No installer changes application instructions, restores symlinks, resumes old wo
 
 ### Upgrade from 1.0.1
 
-Old role names are rejected, so a live 1.0.1 run cannot continue: start a new run after upgrading (`start --new-run` archives the old state). Reinstall from the marketplace, restart the client, then rerun `install-profiles` for Codex so the new profiles replace the old ones.
+Old role names are rejected, so a live 1.0.1 run cannot continue, and 2.0.0 cannot clear it: its policy hash differs, so `interrupt`, `finish` and `start --new-run` all refuse it. Before upgrading, with 1.0.1 still installed, end any active run from its repository with `python3.11 ~/.claude/plugins/cache/orchestra-distribution/orchestra/1.0.1/scripts/orchestra.py --lease LEASE interrupt` (or `finish`; LEASE is the value `start` printed). If you already upgraded with a run active, move that run's `state.json` out of the state directory by hand; the repository is then unarmed. The directory is `$ORCHESTRA_STATE_DIR` when set, otherwise `${XDG_STATE_HOME:-~/.local/state}/orchestra/<id>`, where `<id>` is the first 24 hex characters of the SHA-256 of the repository's absolute path (list the directories under `orchestra/` to find it). Then reinstall from the marketplace, restart the client, and rerun `install-profiles` from an updated clone for Codex so the new profiles replace the old ones.
 
 ```sh
 claude plugin uninstall orchestra@orchestra-distribution
@@ -48,6 +48,7 @@ claude plugin list
 codex plugin marketplace upgrade orchestra-distribution
 codex plugin remove orchestra@orchestra-distribution
 codex plugin add orchestra@orchestra-distribution
+git -C orchestra-plugin pull --ff-only
 python3.11 orchestra-plugin/plugins/orchestra/scripts/orchestra.py install-profiles
 ```
 
@@ -67,7 +68,7 @@ Orchestra hooks are absent between uninstall and install, so run these in a plai
 
 ### Mods and function hooks
 
-On Claude Code the plugin also registers a function-hook module that classifies commands in process, adds `/orchestra-board` and `/orchestra-autonomy`, and shows toasts and a status band. It needs a Claude Code build with function hooks enabled (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`) and the `$` APIs the module uses; it is tested on Claude Code 2.1.289 (CLI) and 2.1.286 (embedded in Desktop with that variable set). There is no version floor: the module checks that each API exists and installs nothing if one is missing. In that case, and with function hooks off, the Python hooks do the same guarding and the CLI does everything else. See [hook policy](docs/hooks.md).
+On Claude Code the plugin also registers a function-hook module that classifies commands in process, adds `/orchestra-board` and `/orchestra-autonomy`, and shows toasts and a status band. It needs a Claude Code build with function hooks enabled (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`) and the `$` APIs the module uses; it is tested on Claude Code 2.1.289 (CLI) and 2.1.286 (embedded in Desktop with that variable set). There is no version floor and no explicit API check: if a needed API is missing, session start fails, the guard stays not ready, and guarded calls fall back to the Python hooks. In that case, and with function hooks off, the Python hooks do the same guarding and the CLI does everything else. See [hook policy](docs/hooks.md).
 
 ## Roles and models
 
