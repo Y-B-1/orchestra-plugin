@@ -198,7 +198,7 @@ Owned paths:
 
 Mod skeleton scope:
 - `session.start` runs the API presence check (SPEC 10.2). If the core APIs exist, it writes the marker with `rules_sha256: null` and heartbeats every 5 s, re-reading `$.session.id()` each tick.
-- `session.end` only retires the heartbeat (`heartbeat_ms: 0`).
+- `session.end` only retires the heartbeat (`heartbeat_ms: 0`). (B1 scope; B5 replaces this with the SPEC 10.3 lifecycle.)
 - No guard yet. A null `rules_sha256` never matches, so Python keeps guarding.
 
 Acceptance:
@@ -382,7 +382,8 @@ Acceptance:
 - `claude plugin validate plugins/orchestra` (2.1.289) exits 0 and lists the six events of SPEC 10.
 - `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test plugins/orchestra` exits 0, including corpus parity over every case.
 - `test_guard_corpus.py` and `test_hooks.py` exit 0.
-- Marker lifecycle (SPEC 10.3, from R1 F1 to F5), each case covered in `claude plugin test` with the mock clock: `session.end` with reason `clear` retires the old id and the next tick writes the new id; any other reason cancels the tick; a tick in flight never overwrites a retired marker; a throwing tick writes nothing; no `XDG_STATE_HOME` and no `HOME` writes no marker.
+- Marker lifecycle (SPEC 10.3, from the B1 checkpoint review), each case covered in `claude plugin test` with the mock clock: `session.end` with reason `clear` and with reason `resume` retires the old id and the next tick writes the new id; each of `prompt_input_exit`, `logout` and `other` cancels the tick; a second `session.start` leaves exactly one tick; `/clear` then a return to the first id gives the first id fresh markers again; a fresh write held in flight (mocked `fs.write` that resolves late) when `session.end` runs ends with `heartbeat_ms: 0` on disk; a throwing tick writes nothing; no `XDG_STATE_HOME` and no `HOME` writes no marker.
+- Live: record whether `session.start` fires after an in-process `/resume`, and whether `/resume` reuses the original id.
 - Live (0.6): the SPEC 10 live list, each item recorded, with a screenshot of `/orchestra-board`. A scratch copy with an invalid rules file leaves Python guarding: `git stash` is still denied.
 
 ### B11: autonomy mod surface
