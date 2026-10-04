@@ -30,4 +30,6 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | I2 | investigator | none | 512bfac (RESEARCH-v2 I2) | coordinator re-check of SHAs and licenses | ACCEPTED |
 | P0 r1 | critic feasibility + scope | none | e9140d0 (round 5 repair) | ISSUES FF1-FF3, SF1-SF10, routed to designer-planner | REPAIRED |
 | P0 r2 | critic feasibility + scope | none | 3e0889d (round 6 repair) | ISSUES F1-F5, N1-N4 (planning only); all FF/SF RESOLVED | REPAIRED; P0 accepted for B1 scope |
-| MX | investigator (matrix) | main checkout (one-time exception, PLAN round 6) | 6003c11 | coordinator check: one path, no personal paths | REPORTED; MXR running |
+| MX | investigator (matrix) | main checkout (one-time exception, PLAN round 6) | 6003c11 | coordinator check: one path, no personal paths | REPAIRING (MXR r1 ISSUES, 8 content findings; routed to MX-r1) |
+| B1 | builder | $SCRATCH/wt/B1 | 2c515f5 (425758e, 31ef9b2, 25bf9da coordinator fix: host-written tsconfig.json excluded and gitignored, scope extension) | R1 CLEAN; SPEC 10.2 fallback used (validator rejects `typeof $.x`; load-time validation instead) | ACCEPTED; live steps pending (heartbeat advance, interactive /exit, one SessionStart context); release build rerun owed to G1 |
+| R1 F1 | design gap | none | n/a | session.end on /clear or resume stops the tick; new id never gets a marker | ROUTED to designer-planner before B5; R1 F2-F4 folded into B5 |
