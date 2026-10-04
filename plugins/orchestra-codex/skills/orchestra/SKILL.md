@@ -2,7 +2,6 @@
 name: orchestra
 description: Coordinate bounded engineering work with dependency-aware assignments, independent reviews, artifact-bound checks, and project-authorized release. Use for multi-part delivery or when the user selects Orchestra.
 ---
-
 Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md skills/dispatching-parallel-agents/SKILL.md (MIT); garrytan/gstack@4015c2870b06 review/sections/review-army.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/SKILL.md
 

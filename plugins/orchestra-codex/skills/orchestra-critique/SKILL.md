@@ -2,7 +2,6 @@
 name: orchestra-critique
 description: Core rules for the critic role, preloaded by the orchestra:critic agent. Worker agents only; not for the main session.
 ---
-
 Source: derived from mattpocock/skills@d81f3a183412 skills/productivity/grilling/SKILL.md (MIT); garrytan/gstack@4015c2870b06 review/sections/adversarial.md review/sections/plan-completion.md (MIT); bmad-code-org/BMAD-METHOD@3cae711ea527 skills/bmad-review/references/lens-adversarial.md skills/bmad-build/references/claims-check.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-critique/SKILL.md
 

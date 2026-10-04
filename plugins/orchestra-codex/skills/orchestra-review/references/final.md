@@ -9,6 +9,8 @@ Review the full integration diff against the named base and the current artifact
 
 The brief's `Lens:` line names one lens file: `correctness.md`, `architecture.md`, `security.md` or `cleanliness.md`. Open that file and review only through it.
 
+A `Lens:` line of `specialist:<name>` names a section of `specialists.md` instead. Open that file and review only through the named section. Its categories are those of that section's findings; the table below does not apply.
+
 A final brief with no `Lens:` line is a blocker. Report `STATUS: BLOCKED` and name the missing line. Do not review all lenses to make up for it.
 
 | Lens file | Categories you report |
@@ -26,7 +28,6 @@ Set `categories` in the verdict to the row for your lens and no other. Findings 
 - Find contracts that two tickets each assume differently.
 - Find the same symbol or file changed by more than one ticket.
 - Confirm that every requirement in the approved ask is met by code in the diff.
-- A finding needs a quoted line, a trigger and a wrong outcome. Refute it before you report it.
 
 ## Verdict
 

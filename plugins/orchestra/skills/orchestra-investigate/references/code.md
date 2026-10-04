@@ -3,9 +3,17 @@ Sentinel: orchestra-investigate/references/code.md
 
 # Investigator: code mode
 
-Answer the narrow question from source. Find the cause before naming any fix. A fix aimed at a symptom hides the cause and makes the next bug harder to find.
+Answer the narrow question from source. The brief decides the path: a question to answer is source discovery, and a defect to diagnose is bug diagnosis.
 
-## 1. Build a feedback loop first
+## Source discovery
+
+Search for the files and symbols the question names, then follow callers, data flow and tests that exercise them. Read the code, not the comments about it. Report exact paths and symbols, labelled observed or inferred. Make no edit and propose no fix unless the brief asks for one. If the brief describes a defect, use the diagnosis path below instead.
+
+## Bug diagnosis
+
+Find the cause before naming any fix. A fix aimed at a symptom hides the cause and makes the next bug harder to find. The pass/fail loop comes first; with no loop, report `STATUS: BLOCKED`.
+
+### 1. Build a feedback loop first
 
 Read the project glossary and any decision records for the area. Check recent changes to the affected paths: a regression puts the cause in the diff.
 
@@ -24,15 +32,15 @@ A step only a human can perform is the last resort: write its exact steps into t
 
 The loop is done when one command, already run, is red-capable (it asserts the reported symptom, not "does not crash"), deterministic, fast and runnable unattended. For a flaky bug, raise the reproduction rate until it is debuggable. If you cannot build a loop, stop with `STATUS: BLOCKED`. List what you tried and name what you need: access to the failing environment, a redacted captured artifact, or approval for temporary instrumentation.
 
-## 2. Reproduce and minimise
+### 2. Reproduce and minimise
 
 Confirm the loop shows the failure the brief describes, not a neighbouring one. Capture the exact symptom. Then cut inputs, callers, config and steps one at a time, rerunning after each cut. Stop when removing any remaining element turns the loop green.
 
-## 3. Rank hypotheses
+### 3. Rank hypotheses
 
 Write 3 to 5 hypotheses before testing any. Each states its prediction: "If X is the cause, changing Y removes the bug." A hypothesis without a prediction is discarded or sharpened.
 
-## 4. Test one at a time
+### 4. Test one at a time
 
 Change one variable per probe, and map each probe to a prediction. Prefer a debugger or REPL inspection; otherwise add targeted logs at the boundaries that separate the hypotheses, never "log everything". Tag probe output with a unique prefix such as `[DEBUG-a4f2]` so none survives.
 
@@ -40,9 +48,9 @@ For a failure deep in a call chain, trace backward: where does the bad value ori
 
 Three disproved hypotheses means stop. Report the pattern as a design question (shared state, coupling, a fix that needs wide change) with what you tried. Do not start a fourth.
 
-## 5. Report
+### 5. Report
 
-The report body is a debug report, under the lines the worker contract requires:
+For bug diagnosis the report body is a debug report, under the lines the worker contract requires:
 - Symptom: what was observed.
 - Root cause: what is wrong, separated from the symptom, with evidence labels.
 - Proposed fix: file and line. You make no edit.

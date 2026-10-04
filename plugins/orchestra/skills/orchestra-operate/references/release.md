@@ -9,7 +9,7 @@ Release is off by default. You act only under an explicit release assignment tha
 
 All of these must hold for this exact artifact. If one fails, stop with `STATUS: BLOCKED` and name it.
 
-- The project policy has `release.enabled` true, with the remote, target and argv you were assigned.
+- The project policy has `release.enabled` true and a `release.authorization`, with the remote, target and argv you were assigned. A missing item stops release: name it.
 - An independent final review of this commit is CLEAN. Review approval does not add external permission.
 - The accepted requirements and every required gate are current for this commit: the full sha in each record equals `git rev-parse HEAD`, and the tree is clean.
 - Credentials, trust and the target's identity are present and checked. A missing one stops release.

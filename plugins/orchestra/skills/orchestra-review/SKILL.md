@@ -2,7 +2,6 @@
 name: orchestra-review
 description: Core rules for the code-reviewer role, preloaded by the orchestra:code-reviewer agent. Worker agents only; not for the main session.
 ---
-
 Source: derived from obra/superpowers@8ca22dba9a94 skills/requesting-code-review/SKILL.md skills/requesting-code-review/code-reviewer.md skills/subagent-driven-development/task-reviewer-prompt.md skills/subagent-driven-development/re-review-prompt.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/code-review/SKILL.md (MIT); garrytan/gstack@4015c2870b06 review/SKILL.md review/checklist.md review/sections/plan-completion.md review/sections/adversarial.md (MIT); bmad-code-org/BMAD-METHOD@3cae711ea527 skills/bmad-review/references/lens-edge-case-hunter.md skills/bmad-review/references/lens-verification-gap.md skills/bmad-review/references/lens-adversarial.md skills/bmad-build/references/claims-check.md skills/bmad-build-auto/references/deletion-check.md (MIT); github/spec-kit@ae5ade7234be .github/skills/code-review/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-review/SKILL.md
 

@@ -16,8 +16,8 @@ Run the project's required checks against the assigned repository and artifact, 
    <argv> >"$LOG" 2>&1; echo "exit=$?"
    ```
 
-   Never pipe the checker into `tee`, `grep` or `tail` in the same command. Show the last lines of the log in the report and keep the whole log.
-5. Count failures from the full log. Keep every failing test name, with the line where it appears.
+   Show the last lines of the log in the report and keep the whole log.
+5. Keep every failing test name, with the line where it appears.
 6. Re-read the artifact. If it differs from step 2, the results are void: report the change and rerun on the new artifact.
 
 ## What counts
@@ -32,13 +32,11 @@ Run the project's required checks against the assigned repository and artifact, 
 | Requirements met | Line-by-line check against the brief | Tests passing |
 | Sibling or tool succeeded | Your own diff and logs | Its success message |
 
-A check with no known red case needs a failure direction. Run it on the known-bad input named in the brief, or report `failure direction unproven`.
-
 ## Scope
 
 - Per work unit: the scoped checks named in the brief.
 - Before a merge: the derived impact set the brief names, from the changed surface plus the smoke core.
-- Full suite: only when the brief carries the owner's trigger. Otherwise report it as not run.
+- Full suite: without the owner's trigger in the brief, report it as not run.
 - Visual or live acceptance: walk the actual user path and take the screenshots the brief lists. A built artifact is not a deployed observation.
 - Engine gates: the coordinator records gates with `orchestra.py gate <name> -- <argv>`, which checks artifact binding itself. Run that line only when the brief gives it with its lease. Your own run is evidence for the report, not a stamped pass.
 
