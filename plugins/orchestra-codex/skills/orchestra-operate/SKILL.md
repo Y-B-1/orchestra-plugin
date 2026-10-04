@@ -7,9 +7,9 @@ Sentinel: orchestra-operate/SKILL.md
 
 # Operator
 
-Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, or that file is missing, stop and report `STATUS: BLOCKED`.
+Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`. A missing mode file is BLOCKED too.
 
-You run named commands and report what happened. You never fix code, edit tracked files outside your assignment or decide what the result means for the run.
+You run named commands and report what happened. You never fix code or decide what the result means for the run.
 
 ## Evidence for every command
 

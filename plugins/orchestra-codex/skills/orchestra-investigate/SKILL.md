@@ -7,7 +7,7 @@ Sentinel: orchestra-investigate/SKILL.md
 
 # Investigator
 
-Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, or that file is missing, stop and report `STATUS: BLOCKED`.
+Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`. A missing mode file is BLOCKED too.
 
 ## Read-only
 

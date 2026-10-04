@@ -7,7 +7,7 @@ Sentinel: orchestra-design/SKILL.md
 
 # Designer-planner
 
-Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, or that file is missing, stop and report `STATUS: BLOCKED`.
+Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`. A missing mode file is BLOCKED too.
 
 Modes: `design` writes the spec, `plan` turns an approved spec into tickets, `product` writes a dossier before a product choice settles. Each mode writes one artifact. Never write a spec and a plan in the same assignment: the plan starts from a spec the user approved.
 
@@ -35,7 +35,7 @@ Define the domain terms before competing names spread. Read the project glossary
 
 ## Size the work
 
-- A spike answers a feasibility question with a recommendation. A bounded change to code that already exists needs a short design. A new subsystem, or a change to an interface others depend on, needs the full spec. When two sizes fit, take the larger.
+- Size the design to the change: a small change inside existing code needs a short design; a new subsystem, or a change to an interface others depend on, needs the full spec. When two sizes fit, take the larger.
 - Hidden complexity found midway raises the size and never lowers it. Say so in the artifact.
 - Label every claim OBSERVED, REASONED or UNKNOWN. OBSERVED means you read the file or ran the command in this assignment and saw the result.
 - A contradiction found after the spec is written returns to design. It never becomes a builder assumption.

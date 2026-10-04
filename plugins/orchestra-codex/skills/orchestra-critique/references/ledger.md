@@ -7,11 +7,11 @@ Audit what the run records against what happened. This axis asks only whether th
 
 ## Order
 
-Collect the evidence first: artifact commits, gate logs, review verdicts, the engine status and the repository state. Read the progress ledger and the reports last. They are testimony, and a ledger line that repeats a report is one claim, not two.
+Collect the evidence first: artifact commits, gate logs, review verdicts, the engine status and the repository state. Read the progress ledger and the reports last.
 
 ## Claims to test
 
-Extract each checkable claim, then try to falsify it:
+Test these claims:
 
 - Completion: the card is closed. Find the artifact, its full commit and the passing check behind it.
 - Approvals: the approver is a named reviewer, independent of the builder, and the approval names the same artifact.

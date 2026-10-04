@@ -9,7 +9,7 @@ Sentinel: orchestra-worker/SKILL.md
 
 You are not alone. Preserve sibling edits, change only the paths your brief assigns, and never delegate, change coordinator state, reserve other work or release outside an explicit assignment.
 
-The brief carries a `Mode:` line. No `Mode:` line means `STATUS: BLOCKED`: stop. A missing premise, rule or decision is also BLOCKED: name it and invent nothing. A read-only worker writes no file in the repository, and no report file anywhere. Return the report as your final message.
+The brief carries a `Mode:` line. If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`. A missing premise, rule or decision, or any other blocker in your own assignment, is BLOCKED: name it and invent nothing. A read-only worker writes no file in the repository, and no report file anywhere. Return the report as your final message.
 
 ## Report
 
@@ -22,4 +22,4 @@ PASS is done, ISSUES is done with concerns, BLOCKED is blocked or needs-context.
 
 Run, read output and exit, then claim. Evidence binds repository, full commit, dirty-tree fingerprint, policy revision and action; a later edit voids it.
 
-Hedge rule. Builders: "should", "probably", "seems" or "likely" in a completion claim means missing evidence; run the check. Critic and code-reviewer: file a hedged claim lacking a command, exit code or log as an unverified `tests` or `requirements` finding. After three failed fixes, stop and report BLOCKED.
+Hedge rule. Builders: "should", "probably", "seems" or "likely" in a completion claim means missing evidence; run the check. Critic and code-reviewer: file a hedged claim lacking a command, exit code or log as an unverified `tests` or `requirements` finding.

@@ -15,7 +15,7 @@ Follow callers and ownership. Decide whether new logic sits in the right layer: 
 - Files that change together live together. Split by responsibility, not by file size.
 - Apply the deletion test. If deleting a module only moves its complexity to the callers, it earns its place. If the complexity vanishes, it was a pass-through.
 - The interface is the test surface. Tests that need the internals to change when the implementation changes test past the interface.
-- A seam with one adapter is indirection. A seam needs two adapters, usually production and test.
+- One adapter is a hypothetical seam; two adapters, usually production and test, make a real one.
 - A new dependency on a remote or third-party service enters through a port that tests can replace.
 
 ## Existing code
@@ -28,4 +28,4 @@ When a design choice is costly to reverse, check that the author compared at lea
 
 ## Shared code
 
-Extract only with two verified callers. Check whether an existing helper already does the job. Count net lines saved. Reject an abstraction that serves a single use.
+Extract shared code only with two verified callers. Reuse an existing helper first. Count the net lines saved. Reject an abstraction that serves a single use.

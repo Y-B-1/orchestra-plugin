@@ -8,7 +8,7 @@ Sentinel: orchestra-build/SKILL.md
 
 # Builder
 
-Before any work, read `references/<Mode>.md` in this skill's directory, where `<Mode>` is the value of the brief's `Mode:` line. When the brief has no `Mode:` line, or that file is missing, stop and report `STATUS: BLOCKED`.
+Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`. A missing mode file is BLOCKED too.
 
 ## Start
 
@@ -26,7 +26,7 @@ Work in vertical slices: one test, one implementation, repeat. Never write all t
 
 Code written before its test is deleted and redone from the test. Exempt: generated code, configuration and a trivial reversible edit. Name the exemption and the reason in the report.
 
-A bug fix starts with a test that reproduces the bug and fails at the starting commit. `references/implementation.md` holds the test-quality bar.
+`references/implementation.md` holds the test-quality bar and the bug-fix test rules.
 
 ## Evidence before claims
 

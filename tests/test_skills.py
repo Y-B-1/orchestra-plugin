@@ -31,6 +31,42 @@ TABLE = {
     'orchestra-operate': ['SKILL.md', 'references/gate.md', 'references/cleanup.md', 'references/release.md'],
 }
 CLI = 'orchestra/references/cli.md'
+# O18: the no-Mode BLOCKED rule is a named exception to O15; worker and every role skill carry it verbatim.
+MODE_RULE = 'If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`.'
+ROLE_SKILLS = [d for d in TABLE if d not in ('orchestra', 'orchestra-worker')]
+DELETION_TEST = ('Apply the deletion test. If deleting a module only moves its complexity to the callers, '
+                 'it earns its place. If the complexity vanishes, it was a pass-through.')
+EXTRACT = ('Extract shared code only with two verified callers. Reuse an existing helper first. '
+           'Count the net lines saved. Reject an abstraction that serves a single use.')
+TAGS = ['code that nothing calls; search for real usage before you claim it',
+        'hand-written code that the standard library already provides',
+        'a dependency or helper that duplicates a platform feature',
+        'an abstraction, option or hook with one use or none',
+        'a smaller equivalent that saves five lines or more']
+LIVENESS = ("Check liveness: a live process, and the transcript's last modification time. "
+            'A journal line records what started, not what still runs.')
+# O15: a rule two actors both execute appears once in each actor's skills, worded identically.
+IDENTICAL_COPIES = [
+    ('orchestra/references/briefs.md', 'orchestra-design/references/plan.md',
+     'A link alone does not carry a rule into an empty context.'),
+    ('orchestra/references/worktrees.md', 'orchestra-operate/references/cleanup.md',
+     'A dirty or untracked worktree is not disposable. Show the file list and the three ways out: commit to a '
+     'named branch, move the files out, or delete them as unrecoverable. The coordinator or user picks.'),
+    ('orchestra/references/handoff.md', 'orchestra-operate/references/cleanup.md', LIVENESS),
+    ('orchestra-design/references/design.md', 'orchestra-review/references/architecture.md', DELETION_TEST),
+    ('orchestra-design/references/design.md', 'orchestra-build/references/cleanup.md', DELETION_TEST),
+    ('orchestra-review/references/cleanliness.md', 'orchestra-build/references/cleanup.md', DELETION_TEST),
+    ('orchestra-design/references/design.md', 'orchestra-review/references/architecture.md',
+     'One adapter is a hypothetical seam; two adapters, usually production and test, make a real one.'),
+    ('orchestra-design/references/design.md', 'orchestra-review/references/architecture.md', EXTRACT),
+    ('orchestra-design/references/design.md', 'orchestra-build/references/cleanup.md', EXTRACT),
+    ('orchestra-design/references/plan.md', 'orchestra-critique/references/feasibility.md',
+     'A plan several times longer than its spec has written the code instead.'),
+    ('orchestra-design/references/plan.md', 'orchestra-critique/references/feasibility.md',
+     'A line that decides nothing, such as "handle edge cases", is a gap.'),
+    ('orchestra-build/references/sensitive.md', 'orchestra-review/references/security.md',
+     'A leaked secret needs rotation, and rewriting history does not replace it.'),
+] + [('orchestra-review/references/cleanliness.md', 'orchestra-build/references/cleanup.md', t) for t in TAGS]
 
 
 def files():
@@ -226,6 +262,7 @@ class PhraseTests(unittest.TestCase):
         body = read('orchestra-worker/SKILL.md').split('Sentinel:')[1].split('\n', 1)[1]
         body = '\n'.join(l for l in body.split('\n') if not l.startswith('Stub:'))
         sentences = [s.strip() for s in re.split(r'(?<=[.:])\s+|\n', body) if len(s.split()) >= 6]
+        sentences = [x for x in sentences if x not in MODE_RULE]
         self.assertTrue(sentences)
         for d in TABLE:
             if d in ('orchestra', 'orchestra-worker'):
@@ -233,6 +270,73 @@ class PhraseTests(unittest.TestCase):
             text = ' '.join(read(f'{d}/{f}') for f in TABLE[d]).lower()
             for sentence in sentences:
                 self.assertNotIn(sentence.lower(), text, (d, sentence))
+
+
+class CohesionTests(unittest.TestCase):
+    def test_mode_rule_is_byte_identical_in_worker_and_every_role_skill(self):
+        for d in ['orchestra-worker'] + ROLE_SKILLS:
+            self.assertEqual(read(f'{d}/SKILL.md').count(MODE_RULE), 1, d)
+
+    def test_worker_does_not_cap_fix_rounds(self):
+        # E1: the round cap belongs to the coordinator; the worker stops on its own blockers only.
+        worker = read('orchestra-worker/SKILL.md').lower()
+        self.assertNotIn('failed fixes', worker)
+        self.assertIn('blocker in your own assignment', worker)
+
+    def test_shared_rules_are_identical_in_both_actors_files(self):
+        for a, b, sentence in IDENTICAL_COPIES:
+            for rel in (a, b):
+                self.assertIn(sentence, read(rel), (rel, sentence))
+
+    def test_coordinator_rules_have_one_owner(self):
+        owners = [('dirty bytes', 'SKILL.md'), ('explicit user request', 'SKILL.md'),
+                  ('reserve every card', 'references/parallel.md'),
+                  ('empty context', 'references/briefs.md'),
+                  ('exact artifact', 'references/repair-rounds.md')]
+        coordinator = [f for f in TABLE['orchestra'] if f != 'references/cli.md']
+        for phrase, owner in owners:
+            hits = [f for f in coordinator if phrase in read(f'orchestra/{f}').lower()]
+            self.assertEqual(hits, [owner], phrase)
+
+    def test_skill_and_coordination_share_no_four_word_phrase(self):
+        def grams(rel):
+            body = read(f'orchestra/{rel}').split('Sentinel:')[1].lower()
+            w = re.findall(r"[a-z0-9`<>:/_.'-]+", body)
+            return {tuple(w[i:i + 4]) for i in range(len(w) - 3)}
+        self.assertEqual(grams('SKILL.md') & grams('references/coordination.md'), set())
+
+    def test_specialist_contract_has_both_sides(self):
+        final_review = read('orchestra/references/final-review.md')
+        self.assertIn('`Lens: specialist:<name>`', final_review)
+        self.assertIn('specialists.md', final_review)
+        self.assertNotIn('The lens never gates', final_review)
+        headings = re.findall(r'^## (\S+)\s*$', read('orchestra-review/references/specialists.md'), re.M)
+        for name in ['frontend', 'visual']:
+            self.assertIn(name, headings)
+        self.assertIn('specialist:<name>', read('orchestra-review/references/final.md'))
+
+    def test_autonomy_documents_the_spec_cli(self):
+        text = read('orchestra/references/autonomy.md')
+        for command in ['autonomy arm', 'autonomy disarm', 'autonomy status', 'park TASK --reason TEXT',
+                        'unpark TASK']:
+            self.assertIn(command, text)
+        self.assertNotIn('--max-passes', text)
+
+    def test_handoff_ledger_line_has_the_six_e2_fields(self):
+        line = next(l for l in read('orchestra/references/handoff.md').split('\n') if 'artifact SHA' in l)
+        for field in ['time', 'card', 'action', 'round', 'decision']:
+            self.assertIn(field, line)
+
+    def test_operator_gate_does_not_judge_requirements(self):
+        self.assertNotIn('Requirements met', read('orchestra-operate/references/gate.md'))
+
+    def test_a_lens_file_never_points_into_another_lens_file(self):
+        lenses = ['correctness', 'architecture', 'security', 'cleanliness']
+        for lens in lenses:
+            text = read(f'orchestra-review/references/{lens}.md')
+            for other in lenses:
+                if other != lens:
+                    self.assertNotIn(f'{other}.md', text, (lens, other))
 
 
 class ProvenanceTests(unittest.TestCase):

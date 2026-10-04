@@ -3,7 +3,7 @@ Sentinel: orchestra-critique/references/surface.md
 
 # Critic: surface mode (shipped-surface audit)
 
-Audit a surface that has already shipped. Find and report; never fix. Write no product code and no tests.
+Audit a surface that has already shipped. Find and report; never fix. Write no tests.
 
 ## Method
 

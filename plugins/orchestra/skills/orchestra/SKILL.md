@@ -20,7 +20,7 @@ A trusted session start supplies context only. Repair, resume and autonomy begin
 
 ## The loop
 
-Route, reserve, dispatch, check, integrate, review. Every card ends with evidence you inspected yourself, and every integration ends with an independent final review. A review grants no external permission. Release stays disabled until project configuration names authorization, remote, target, required checks and commands.
+Route, reserve, dispatch, check, integrate, review. Every card ends with evidence you inspected yourself, and every integration ends with an independent final review and the named project checks. A review grants no external permission. Release stays disabled until project configuration names authorization, remote, target, required checks and commands.
 
 ## Executor choice
 

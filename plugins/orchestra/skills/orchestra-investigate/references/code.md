@@ -7,11 +7,11 @@ Answer the narrow question from source. The brief decides the path: a question t
 
 ## Source discovery
 
-Search for the files and symbols the question names, then follow callers, data flow and tests that exercise them. Read the code, not the comments about it. Report exact paths and symbols, labelled observed or inferred. Make no edit and propose no fix unless the brief asks for one. If the brief describes a defect, use the diagnosis path below instead.
+Search for the files and symbols the question names, then follow callers, data flow and tests that exercise them. Read the code, not the comments about it. Report exact paths and symbols, each with its evidence label. Make no edit and propose no fix unless the brief asks for one. If the brief describes a defect, use the diagnosis path below instead.
 
 ## Bug diagnosis
 
-Find the cause before naming any fix. A fix aimed at a symptom hides the cause and makes the next bug harder to find. The pass/fail loop comes first; with no loop, report `STATUS: BLOCKED`.
+Find the cause before naming any fix. A fix aimed at a symptom hides the cause and makes the next bug harder to find. Build the pass/fail loop first; with no loop, report `STATUS: BLOCKED`.
 
 ### 1. Build a feedback loop first
 
@@ -28,7 +28,6 @@ Then build a pass/fail loop that goes red on this bug. Do not read code for a th
 8. a bisection harness when the bug appeared between two known states;
 9. a differential run of old against new, or of two configs.
 
-A step only a human can perform is the last resort: write its exact steps into the report.
 
 The loop is done when one command, already run, is red-capable (it asserts the reported symptom, not "does not crash"), deterministic, fast and runnable unattended. For a flaky bug, raise the reproduction rate until it is debuggable. If you cannot build a loop, stop with `STATUS: BLOCKED`. List what you tried and name what you need: access to the failing environment, a redacted captured artifact, or approval for temporary instrumentation.
 

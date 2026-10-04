@@ -2,11 +2,16 @@ Sentinel: orchestra/references/autonomy.md
 
 # Autonomy
 
-Overnight mode runs only on an explicit user request. Orchestra waits at approval boundaries; it never pushes through them.
+Orchestra waits at approval boundaries; it never pushes through them.
 
 ## Toggle
 
-`orchestra.py autonomy arm|disarm|status` is the one entry. `arm` needs an active run. With no `<state>/autonomy.md`, it writes the template and refuses: fill the ledger, then arm again. The ledger holds the goal, the completion checks (each a named gate command), the pass and stall limits, a deadline and the approval boundaries. Edit nothing in it after `arm`; a change stops the loop. `arm` prints the preconditions report. Read it to the user, including the keep-awake step, which only the user can take.
+- `orchestra.py autonomy arm` needs an active run. With no `<state>/autonomy.md`, it writes the template and refuses: fill the ledger, then arm again. A placeholder left in it, or a field that does not parse, refuses and names the field. Otherwise it snapshots the ledger and prints the preconditions report. Read the report to the user, including the keep-awake step, which only the user can take.
+- `orchestra.py autonomy disarm` ends the loop with the stop reason `disarmed`.
+- `orchestra.py autonomy status` prints active, passes and max_passes, stalls and max_stalls, the deadline, parked cards and the last stop reason.
+- `orchestra.py park TASK --reason TEXT` moves a queued, running or reported card to parked. `orchestra.py unpark TASK` returns it to queued. Both need the lease; `autonomy` takes none.
+
+The ledger holds the goal, the completion checks (each a named gate command), the pass and stall limits, a deadline and the approval boundaries. Edit nothing in it after `arm`; a change stops the loop.
 
 ## Loop
 

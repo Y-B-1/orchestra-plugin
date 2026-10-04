@@ -23,9 +23,9 @@ Compare two or three feasible approaches with their trade-offs. Lead with your r
 For a change to structure or interfaces, use this method:
 - Prefer deep modules: a small interface in front of much behavior. Name the seam where the interface lives and what sits behind it.
 - Apply the deletion test. If deleting a module only moves its complexity to the callers, it earns its place. If the complexity vanishes, it was a pass-through.
-- The interface is the test surface. Tests and callers cross the same seam. One adapter is a hypothetical seam; add a seam only where two real variants exist.
+- The interface is the test surface. Tests and callers cross the same seam. One adapter is a hypothetical seam; two adapters, usually production and test, make a real one.
 - Design the interface twice. Sketch two contrasting shapes, for example one minimal and one tuned for the most common caller, then compare them on leverage, locality and seam placement. Recommend one, or a hybrid.
-- Extract shared code only with two verified callers. Reuse an existing helper first. Count the net lines saved, tests included. Reject a speculative abstraction.
+- Extract shared code only with two verified callers. Reuse an existing helper first. Count the net lines saved. Reject an abstraction that serves a single use.
 - Give each unit one purpose. Keep files that change together together, and split by responsibility. In existing code, follow the local patterns and improve only what the work touches. Propose no unrelated refactor.
 
 ## Write the spec

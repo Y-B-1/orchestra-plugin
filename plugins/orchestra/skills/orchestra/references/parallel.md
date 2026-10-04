@@ -5,7 +5,7 @@ Sentinel: orchestra/references/parallel.md
 
 ## Independence test
 
-Run cards together only when they touch different files and resources, need no result from each other, and own no shared state. Anything else runs in dependency order. Reserve every card in the engine first; reject cycles and overlaps. Only the main changes coordinator state.
+Run cards together only when they touch different files and resources, need no result from each other, and own no shared state. Anything else runs in dependency order. Only the main changes coordinator state.
 
 Each brief is focused and self-contained, names one output and its constraints, and follows briefs.md.
 

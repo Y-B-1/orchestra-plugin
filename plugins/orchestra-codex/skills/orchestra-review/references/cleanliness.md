@@ -13,13 +13,13 @@ Start from the recent work in the diff. At most five candidates, best three firs
 
 Tag each finding with one of: delete, stdlib, native, speculative, shrink.
 
-- delete: code that nothing calls. Search for real usage before you claim it.
-- stdlib: hand-written code that the standard library already provides.
-- native: a dependency or helper that duplicates a platform feature.
-- speculative: an abstraction, option or hook with one use or none.
-- shrink: a smaller equivalent that saves five lines or more. Sketch it.
+- delete: code that nothing calls; search for real usage before you claim it
+- stdlib: hand-written code that the standard library already provides
+- native: a dependency or helper that duplicates a platform feature
+- speculative: an abstraction, option or hook with one use or none
+- shrink: a smaller equivalent that saves five lines or more
 
-Report a delete finding for a module only when it is a pass-through under the deletion test in `architecture.md`.
+Apply the deletion test. If deleting a module only moves its complexity to the callers, it earns its place. If the complexity vanishes, it was a pass-through. Report a delete finding for a module only when it is a pass-through.
 
 ## Reuse
 

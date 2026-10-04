@@ -30,3 +30,11 @@ Existing callers keep working. Removed or renamed fields, changed types, changed
 ## red-team
 
 Attack the change as a hostile user and a hostile input. Find the sequence of valid steps that reaches a bad state. Report only paths you can trace in the code.
+
+## frontend
+
+Component states: empty, loading, error and long text. Accessibility: labels, focus order, keyboard use and contrast. The host's design vocabulary is reused, not reinvented. Responsive behavior at the required widths. Real input events drive the checks, not direct state changes.
+
+## visual
+
+Inspected screenshots exist for each required theme, viewport and state. Look for clipped text, overflow, misalignment, low contrast, a missing focus ring and broken motion. Judge density in place against the host page. State each state you did not observe.

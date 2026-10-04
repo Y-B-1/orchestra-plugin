@@ -3,7 +3,7 @@ Sentinel: orchestra/references/coordination.md
 
 # Coordinator procedure
 
-Inspect project rules, repository identity, branch and dirty bytes first. Preserve existing work. Split the request into outcomes and size each item, not the whole message. Settle facts from code before asking for product decisions. Record each settled decision without widening scope.
+Preserve existing work. Split the request into outcomes and size each item, not the whole message. Settle facts from code before asking for product decisions. Record each settled decision without widening scope.
 
 ## Lanes
 
@@ -24,7 +24,7 @@ Unknown requirements go to design, dependency mistakes to planning, checked code
 
 ## Inline work
 
-Executor choice is in SKILL.md. Inline work runs beside disjoint workers. Reserve it with `inline TASK`, then report under your real actor identity and returned token. The engine applies the same ownership, resource, dependency, capacity and lease checks as for a worker. Never edit a worker-owned file inline.
+Inline work runs beside disjoint workers. Reserve it with `inline TASK`, then report under your real actor identity and returned token. The engine applies the same ownership, resource, dependency, capacity and lease checks as for a worker. Never edit a worker-owned file inline.
 
 ## Kanban
 
@@ -35,19 +35,19 @@ Columns are role assignments, not sequence barriers. A card holds role and mode,
 - A review_of card reads its targets without taking write ownership and still reserves its own resources.
 - Creating a repair suspends its ancestors as repairing and moves their reservations to the queued repair. Repair acceptance and fresh independent coverage come before ancestor acceptance.
 - Before dispatch, reject unknown or cyclic dependencies, missing inputs or checks, unavailable roles or modes, overlapping ownership and exhausted capacity. The engine reserves atomically; prose scheduling is no lock.
-- Early independent review goes to consequential foundations. Group low-risk related tickets under one review with stated coverage. Every integration gets a final review and the named project checks.
+- Early independent review goes to consequential foundations. Group low-risk related tickets under one review with stated coverage.
 
 Example: a settings request makes I1 investigate, D1 design, P1 plan, B1 API build, B2 UI build, R1 checkpoint review of B1, G1 gates and R2 final review. R1 starts when B1 reports while B2 runs. An unrelated docs card runs alongside, on different paths.
 
 ## Standing orders
 
-At run start write `<state>/standing-orders.md`, copying the binding project rules verbatim (path rules, authorization limits, design vocabulary, policy revision). Paste it into every brief under `## Standing orders (verbatim)`, followed by a `sha256:` line of the file. A rule that constrains a worker must be inside the brief; a link or a standing file does not reach an empty context. With mods, agent.spawn appends the file.
+At run start write `<state>/standing-orders.md`, copying the binding project rules verbatim (path rules, authorization limits, design vocabulary, policy revision). Paste it into every brief under `## Standing orders (verbatim)`, followed by a `sha256:` line of the file. With mods, agent.spawn appends the file.
 
 ## Findings and interruption
 
-Check each finding against source and try to refute it. A confirmed defect returns to the builder with the exact artifact, scenario and scope. A spec contradiction or missing decision returns to design; a task or dependency flaw to planning, then critic challenge. Never ask a builder to implement contradictory requirements. After a change, invalidate and rerun the affected reviews and gates.
+Check each finding against source and try to refute it. A confirmed defect goes to builder repair (references/repair-rounds.md). A spec contradiction or missing decision returns to design; a task or dependency flaw to planning, then critic challenge. Never ask a builder to implement contradictory requirements. After a change, invalidate and rerun the affected reviews and gates.
 
-On interruption or lease loss, stop dispatch. Late reports stay historical and advance nothing. Resume only on explicit request, after checking artifacts and live workers (references/handoff.md). Overnight runs follow references/autonomy.md; conformance axes are in references/audit-axes.md.
+On interruption or lease loss, stop dispatch. Late reports stay historical and advance nothing. Resume follows references/handoff.md. Overnight runs follow references/autonomy.md; conformance axes are in references/audit-axes.md.
 
 ## Release and bypass
 
@@ -55,4 +55,4 @@ At most one terminal operator release card belongs to a run, dispatched before t
 
 A `gh api` merge or release, or an MCP or terminal tool that pushes or merges, is no way around the guard. Use the guarded path. Procedure binds here; the guard does not enforce it.
 
-Engine commands and schemas: references/cli.md, or `scripts/orchestra.py --help` from the plugin root.
+Every command and schema is in references/cli.md, or in `scripts/orchestra.py --help` from the plugin root.
