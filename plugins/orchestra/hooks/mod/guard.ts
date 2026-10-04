@@ -199,7 +199,13 @@ export function shlexSplit(s: string, comments: boolean): string[] {
         } else token += ch;
       } else if (state === '\\') {
         if (ch === '') throw new ValueError('No escaped character');
-        if ((escapedState === '"' || escapedState === "'") && ch !== state && ch !== escapedState) token += state;
+        // Inside double quotes a backslash before `$`, a backtick, `"` or a backslash is removed, and a
+        // backslash-newline pair is deleted, as in bash (O34); before any other character it stays.
+        if (escapedState === '"' && ch === '\n') {
+          state = escapedState;
+          continue;
+        }
+        if (escapedState === '"' && !'$`"\\'.includes(ch)) token += state;
         token += ch;
         state = escapedState;
       } else {
@@ -1201,6 +1207,7 @@ function scanOps(text: string): Ops {
   const herestrings: [string, string][] = [];
   const procsubs: [string, string][] = [];
   let pending: [string, string, number][] = [];
+  const parens: ([number, [string, string, number][]] | null)[] = [];
   let start = 0;
   let q: string | null = null;
   let escaped = false;
@@ -1228,10 +1235,20 @@ function scanOps(text: string): Ops {
       continue;
     } else if (char === '|' && i > 0 && text[i - 1] === '>') {
       continue;
+    } else if (char === '(' && i > 0 && text[i - 1] === '$' && !backslashed(text, i - 1)) {
+      // O34: a `$(` substitution does not cut the command around it; its inner text is a command of its own.
+      parens.push([start, pending]);
+      pending = [];
+      start = i + 1;
     } else if (';|&()\n'.includes(char)) {
       for (const [before, word, end] of pending) herestrings.push([before + ' ' + (i >= end ? text.slice(end, i) : ''), word]);
       pending = [];
       start = i + 1;
+      if (char === '(') parens.push(null);
+      else if (char === ')' && parens.length) {
+        const outer = parens.pop();
+        if (outer) [start, pending] = outer;
+      }
     }
   }
   for (const [before, word, end] of pending) herestrings.push([before + ' ' + text.slice(end), word]);
@@ -1865,7 +1882,30 @@ function codePointLength(text: string): number {
 const SMARK = '\ue002'; // Private-use delimiter for the placeholder that stands in for an unquoted `$(...)` (O33).
 const SUB_RE = /\ue002([0-9]+)\ue002/g;
 const PURE_SUB_RE = /^(?:\ue002[0-9]+\ue002)+$/; // A word made only of substitutions.
-const FOLD_LEVELS = 8; // Substitution nesting levels folded (O33); deeper text is segmented as before.
+const FOLD_LEVELS = 16; // Substitution nesting levels folded (O33); a substitution nested deeper denies (O34).
+const RANK: Record<string, number> = { deny: 4, 'release-multi': 3, release: 2, boundary: 1 };
+
+/** The stricter of two verdicts (O34); first on a tie. Mirrors guards._stricter. */
+function stricter(first: Decision, second: Decision): Decision {
+  return (RANK[klassOf(second)] ?? 0) > (RANK[klassOf(first)] ?? 0) ? second : first;
+}
+
+/** O33 and O34: the words with pure-substitution words removed, then unwrapped. Mirrors guards._removed_reading. */
+function removedReading(full: string[], kept: string[], whole: string[]): string[] {
+  const words = unwrap(full.filter((_w, k) => !PURE_SUB_RE.test(kept[k]!)));
+  if (!words.length || !whole.length || whole[0] !== words[0]) return words;
+  if (words[0] === 'eval' || !SHELLS.has(posixName(words[0]!))) return words[0] === 'eval' ? whole : words;
+  const offset = full.length - whole.length;
+  if (whole.some((word, k) => full[offset + k] !== word)) return whole; // Rewritten by a runner (watch, flock -c).
+  const out = [whole[0]!];
+  let payload = false;
+  for (let k = 1; k < whole.length; k++) {
+    const word = whole[k]!;
+    if (payload || !PURE_SUB_RE.test(kept[offset + k]!)) out.push(word);
+    payload = payload || (/^-[A-Za-z]+$/.test(word) && word.slice(1).includes('c'));
+  }
+  return out;
+}
 
 /**
  * SPEC A5 (O33): text with each unquoted `$(...)` (backticks are rewritten to it first; `$((...))` included)
@@ -1907,7 +1947,10 @@ function fold(text: string, subs: string[]): string {
 
 /** The segments of text with its substitutions folded (O33), each followed by the segments of the substitutions it holds. Mirrors guards._folded_segments. */
 function foldedSegments(text: string, subs: string[], level = 0): string[] {
-  if (level >= FOLD_LEVELS) return segments(text);
+  if (level >= FOLD_LEVELS) {
+    if (fold(text, []) !== text) throw new ValueError('Substitution nesting too deep'); // O34: fail closed.
+    return segments(text);
+  }
   const result: string[] = [];
   for (const segment of segments(fold(text, subs))) {
     result.push(segment);
@@ -1931,15 +1974,24 @@ export function classifyCommand(command: string, depth = 0): Decision {
       const heredoc = rawOriginal.some((word) => word.includes(MARK));
       const original = rawOriginal.map(render);
       const full = kept.map(render);
-      // Redirections removed (O31, heredocs included); a word made only of substitutions is removed too (O33).
-      let words = unwrap(full.filter((_w, k) => !PURE_SUB_RE.test(kept[k]!)));
-      if (words.length && (words[0] === 'eval' || SHELLS.has(posixName(words[0]!)))) {
-        const whole = unwrap(full); // Script text (an eval argument, a -c payload) keeps its substitutions.
-        if (whole.length && whole[0] === words[0]) words = whole;
+      const whole = unwrap(full); // Redirections removed (O31, heredocs included).
+      const readings = [whole];
+      const pure = kept.map((raw) => PURE_SUB_RE.test(raw));
+      if (pure.includes(true)) {
+        // A pure-substitution word may expand to nothing (O33): classified removed and kept, stricter wins (O34).
+        readings.unshift(removedReading(full, kept, whole));
+        if (full.slice(0, pure.indexOf(true)).some((word) => WRAPPER_VALUES.has(posixName(word)))) {
+          // After a wrapper it may also fill an option value and the next slot (two words).
+          readings.push(unwrap(full.flatMap((word, k) => (pure[k] ? [word, word] : [word]))));
+        }
       }
-      if (words.length && words[0] === 'eval' && heredoc) items.push([denyOf('Malformed heredoc', 'malformed'), original, true]); // R2b F3 fail-safe.
-      else if (words.length) items.push([classifySegment(words, depth), original, true]);
-      else if (unwrap(full).length) items.push([dec(), original, true]); // Only substitutions: still a command of its own.
+      let decision: Decision | null = null;
+      for (const words of readings) {
+        if (!words.length) continue;
+        const found = words[0] === 'eval' && heredoc ? denyOf('Malformed heredoc', 'malformed') : classifySegment(words, depth); // R2b F3 fail-safe.
+        decision = decision === null ? found : stricter(decision, found);
+      }
+      if (decision !== null) items.push([decision, original, true]);
     }
     items.push(...heredocItems(docs, pipelines(text), depth));
     items.push(...streamItems(text, scanOps(text), depth));
