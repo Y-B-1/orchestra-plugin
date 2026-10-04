@@ -292,10 +292,10 @@ Acceptance: `python3 -m unittest discover -s tests -p 'test_hooks.py'`, `-p 'tes
 | designer-planner | design, plan, product | opus-5-5 high | none | sol high | none | Agent |
 | critic | requirements, feasibility, scope, judge, spec, standards, ledger, surface | opus-5-5 high | none | sol high | none | Agent, Edit, Write, NotebookEdit |
 | builder | implementation, frontend, sensitive, mechanical, repair, cleanup | sonnet-5-5 medium | none (repair round 4 = dispatch override `claude-opus-5-5`; cleanup = default) | sol medium | `orchestra_builder_repair` (sol high); cleanup = default | Agent |
-| code-reviewer | checkpoint, final | opus-5-5 high | `code-reviewer-checkpoint` (opus medium) | sol high | `orchestra_code_reviewer_checkpoint` (sol medium) | Agent, Edit, Write, NotebookEdit |
+| code-reviewer | checkpoint, final | opus-5-5 high | `code-reviewer-checkpoint` (opus medium) | sol high | none (checkpoint = default, sol high; final wave a2, FX3) | Agent, Edit, Write, NotebookEdit |
 | operator | gate, cleanup, release | sonnet-5-5 medium | none | sol medium | `orchestra_operator_cleanup` (luna high) | Agent |
 
-The result is 7 roles, 9 Claude agent files (down from 14) and 10 Codex profiles (down from 13): the 6 role defaults other than orchestrator (Codex generates no orchestrator profile, OBSERVED) plus the 4 named variants. The builder `cleanup` preset equals the builder default on both harnesses, so it adds no file. `generate.py --check` therefore reports 19 native profiles instead of 27.
+The result is 7 roles, 9 Claude agent files (down from 14) and 9 Codex profiles (down from 13): the 6 role defaults other than orchestrator (Codex generates no orchestrator profile, OBSERVED) plus the 3 named variants. The builder `cleanup` preset equals the builder default on both harnesses, so it adds no file. `generate.py --check` therefore reports 19 native profiles instead of 27.
 
 Model mapping checks against the current matrix:
 - Every former Opus-high worker role (founder-mind, red-teamer, auditor) maps to an Opus-high role.
@@ -340,7 +340,7 @@ Why these names:
 
 Acceptance criteria for area C:
 - `ls plugins/orchestra/agents` lists exactly these files: `builder.md`, `code-reviewer.md`, `code-reviewer-checkpoint.md`, `critic.md`, `designer-planner.md`, `investigator.md`, `investigator-code.md`, `operator.md`, `orchestrator.md`.
-- `ls plugins/orchestra/profiles/codex` lists exactly the 10 profiles in 7.1: `orchestra_builder`, `orchestra_builder_repair`, `orchestra_code_reviewer`, `orchestra_code_reviewer_checkpoint`, `orchestra_critic`, `orchestra_designer_planner`, `orchestra_investigator`, `orchestra_investigator_code`, `orchestra_operator`, `orchestra_operator_cleanup` (each `.toml`).
+- `ls plugins/orchestra/profiles/codex` lists exactly the 9 profiles in 7.1: `orchestra_builder`, `orchestra_builder_repair`, `orchestra_code_reviewer`, `orchestra_critic`, `orchestra_designer_planner`, `orchestra_investigator`, `orchestra_investigator_code`, `orchestra_operator`, `orchestra_operator_cleanup` (each `.toml`).
 - `test_packaging` asserts the role set, the read-only `disallowedTools`, `disallowedTools` containing `Agent` on every worker file, `sandbox_mode = "read-only"` on exactly the read-only role profiles, no `model:`/`effort:` in `orchestrator.md`, Luna assignments `[('investigator','code'), ('operator','cleanup')]`, and Codex `builder.repair == sol high`.
 - `test_engine` covers: the operator release card as the terminal card; critic `review_of`; critic refused for inline execution; old role names rejected as an unavailable role; builder `cleanup` accepted without `repair_of`.
 - `generate.py --check` exits 0.
