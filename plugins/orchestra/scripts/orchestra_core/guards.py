@@ -231,7 +231,15 @@ def _unwrap(words):
         redirect = _REDIRECT.fullmatch(words[0])
         if words[0] == 'case':
             return []  # A case header (`case WORD in`) runs nothing; its patterns are not commands.
-        if words[0] in _RESERVED:
+        if words[0] == 'function' and len(words) > 1:
+            words = words[2:]  # `function NAME [()] {`: the name is not a command (SPEC A5, O20).
+            if words and words[0] == '()':
+                words = words[1:]
+        elif words[0] == 'coproc':
+            words = words[1:]  # `coproc [NAME] {` or `coproc COMMAND` (SPEC A5, O20).
+            if len(words) > 1 and words[1] == '{':
+                words = words[1:]
+        elif words[0] in _RESERVED:
             words = words[1:]  # SPEC A5 (O17): reserved words and group openers precede the real command.
         elif redirect:
             words = words[1:] if redirect.group(1) else words[2:]
@@ -600,7 +608,23 @@ def _read_balanced(text, i):
     return len(text) if end < 0 else end
 
 
-_CASE_PREV = frozenset(['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', '{'])
+_CASE_PREV = frozenset(['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', '{', 'time'])
+
+
+def _skip_heredoc_bodies(text, i, pending):
+    """Index just past the bodies of the heredocs in pending, which start at text[i]. A body that never
+    ends is not skipped (the operator may not have been a heredoc, as in `$((1 << 2))`)."""
+    j, n = i, len(text)
+    for dash, delimiter in pending:
+        while True:
+            if j >= n:
+                return i
+            end = text.find('\n', j)
+            line = text[j:n if end < 0 else end]
+            j = n if end < 0 else end + 1
+            if (line.lstrip('\t') if dash else line) == delimiter:
+                break
+    return j
 
 
 def _balanced_end(text, i):
@@ -609,6 +633,7 @@ def _balanced_end(text, i):
     (SPEC A5, O17)."""
     depth, quote, n = 1, None, len(text)
     cases = []  # One [state, depth] per open `case`; state is 'head', 'pattern' or 'body'.
+    pending = []  # Heredoc (dash, delimiter) pairs whose bodies start after the next newline (SPEC A5, O20).
     start = True  # At a command position, where `case` is a keyword.
     while i < n:
         char = text[i]
@@ -647,10 +672,22 @@ def _balanced_end(text, i):
                 if depth == 0:
                     return i + 1
             start = True
+        elif char == '<' and text.startswith('<<', i) and not text.startswith('<<<', i) and (
+                i == 0 or text[i - 1] != '<') and _HEREDOC.match(text, i):
+            found = _HEREDOC.match(text, i)
+            pending.append((bool(found.group(1)), found.group(2).strip('"\'\\')))
+            i = found.end()
+            start = False
+            continue
         elif char in ';&|\n':
             if top and top[0] == 'body' and text[i:i + 2] in {';;', ';&'}:
                 top[0] = 'pattern'
                 i += 1
+            elif char == '\n' and pending:
+                i = _skip_heredoc_bodies(text, i + 1, pending)
+                pending = []
+                start = True
+                continue
             start = True
         elif char not in '$`<>':
             end = i
@@ -761,7 +798,7 @@ def _is_arithmetic(text, i):
     return inner < 0 or text[inner:inner + 1] == ')'
 
 
-def _raw_substitutions(text):
+def _raw_substitutions(text, ticks=None):
     """Quote-aware scan of raw text (SPEC A5 rule 6b) for the `$(...)` and backtick substitutions the
     outer shell runs: unquoted or inside double quotes, never inside single quotes. Nested quotes and
     substitutions are tracked, so the text is not cut the way shlex or _split cut it. Returns
@@ -771,6 +808,8 @@ def _raw_substitutions(text):
 
     def command(i):  # text[i] starts `$(` or a backtick; returns the index to resume from.
         nonlocal closed
+        if ticks is not None:
+            ticks.append((text[i] == '`', i))
         if text[i] == '`':
             j = i + 1
             while j < n and text[j] != '`':
@@ -808,6 +847,24 @@ def _raw_substitutions(text):
         else:
             i += 1
     return found, closed
+
+
+def _backtick_scan(text, depth):
+    """SPEC A5 (O20): a backtick substitution anywhere in the text is a command, as `$(...)` is. The
+    `$(...)` ones are classified by the segment split; only the backtick ones need this scan."""
+    if depth > 8:
+        return None
+    ticks = []  # One (is a backtick, start index) per substitution.
+    for content, (tick, at) in zip(_raw_substitutions(text, ticks)[0], ticks):
+        if not tick:
+            hit = _backtick_scan(content, depth + 1)
+        elif not text[:at].rstrip(' \t') or text[:at].rstrip(' \t')[-1] in ';&|({!\n':
+            hit = _scan_text(content, depth + 1, as_command=True)  # At command position its output runs.
+        else:
+            hit = classify_command(content, depth + 1)
+        if hit and _hard_deny(hit):
+            return hit
+    return None
 
 
 def _raw_commands(text):
@@ -880,6 +937,21 @@ def _raw_scan(text, depth):
     return None
 
 
+def _only_redirects(segment):
+    """True when the segment is blank or only redirections (`2>/dev/null`, `>&1`, `</dev/stdin`)."""
+    try:
+        words = shlex.split(segment)
+    except ValueError:
+        return False
+    i = 0
+    while i < len(words):
+        redirect = _REDIRECT.fullmatch(words[i])
+        if not redirect:
+            return False
+        i += 1 if redirect.group(1) else 2
+    return i <= len(words)
+
+
 def _pipe_joins(parts, k):
     """True when the `|` that ends parts[k] continues the pipeline (`|&` and a following group included)."""
     following = parts[k + 1] if k + 1 < len(parts) else None
@@ -904,8 +976,9 @@ def _chains(text):
             state['flushes'] += 1
         cur = []
 
-    def pipe_follows(k):  # A blank part holding only a continuing `|` comes right after parts[k].
-        return k + 1 < len(parts) and not parts[k + 1][0].strip() and parts[k + 1][1] == '|' and _pipe_joins(parts, k + 1)
+    def pipe_follows(k):  # A part holding only redirects and a continuing `|` comes right after parts[k] (O20).
+        return (k + 1 < len(parts) and _only_redirects(parts[k + 1][0]) and parts[k + 1][1] == '|'
+                and _pipe_joins(parts, k + 1))
 
     for k, (seg, op) in enumerate(parts):
         s = seg.strip()
@@ -913,6 +986,8 @@ def _chains(text):
             state['carry'] = False
             continue
         state['carry'] = False
+        if k and parts[k - 1][1] == ')' and s and pipe_follows(k - 1):
+            s = ''  # The redirects of a group that a pipe follows are not a command.
         if re.match(r'\{(\s|$)', s):
             s = s[1:].strip()
             frames.append(([], state['flushes'], list(cur) if state['pipe_before'] else None))
@@ -1089,7 +1164,7 @@ def classify_command(command: str, _depth=0) -> Decision:
                 items.append((_classify_segment(words, _depth), original, True))
         items.extend(_heredoc_items(docs, _pipelines(text), _depth))
         items.extend(_stream_items(text, _scan_ops(text), _depth))
-        raw_hit = _raw_scan(text, _depth)
+        raw_hit = _raw_scan(text, _depth) or _backtick_scan(text, _depth)
         if raw_hit:
             items.append((raw_hit, (), False))
     except ValueError as exc:
