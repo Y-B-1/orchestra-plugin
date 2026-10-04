@@ -181,7 +181,8 @@ test('/orchestra-board is registered once and command.run opens the pane', async
   r.runAnswer = () => ({ exitCode: 0, stdout: JSON.stringify({ version: 2, tasks: {}, session: null }) });
   await $.session.start(start);
   await $.session.start(start);
-  expect(b.registered).toEqual(['orchestra-board']);
+  // B11 registers /orchestra-autonomy beside the board; autonomy.test.ts asserts that one.
+  expect(b.registered.filter((n) => n === 'orchestra-board')).toEqual(['orchestra-board']);
   await $.command.run({ command: 'orchestra-board', args: '' } as never);
   expect(b.opened).toEqual(['orchestra-board']);
 });
