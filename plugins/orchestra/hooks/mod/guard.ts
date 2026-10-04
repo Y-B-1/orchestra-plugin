@@ -324,6 +324,13 @@ type Doc = [string, boolean];
 const WORD_START = ' \t\n;&|()<>'; // A `#` right after one of these (or at the start) begins a comment.
 const COMMENT_BLANK = /['"\\]/g;
 
+/** True when the character at i follows an odd run of backslashes: it is escaped, so it is no word start. */
+function backslashed(text: string, i: number): boolean {
+  let j = i;
+  while (j > 0 && text[j - 1] === '\\') j -= 1;
+  return (i - j) % 2 === 1;
+}
+
 function stripHeredocs(command: string): [string, Doc[]] {
   const out: string[] = [];
   const docs: Doc[] = [];
@@ -332,21 +339,41 @@ function stripHeredocs(command: string): [string, Doc[]] {
   let escaped = false;
   let i = 0;
   const n = command.length;
+  let tick = false; // Inside a backtick substitution.
+  const parens: [string, number][] = []; // Open `(` as [kind, index].
+  let noStart = -1; // The index where a `#` cannot start a word.
   while (i < n) {
     const char = command[i]!;
     if (escaped) {
       escaped = false;
+      noStart = i + 1; // SPEC A5 (O27): a character after an unescaped backslash is not a word start.
     } else if (char === '\\' && q !== "'") {
       escaped = true;
     } else if (q) {
       if (char === q) q = null;
     } else if (char === '"' || char === "'") {
       q = char;
-    } else if (char === '#' && (i === 0 || WORD_START.includes(command[i - 1]!))) {
+    } else if (char === '(') {
+      const prev = i > 0 ? command[i - 1]! : '';
+      const last = parens[parens.length - 1];
+      const sub = i > 0 && ('$<>'.includes(prev) || (prev === '(' && last !== undefined && last[0] === 'sub' && last[1] === i - 1));
+      parens.push([sub ? 'sub' : 'plain', i]);
+    } else if (char === ')') {
+      const popped = parens.pop();
+      if (popped && popped[0] === 'sub') noStart = i + 1; // The `)` of `$(`, `$((` or `<(` ends part of a word, not a command.
+    } else if (char === '`') {
+      tick = !tick;
+    } else if (char === '#' && i !== noStart && (i === 0 || WORD_START.includes(command[i - 1]!) || (tick && command[i - 1] === '`'))) {
       // SPEC A5 (O27): a comment runs to the newline. Its quotes and backslashes are literal, so they
       // are blanked: no later scanner can read them as opening a quote or escaping the newline.
+      // Inside a backtick substitution it ends at the closing backtick, which stays visible.
       const found = command.indexOf('\n', i);
-      const end = found < 0 ? n : found;
+      let end = found < 0 ? n : found;
+      if (tick) {
+        let stop = i;
+        while (stop < end && (command[stop] !== '`' || backslashed(command, stop))) stop += 1;
+        end = stop;
+      }
       out.push(command.slice(i, end).replace(COMMENT_BLANK, ' '));
       i = end;
       continue;
@@ -1206,6 +1233,8 @@ function skips(word: string): boolean {
   return word === 'function' || !unwrap([word]).length;
 }
 
+const HERE_OPERATOR_RE = /^[0-9]*<<<?$/;
+
 type CommandGroup = ['proc' | 'group', string[], boolean, boolean];
 
 /**
@@ -1226,6 +1255,7 @@ function commandPositions(text: string, ats: number[]): boolean[] {
   const cases: string[] = []; // Open `case` states ('head', 'pattern', 'body').
   let t = 0;
   let i = 0;
+  let noStart = -1; // The index just after the `)` of a `<(` or `>(`, where a `#` is no word start.
 
   const here = (): boolean => {
     if (cases.length && cases[cases.length - 1] !== 'body') return false;
@@ -1264,7 +1294,7 @@ function commandPositions(text: string, ats: number[]): boolean[] {
     }
     let token = 'word';
     let end = i + 1;
-    if (char === '#' && (i === 0 || WORD_START.includes(text[i - 1]!))) {
+    if (char === '#' && i !== noStart && (i === 0 || (WORD_START.includes(text[i - 1]!) && !backslashed(text, i)))) {
       const found = text.indexOf('\n', i);
       end = found < 0 ? n : found;
       token = 'comment';
@@ -1298,6 +1328,9 @@ function commandPositions(text: string, ats: number[]): boolean[] {
         token = 'redirect';
       }
     }
+    if (token === 'redirect' && end < n && !' \t\n;&|()<>'.includes(text[end]!) && HERE_OPERATOR_RE.test(text.slice(i, end))) {
+      end = Math.max(readWord(text, end), end); // SPEC A5 (O28): `<<<x` and `<<EOF` glue their operand, as the command-name rule reads them.
+    }
     while (t < limit && ats[t]! < end) {
       if (ats[t]! <= i) {
         result.push(here());
@@ -1327,6 +1360,7 @@ function commandPositions(text: string, ats: number[]): boolean[] {
         settled = savedSettled;
         overflow = savedOverflow;
         if (kind === 'proc') {
+          noStart = end;
           word('<()');
         } else {
           seg = [];
@@ -1381,10 +1415,12 @@ function backtickScan(text: string, depth: number): Decision | null {
  * SPEC A5 (O26): a `$(...)` inside a double-quoted word keeps the full class of its content, as the
  * unquoted one does (the segment split cuts that one out; here the quoted word stays whole). Returns the
  * decision of each such substitution, found at any depth of unquoted substitutions. A double-quoted
- * backtick is unchanged: backtickScan classifies it.
+ * backtick is unchanged: backtickScan classifies it. Nesting above depth 8 throws ValueError, which
+ * classifyCommand turns into the malformed deny (accepted limit).
  */
 function quotedSubstitutions(text: string, depth: number): Decision[] {
-  if (depth > 8 || !text.includes('$(') || !text.includes('"')) return [];
+  if (!text.includes('$(') || !text.includes('"')) return [];
+  if (depth > 8) throw new ValueError('Quoted substitution nested too deep'); // Fail-safe: a malformed deny, never an empty result.
   const ticks: [boolean, number, boolean][] = [];
   const found: Decision[] = [];
   const contents = rawSubstitutions(text, ticks)[0];

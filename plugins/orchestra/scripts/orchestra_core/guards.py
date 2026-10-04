@@ -135,10 +135,13 @@ def _strip_heredocs(command):
     Each operator becomes a numbered placeholder so the pipeline that consumes it can be found."""
     out, docs, pending = [], [], []
     quote, escaped, i, n = None, False, 0, len(command)
+    tick = False  # Inside a backtick substitution.
+    parens, no_start = [], -1  # Open `(` as (kind, index); the index where a `#` cannot start a word.
     while i < n:
         char = command[i]
         if escaped:
             escaped = False
+            no_start = i + 1  # SPEC A5 (O27): a character after an unescaped backslash is not a word start.
         elif char == '\\' and quote != "'":
             escaped = True
         elif quote:
@@ -146,11 +149,25 @@ def _strip_heredocs(command):
                 quote = None
         elif char in "\"'":
             quote = char
-        elif char == '#' and (i == 0 or command[i - 1] in _WORD_START):
+        elif char == '(':
+            sub = i and (command[i - 1] in '$<>' or (command[i - 1] == '(' and parens and parens[-1] == ('sub', i - 1)))
+            parens.append(('sub' if sub else 'plain', i))
+        elif char == ')':
+            if parens and parens.pop()[0] == 'sub':
+                no_start = i + 1  # The `)` of `$(`, `$((` or `<(` ends part of a word, not a command.
+        elif char == '`':
+            tick = not tick
+        elif char == '#' and i != no_start and (i == 0 or command[i - 1] in _WORD_START or (tick and command[i - 1] == '`')):
             # SPEC A5 (O27): a comment runs to the newline. Its quotes and backslashes are literal, so they
             # are blanked: no later scanner can read them as opening a quote or escaping the newline.
+            # Inside a backtick substitution it ends at the closing backtick, which stays visible.
             end = command.find('\n', i)
             end = n if end < 0 else end
+            if tick:
+                stop = i
+                while stop < end and (command[stop] != '`' or _backslashed(command, stop)):
+                    stop += 1
+                end = stop
             out.append(_COMMENT_BLANK.sub(' ', command[i:end]))
             i = end
             continue
@@ -904,6 +921,17 @@ def _skips(word):
     return word == 'function' or not _unwrap([word])
 
 
+_HERE_OPERATOR = re.compile(r'[0-9]*<<<?')
+
+
+def _backslashed(text, i):
+    """True when the character at i follows an odd run of backslashes: it is escaped, so it is no word start."""
+    j = i
+    while j and text[j - 1] == '\\':
+        j -= 1
+    return (i - j) % 2 == 1
+
+
 def _command_positions(text, ats):
     """SPEC A5 (O20, O23, O28): for each index in ats (ascending, each the start of a substitution), True
     when the substitution is at command position: after a separator or group opener, with only the words
@@ -914,6 +942,7 @@ def _command_positions(text, ats):
     seg, settled, overflow = [], False, False  # Bare words of the segment, whether its command name came, too many words.
     stack, cases = [], []  # Open `(` groups; open `case` states ('head', 'pattern', 'body').
     t = i = 0
+    no_start = -1  # no_start: the index just after the `)` of a `<(` or `>(`, where a `#` is no word start.
 
     def here():
         if cases and cases[-1] != 'body':
@@ -956,7 +985,7 @@ def _command_positions(text, ats):
             continue
         token = 'word'
         end = i + 1
-        if char == '#' and (i == 0 or text[i - 1] in _WORD_START):
+        if char == '#' and i != no_start and (i == 0 or (text[i - 1] in _WORD_START and not _backslashed(text, i))):
             found = text.find('\n', i)
             end, token = (n if found < 0 else found), 'comment'
         elif char == '\n':
@@ -993,6 +1022,8 @@ def _command_positions(text, ats):
                 if text[end:end + 1] == '&' or (text[end:end + 1] == '|' and text[end - 1] == '>'):
                     end += 1
                 token = 'redirect'
+        if token == 'redirect' and end < n and text[end] not in ' \t\n;&|()<>' and _HERE_OPERATOR.fullmatch(text[i:end]):
+            end = max(_read_word(text, end), end)  # SPEC A5 (O28): `<<<x` and `<<EOF` glue their operand, as the command-name rule reads them.
         while t < limit and ats[t] < end:
             if ats[t] <= i:
                 result.append(here())
@@ -1016,6 +1047,7 @@ def _command_positions(text, ats):
             elif stack:
                 kind, seg, settled, overflow = stack.pop()
                 if kind == 'proc':
+                    no_start = end
                     word('<()')
                 else:
                     seg, settled, overflow = [], True, False
@@ -1058,9 +1090,12 @@ def _quoted_substitutions(text, depth):
     """SPEC A5 (O26): a `$(...)` inside a double-quoted word keeps the full class of its content, as the
     unquoted one does (the segment split cuts that one out; here the quoted word stays whole). Returns the
     decision of each such substitution, found at any depth of unquoted substitutions. A double-quoted
-    backtick is unchanged: _backtick_scan classifies it."""
-    if depth > 8 or '$(' not in text or '"' not in text:
+    backtick is unchanged: _backtick_scan classifies it. Nesting above depth 8 raises ValueError, which
+    classify_command turns into the malformed deny (accepted limit)."""
+    if '$(' not in text or '"' not in text:
         return []
+    if depth > 8:
+        raise ValueError('Quoted substitution nested too deep')  # Fail-safe: a malformed deny, never an empty result.
     ticks = []
     found = []
     for content, (tick, _, quoted) in zip(_raw_substitutions(text, ticks)[0], ticks):

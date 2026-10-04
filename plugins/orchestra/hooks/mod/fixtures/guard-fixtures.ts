@@ -3431,5 +3431,118 @@ export const CORPUS: CorpusCase[] = [
    "command": "echo \"a;b\" $(echo git reset --hard)"
   },
   "class": "allow"
+ },
+ {
+  "id": "inline-r9-1",
+  "input": {
+   "command": "echo $(true)#\"x\ny\"\ngit reset --hard\necho \"a #\""
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-2",
+  "input": {
+   "command": "echo $((1))#\"x\ny\"\ngit reset --hard\necho \"a #\""
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-3",
+  "input": {
+   "command": "echo <(true)#\"x\ny\"\ngit reset --hard\necho \"a #\""
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-4",
+  "input": {
+   "command": "echo a\\ #\"x\ny\"\ngit reset --hard\necho \"a #\""
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-5",
+  "input": {
+   "command": "echo $(true)#'x\ny'\ngit reset --hard\necho \"a #'\""
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-6",
+  "input": {
+   "command": "(true) # it's fine"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "inline-r9-7",
+  "input": {
+   "command": "echo hi # it's broken\necho ok"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "inline-r9-8",
+  "input": {
+   "command": "echo ${#x} $# $((2#101)) ${x#pre}"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "inline-r9-9",
+  "input": {
+   "command": "<<<x $(echo git reset --hard)"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-10",
+  "input": {
+   "command": "0<<<x $(echo git reset --hard)"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-11",
+  "input": {
+   "command": "<<<\"x y\" $(echo git reset --hard)"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-12",
+  "input": {
+   "command": "<<EOF $(echo git reset --hard)\nbody\nEOF"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-13",
+  "input": {
+   "command": "echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo \"$(git reset --hard)\")))))))))"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "inline-r9-14",
+  "input": {
+   "command": "echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo \"$(true)\")))))))))"
+  },
+  "class": "deny",
+  "_doc": "R2i: nesting above depth 8 with a quoted substitution denies as malformed (fail-safe, accepted limit)."
+ },
+ {
+  "id": "inline-r9-15",
+  "input": {
+   "command": "echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(echo $(true))))))))))"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "inline-r9-16",
+  "input": {
+   "command": "echo `#c's`; git reset --hard"
+  },
+  "class": "deny"
  }
 ];
