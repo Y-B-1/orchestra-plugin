@@ -849,17 +849,39 @@ def _raw_substitutions(text, ticks=None):
     return found, closed
 
 
+def _at_command_position(before):
+    """True when the text before a substitution leaves it at command position: after a separator or
+    group opener, with only reserved words and `NAME=value` assignments since (SPEC A5, O20, O23)."""
+    tail = before
+    for k in range(len(before) - 1, -1, -1):
+        if before[k] in ';&|({\n':
+            tail = before[k + 1:]
+            break
+    i, n = 0, len(tail)
+    while i < n:
+        if tail[i] in ' \t':
+            i += 1
+            continue
+        end = max(_read_word(tail, i), i + 1)
+        word = tail[i:end]
+        if word not in _RESERVED and not re.match(r'[A-Za-z_][A-Za-z0-9_]*\+?=', word):
+            return False
+        i = end
+    return True
+
+
 def _backtick_scan(text, depth):
-    """SPEC A5 (O20): a backtick substitution anywhere in the text is a command, as `$(...)` is. The
-    `$(...)` ones are classified by the segment split; only the backtick ones need this scan."""
+    """SPEC A5 (O20, O23): a backtick substitution anywhere in the text is a command, as `$(...)` is.
+    The `$(...)` ones are classified by the segment split, except at command position, where (like a
+    backtick there) the substitution's output runs, so its text is producer text."""
     if depth > 8:
         return None
     ticks = []  # One (is a backtick, start index) per substitution.
     for content, (tick, at) in zip(_raw_substitutions(text, ticks)[0], ticks):
-        if not tick:
-            hit = _backtick_scan(content, depth + 1)
-        elif not text[:at].rstrip(' \t') or text[:at].rstrip(' \t')[-1] in ';&|({!\n':
+        if _at_command_position(text[:at]):
             hit = _scan_text(content, depth + 1, as_command=True)  # At command position its output runs.
+        elif not tick:
+            hit = _backtick_scan(content, depth + 1)
         else:
             hit = classify_command(content, depth + 1)
         if hit and _hard_deny(hit):

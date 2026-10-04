@@ -3023,6 +3023,69 @@
     "command": "echo $((1+2))"
    },
    "class": "allow"
+  },
+  {
+   "id": "inline-r6-1",
+   "input": {
+    "command": "$(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r6-2",
+   "input": {
+    "command": "x=1 $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r6-3",
+   "input": {
+    "command": "$(printf %s \"git reset --hard\")"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r6-4",
+   "input": {
+    "command": "{ $(echo git reset --hard); }"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r6-5",
+   "input": {
+    "command": "if true; then $(echo git reset --hard); fi"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r6-6",
+   "input": {
+    "command": "$(which python3) -V"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r6-7",
+   "input": {
+    "command": "\"$(git rev-parse --show-toplevel)\"/scripts/x.sh"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r6-8",
+   "input": {
+    "command": "echo $(date)"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r6-9",
+   "input": {
+    "command": "$(echo ls)"
+   },
+   "class": "allow"
   }
  ]
 }

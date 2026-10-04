@@ -1143,8 +1143,35 @@ function rawScan(text: string, depth: number): Decision | null {
 }
 
 /**
- * SPEC A5 (O20): a backtick substitution anywhere in the text is a command, as `$(...)` is. The `$(...)`
- * ones are classified by the segment split; only the backtick ones need this scan.
+ * True when the text before a substitution leaves it at command position: after a separator or group
+ * opener, with only reserved words and `NAME=value` assignments since (SPEC A5, O20, O23).
+ */
+function atCommandPosition(before: string): boolean {
+  let tail = before;
+  for (let k = before.length - 1; k >= 0; k--) {
+    if (';&|({\n'.includes(before[k]!)) {
+      tail = before.slice(k + 1);
+      break;
+    }
+  }
+  let i = 0;
+  while (i < tail.length) {
+    if (tail[i] === ' ' || tail[i] === '\t') {
+      i++;
+      continue;
+    }
+    const end = Math.max(readWord(tail, i), i + 1);
+    const word = tail.slice(i, end);
+    if (!RESERVED.has(word) && !/^[A-Za-z_][A-Za-z0-9_]*\+?=/.test(word)) return false;
+    i = end;
+  }
+  return true;
+}
+
+/**
+ * SPEC A5 (O20, O23): a backtick substitution anywhere in the text is a command, as `$(...)` is. The
+ * `$(...)` ones are classified by the segment split, except at command position, where (like a
+ * backtick there) the substitution's output runs, so its text is producer text.
  */
 function backtickScan(text: string, depth: number): Decision | null {
   if (depth > 8) return null;
@@ -1153,10 +1180,9 @@ function backtickScan(text: string, depth: number): Decision | null {
   for (let k = 0; k < found.length && k < ticks.length; k++) {
     const content = found[k]!;
     const [tick, at] = ticks[k]!;
-    const before = text.slice(0, at).replace(/[ \t]+$/, '');
     let hit: Decision | null;
-    if (!tick) hit = backtickScan(content, depth + 1);
-    else if (!before || ';&|({!\n'.includes(before[before.length - 1]!)) hit = scanText(content, depth + 1, true); // At command position its output runs.
+    if (atCommandPosition(text.slice(0, at))) hit = scanText(content, depth + 1, true); // At command position its output runs.
+    else if (!tick) hit = backtickScan(content, depth + 1);
     else hit = classifyCommand(content, depth + 1);
     if (hit && hardDeny(hit)) return hit;
   }
