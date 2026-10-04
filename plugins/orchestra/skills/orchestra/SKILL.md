@@ -3,24 +3,41 @@ name: orchestra
 description: Coordinate bounded engineering work with dependency-aware assignments, independent reviews, artifact-bound checks, and project-authorized release. Use for multi-part delivery or when the user selects Orchestra.
 ---
 
+Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md skills/dispatching-parallel-agents/SKILL.md (MIT); garrytan/gstack@4015c2870b06 review/sections/review-army.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/SKILL.md
-Stub: B4 skeleton; ticket S1 rewrites this file and removes this line.
 
 # Orchestra
 
-The main session coordinates and can perform bounded work inline; workers finish assigned work and return evidence. Before each action, choose inline or worker execution from task readiness, risk, context and independent work. Inline work can run alongside disjoint worker assignments. Use the user's project rules and authorization boundaries. Opening a trusted session supplies coordinator context only; do not repair, resume, or start an autonomous loop without a request. Skill discovery alone does not guarantee activation. Native hook registration, enablement, trust and identity must be checked separately.
+You are the main coordinator. You route work, reserve it, dispatch it, check the evidence and integrate. Workers do the assigned work and return evidence. You can also do bounded work inline beside disjoint worker cards.
 
-Start by reading applicable project instructions and current repository state. Identify the requested outcome, bounded ownership, acceptance checks and missing decisions. Answer self-contained questions directly. Load references only when their phase applies:
+## Start
 
-- Routing, role columns and continuous ready dispatch: [coordination](references/coordination.md).
-- Worker assignment: [briefs](references/briefs.md). Workers carry their own contract in the orchestra-worker skill.
-- Triage: [triage](references/triage.md). Resume and handoff: [handoff](references/handoff.md).
-- Parallel dispatch: [parallel](references/parallel.md). Worktrees: [worktrees](references/worktrees.md).
-- Finishing a branch: [finishing](references/finishing.md). Fix rounds: [repair-rounds](references/repair-rounds.md).
-- Final review lenses and cleanup: [final-review](references/final-review.md). Conformance axes: [audit-axes](references/audit-axes.md).
-- Autonomous mode: [autonomy](references/autonomy.md).
-- Run commands and task/review schemas: [CLI](references/cli.md).
+1. Read the project instructions and the repository state: identity, branch, dirty bytes.
+2. Name the outcome, the owned files, the acceptance checks and every missing decision.
+3. Answer a self-contained question directly, with no run.
+4. Load only the references the current phase needs.
 
-Role methods live in the role skills (orchestra-investigate, orchestra-design, orchestra-critique, orchestra-build, orchestra-review, orchestra-operate), one mode file per card mode. Workers preload their role skill; every brief carries a `Mode:` line, and a final-review brief a `Lens:` line. Do not load every reference for a tiny request. Canonical roles and provider matrices live in ../../config/roles.json and ../../config/models.json. They generate native profiles; installed capabilities and project policy still determine what a role can do.
+A trusted session start supplies context only. Repair, resume and autonomy begin on an explicit user request. Skill discovery does not guarantee activation, and hook registration, trust and identity are checked separately.
 
-Always use an independent final review of integration. A review never grants external permission. Release remains disabled until project configuration names authorization, remote, target, required checks and commands. Report native discovery or trust limits honestly.
+## The loop
+
+Route, reserve, dispatch, check, integrate, review. Every card ends with evidence you inspected yourself, and every integration ends with an independent final review. A review grants no external permission. Release stays disabled until project configuration names authorization, remote, target, required checks and commands.
+
+## References
+
+- Lanes, executor choice, kanban, standing orders: [coordination](references/coordination.md)
+- Writing a worker brief: [briefs](references/briefs.md)
+- Sorting a defect or request report: [triage](references/triage.md)
+- Interruption, resume, handoff: [handoff](references/handoff.md)
+- Parallel cards and plan execution: [parallel](references/parallel.md)
+- Isolated worktrees: [worktrees](references/worktrees.md)
+- Closing a branch: [finishing](references/finishing.md)
+- Fix rounds: [repair-rounds](references/repair-rounds.md)
+- Final review and cleanup: [final-review](references/final-review.md)
+- Conformance axes: [audit-axes](references/audit-axes.md)
+- Overnight mode: [autonomy](references/autonomy.md)
+- Engine commands and schemas: [CLI](references/cli.md)
+
+## Roles
+
+Each role has its own skill: orchestra-investigate, orchestra-design, orchestra-critique, orchestra-build, orchestra-review, orchestra-operate. A role skill holds one mode file per card mode. Workers preload their role skill and the shared orchestra-worker contract. The role and model matrices live in ../../config/roles.json and ../../config/models.json and generate the native profiles. Installed capabilities and project policy decide what a role can do.

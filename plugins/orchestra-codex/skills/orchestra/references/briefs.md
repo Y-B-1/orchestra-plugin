@@ -1,13 +1,17 @@
+Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/implementer-prompt.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/AGENT-BRIEF.md skills/productivity/writing-for-agents/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/references/briefs.md
-Stub: B4 skeleton; ticket S1 rewrites this file and removes this line.
 
-# Assignment guide
+# Brief writing
 
-Write one bounded brief per worker. Include:
+One brief per worker, one responsibility per brief. Write it for a reader with empty context, durable and behavioral: name interfaces and outcomes, and point to files by path instead of copying them.
 
-1. Objective, `Mode:` line (a final-review brief also a `Lens:` line), immutable starting artifact and requested output path.
-2. Owned files/resources, sibling ownership, worktree, prerequisites and acceptance checks.
-3. Applicable project instructions, path rules, design vocabulary and policy revision. Read linked source rules first and carry their operative requirements inline; a link alone does not carry a rule into an empty worker context.
-4. Tools available, authorization limits and report contract.
+1. Objective: a summary, the current behavior against the desired behavior, and what is out of scope.
+2. `Mode:` line (a final-review brief adds a `Lens:` line), the immutable starting artifact and the requested output path.
+3. Ownership: files and resources, sibling ownership, worktree, prerequisites.
+4. Acceptance: criteria a command can check, each ending in a stated done condition.
+5. Rules: the binding project rules, path rules and design vocabulary, carried inline after you read the source. A link alone does not carry a rule. Paste the standing orders as coordination.md describes.
+6. Tools, authorization limits and the report contract.
 
-Workers preload the orchestra-worker skill, so a brief does not restate the worker contract. A card whose brief file lacks its `Mode: <mode>` line is rejected by the engine.
+Plugin root: state the root path in the brief, the directory holding `skills/` and `scripts/`. The worker reads its role skill and references from `<root>/skills/` and runs the CLI from `<root>/scripts/orchestra.py`.
+
+The worker contract lives in the orchestra-worker skill, so a brief omits it. The engine rejects a card whose brief file lacks its `Mode: <mode>` line.

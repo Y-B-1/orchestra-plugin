@@ -1,5 +1,9 @@
 {
   "phrases": [
-    "Sentinel: orchestra-worker/SKILL.md"
+    "Sentinel: orchestra-worker/SKILL.md",
+    "STATUS: PASS|ISSUES|BLOCKED",
+    "Mode:",
+    "ARTIFACT:",
+    "should"
   ]
 }
