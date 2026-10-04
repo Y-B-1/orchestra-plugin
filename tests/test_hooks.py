@@ -5,6 +5,7 @@ import shutil
 import time
 import types
 import os
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
 from orchestra_core.guards import classify_command, guard_digest, RULES, RULES_PATH
+from orchestra_core import hooks as hooks_module
 from orchestra_core.hooks import _main_worktree, handle_event, main
 
 PLUGIN = Path(__file__).resolve().parents[1] / 'plugins/orchestra'
@@ -612,6 +614,15 @@ class HooksTest(unittest.TestCase):
         self.assertNotRegex('Read', '^(?:' + matcher + ')$')
         codex = json.loads((PLUGIN / 'hooks/codex.json').read_text())
         self.assertEqual(codex['hooks']['PreToolUse'][0]['matcher'], '.*')
+
+    def test_mod_tools_match_orchestra_ts_guarded(self):
+        """_MOD_TOOLS hand-mirrors GUARDED in the TypeScript mod; drift would reopen a marker skip."""
+        source = (PLUGIN / 'hooks/mod/orchestra.ts').read_text()
+        found = re.search(r'^const GUARDED\s*=\s*\[([^\]]*)\]', source, re.M)
+        self.assertIsNotNone(found, 'GUARDED list not found in orchestra.ts')
+        guarded = set(re.findall(r"'([^']+)'", found.group(1)))
+        self.assertTrue(guarded)
+        self.assertEqual(hooks_module._MOD_TOOLS, guarded)
 
 
 def run_main(payload, *args, env=None):
