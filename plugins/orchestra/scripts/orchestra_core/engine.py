@@ -52,8 +52,9 @@ def _contracts():
                 target = (root / method).resolve()
                 if root not in target.parents or not target.is_file():
                     raise ValueError('Missing required method: ' + method)
-        result.pop('orchestrator', None)
-        return result, _digest(result)
+        digest = _digest(result)  # every role, the orchestrator included, binds the run
+        result.pop('orchestrator', None)  # but a task never takes the orchestrator role
+        return result, digest
     except (OSError, ValueError, TypeError, KeyError) as exc:
         raise EngineError('Invalid canonical role/method contract: ' + str(exc)) from exc
 
@@ -105,11 +106,19 @@ class Engine:
         except subprocess.CalledProcessError as exc:
             raise EngineError(exc.stderr.decode(errors='replace')) from exc
 
-    def artifact(self):
+    @staticmethod
+    def _in_scope(path, scope):
+        return any(path == s or path.startswith(s + '/') for s in scope)
+
+    def artifact(self, scope=None):
+        """Whole-repo evidence, or with `scope` (repository-relative paths) evidence for those paths plus HEAD."""
+        scope = sorted({Path(s).as_posix() for s in scope}) if scope else None
         # Hash every tracked and untracked nonignored entry. Index and status are also bound.
         names = self._git('ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')
         entries = []
         for raw in sorted(set(names) - {b''}):
+            if scope is not None and not self._in_scope(os.fsdecode(raw), scope):
+                continue
             path = self.repo / os.fsdecode(raw)
             if path.is_symlink():
                 value = ['symlink', os.readlink(path)]
@@ -124,13 +133,46 @@ class Engine:
         common = Path(self._git('rev-parse', '--git-common-dir').decode().strip())
         if not common.is_absolute():
             common = self.repo / common
-        return dict(repo=str(self.repo), identity=str(common.resolve()),
-                    head=self._git('rev-parse', 'HEAD').decode().strip(),
-                    tree=self._git('rev-parse', 'HEAD^{tree}').decode().strip(),
-                    fingerprint=_digest(entries),
-                    index=_hash(self._git('ls-files', '--stage', '-z')),
-                    status=_hash(self._git('status', '--porcelain=v1', '-z', '--untracked-files=all')),
-                    policy=self.policy_hash)
+        index = self._git('ls-files', '--stage', '-z')
+        status = self._git('status', '--porcelain=v1', '-z', '--untracked-files=all')
+        result = dict(repo=str(self.repo), identity=str(common.resolve()),
+                      head=self._git('rev-parse', 'HEAD').decode().strip(),
+                      tree=self._git('rev-parse', 'HEAD^{tree}').decode().strip(),
+                      fingerprint=_digest(entries), index=_hash(index), status=_hash(status),
+                      policy=self.policy_hash)
+        if scope is not None:
+            lines = [l for l in index.split(b'\0') if l and self._in_scope(os.fsdecode(l.split(b'\t', 1)[-1]), scope)]
+            changes, parts = [], status.split(b'\0')
+            while parts:
+                part = parts.pop(0)
+                if not part:
+                    continue
+                paths = [os.fsdecode(part[3:])]
+                if part[:1] in b'RC' or part[1:2] in b'RC':
+                    paths.append(os.fsdecode(parts.pop(0)) if parts else '')
+                if any(self._in_scope(x, scope) for x in paths):
+                    changes.append(part)
+            result.update(scope=scope, index=_hash(b'\0'.join(lines)), status=_hash(b'\0'.join(changes)))
+        return result
+
+    def scope_for(self, task_ids):
+        """Union of the tasks' reservation files, or None (whole repo) when they reserve no files."""
+        with self._state(False) as state:
+            return self._scope_of(state, task_ids)
+
+    def _scope_of(self, state, task_ids):
+        files = set()
+        for task_id in task_ids:
+            if task_id not in state['tasks']:
+                raise EngineError('Unknown task: ' + str(task_id))
+            files.update(Path(f).as_posix() for f in self._reservation(state['tasks'][task_id], state)['files'])
+        return sorted(files) or None
+
+    def _artifact_cached(self, cache, scope):
+        key = tuple(scope) if scope else None
+        if key not in cache:
+            cache[key] = self.artifact(scope)
+        return cache[key]
 
     @staticmethod
     def _directory_hash(path):
@@ -406,7 +448,7 @@ class Engine:
                     raise EngineError('Repair needs a reported builder without an existing repair')
                 if repair_of in task['dependencies']:
                     raise EngineError('repair_of replaces an accepted dependency on the original')
-                verdicts = self._review_verdicts(state, self.artifact(), task_id=repair_of)
+                verdicts = self._review_verdicts(state, {}, task_id=repair_of)
                 if not any(r['findings'] for r in verdicts.values()):
                     raise EngineError('Repair needs earlier checked coding findings')
                 # Suspend the whole chain atomically. Reports and workers remain as history,
@@ -498,7 +540,8 @@ class Engine:
             if not task or task['state'] != 'running' or task['worker'] != worker:
                 raise EngineError('Invalid assignment')
             self._lease(state, state['session']['actor'], task['lease'])
-            task.update(state='reported', report=report, report_artifact=self.artifact())
+            task.update(state='reported', report=report,
+                        report_artifact=self.artifact(self._scope_of(state, [task['id']])))
             ancestor = task
             while ancestor.get('repair_of'):
                 ancestor = state['tasks'][ancestor['repair_of']]
@@ -547,7 +590,8 @@ class Engine:
                 raise EngineError('Worker cannot review own artifact')
             if any(t['state'] not in ('reported', 'accepted') for t in covered):
                 raise EngineError('Review covers incomplete work')
-            artifact = self.artifact()
+            scope = None if final else self._scope_of(state, ids)
+            artifact = self.artifact(scope)
             try:
                 body = json.loads(Path(report_path).read_text())
             except (ValueError, OSError) as exc:
@@ -560,16 +604,18 @@ class Engine:
                 raise EngineError('Review needs a nonempty semantic summary')
             evidence = self._snapshot(report_path, 'review')
             receipt = dict(id=uuid.uuid4().hex, reviewer=reviewer, categories=categories,
-                           tasks=ids, final=bool(final), findings=findings, artifact=artifact, action='review', **evidence)
+                           tasks=ids, final=bool(final), findings=findings, artifact=artifact, scope=scope,
+                           action='review', **evidence)
             state['reviews'].append(receipt)
             return copy.deepcopy(receipt)
 
-    def _review_verdicts(self, state, artifact, task_id=None, final=False):
+    def _review_verdicts(self, state, cache, task_id=None, final=False):
         """Newest relevant verdict wins; altered evidence cannot restore an older verdict."""
         verdicts = {}
         since = state['tasks'][task_id].get('review_since', 0) if task_id is not None else 0
         for review in state['reviews'][since:]:
-            if review['artifact'] != artifact:
+            # Each receipt is compared against the artifact recomputed with its own stored scope.
+            if review['artifact'] != self._artifact_cached(cache, review.get('scope')):
                 continue
             if task_id is not None and task_id not in review['tasks']:
                 continue
@@ -588,15 +634,14 @@ class Engine:
             task = state['tasks'].get(task_id)
             if not task or task['state'] != 'reported':
                 raise EngineError('Task has no reported result')
-            artifact = self.artifact()
-            verdicts = self._review_verdicts(state, artifact, task_id=task_id)
+            verdicts = self._review_verdicts(state, {}, task_id=task_id)
             if any(r['findings'] for r in verdicts.values()):
                 raise EngineError('Task has current review findings')
             if task.get('repaired_by') and state['tasks'][task['repaired_by']]['state'] != 'accepted':
                 raise EngineError('Task repair must be accepted first')
             if (task['role'] == 'builder' or task.get('review_required', False)) and not verdicts:
                 raise EngineError('Task needs current independent review')
-            if not (task['role'] == 'builder' or task.get('review_required', False)) and task['report_artifact'] != artifact:
+            if not (task['role'] == 'builder' or task.get('review_required', False)) and task['report_artifact'] != self.artifact(self._scope_of(state, [task_id])):
                 raise EngineError('Reported artifact is stale')
             task['state'] = 'accepted'
 
@@ -696,12 +741,13 @@ class Engine:
         if any(state['tasks'][i]['state'] != 'accepted' for i in required_ids):
             raise EngineError('All tasks must be accepted')
         artifact = self.artifact()
-        verdicts = self._review_verdicts(state, artifact, final=True)
+        cache = {None: artifact}
+        verdicts = self._review_verdicts(state, cache, final=True)
         categories = {category for category, review in verdicts.items() if not review['findings']}
         if any(review['findings'] for review in verdicts.values()):
             raise EngineError('Current final review has findings')
         for task_id in state['tasks']:
-            if any(r['findings'] for r in self._review_verdicts(state, artifact, task_id=task_id).values()):
+            if any(r['findings'] for r in self._review_verdicts(state, cache, task_id=task_id).values()):
                 raise EngineError('Current task review has findings: ' + task_id)
         required_categories = set(self.policy['required_review_categories'])
         if (require_review or state['tasks']) and not required_categories <= categories:

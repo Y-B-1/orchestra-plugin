@@ -36,8 +36,10 @@ def parser():
     start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
-    for name in ['status','artifact','ready','board','interrupt','finish','scan']:
+    for name in ['status','ready','board','interrupt','finish','scan']:
         sub.add_parser(name)
+    art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
+    art.add_argument('--tasks', help='Comma-separated task IDs')
     add = sub.add_parser('add')
     add.add_argument('task', help='Task JSON path')
     dispatch = sub.add_parser('dispatch')
@@ -109,7 +111,10 @@ def execute(args):
     if args.command=='status':
         return engine.status(),0
     if args.command=='artifact':
-        return engine.artifact(),0
+        ids=[i for i in (args.tasks or '').split(',') if i]
+        if args.tasks is not None and not ids:
+            raise EngineError('--tasks needs at least one task id')
+        return engine.artifact(engine.scope_for(ids) if ids else None),0
     if args.command=='inline':
         return {'token':engine.start_inline(args.actor,args.lease,args.task_id), 'executor':args.actor, 'inline':True},0
     if args.command=='board':
