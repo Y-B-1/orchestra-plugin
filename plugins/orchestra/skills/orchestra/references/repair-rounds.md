@@ -11,7 +11,7 @@ A round is one repair plus one scoped independent re-review of it. Count rounds 
 | 4 | Dispatch override: model `claude-opus-5-5` through the Agent tool. On Codex use the `orchestra_builder_repair` profile at Sol high. |
 | Round 5 | Breaker. No further repair. Send the ticket to critic `judge` mode, then to design or planning. Tell the user. |
 
-Each repair brief carries the exact artifact, the failing scenario and the scope of the defect. Recheck every finding against source first. A finding that contradicts the spec stops the dependent change and goes to design.
+Each repair brief carries the exact artifact, the failing scenario and the scope of the defect.
 
 ## Why the breaker routes back
 

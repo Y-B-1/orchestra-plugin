@@ -31,9 +31,9 @@ A ticket maps to one engine card. State:
 - acceptance criteria and the scoped commands that check them;
 - the done contract: what the report must show.
 
-Carry each binding rule that touches the ticket into the ticket text. A link does not carry a rule into an empty worker context.
+Carry each binding rule that touches the ticket into the ticket text. A link alone does not carry a rule into an empty context.
 
-Plans decide what an implementer cannot decide alone. Give a test its name and assertions, and give code its exact signature, file and any value the spec fixes. Write a body only for an algorithm the signature and tests leave open. Strike lines that decide nothing, such as "handle edge cases". A plan several times longer than its spec has written the code instead.
+Plans decide what an implementer cannot decide alone. Give a test its name and assertions, and give code its exact signature, file and any value the spec fixes. Write a body only for an algorithm the signature and tests leave open. A line that decides nothing, such as "handle edge cases", is a gap. Strike it. A plan several times longer than its spec has written the code instead.
 
 ## Check the graph
 

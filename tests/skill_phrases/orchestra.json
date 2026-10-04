@@ -34,6 +34,11 @@
     "Plugin root",
     "review-packages",
     "sha256:",
-    "git diff --shortstat"
+    "git diff --shortstat",
+    "`Lens: specialist:<name>`",
+    "autonomy arm",
+    "autonomy disarm",
+    "autonomy status",
+    "unpark TASK"
   ]
 }

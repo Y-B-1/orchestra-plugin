@@ -26,4 +26,4 @@ A documented repository rule overrides any general baseline. Where the repositor
 
 ## Report
 
-Group findings by rule. Classify each rule item with the shared classes in SKILL.md: a violated rule is NOT DONE, and one you could not locate or check is UNVERIFIABLE. For each violation, give the rule, the violating line or hunk, and mark it a hard violation or a judgement call.
+Group findings by rule. Classify each rule item with the core classes: a violated rule is NOT DONE, and one you could not locate or check is UNVERIFIABLE. For each violation, give the rule, the violating line or hunk, and mark it a hard violation or a judgement call.

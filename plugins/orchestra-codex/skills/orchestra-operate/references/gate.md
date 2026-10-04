@@ -29,7 +29,6 @@ Run the project's required checks against the assigned repository and artifact, 
 | Lint or scan clean | The tool's own exit code 0 | A different tool's pass |
 | Bug fixed | The reproducing test passes | Code changed |
 | Regression test works | Fails with the fix removed, passes with it | One green run |
-| Requirements met | Line-by-line check against the brief | Tests passing |
 | Sibling or tool succeeded | Your own diff and logs | Its success message |
 
 ## Scope

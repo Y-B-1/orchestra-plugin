@@ -8,7 +8,7 @@ Use this mode for user-visible surfaces: pages, components, styling, layout and 
 
 ## Inputs
 
-The brief names the host design vocabulary: component library, tokens, spacing and copy rules. Use those and add no new styling system. It also names the required themes, viewports and states. When any of these is missing, report a blocker; do not invent a design.
+The brief names the host design vocabulary: component library, tokens, spacing and copy rules. Use those and add no new styling system. It also names the required themes, viewports and states.
 
 ## Build
 

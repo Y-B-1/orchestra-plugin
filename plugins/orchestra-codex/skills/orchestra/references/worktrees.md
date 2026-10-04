@@ -24,4 +24,4 @@ Commit to a named branch to preserve work. A detached HEAD is not preservation; 
 
 Inspect the directory, not the refs. A merged branch says nothing about edits left uncommitted after the commit.
 
-Run `git status` inside the worktree. Refuse to remove a dirty one: show the uncommitted paths and what is at stake, commit them to the named branch, then remove with `git worktree remove`.
+Run `git status` inside the worktree. A dirty or untracked worktree is not disposable. Show the file list and the three ways out: commit to a named branch, move the files out, or delete them as unrecoverable. The coordinator or user picks. Once clean, remove with `git worktree remove`.

@@ -12,7 +12,7 @@ Inspect the directory, not the refs. A merged branch says nothing about edits le
 1. List what exists: `git worktree list`, `git branch -vv`, and for each worktree the brief names, `git -C <worktree> status --porcelain -uall`.
 2. Tell a linked worktree from a plain checkout: compare `git rev-parse --git-dir` with `--git-common-dir`. Differing values with a non-empty `git rev-parse --show-superproject-working-tree` mean a submodule, not a worktree.
 3. For each branch, list commits that its base branch lacks: `git log <base>..<branch> --oneline`.
-4. Check liveness before you call anything stale: a live process with that directory as its working directory, and the transcript's last modification time.
+4. Check liveness: a live process, and the transcript's last modification time. A journal line records what started, not what still runs. Check this before you call anything stale.
 5. Check temporary files, generated-file drift (the project's own drift check), and whether the project memory file carries this wave's facts.
 
 Ownership rules for the proposal:

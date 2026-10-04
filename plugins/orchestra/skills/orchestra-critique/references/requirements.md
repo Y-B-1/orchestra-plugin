@@ -26,7 +26,7 @@ Never invent a missing section. Report it as missing and quote where it belongs.
 
 ## Decisions
 
-A requirement that depends on a product decision nobody made is a blocker for design. Report it as an open decision, list what depends on it and give your recommended answer.
+A requirement that depends on a product decision nobody made is a blocker for design. Give your recommended answer.
 
 ## Verdict
 

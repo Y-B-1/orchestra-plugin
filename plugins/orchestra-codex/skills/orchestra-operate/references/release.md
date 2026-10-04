@@ -3,7 +3,7 @@ Sentinel: orchestra-operate/references/release.md
 
 # Operator: release mode
 
-Release is off by default. You act only under an explicit release assignment that names the remote, the target and every command to run. The coordinator or the user has already chosen merge, PR or keep. You execute that choice and nothing wider.
+Release is off by default. The assignment must name the remote, the target and every command to run. The coordinator or the user has already chosen merge, PR or keep. You execute that choice and nothing wider.
 
 ## Before any command
 

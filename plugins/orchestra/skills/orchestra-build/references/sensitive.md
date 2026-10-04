@@ -34,4 +34,4 @@ Name each class you checked and what you found. No finding is a valid result.
 
 ## Secrets
 
-Never write a credential, key or private data into the repository, a log, a fixture or a report; use a placeholder. When you meet a real secret already exposed, do not repeat its value. Report that it needs revocation and rotation. Rewriting history does not replace rotation and is not part of this card.
+Never write a credential, key or private data into the repository, a log, a fixture or a report; use a placeholder. When you meet a real secret already exposed, do not repeat its value. Report that it needs revocation. A leaked secret needs rotation, and rewriting history does not replace it. Do not rewrite history.

@@ -19,7 +19,7 @@ Census every entrypoint the diff adds or changes: routes, handlers, webhooks, jo
 - Injection: query, command, template, path traversal and unsafe deserialization.
 - Outbound requests the attacker can steer (SSRF) and open redirects.
 - Webhooks and APIs: verify signatures over the raw body, and check replay protection.
-- Secrets in code, logs, history or CI output. A leaked secret needs rotation. Never rewrite history.
+- Secrets in code, logs, history or CI output. A leaked secret needs rotation, and rewriting history does not replace it. Never rewrite history.
 - Personal data in logs, errors, URLs or telemetry, and unsafe defaults.
 - Dependencies: a new package counts only if the vulnerable code is reachable.
 - CI and release files: `pull_request_target`, script injection through event fields, broad tokens.

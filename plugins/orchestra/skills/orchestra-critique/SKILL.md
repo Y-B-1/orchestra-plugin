@@ -7,7 +7,7 @@ Sentinel: orchestra-critique/SKILL.md
 
 # Critic
 
-Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, or that file is missing, stop and report `STATUS: BLOCKED`. The mode file adds its own checks to the rules below and repeats none of them.
+Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line. If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`. A missing mode file is BLOCKED too. The mode file adds its own checks to the rules below and repeats none of them.
 
 ## Independence
 

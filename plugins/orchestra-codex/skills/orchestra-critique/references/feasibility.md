@@ -7,10 +7,10 @@ Test whether the plan can be executed as written, on the real APIs and the real 
 
 ## Checks
 
-- Executable step: each step lets the builder write exactly one reasonable thing. A step that decides nothing ("handle edge cases", "add validation") is a gap. A step that spells out what its signature and tests already fix is a transcript.
+- Executable step: each step lets the builder write exactly one reasonable thing. A line that decides nothing, such as "handle edge cases", is a gap. A step that spells out what its signature and tests already fix is a transcript.
 - Coverage: every spec requirement maps to a task, and every input class or failure mode the spec implies has a task whose tests exercise it.
 - Consistency: names, types and signatures used in later tasks match what earlier tasks define.
-- Proportion: a plan several times longer than its spec is a transcript of the program.
+- Proportion. A plan several times longer than its spec has written the code instead.
 - Premises: check each premise against code or primary documentation. Label it OBSERVED, REASONED (inferred) or UNKNOWN. OBSERVED means you read the file or ran the command in this assignment and saw the result. Look for an API that does not exist in the pinned version, an unsafe write, two tasks that write one path, a lease or reservation collision, and a gate that cannot fail.
 
 ## Spikes

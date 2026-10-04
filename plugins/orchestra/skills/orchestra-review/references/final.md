@@ -9,7 +9,7 @@ Review the full integration diff against the named base and the current artifact
 
 The brief's `Lens:` line names one lens file: `correctness.md`, `architecture.md`, `security.md` or `cleanliness.md`. Open that file and review only through it.
 
-A `Lens:` line of `specialist:<name>` names a section of `specialists.md` instead. Open that file and review only through the named section. Its categories are those of that section's findings; the table below does not apply.
+A `Lens:` line of `specialist:<name>` names a section of `specialists.md` instead. Open that file and review only through the named section. Tag each finding with the closest category from the table below, and set `categories` to the ones you used.
 
 A final brief with no `Lens:` line is a blocker. Report `STATUS: BLOCKED` and name the missing line. Do not review all lenses to make up for it.
 
