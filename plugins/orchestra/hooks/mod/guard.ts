@@ -1029,7 +1029,7 @@ function rawSubstitutions(text: string, ticks: [boolean, number][] | null = null
       let j = at + 1;
       while (j < n && text[j] !== '`') j += text[j] === '\\' ? 2 : 1;
       closed = closed && j < n;
-      found.push(text.slice(at + 1, Math.min(j, n)));
+      found.push(text.slice(at + 1, Math.min(j, n)).replace(/\\([`\\$])/g, '$1'));
       return j + 1;
     }
     const end = balancedEnd(text, at + 2);
@@ -1140,6 +1140,48 @@ function rawScan(text: string, depth: number): Decision | null {
     }
   }
   return null;
+}
+
+/**
+ * SPEC A5 (O25): rewrite each closed, unquoted backtick substitution (never inside quotes) as the `$(...)`
+ * form of the same content, so it keeps the same class in the same position. Inside double quotes a
+ * backtick stays one (backtickScan classifies it, with its escaped inner backticks unescaped). Inside
+ * backticks the shell reads backslash-backtick, backslash-backslash and backslash-dollar as the plain
+ * character, so an escaped backtick there is a nested substitution, rewritten in turn. A top-level
+ * escaped backtick stays a literal.
+ */
+function tickToDollar(text: string): string {
+  const out: string[] = [];
+  let i = 0;
+  const n = text.length;
+  let quote = false;
+  while (i < n) {
+    const char = text[i]!;
+    if (char === '\\') {
+      out.push(text.slice(i, i + 2));
+      i += 2;
+    } else if (char === '`' && !quote) {
+      let j = i + 1;
+      while (j < n && text[j] !== '`') j += text[j] === '\\' ? 2 : 1;
+      if (j >= n) { // Never closed: leave it for the malformed checks.
+        out.push(text.slice(i));
+        break;
+      }
+      const content = text.slice(i + 1, j).replace(/\\([`\\$])/g, '$1');
+      out.push('$(' + tickToDollar(content) + ')');
+      i = j + 1;
+    } else if (char === "'" && !quote) {
+      const close = text.indexOf("'", i + 1);
+      const end = close < 0 ? n : close + 1;
+      out.push(text.slice(i, end));
+      i = end;
+    } else {
+      if (char === '"') quote = !quote;
+      out.push(char);
+      i += 1;
+    }
+  }
+  return out.join('');
 }
 
 /**
@@ -1425,7 +1467,7 @@ export function classifyCommand(command: string, depth = 0): Decision {
   const items: Item[] = [];
   try {
     const [stripped, docs] = stripHeredocs(command);
-    const text = dollarDecode(stripped);
+    const text = tickToDollar(dollarDecode(stripped));
     const parsed = segments(text)
       .map((segment) => shlexSplit(segment, true).map((word) => word.replace(MARK_RE, '<<HEREDOC')))
       .filter((words) => words.length);

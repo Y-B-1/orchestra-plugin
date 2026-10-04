@@ -815,7 +815,7 @@ def _raw_substitutions(text, ticks=None):
             while j < n and text[j] != '`':
                 j += 2 if text[j] == '\\' else 1
             closed = closed and j < n
-            found.append(text[i + 1:min(j, n)])
+            found.append(re.sub(r'\\([`\\$])', r'\1', text[i + 1:min(j, n)]))
             return j + 1
         end = _balanced_end(text, i + 2)
         closed = closed and end >= 0
@@ -847,6 +847,41 @@ def _raw_substitutions(text, ticks=None):
         else:
             i += 1
     return found, closed
+
+
+def _tick_to_dollar(text):
+    """SPEC A5 (O25): rewrite each closed, unquoted backtick substitution (never inside quotes) as the `$(...)` form of the same
+    content, so it keeps the same class in the same position. Inside double quotes a backtick stays one
+    (_backtick_scan classifies it, with its escaped inner backticks unescaped). Inside backticks the shell reads backslash-backtick,
+    backslash-backslash and backslash-dollar as the plain character, so an escaped backtick there is a
+    nested substitution, rewritten in turn. A top-level escaped backtick stays a literal."""
+    out, i, n, quote = [], 0, len(text), False
+    while i < n:
+        char = text[i]
+        if char == '\\':
+            out.append(text[i:i + 2])
+            i += 2
+        elif char == '`' and not quote:
+            j = i + 1
+            while j < n and text[j] != '`':
+                j += 2 if text[j] == '\\' else 1
+            if j >= n:  # Never closed: leave it for the malformed checks.
+                out.append(text[i:])
+                break
+            content = re.sub(r'\\([`\\$])', r'\1', text[i + 1:j])
+            out.append('$(' + _tick_to_dollar(content) + ')')
+            i = j + 1
+        elif char == "'" and not quote:
+            close = text.find("'", i + 1)
+            end = n if close < 0 else close + 1
+            out.append(text[i:end])
+            i = end
+        else:
+            if char == '"':
+                quote = not quote
+            out.append(char)
+            i += 1
+    return ''.join(out)
 
 
 def _at_command_position(before):
@@ -1175,7 +1210,7 @@ def classify_command(command: str, _depth=0) -> Decision:
         return _deny('Invalid or excessively nested command', 'malformed')
     try:
         text, docs = _strip_heredocs(command)
-        text = _dollar_decode(text)
+        text = _tick_to_dollar(_dollar_decode(text))
         segments = [[_MARK_RE.sub('<<HEREDOC', word) for word in shlex.split(segment, comments=True)]
                     for segment in _segments(text)]
         segments = [words for words in segments if words]
