@@ -16,7 +16,9 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+import tomllib
 import uuid
+from datetime import datetime, timezone
 
 from .guards import classify_command
 
@@ -57,6 +59,117 @@ def _contracts():
         return result, digest
     except (OSError, ValueError, TypeError, KeyError) as exc:
         raise EngineError('Invalid canonical role/method contract: ' + str(exc)) from exc
+
+
+AUTONOMY_TEMPLATE = PACKAGE_ROOT / 'config' / 'autonomy-template.md'
+AUTONOMY_FIXED = (
+    '- Release: no release, permit or deploy.',
+    '- Merge: no pull request merge, and no local merge on the default branch.',
+    '- Push: no push to any branch.',
+    '- Deletion: no deletion of files, branches or tags.',
+    '- Credential entry: never enter credentials.',
+    '- Engine-gated actions: nothing that needs a permit.',
+)
+AUTONOMY_KEEP_AWAKE = 'User step: enable keep-awake in Claude Desktop (or keep the machine awake) for an overnight run.'
+CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
+CODEX_PROMPT_FREE_POLICIES = ('never',)
+PARKABLE = ('queued', 'running', 'reported')
+TASK_STATES = ('queued', 'running', 'reported', 'repairing', 'accepted', 'parked')
+
+
+def _section(text, title):
+    start = re.search(r'^##[ \t]+' + re.escape(title) + r'[ \t]*$', text, re.M)
+    if not start:
+        return None
+    rest = text[start.end():]
+    end = re.search(r'^##[ \t]', rest, re.M)
+    return rest[:end.start()] if end else rest
+
+
+def parse_ledger(text, now):
+    """Parse the autonomy ledger (SPEC 12.2); every refusal names the field."""
+    fields = {}
+    for name in ('goal', 'max_passes', 'max_stalls', 'deadline'):
+        match = re.search(r'^' + name + r':[ \t]*(.*?)[ \t]*$', text, re.M)
+        if not match or not match.group(1):
+            raise EngineError('Ledger field %s is missing or empty' % name)
+        if re.fullmatch(r'<.*>', match.group(1)):
+            raise EngineError('Ledger field %s still holds its template placeholder' % name)
+        fields[name] = match.group(1)
+    for name, top in (('max_passes', 20), ('max_stalls', 2)):
+        if not re.fullmatch(r'[0-9]{1,6}', fields[name]) or not 1 <= int(fields[name]) <= top:
+            raise EngineError('Ledger field %s must be an integer from 1 to %d' % (name, top))
+        fields[name] = int(fields[name])
+    try:
+        when = datetime.fromisoformat(fields['deadline'])
+    except ValueError:
+        raise EngineError('Ledger field deadline must be ISO 8601 with a UTC offset') from None
+    if when.utcoffset() is None:
+        raise EngineError('Ledger field deadline needs a UTC offset')
+    if when.timestamp() <= now:
+        raise EngineError('Ledger field deadline must be in the future')
+    checks, names = [], set()
+    for raw in (_section(text, 'Completion checks') or '').splitlines():
+        line = raw.strip()
+        if line.startswith('- '):
+            line = line[2:].strip()
+        if not line or line.startswith('>'):
+            continue
+        if re.fullmatch(r'<.*>', line):
+            raise EngineError('Completion checks still hold a template placeholder')
+        name, colon, rest = line.partition(':')
+        name = name.strip()
+        try:
+            argv = shlex.split(rest)
+        except ValueError:
+            argv = []
+        if not colon or not re.fullmatch(r'[A-Za-z0-9._-]+', name) or not argv:
+            raise EngineError('Completion checks line is not NAME: argv...: ' + line)
+        if name in names:
+            raise EngineError('Completion checks repeat the name ' + name)
+        names.add(name)
+        checks.append(dict(name=name, argv=argv))
+    if not checks:
+        raise EngineError('Completion checks need at least one NAME: argv... line')
+    boundaries = {line.strip() for line in (_section(text, 'Approval boundaries') or '').splitlines()}
+    for line in AUTONOMY_FIXED:
+        if line not in boundaries:
+            raise EngineError('Approval boundaries must keep the fixed line: ' + line)
+    return dict(goal=fields['goal'], max_passes=fields['max_passes'], max_stalls=fields['max_stalls'],
+                deadline=fields['deadline'], checks=checks)
+
+
+def autonomy_preconditions(repo, home=None):
+    """Read and report only (SPEC 12.5): never changes a setting, never refuses."""
+    home = Path(home) if home else Path.home()
+    found = None
+    for label, path in (('local project', Path(repo) / '.claude' / 'settings.local.json'),
+                        ('project', Path(repo) / '.claude' / 'settings.json'),
+                        ('user', home / '.claude' / 'settings.json')):
+        try:
+            value = json.loads(path.read_text())['permissions']['defaultMode']
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+        if isinstance(value, str) and value:
+            found = (value, label)
+            break
+    if not found:
+        mode = 'unknown (no Claude settings file names permissions.defaultMode); WARNING: prompts may stall an unattended run'
+    elif found[0] in CLAUDE_PROMPT_FREE_MODES:
+        mode = '%s (%s settings)' % found
+    else:
+        mode = '%s (%s settings); WARNING: this mode can stall on prompts' % found
+    try:
+        policy = tomllib.loads((home / '.codex' / 'config.toml').read_text()).get('approval_policy')
+    except (OSError, ValueError):
+        policy = None
+    if not isinstance(policy, str) or not policy:
+        codex = 'unknown (no approval_policy in ~/.codex/config.toml)'
+    elif policy in CODEX_PROMPT_FREE_POLICIES:
+        codex = policy
+    else:
+        codex = policy + '; WARNING: this policy can stall on prompts'
+    return dict(permission_mode=mode, codex_approval_policy=codex, keep_awake=AUTONOMY_KEEP_AWAKE)
 
 
 def _hash(data):
@@ -237,6 +350,15 @@ class Engine:
         for key in ('session', 'autonomy'):
             if key not in state or (state[key] is not None and not isinstance(state[key], dict)):
                 raise EngineError('Invalid run state ' + key)
+        auto = state['autonomy']
+        if auto is not None:
+            ints = ('passes', 'stalls', 'max_passes', 'max_stalls', 'armed_gates', 'armed_reviews')
+            if (not isinstance(auto.get('active'), bool) or ('report' in auto and not isinstance(auto['report'], dict))
+                    or (auto['active'] and (any(isinstance(auto.get(k), bool) or not isinstance(auto.get(k), int) for k in ints)
+                                            or any(not isinstance(auto.get(k), str) for k in ('goal', 'deadline'))
+                                            or any(not isinstance(auto.get(k), list) for k in ('checks', 'accepted'))
+                                            or not isinstance(auto.get('ledger'), dict)))):
+                raise EngineError('Invalid autonomy state')
         session = state['session']
         if session is not None and (not isinstance(session.get('active'), bool)
                 or any(not isinstance(session.get(k), str) or not session[k] for k in ('actor', 'lease'))):
@@ -250,7 +372,7 @@ class Engine:
                     or isinstance(pending.get('at'), bool) or not isinstance(pending.get('at'), (int, float))):
                 raise EngineError('Invalid pending rebind')
         for name, task in state['tasks'].items():
-            if not isinstance(task, dict) or task.get('id') != name or task.get('state') not in ('queued', 'running', 'reported', 'repairing', 'accepted'):
+            if not isinstance(task, dict) or task.get('id') != name or task.get('state') not in TASK_STATES:
                 raise EngineError('Invalid task state')
             for key in ('role', 'mode'):
                 if not isinstance(task.get(key), str):
@@ -341,7 +463,7 @@ class Engine:
             self._lease(state, actor, lease)
             state['session']['active'] = False
             state['permits'] = []
-            state['autonomy'] = None
+            state['autonomy'] = self._kept_autonomy(state)
 
     def interrupt_active(self):
         """Interrupt the active session without a caller-supplied lease. Python only, for the Interrupt hook."""
@@ -353,8 +475,14 @@ class Engine:
                 return False
             state['session']['active'] = False
             state['permits'] = []
-            state['autonomy'] = None
+            state['autonomy'] = self._kept_autonomy(state)
             return True
+
+    @staticmethod
+    def _kept_autonomy(state):
+        """Clear autonomy as today, except a stopped run's morning report stays until the next arm or disarm."""
+        auto = state['autonomy']
+        return auto if auto and not auto['active'] and 'report' in auto else None
 
     @staticmethod
     def _bound_to(state, session_id):
@@ -372,7 +500,7 @@ class Engine:
             state['session'].update(active=False, outcome='ended')
             state['session'].pop('pending_rebind', None)  # harness_session stays as a record
             state['permits'] = []
-            state['autonomy'] = None
+            state['autonomy'] = self._kept_autonomy(state)
             return True
 
     def mark_harness_rebind(self, session_id):
@@ -481,6 +609,28 @@ class Engine:
     @staticmethod
     def _read_review(task):
         return bool(task.get('review_of')) and task['role'] in REVIEW_ROLES
+
+    def park(self, actor, lease, task_id, reason):
+        """An approval boundary: set the card aside and release its assignment, reservation and capacity (SPEC 12.4)."""
+        if not isinstance(reason, str) or not reason.strip():
+            raise EngineError('Parking needs a reason')
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = state['tasks'].get(task_id)
+            if not task or task['state'] not in PARKABLE or task.get('repaired_by'):
+                raise EngineError('Only a queued, running or reported card without a repair can be parked')
+            task.update(state='parked', parked_reason=reason.strip())
+            for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact'):
+                task.pop(key, None)
+
+    def unpark(self, actor, lease, task_id):
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = state['tasks'].get(task_id)
+            if not task or task['state'] != 'parked':
+                raise EngineError('Task is not parked')
+            task['state'] = 'queued'
+            task.pop('parked_reason', None)
 
     @staticmethod
     def _reservation(task, state):
@@ -789,12 +939,13 @@ class Engine:
             artifact = self._completion_evidence(state)
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []
-            state['autonomy'] = None
+            state['autonomy'] = self._kept_autonomy(state)
             return artifact
 
     def release_permit(self, actor, lease, remote, target, action='release'):
         with self._state() as state:
             self._lease(state, actor, lease)
+            self._refuse_under_autonomy(state)
             artifact = self._release_evidence(state, remote, target, action)
             permit = dict(id=uuid.uuid4().hex, action=action, remote=remote, target=target,
                           argv=self.policy['release']['argv'], artifact=artifact, lease=lease)
@@ -806,6 +957,7 @@ class Engine:
             session = state['session']
             if not session or not session['active']:
                 raise EngineError('No active release session')
+            self._refuse_under_autonomy(state)
             artifact = self._release_evidence(state, remote, target, action, argv)
             for permit in reversed(state['permits']):
                 if (permit['artifact'] == artifact and permit['remote'] == remote and permit['target'] == target
@@ -813,49 +965,146 @@ class Engine:
                     return copy.deepcopy(permit)
             raise EngineError('No current explicit release permit')
 
-    def enable_autonomy(self, actor, lease, ledger_path, max_passes, max_stalls):
-        if (not all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in (max_passes, max_stalls))
-                or max_passes > 20 or max_stalls > 2):
-            raise EngineError('Autonomy needs explicit positive caps')
-        with self._state() as state:
-            self._lease(state, actor, lease)
-            state['autonomy'] = dict(ledger=self._snapshot(ledger_path, 'ledger'), max_passes=max_passes,
-                                     max_stalls=max_stalls, passes=0, stalls=0, active=True, progress=self._progress(state))
+    @staticmethod
+    def _autonomy_on(state):
+        auto = state['autonomy']
+        return bool(state['session'] and state['session']['active'] and auto and auto['active'])
 
-    def autonomy_step(self, actor, lease, progress):
-        if not isinstance(progress, bool):
-            raise EngineError('Progress must be boolean')
-        with self._state() as state:
-            self._lease(state, actor, lease)
-            ledger = state['autonomy']
-            if not ledger or not ledger['active'] or not self._intact(ledger['ledger']):
-                raise EngineError('No active intact autonomy ledger')
-            ledger['passes'] += 1
-            ledger['stalls'] = 0 if progress else ledger['stalls'] + 1
-            ledger['active'] = ledger['passes'] < ledger['max_passes'] and ledger['stalls'] < ledger['max_stalls']
-            return copy.deepcopy(ledger)
+    def _refuse_under_autonomy(self, state):
+        if self._autonomy_on(state):
+            raise EngineError('Release and permits are approval boundaries while autonomy is active')
 
-    def _progress(self, state):
-        return _digest(dict(accepted=sorted(t['id'] for t in state['tasks'].values()
-                                            if t['state'] == 'accepted'),
-                            artifact=self.artifact(),
-                            gates=sorted({(g['name'], g['sha256']) for g in state['gates']
-                                          if g['passed'] and self._intact(g)})))
+    def autonomy_active(self):
+        with self._state(False) as state:
+            return self._autonomy_on(state)
+
+    def arm_autonomy(self, home=None):
+        """Arm the loop from `<state>/autonomy.md` (SPEC 12.1). Takes no lease, by design (O8)."""
+        path = self.state_dir / 'autonomy.md'
+        with self._state() as state:
+            if not state['session'] or not state['session']['active']:
+                raise EngineError('Autonomy needs an armed run (an active session)')
+            if not path.is_file():
+                shutil.copyfile(AUTONOMY_TEMPLATE, path)
+                raise EngineError('Ledger template written to %s: fill the ledger, then arm again' % path)
+            data = path.read_bytes()
+            fields = parse_ledger(data.decode(errors='replace'), self._clock())
+            snapshot = self._snapshot(path, 'ledger')
+            if snapshot['sha256'] != _hash(data):
+                raise EngineError('Ledger changed while arming; arm again')
+            state['autonomy'] = dict(
+                active=True, ledger=snapshot, passes=0, stalls=0, armed_at=self._clock(),
+                armed_gates=len(state['gates']), armed_reviews=len(state['reviews']),
+                accepted=self._accepted(state), **fields)
+        return dict(active=True, ledger=str(path), preconditions=autonomy_preconditions(self.repo, home))
+
+    def disarm_autonomy(self):
+        """Safe at any time; a no-op never rewrites state.json."""
+        with self._state(False) as state:
+            auto = state['autonomy']
+            if not auto or (not auto['active'] and 'report' not in auto):
+                return dict(was_active=False)
+        with self._state() as state:
+            auto = state['autonomy']
+            if not auto:
+                return dict(was_active=False)
+            if auto['active']:
+                return dict(was_active=True, reason='disarmed', text=self._stop_autonomy(state, 'disarmed', shown=False))
+            auto.pop('report', None)  # clear the report shown from the previous stop
+            return dict(was_active=False)
+
+    def autonomy_status(self):
+        with self._state(False) as state:
+            auto = state['autonomy'] or {}
+            parked = [dict(id=t['id'], reason=t.get('parked_reason', ''))
+                      for t in state['tasks'].values() if t['state'] == 'parked']
+            keys = ('passes', 'max_passes', 'stalls', 'max_stalls', 'deadline')
+            return dict(active=self._autonomy_on(state), parked=parked,
+                        last_stop_reason=auto.get('last_stop_reason'), **{k: auto.get(k) for k in keys})
+
+    def autonomy_report(self):
+        """The morning report shown at SessionStart, or None. Read-only."""
+        with self._state(False) as state:
+            return copy.deepcopy((state['autonomy'] or {}).get('report'))
+
+    @staticmethod
+    def _accepted(state):
+        return sorted(t['id'] for t in state['tasks'].values() if t['state'] == 'accepted')
+
+    def _stop_autonomy(self, state, reason, shown=True):
+        auto = state['autonomy']
+        auto.update(active=False, last_stop_reason=reason)
+        at = datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')
+        text = self._report_text(state, auto, reason, at)
+        progress = self.state_dir / 'progress.md'
+        old = progress.read_text() if progress.exists() else ''
+        gap = '' if not old.strip() else ('' if old.endswith('\n') else '\n') + '\n'
+        progress.write_text(old + gap + text + '\n')
+        if shown:
+            auto['report'] = dict(reason=reason, at=at, text=text, path=str(progress))
+        else:
+            auto.pop('report', None)
+        return text
+
+    @staticmethod
+    def _report_text(state, auto, reason, at):
+        def listing(items):
+            return ['  - ' + i for i in items] or ['  - none']
+        tasks = state['tasks'].values()
+        accepted = ['%s (%s/%s)' % (t['id'], t['role'], t['mode']) for t in tasks if t['state'] == 'accepted']
+        parked = ['%s: %s' % (t['id'], t.get('parked_reason', '')) for t in tasks if t['state'] == 'parked']
+        failures = ['gate %s: exit %d' % (g['name'], g['exit_code'])
+                    for g in state['gates'][auto['armed_gates']:] if not g['passed']]
+        failures += ['review %s: BLOCKED (%s)' % (r['reviewer'], '; '.join(map(str, r['findings'])))
+                     for r in state['reviews'][auto['armed_reviews']:] if r['findings']]
+        lines = ['## Autonomy report ' + at, '', '- stop reason: ' + reason,
+                 '- passes: %d of %d' % (auto['passes'], auto['max_passes']),
+                 '- stalls: %d of %d' % (auto['stalls'], auto['max_stalls']),
+                 '- accepted:', *listing(accepted), '- parked:', *listing(parked), '- failures:', *listing(failures)]
+        return '\n'.join(lines)
+
+    def _complete(self, state, auto):
+        matches = []
+        for check in auto['checks']:
+            same = [g for g in state['gates'] if g['name'] == check['name'] and g['argv'] == check['argv']]
+            if not same or not same[-1]['passed'] or not self._intact(same[-1]):
+                return False
+            matches.append(same[-1])
+        artifact = self.artifact()
+        return all(g['artifact'] == artifact for g in matches)
 
     def hook_stop(self):
-        """Consume explicit bounded continuation; caller identifiers do not authenticate."""
+        """The bounded Stop continuation of SPEC 12.3. Caller identifiers do not authenticate."""
+        with self._state(False) as state:
+            if not self._autonomy_on(state):
+                return None  # Read-only unless autonomy is active
         with self._state() as state:
-            session = state['session']
-            ledger = state['autonomy']
-            if (not session or not session['active'] or not ledger or not ledger['active']
-                    or not self._intact(ledger['ledger'])
-                    or not any(t['state'] != 'accepted' for t in state['tasks'].values())):
+            if not self._autonomy_on(state):
                 return None
-            progress = self._progress(state)
-            ledger['passes'] += 1
-            ledger['stalls'] = 0 if ledger['progress'] != progress else ledger['stalls'] + 1
-            ledger['progress'] = progress
-            ledger['active'] = ledger['passes'] < ledger['max_passes'] and ledger['stalls'] < ledger['max_stalls']
-            if not ledger['active']:
-                return None
-            return 'Continue the explicitly armed workflow within its ledger; check ready cards and evidence.'
+            auto = state['autonomy']
+            accepted = self._accepted(state)
+            if not self._intact(auto['ledger']):
+                reason = 'ledger-tampered'
+            elif self._clock() >= datetime.fromisoformat(auto['deadline']).timestamp():
+                reason = 'deadline'
+            elif self._complete(state, auto):
+                reason = 'complete'
+            else:
+                if auto['passes'] > 0:  # the arming turn is not a pass
+                    auto['stalls'] = 0 if set(accepted) - set(auto['accepted']) else auto['stalls'] + 1
+                auto['accepted'] = accepted
+                live = (any(t['state'] in ('running', 'reported') for t in state['tasks'].values())
+                        or bool(self._ready(state)))
+                if auto['stalls'] >= auto['max_stalls']:
+                    reason = 'cap-stalls'
+                elif auto['passes'] >= auto['max_passes']:
+                    reason = 'cap-passes'
+                elif not live:
+                    parked = any(t['state'] == 'parked' for t in state['tasks'].values())
+                    reason = 'parked-only' if parked else 'no-ready-card'
+                else:
+                    auto['passes'] += 1
+                    return ('Autonomy pass %d of %d: continue with the next ready card; park any card that '
+                            'reaches an approval boundary.' % (auto['passes'], auto['max_passes']))
+            self._stop_autonomy(state, reason)
+            return None

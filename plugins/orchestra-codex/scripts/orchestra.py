@@ -62,10 +62,13 @@ def parser():
         action = sub.add_parser(name)
         action.add_argument('remote')
         action.add_argument('target')
-    autonomy = sub.add_parser('autonomy')
-    autonomy.add_argument('ledger')
-    autonomy.add_argument('--max-passes',type=int,required=True)
-    autonomy.add_argument('--max-stalls',type=int,required=True)
+    autonomy = sub.add_parser('autonomy', help='Arm, disarm or inspect the autonomous loop; takes no lease')
+    autonomy.add_argument('action', choices=['arm','disarm','status'])
+    park = sub.add_parser('park', help='Set a card aside at an approval boundary')
+    park.add_argument('task_id')
+    park.add_argument('--reason', required=True)
+    unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
+    unpark.add_argument('task_id')
     for name in ['install-profiles','uninstall-profiles']:
         profile = sub.add_parser(name)
         profile.add_argument('--codex-home',default=os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
@@ -110,6 +113,8 @@ def execute(args):
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
     if args.command=='status':
         return engine.status(),0
+    if args.command=='autonomy':  # O8: no lease, so the ledger is armed from outside the run
+        return {'arm':engine.arm_autonomy,'disarm':engine.disarm_autonomy,'status':engine.autonomy_status}[args.action](),0
     if args.command=='artifact':
         ids=[i for i in (args.tasks or '').split(',') if i]
         if args.tasks is not None and not ids:
@@ -200,9 +205,12 @@ def execute(args):
                  'remote':args.remote,'target':args.target}
         atomic(state/('release-receipt-'+uuid.uuid4().hex+'.json'),json.dumps(receipt,indent=2).encode())
         return receipt,0 if code==0 else 1
-    if args.command=='autonomy':
-        engine.enable_autonomy(args.actor,args.lease,args.ledger,args.max_passes,args.max_stalls)
-        return {'autonomy':'armed','caps':[args.max_passes,args.max_stalls]},0
+    if args.command=='park':
+        engine.park(args.actor,args.lease,args.task_id,args.reason)
+        return {'parked':args.task_id},0
+    if args.command=='unpark':
+        engine.unpark(args.actor,args.lease,args.task_id)
+        return {'unparked':args.task_id},0
     raise EngineError('Unsupported command')
 
 
