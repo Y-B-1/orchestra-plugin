@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -52,9 +53,44 @@ def frontmatter(rel):
     return fields
 
 
+LICENSE_SHA256 = {  # sha256 of the stripped upstream LICENSE at each pinned commit
+    'obra/superpowers': 'bcbb871b4f72630bb35e1a28b11c083faabecd0751ded874762a75978caa318b',
+    'mattpocock/skills': 'b50c2b2b687a9e47af56bb60908332828bb99aa7443ad5e007edcb311e23aba6',
+    'garrytan/gstack': '0d18a6a75ad842e427f78e7f00739499330ee37c065363bcf44a7f07325e2ba6',
+    'github/spec-kit': 'e32449d23085399adc1222f7a17408b730550258e51627c153cb108ca9955823',
+    'bmad-code-org/BMAD-METHOD': '5034ff7cfe62bcef92188117a3b0e2c2fa4b8bea29a6f972368a9edc4893e557',
+}
+RULE = '=' * 64 + '\n'
+
+
+def license_blocks(notices):
+    """{repo: license text from 'MIT License' to the end of its section}, stripped."""
+    blocks = {}
+    for section in notices.split(RULE):
+        m = re.match(r'([\w.-]+/[\w.-]+)\nRepository: ', section)
+        if m and '\nMIT License' in section:
+            blocks[m.group(1)] = section[section.index('\nMIT License'):].strip()
+    return blocks
+
+
 def source_header(rel):
-    lines = [l for l in read(rel).split('\n') if l.startswith('Source:')]
-    return lines[0] if lines else None
+    try:
+        return header_in(read(rel))
+    except ValueError as e:
+        raise ValueError(f'{rel}: {e}')
+
+
+def header_in(text):
+    """The Source line, which must be the first non-blank line after any frontmatter (before Sentinel)."""
+    body = text.split('\n---\n', 1)[1] if text.startswith('---\n') else text
+    lines = body.split('\n')
+    found = [l for l in lines if l.startswith('Source:')]
+    if not found:
+        return None
+    first = next((l for l in lines if l.strip()), '')
+    if found[0] != first or len(found) > 1:
+        raise ValueError(f'Source header must be the first line after frontmatter, once: {found}')
+    return first
 
 
 def parse_header(line):
@@ -62,8 +98,11 @@ def parse_header(line):
     if not line.startswith('Source: ') or not line.endswith(HEADER_TAIL):
         raise ValueError(line)
     repos, ideas = [], []
-    for i, seg in enumerate(line[len('Source: '):-len(HEADER_TAIL)].split('; ')):
+    segments = line[len('Source: '):-len(HEADER_TAIL)].split('; ')
+    for i, seg in enumerate(segments):
         if seg.startswith('ideas: '):
+            if ideas or i != len(segments) - 1:
+                raise ValueError(line)
             names = IDEA.findall(seg[len('ideas: '):])
             if not names or ', '.join(f'{n} (idea level)' for n in names) != seg[len('ideas: '):]:
                 raise ValueError(line)
@@ -220,6 +259,17 @@ class ProvenanceTests(unittest.TestCase):
         for holder in ['Jesse Vincent', 'Matt Pocock', 'Garry Tan', 'GitHub, Inc.', 'BMad Code, LLC']:
             self.assertIn(holder, notices)
         self.assertIn('TRADEMARK NOTICE', notices)
+        blocks = license_blocks(notices)
+        self.assertEqual(set(blocks), set(LICENSE_SHA256))
+        for repo, text in blocks.items():
+            self.assertEqual(hashlib.sha256(text.encode()).hexdigest(), LICENSE_SHA256[repo], repo)
+
+    def test_pstack_and_omc_are_credited_as_idea_level_only(self):
+        notices = self.notices()
+        for name in ['pstack', 'OMC']:
+            self.assertIn(f'\n{name} (idea level)\n', notices)
+            tail = notices.split(f'{name} (idea level)')[-1].split('\n\n')[0]
+            self.assertNotIn('Permission is hereby granted', tail)
 
     def test_idea_level_sources_carry_no_license_text(self):
         notices = self.notices()
@@ -239,9 +289,23 @@ class ProvenanceTests(unittest.TestCase):
                     'Source: obra/superpowers@8ca22dba9a94 a.md (MIT); see THIRD-PARTY-NOTICES.',
                     'Source: derived from obra/superpowers@8ca22dba9a94 a.md (Apache); see THIRD-PARTY-NOTICES.',
                     'Source: ideas: A; see THIRD-PARTY-NOTICES.',
+                    'Source: ideas: A (idea level); obra/superpowers@8ca22dba9a94 a.md (MIT); see THIRD-PARTY-NOTICES.',
+                    'Source: ideas: A (idea level); ideas: B (idea level); see THIRD-PARTY-NOTICES.',
+                    'Source: derived from obra/superpowers@8ca22dba9a94 a.md (MIT); ideas: A (idea level); '
+                    'github/spec-kit@ae5ade7234be t.md (MIT); see THIRD-PARTY-NOTICES.',
                     'Source: see THIRD-PARTY-NOTICES.']:
             with self.assertRaises(ValueError, msg=bad):
                 parse_header(bad)
+
+    def test_header_must_lead_the_body_after_frontmatter(self):
+        src = 'Source: ideas: A (idea level); see THIRD-PARTY-NOTICES.'
+        self.assertEqual(header_in(f'{src}\n\nSentinel: x\n'), src)
+        self.assertEqual(header_in(f'---\nname: n\n---\n{src}\nSentinel: x\n'), src)
+        self.assertIsNone(header_in('Sentinel: x\nbody\n'))
+        for bad in [f'Sentinel: x\n{src}\n', f'---\nname: n\n---\nSentinel: x\n{src}\n',
+                    f'text\n{src}\nSentinel: x\n', f'{src}\n{src}\nSentinel: x\n']:
+            with self.assertRaises(ValueError, msg=bad):
+                header_in(bad)
 
     def test_headers_parse_and_are_credited(self):
         notices = self.notices()
