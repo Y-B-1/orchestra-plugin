@@ -739,6 +739,9 @@ Parking:
 - New CLI `orchestra.py park TASK --reason TEXT` (lease required) moves a queued, running or reported card to `parked` with the reason. It drops the card's assignment and releases its reservation and capacity. Dependents stay blocked.
 - `orchestra.py unpark TASK` (lease required) returns a parked card to `queued`. The user's morning step.
 - Parked cards count as not done for completion evidence, so a run with parked cards cannot `finish`.
+- A card with an open repair chain (`repaired_by` set) is not parkable; park its open repair card instead. For the `parked-only` stop, a card whose open repair card is parked counts as parked (O30).
+
+Unloadable state (O29): when a state file exists but the engine cannot load it (corrupt JSON, a contract or policy change), the hook reads `autonomy.active` from the raw state JSON without validation. If that flag is true, or the file does not parse as JSON, the hook applies the autonomy-active column of 5.1 to every class (boundary included). If the raw file parses and the flag is not true, the armed, autonomy-off column applies. An exception while reading autonomy status counts as active. Stop never continues when the state cannot be loaded.
 
 Scope note: a builder working in a linked worktree of the armed repository gets the same boundaries, because the hook resolves state from the main worktree (A15). A separate clone is a different repository and stays unarmed. REASONED; recorded in `docs/hooks.md`.
 
@@ -797,6 +800,8 @@ Acceptance for section 12:
 | O26 | Double-quoted `$(...)` in an argument word (R2h) | REASONED (coordinator ruling, overnight): a pre-existing fail-open in v1 and v2 (`echo "$(git reset --hard)"` allows); not an accepted limit in A5, so it is closed: the substitution keeps its class as unquoted. Ticket B2-r8, Python and TypeScript. | Morning report; default applies |
 | O27 | Comment with an apostrophe hides later lines (R2h) | REASONED (coordinator ruling, overnight): pre-existing fail-open; a word-start `#` comment ends at the newline and its quotes are literal. Ticket B2-r8. | Morning report; default applies |
 | O28 | Command-position skip list and quote-blind separator search (R2g) | REASONED (coordinator ruling, overnight): the O23 command-position test uses the full A5 skip list and a quote-aware backward search. Ticket B2-r8. | Morning report; default applies |
+| O29 | Boundary enforcement with an unloadable state (R10) | REASONED (coordinator ruling, overnight): fail closed only when autonomy may be active: read the raw `autonomy.active` flag; true or unparseable applies the autonomy-active column, otherwise the armed, autonomy-off column. Avoids denying every deletion after a plugin upgrade changes the policy hash. Ticket B10-r1. | Morning report; default applies |
+| O30 | Parking a card under repair (R10) | REASONED (coordinator ruling, overnight): a card with `repaired_by` is not parkable; park its repair card; a card whose open repair is parked counts as parked for `parked-only`. Ticket B10-r1. | Morning report; default applies |
 
 ## 14. Exclusions
 
