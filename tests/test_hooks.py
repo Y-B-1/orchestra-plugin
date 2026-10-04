@@ -74,10 +74,33 @@ UNARMED_RELEASES = ['git push origin feat/v2-roles-guard-mods', 'git push origin
 MULTI_RELEASES = ['git push origin x && gh pr create', 'git push origin a && git push origin b',
                   'git tag v2.0.0 && git push origin v2.0.0', 'cd sub && git push origin x',
                   'gh pr merge 3 --squash; echo done']
-STASH_ALLOWED = ['git stash list', 'git stash show', 'git stash show -p stash@{1}', 'git stash show --stat']
 STASH_DENIED = ['git stash', 'git stash push', 'git stash pop', 'git stash apply', 'git stash drop',
                 'git stash clear', 'git stash save wip', 'git stash branch topic', 'git stash create',
-                'git stash store abc']
+                'git stash store abc', 'git stash list', 'git stash show', 'git stash show -p stash@{1}',
+                'git stash show --stat']
+# Plugin 2.1.0: every stash form, wholesale add and commit -a deny at any command boundary or prefix.
+_BOUNDARIES = ['{}', 'FOO=1 {}', 'sudo {}', 'sudo -u root {}', 'env X=1 {}', 'command {}', 'nohup {}',
+               'true && {}', 'false || {}', 'echo x; {}', 'echo x | {}', '({})', 'cd sub && {}']
+_STASH_FORMS = ['git stash', 'git stash list', 'git stash show', 'git stash show -p stash@{1}', 'git stash pop',
+                'git stash push -m x', 'git -C wt stash list', 'git -c core.pager=cat stash show',
+                'git --git-dir=.git stash list', 'git --work-tree=. stash drop', 'git --git-dir .git stash clear']
+_ADD_FORMS = ['git add -A', 'git add --all', 'git add -u', 'git add --update', 'git add --no-ignore-removal',
+              'git add -Av', 'git add -vA', 'git add -nu', 'git add -v -u src', 'git add src/a.ts -A',
+              'git add src/a.ts --all', 'git add .', 'git add ./', 'git add ..', 'git add ../', 'git add :/',
+              'git add :/.', 'git add *', "git add '*'", 'git add "*"', 'git add src/a.ts .', 'git add -- .',
+              'git add -f .', 'git add -- ../', 'git -C wt add -A', 'git -c core.x=y add .',
+              'git --git-dir=a --work-tree=b add .', 'git --work-tree b add -u']
+_COMMIT_FORMS = ['git commit -a', 'git commit --all', 'git commit --all -m x', 'git commit -am x',
+                 'git commit -m x -a', 'git commit -sam x', 'git -C wt commit -am x', 'git commit -a -m x']
+DENY_GIT_21 = sorted({b.format(f) for f in _STASH_FORMS + _ADD_FORMS + _COMMIT_FORMS for b in _BOUNDARIES})
+ALLOW_GIT_21 = ['git add src/a.ts docs/b.md', 'git add ./src/x.ts', 'git add src/*.ts', 'git add docs/',
+                'git add .gitignore', 'git add ..foo', 'git add -p src/a.ts', 'git add -f src/a.ts',
+                'git add -- -A', 'git commit -m "never run git add -A or git stash"',
+                "git commit -m 'git add . && git commit -a'", 'git commit -m "git stash list"',
+                'git commit -m "-a --all"', 'git commit -F msg.txt', 'git commit -m done',
+                'git clean -n -f', 'git status', 'echo git stash', 'echo "git add -A"',
+                'FOO=1 git add src/a.ts', 'sudo git commit -m "use git add . later"',
+                'true && git add ./src/x.ts && git commit -m "no git stash here"']
 RESTORE_ALLOWED = ['git restore --staged .', 'git restore -S .', 'git restore --staged src/a.py',
                    'git restore --staged :/']
 RESTORE_DENIED = ['git restore --staged --worktree .', 'git restore -SW .', 'git restore -W .',
@@ -211,13 +234,20 @@ class GuardsTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).klass, 'deny')
 
-    def test_a3_stash_list_and_show(self):
-        for command in STASH_ALLOWED:
-            with self.subTest(command=command):
-                self.assertEqual(classify_command(command).klass, 'allow')
+    def test_a3_every_stash_form_denies(self):
         for command in STASH_DENIED:
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).klass, 'deny')
+
+    def test_git_21_stash_wholesale_add_and_commit_all_deny(self):
+        for command in DENY_GIT_21:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'deny', command)
+
+    def test_git_21_explicit_paths_and_message_words_still_allow(self):
+        for command in ALLOW_GIT_21:
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'allow', command)
 
     def test_a4_restore_staged(self):
         for command in RESTORE_ALLOWED:

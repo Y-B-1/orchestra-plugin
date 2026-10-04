@@ -443,8 +443,6 @@ def _git(words):
     flags = [x for x in options if x.startswith('-')]
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
-        if args and args[0] in _GIT['stash_allowed']:
-            return Decision()
         return _deny('Git stash shares state across worktrees', 'stash')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):
         return _deny('Hard reset discards work')
@@ -461,7 +459,8 @@ def _git(words):
         staged_only = ('--staged' in flags or 'S' in short) and not ('--worktree' in flags or 'W' in short)
         if '--force' in flags or (wholesale and not staged_only):
             return _deny('Wholesale restore discards work')
-    if verb == 'add' and (any(x in flags for x in ['--all', '--update']) or 'A' in short or 'u' in short or '.' in args or ':/' in args):
+    if verb == 'add' and (any(x in flags for x in _GIT['wholesale_add_flags']) or 'A' in short or 'u' in short or
+                          any(x in _GIT['wholesale_add_pathspecs'] for x in args)):
         return _deny('Stage explicit paths only', 'wholesaleStage')
     if verb == 'commit':
         # A message beginning with a dash is still a message.

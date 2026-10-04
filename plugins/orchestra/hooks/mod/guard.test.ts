@@ -51,7 +51,14 @@ test('classifier: malformed input denies, size and depth caps', () => {
   expect(classifyCommand('cat <<EOF\nno end').reason).toBe('Malformed heredoc');
   expect(klassOf(classifyCommand('echo ' + 'a'.repeat(131100)))).toBe('deny');
   expect(klassOf(classifyCommand('git stash'))).toBe('deny');
-  expect(klassOf(classifyCommand('git stash list'))).toBe('allow');
+  expect(klassOf(classifyCommand('git stash list'))).toBe('deny');
+  expect(klassOf(classifyCommand('git stash show -p stash@{1}'))).toBe('deny');
+  expect(klassOf(classifyCommand('git add --no-ignore-removal'))).toBe('deny');
+  expect(klassOf(classifyCommand("git add '*'"))).toBe('deny');
+  expect(klassOf(classifyCommand('git add ../'))).toBe('deny');
+  expect(klassOf(classifyCommand('git add -vA'))).toBe('deny');
+  expect(klassOf(classifyCommand('git add ./src/x.ts'))).toBe('allow');
+  expect(klassOf(classifyCommand('git commit -m "never run git add -A or git stash"'))).toBe('allow');
 });
 
 test('FX6: crafted nested shells deny well inside the hook timeout (reading budget)', () => {

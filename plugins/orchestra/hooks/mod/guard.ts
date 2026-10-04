@@ -89,7 +89,7 @@ export function loadRules(json: string): void {
   for (const key of Object.keys(need(runners.attached_value_flags, 'runners.attached'))) attached.set(key, new Set(strings(runners.attached_value_flags[key], 'attached')));
   const gitSets: Record<string, Set<string>> = {};
   for (const key of Object.keys(git)) gitSets[key] = new Set(strings(git[key], 'git.' + key));
-  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'stash_allowed', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs']) need(gitSets[key], 'git.' + key);
+  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs']) need(gitSets[key], 'git.' + key);
   strings(release.az_requires, 'release.az_requires');
   strings(release.package_tools, 'release.package_tools');
   strings(release.deploy_tools, 'release.deploy_tools');
@@ -612,7 +612,6 @@ function git(words: string[]): Decision {
   const short = flags.filter((x) => !x.startsWith('--')).map((x) => x.slice(1)).join('');
   const hasFlag = (name: string) => flags.includes(name);
   if (verb === 'stash') {
-    if (args.length && GIT.stash_allowed!.has(args[0]!)) return dec();
     return denyOf('Git stash shares state across worktrees', 'stash');
   }
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
@@ -625,7 +624,7 @@ function git(words: string[]): Decision {
     const stagedOnly = (hasFlag('--staged') || short.includes('S')) && !(hasFlag('--worktree') || short.includes('W'));
     if (hasFlag('--force') || (wholesale && !stagedOnly)) return denyOf('Wholesale restore discards work');
   }
-  if (verb === 'add' && (hasFlag('--all') || hasFlag('--update') || short.includes('A') || short.includes('u') || args.includes('.') || args.includes(':/'))) {
+  if (verb === 'add' && ([...GIT.wholesale_add_flags!].some((x) => hasFlag(x)) || short.includes('A') || short.includes('u') || args.some((x) => GIT.wholesale_add_pathspecs!.has(x)))) {
     return denyOf('Stage explicit paths only', 'wholesaleStage');
   }
   if (verb === 'commit') {
