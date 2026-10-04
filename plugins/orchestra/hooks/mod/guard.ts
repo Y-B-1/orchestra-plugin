@@ -311,6 +311,12 @@ const MARK = '';
 const MARK_RE = /<<[0-9]+/g;
 const REDIRECT_RE = /^(?:[0-9]*(?:>&|<&|>>|>\||<>|>|<)|&>>?)([^\n]*)$/;
 const HEREDOC_RE = /<<(-?)[ \t]*("[^"\n]*"|'[^'\n]*'|\\?[A-Za-z_0-9][A-Za-z_0-9.\-]*)/y;
+
+/** HEREDOC_RE matched at text[i], or null. */
+function heredocAt(text: string, i: number): RegExpExecArray | null {
+  HEREDOC_RE.lastIndex = i;
+  return HEREDOC_RE.exec(text);
+}
 const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=[^\n]*$/;
 
 type Doc = [string, boolean];
@@ -428,7 +434,15 @@ function unwrap(wordsIn: string[]): string[] {
     const name = posixName(words[0]!);
     const redirect = REDIRECT_RE.exec(words[0]!);
     if (words[0] === 'case') return [];
-    if (RESERVED.has(words[0]!)) {
+    if (words[0] === 'function' && words.length > 1) {
+      // `function NAME [()] {`: the name is not a command (SPEC A5, O20).
+      words = words.slice(2);
+      if (words.length && words[0] === '()') words = words.slice(1);
+    } else if (words[0] === 'coproc') {
+      // `coproc [NAME] {` or `coproc COMMAND` (SPEC A5, O20).
+      words = words.slice(1);
+      if (words.length > 1 && words[1] === '{') words = words.slice(1);
+    } else if (RESERVED.has(words[0]!)) {
       words = words.slice(1);
     } else if (redirect) {
       words = redirect[1] ? words.slice(1) : words.slice(2);
@@ -813,8 +827,27 @@ function readBalanced(text: string, i: number): number {
   return end < 0 ? text.length : end;
 }
 
-const CASE_PREV = new Set(['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', '{']);
+const CASE_PREV = new Set(['if', 'then', 'elif', 'else', 'while', 'until', 'do', '!', '{', 'time']);
 const WORD_STOP = ' \t\n;&|()<>"\'\\$`';
+
+/**
+ * Index just past the bodies of the heredocs in pending, which start at text[i]. A body that never ends is
+ * not skipped (the operator may not have been a heredoc, as in `$((1 << 2))`).
+ */
+function skipHeredocBodies(text: string, i: number, pending: [boolean, string][]): number {
+  let j = i;
+  const n = text.length;
+  for (const [dash, delimiter] of pending) {
+    for (;;) {
+      if (j >= n) return i;
+      const end = text.indexOf('\n', j);
+      const line = text.slice(j, end < 0 ? n : end);
+      j = end < 0 ? n : end + 1;
+      if ((dash ? line.replace(/^\t+/, '') : line) === delimiter) break;
+    }
+  }
+  return j;
+}
 
 function balancedEnd(text: string, start0: number): number {
   let i = start0;
@@ -822,6 +855,7 @@ function balancedEnd(text: string, start0: number): number {
   let q: string | null = null;
   const n = text.length;
   const cases: { state: string; depth: number }[] = [];
+  let pending: [boolean, string][] = []; // Heredoc (dash, delimiter) pairs whose bodies start after the next newline (SPEC A5, O20).
   let start = true;
   while (i < n) {
     const char = text[i]!;
@@ -861,11 +895,22 @@ function balancedEnd(text: string, start0: number): number {
         if (depth === 0) return i + 1;
       }
       start = true;
+    } else if (char === '<' && text.startsWith('<<', i) && !text.startsWith('<<<', i) && (i === 0 || text[i - 1] !== '<') && heredocAt(text, i) !== null) {
+      const found = heredocAt(text, i)!;
+      pending.push([found[1] !== '', found[2]!.replace(/^["'\\]+|["'\\]+$/g, '')]);
+      i = found.index + found[0].length;
+      start = false;
+      continue;
     } else if (';&|\n'.includes(char)) {
       const two = text.slice(i, i + 2);
       if (top && top.state === 'body' && (two === ';;' || two === ';&')) {
         top.state = 'pattern';
         i += 1;
+      } else if (char === '\n' && pending.length) {
+        i = skipHeredocBodies(text, i + 1, pending);
+        pending = [];
+        start = true;
+        continue;
       }
       start = true;
     } else if (!'$`<>'.includes(char)) {
@@ -971,7 +1016,7 @@ function isArithmetic(text: string, i: number): boolean {
   return inner < 0 || text.slice(inner, inner + 1) === ')';
 }
 
-function rawSubstitutions(text: string): [string[], boolean] {
+function rawSubstitutions(text: string, ticks: [boolean, number][] | null = null): [string[], boolean] {
   const found: string[] = [];
   let closed = true;
   let i = 0;
@@ -979,6 +1024,7 @@ function rawSubstitutions(text: string): [string[], boolean] {
   let inQuote = false;
 
   const command = (at: number): number => {
+    if (ticks !== null) ticks.push([text[at] === '`', at]);
     if (text[at] === '`') {
       let j = at + 1;
       while (j < n && text[j] !== '`') j += text[j] === '\\' ? 2 : 1;
@@ -1096,6 +1142,44 @@ function rawScan(text: string, depth: number): Decision | null {
   return null;
 }
 
+/**
+ * SPEC A5 (O20): a backtick substitution anywhere in the text is a command, as `$(...)` is. The `$(...)`
+ * ones are classified by the segment split; only the backtick ones need this scan.
+ */
+function backtickScan(text: string, depth: number): Decision | null {
+  if (depth > 8) return null;
+  const ticks: [boolean, number][] = []; // One [is a backtick, start index] per substitution.
+  const [found] = rawSubstitutions(text, ticks);
+  for (let k = 0; k < found.length && k < ticks.length; k++) {
+    const content = found[k]!;
+    const [tick, at] = ticks[k]!;
+    const before = text.slice(0, at).replace(/[ \t]+$/, '');
+    let hit: Decision | null;
+    if (!tick) hit = backtickScan(content, depth + 1);
+    else if (!before || ';&|({!\n'.includes(before[before.length - 1]!)) hit = scanText(content, depth + 1, true); // At command position its output runs.
+    else hit = classifyCommand(content, depth + 1);
+    if (hit && hardDeny(hit)) return hit;
+  }
+  return null;
+}
+
+/** True when the segment is blank or only redirections (`2>/dev/null`, `>&1`, `</dev/stdin`). */
+function onlyRedirects(segment: string): boolean {
+  let words: string[];
+  try {
+    words = shlexSplit(segment, false);
+  } catch {
+    return false;
+  }
+  let i = 0;
+  while (i < words.length) {
+    const redirect = REDIRECT_RE.exec(words[i]!);
+    if (!redirect) return false;
+    i += redirect[1] ? 1 : 2;
+  }
+  return i <= words.length;
+}
+
 function pipeJoins(parts: Piece[], k: number): boolean {
   const following = k + 1 < parts.length ? parts[k + 1]! : null;
   return following !== null && !!(strip(following[0]) || following[1] === '&' || following[1] === '\n' || following[1] === '(');
@@ -1125,7 +1209,8 @@ function chains(text: string): string[][] {
     cur = [];
   };
 
-  const pipeFollows = (k: number): boolean => k + 1 < parts.length && !strip(parts[k + 1]![0]) && parts[k + 1]![1] === '|' && pipeJoins(parts, k + 1);
+  // A part holding only redirects and a continuing `|` comes right after parts[k] (O20).
+  const pipeFollows = (k: number): boolean => k + 1 < parts.length && onlyRedirects(parts[k + 1]![0]) && parts[k + 1]![1] === '|' && pipeJoins(parts, k + 1);
 
   for (let k = 0; k < parts.length; k++) {
     const [seg, op] = parts[k]!;
@@ -1135,6 +1220,7 @@ function chains(text: string): string[][] {
       continue;
     }
     carry = false;
+    if (k && parts[k - 1]![1] === ')' && s && pipeFollows(k - 1)) s = ''; // The redirects of a group that a pipe follows are not a command.
     if (/^\{/.test(s) && WS_OR_END_RE.test(s.slice(1))) {
       s = strip(s.slice(1));
       frames.push({ members: [], seen: flushes, feeder: pipeBefore ? cur.slice() : null });
@@ -1323,7 +1409,7 @@ export function classifyCommand(command: string, depth = 0): Decision {
     }
     items.push(...heredocItems(docs, pipelines(text), depth));
     items.push(...streamItems(text, scanOps(text), depth));
-    const rawHit = rawScan(text, depth);
+    const rawHit = rawScan(text, depth) ?? backtickScan(text, depth);
     if (rawHit) items.push([rawHit, [], false]);
   } catch (e) {
     if (!(e instanceof ValueError)) throw e;
