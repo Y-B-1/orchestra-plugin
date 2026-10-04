@@ -777,5 +777,103 @@ class FinalBlockerTests(EngineFixture):
             self.engine.validate_lease('main', self.lease)
 
 
+class HarnessSessionTests(EngineFixture):
+    """B-F5: harness-session binding, release on session end, rebind. The clock is injected."""
+
+    def setUp(self):
+        super().setUp()
+        self.now = [1000.0]
+        self.engine.interrupt('main', self.lease)
+        self.engine = Engine(self.root / 'state', self.repo, clock=lambda: self.now[0])
+        self.rebound()
+
+    def rebound(self):
+        """A fresh active run bound to harness session S."""
+        self.now[0] = 1000.0
+        if self.engine.status()['session']['active']:
+            self.engine.interrupt('main', self.session()['lease'])
+        self.lease = self.engine.open_session('main', harness_session='S')
+
+    def session(self):
+        return self.engine.status()['session']
+
+    def test_open_session_records_harness_session_and_keeps_it_optional(self):
+        self.assertEqual(self.session()['harness_session'], 'S')
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main')
+        self.assertNotIn('harness_session', self.session())
+        self.engine.interrupt('main', self.session()['lease'])
+        for bad in ('', 5, True):
+            with self.assertRaises(EngineError):
+                self.engine.open_session('main', harness_session=bad)
+
+    def test_end_harness_session_does_what_interrupt_does_and_is_idempotent(self):
+        self.assertTrue(self.engine.end_harness_session('S'))
+        session = self.session()
+        self.assertFalse(session['active'])
+        self.assertEqual(session['outcome'], 'ended')
+        self.assertEqual(session['harness_session'], 'S')
+        state = self.engine.status()
+        self.assertEqual((state['permits'], state['autonomy']), ([], None))
+        self.assertFalse(self.engine.end_harness_session('S'))
+        self.assertFalse(self.session()['active'])
+
+    def test_end_harness_session_ignores_other_ids_and_unbound_runs(self):
+        self.assertFalse(self.engine.end_harness_session('other'))
+        self.assertTrue(self.session()['active'])
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main')
+        self.assertFalse(self.engine.end_harness_session('S'))
+        self.assertTrue(self.session()['active'])
+
+    def test_mark_rebind_records_only_for_the_bound_id(self):
+        self.assertFalse(self.engine.mark_harness_rebind('other'))
+        self.assertNotIn('pending_rebind', self.session())
+        self.assertTrue(self.engine.mark_harness_rebind('S'))
+        self.assertEqual(self.session()['pending_rebind'], {'from': 'S', 'at': 1000.0})
+        self.assertTrue(self.session()['active'])
+
+    def test_apply_rebind_binds_once_inside_the_window(self):
+        self.engine.mark_harness_rebind('S')
+        self.now[0] = 1000.5
+        self.assertTrue(self.engine.apply_harness_rebind('S2'))
+        self.assertEqual(self.session()['harness_session'], 'S2')
+        self.assertNotIn('pending_rebind', self.session())
+        self.assertFalse(self.engine.apply_harness_rebind('S3'))
+        self.assertEqual(self.session()['harness_session'], 'S2')
+
+    def test_apply_rebind_window_edges_and_stale_entries(self):
+        for offset, applied in [(0, True), (60, True), (60.5, False), (-1, False)]:
+            with self.subTest(offset=offset):
+                self.rebound()
+                self.engine.mark_harness_rebind('S')
+                self.now[0] = 1000.0 + offset
+                self.assertEqual(self.engine.apply_harness_rebind('S2'), applied)
+                self.assertNotIn('pending_rebind', self.session())
+                self.assertEqual(self.session()['harness_session'], 'S2' if applied else 'S')
+
+    def test_apply_rebind_without_pending_changes_nothing(self):
+        before = self.engine.state_path.read_bytes()
+        self.assertFalse(self.engine.apply_harness_rebind('S2'))
+        self.assertEqual(self.engine.state_path.read_bytes(), before)
+
+    def test_release_removes_pending_rebind_and_keeps_harness_session(self):
+        self.engine.mark_harness_rebind('S')
+        self.assertTrue(self.engine.end_harness_session('S'))
+        self.assertNotIn('pending_rebind', self.session())
+        self.assertEqual(self.session()['harness_session'], 'S')
+
+    def test_malformed_harness_fields_are_rejected(self):
+        state = json.loads(self.engine.state_path.read_text())
+        for patch in [{'harness_session': 3}, {'harness_session': ''}, {'pending_rebind': 'x'},
+                      {'pending_rebind': {'from': 'S', 'at': 'now'}}, {'pending_rebind': {'from': 'S', 'at': True}}]:
+            with self.subTest(patch=patch):
+                bad = json.loads(json.dumps(state))
+                bad['session'].update(patch)
+                self.engine.state_path.write_text(json.dumps(bad))
+                with self.assertRaises(EngineError):
+                    self.engine.status()
+
+
 if __name__ == '__main__':
     unittest.main()

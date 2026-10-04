@@ -15,6 +15,7 @@ import signal
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import uuid
 
 from .guards import classify_command
@@ -26,6 +27,7 @@ class EngineError(ValueError):
 
 REVIEW_ROLES = ('code-reviewer', 'critic')
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
+REBIND_WINDOW_SECONDS = 60
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
                gate_timeout_seconds=300, secret_scan=dict(required=False, argv=[]),
@@ -67,7 +69,8 @@ def _digest(value):
 
 
 class Engine:
-    def __init__(self, state_dir, repo, policy=None):
+    def __init__(self, state_dir, repo, policy=None, clock=time.time):
+        self._clock = clock
         self.repo = Path(repo).resolve()
         self.state_dir = Path(state_dir).resolve()
         for protected in (self.repo, PACKAGE_ROOT.resolve()):
@@ -192,6 +195,14 @@ class Engine:
         if session is not None and (not isinstance(session.get('active'), bool)
                 or any(not isinstance(session.get(k), str) or not session[k] for k in ('actor', 'lease'))):
             raise EngineError('Invalid session state')
+        if session is not None:
+            bound = session.get('harness_session')
+            if 'harness_session' in session and (not isinstance(bound, str) or not bound):
+                raise EngineError('Invalid harness session')
+            pending = session.get('pending_rebind')
+            if 'pending_rebind' in session and (not isinstance(pending, dict) or not isinstance(pending.get('from'), str)
+                    or isinstance(pending.get('at'), bool) or not isinstance(pending.get('at'), (int, float))):
+                raise EngineError('Invalid pending rebind')
         for name, task in state['tasks'].items():
             if not isinstance(task, dict) or task.get('id') != name or task.get('state') not in ('queued', 'running', 'reported', 'repairing', 'accepted'):
                 raise EngineError('Invalid task state')
@@ -250,14 +261,18 @@ class Engine:
         with self._state(False) as state:
             self._lease(state, actor, lease)
 
-    def open_session(self, actor):
+    def open_session(self, actor, harness_session=None):
         if not isinstance(actor, str) or not actor.strip():
             raise EngineError('Missing coordinator')
+        if harness_session is not None and (not isinstance(harness_session, str) or not harness_session.strip()):
+            raise EngineError('Invalid harness session id')
         with self._state() as state:
             if state['session'] and state['session']['active']:
                 raise EngineError('A coordinator session is already active')
             lease = uuid.uuid4().hex
             state['session'] = dict(actor=actor, lease=lease, active=True)
+            if harness_session is not None:
+                state['session']['harness_session'] = harness_session
             for task in state['tasks'].values():
                 if task['state'] == 'running':
                     task['state'] = 'queued'
@@ -272,6 +287,45 @@ class Engine:
             state['session']['active'] = False
             state['permits'] = []
             state['autonomy'] = None
+
+    @staticmethod
+    def _bound_to(state, session_id):
+        session = state['session']
+        return bool(session and session['active'] and session.get('harness_session') == session_id)
+
+    def end_harness_session(self, session_id):
+        """The bound harness session ended: what interrupt does, with outcome 'ended'. Idempotent."""
+        with self._state() as state:
+            if not self._bound_to(state, session_id):
+                return False
+            state['session'].update(active=False, outcome='ended')
+            state['session'].pop('pending_rebind', None)  # harness_session stays as a record
+            state['permits'] = []
+            state['autonomy'] = None
+            return True
+
+    def mark_harness_rebind(self, session_id):
+        """/clear or /resume: the process continues under a new id; record the pending hand-over."""
+        with self._state() as state:
+            if not self._bound_to(state, session_id):
+                return False
+            state['session']['pending_rebind'] = {'from': session_id, 'at': self._clock()}
+            return True
+
+    def apply_harness_rebind(self, session_id):
+        """Bind the new id when a fresh pending rebind exists (age 0..60 s); one-shot, stale entries are removed."""
+        with self._state(False) as state:
+            if not state['session'] or 'pending_rebind' not in state['session']:
+                return False  # Read-only unless a rebind is pending (SPEC 12.6)
+        with self._state() as state:
+            session = state['session']
+            pending = session.pop('pending_rebind', None) if session else None
+            if pending is None:
+                return False
+            if not 0 <= self._clock() - pending['at'] <= REBIND_WINDOW_SECONDS:
+                return False
+            session['harness_session'] = session_id
+            return True
 
     def add_task(self, actor, lease, task):
         task = copy.deepcopy(task)

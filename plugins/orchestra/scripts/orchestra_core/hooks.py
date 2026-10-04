@@ -19,6 +19,7 @@ _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
 _EDIT_TOOLS = set(RULES['tools']['edit'])
 _SHELL_TOOLS = set(RULES['tools']['shell'])
+_REBIND_SOURCES = ('clear', 'resume', 'fork')
 
 
 CONTEXT = (
@@ -102,9 +103,34 @@ def handle_event(event, payload, *, harness='codex', state_dir=None, engine=None
         worker = (bool(agent_type) and agent_type not in ('orchestra:orchestrator', 'orchestra_orchestrator', 'orchestra-orchestrator')) or os.environ.get('ORCHESTRA_ROLE', 'main') != 'main'
         skill = Path(__file__).resolve().parents[2] / 'skills/orchestra/SKILL.md'
         context = WORKER_CONTEXT if worker else CONTEXT + ' Skill: ' + str(skill)
+        session_id = payload.get('session_id')
+        if not worker and harness == 'claude' and engine is not None and payload.get('source') in _REBIND_SOURCES \
+                and isinstance(session_id, str) and session_id:
+            try:
+                engine.apply_harness_rebind(session_id)  # B-F5: the one SessionStart write
+            except Exception:
+                pass  # An unloadable state or changed contract never blocks the context
+        if not worker and isinstance(session_id, str) and session_id:
+            context += ' Harness session id: ' + session_id + '. Pass --harness-session ' + session_id + ' to orchestra.py start.'
         return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': context}})
     if event == 'SubagentStart':
-        return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': WORKER_CONTEXT}})
+        # A11: only Orchestra agents get worker context.
+        agent_type = payload.get('agent_type')
+        if isinstance(agent_type, str) and agent_type.startswith('orchestra:'):
+            return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': WORKER_CONTEXT}})
+        return HookResult({})
+    if event == 'SessionEnd':
+        session_id = payload.get('session_id')
+        if engine is None or not isinstance(session_id, str) or not session_id:
+            return HookResult({})
+        try:
+            if payload.get('reason') in ('clear', 'resume'):
+                engine.mark_harness_rebind(session_id)  # The process continues under a new id (O6)
+            else:
+                engine.end_harness_session(session_id)
+        except (OSError, ValueError, KeyError, RuntimeError) as exc:
+            return HookResult({'systemMessage': 'Orchestra session end could not be recorded: ' + str(exc)})
+        return HookResult({})
     if event == 'Interrupt':
         if engine is not None:
             try:
@@ -242,6 +268,16 @@ def main(argv=None):
                     engine = None  # An inactive session is an unarmed run.
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
+    if (args.event in {'SessionStart', 'SessionEnd'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str)
+            and (args.event == 'SessionEnd' or (args.harness == 'claude' and payload.get('source') in _REBIND_SOURCES))):
+        try:
+            from .paths import load_policy
+            from .engine import Engine
+            repo, state_dir = _run_location(payload['cwd'])
+            if (state_dir / 'state.json').is_file():
+                engine = Engine(state_dir, repo, policy=load_policy(state_dir))
+        except Exception:
+            engine = None  # Unloadable state: SessionStart still returns context; a lost lease is recovered by hand
     result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed)
     print(json.dumps(result.output))
     if result.exit_code == 2:

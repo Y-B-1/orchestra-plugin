@@ -45,6 +45,17 @@
           }
         ]
       }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.sh\" SessionEnd --harness claude",
+            "timeout": 10
+          }
+        ]
+      }
     ]
   }
 }
