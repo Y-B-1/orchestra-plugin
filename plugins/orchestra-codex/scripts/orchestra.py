@@ -12,11 +12,10 @@ import subprocess
 import sys
 import uuid
 
-from orchestra_core.engine import Engine, EngineError
+from orchestra_core.engine import ACTIVE_MISMATCH, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import load_policy, repository, state_location
 from orchestra_core.profiles import atomic, install, uninstall
-from orchestra_core.routing import route, review_groups, audit_axes
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,9 +33,13 @@ def parser():
     sub = p.add_subparsers(dest='command', required=True)
     start = sub.add_parser('start')
     start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
+    start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
-    for name in ['status','artifact','ready','board','review-groups','interrupt','finish','scan']:
+    sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
+    for name in ['status','ready','board','interrupt','finish','scan']:
         sub.add_parser(name)
+    art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
+    art.add_argument('--tasks', help='Comma-separated task IDs')
     add = sub.add_parser('add')
     add.add_argument('task', help='Task JSON path')
     dispatch = sub.add_parser('dispatch')
@@ -59,23 +62,22 @@ def parser():
         action = sub.add_parser(name)
         action.add_argument('remote')
         action.add_argument('target')
-    autonomy = sub.add_parser('autonomy')
-    autonomy.add_argument('ledger')
-    autonomy.add_argument('--max-passes',type=int,required=True)
-    autonomy.add_argument('--max-stalls',type=int,required=True)
+    autonomy = sub.add_parser('autonomy', help='Arm, disarm or inspect the autonomous loop; takes no lease')
+    autonomy.add_argument('action', choices=['arm','disarm','status'])
+    park = sub.add_parser('park', help='Set a card aside at an approval boundary')
+    park.add_argument('task_id')
+    park.add_argument('--reason', required=True)
+    unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
+    unpark.add_argument('task_id')
     for name in ['install-profiles','uninstall-profiles']:
         profile = sub.add_parser(name)
         profile.add_argument('--codex-home',default=os.environ.get('CODEX_HOME',str(Path.home()/'.codex')))
     route = sub.add_parser('classify')
     route.add_argument('shell_command')
-    lane = sub.add_parser('route')
-    lane.add_argument('facts',help='Facts JSON path; coordinator checks facts against source')
-    audit = sub.add_parser('audit-policy')
-    audit.add_argument('facts',help='Audit trigger facts JSON path')
     return p
 
 
-def archive_inactive(state):
+def archive_inactive(state,engine):
     with (state/'state.lock').open('a') as stream:
         fcntl.flock(stream,fcntl.LOCK_EX)
         source = state/'state.json'
@@ -83,6 +85,8 @@ def archive_inactive(state):
             return
         old = read_json(source)
         if old.get('session',{}).get('active'):
+            if old.get('repo') != str(engine.repo) or old.get('policy') != engine.policy_hash:
+                raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives
             raise EngineError('Stop or finish the active run before starting another')
         archive = {'state':old,'policy':load_policy(state)}
         atomic(state/'history'/('run-'+uuid.uuid4().hex+'.json'),json.dumps(archive,indent=2).encode())
@@ -96,25 +100,28 @@ def execute(args):
         return uninstall(args.codex_home),0
     if args.command == 'classify':
         return classify_command(args.shell_command).__dict__,0
-    if args.command == 'route':
-        return route(read_json(args.facts)),0
-    if args.command == 'audit-policy':
-        return audit_axes(read_json(args.facts)),0
     repo = repository(args.repo)
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
+    if args.command=='where':
+        return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file()},0
     policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
     engine = Engine(state,repo,policy)
     if args.command=='start':
         if args.new_run:
-            archive_inactive(state)
-        lease = engine.open_session(args.actor)
+            archive_inactive(state,engine)
+        lease = engine.open_session(args.actor,args.harness_session)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
     if args.command=='status':
         return engine.status(),0
+    if args.command=='autonomy':  # O8: no lease, so the ledger is armed from outside the run
+        return {'arm':engine.arm_autonomy,'disarm':engine.disarm_autonomy,'status':engine.autonomy_status}[args.action](),0
     if args.command=='artifact':
-        return engine.artifact(),0
+        ids=[i for i in (args.tasks or '').split(',') if i]
+        if args.tasks is not None and not ids:
+            raise EngineError('--tasks needs at least one task id')
+        return engine.artifact(engine.scope_for(ids) if ids else None),0
     if args.command=='inline':
         return {'token':engine.start_inline(args.actor,args.lease,args.task_id), 'executor':args.actor, 'inline':True},0
     if args.command=='board':
@@ -123,8 +130,6 @@ def execute(args):
         for card in cards:
             board.setdefault(card['role'],{}).setdefault(card['state'],[]).append(card['id'])
         return board,0
-    if args.command=='review-groups':
-        return review_groups(list(engine.status()['tasks'].values())),0
     if args.command=='report':
         engine.report(args.worker,args.token,Path(args.report).read_text())
         return {'reported':args.token},0
@@ -202,9 +207,12 @@ def execute(args):
                  'remote':args.remote,'target':args.target}
         atomic(state/('release-receipt-'+uuid.uuid4().hex+'.json'),json.dumps(receipt,indent=2).encode())
         return receipt,0 if code==0 else 1
-    if args.command=='autonomy':
-        engine.enable_autonomy(args.actor,args.lease,args.ledger,args.max_passes,args.max_stalls)
-        return {'autonomy':'armed','caps':[args.max_passes,args.max_stalls]},0
+    if args.command=='park':
+        engine.park(args.actor,args.lease,args.task_id,args.reason)
+        return {'parked':args.task_id},0
+    if args.command=='unpark':
+        engine.unpark(args.actor,args.lease,args.task_id)
+        return {'unparked':args.task_id},0
     raise EngineError('Unsupported command')
 
 

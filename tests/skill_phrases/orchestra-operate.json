@@ -1,0 +1,15 @@
+{
+  "phrases": [
+    "Sentinel: orchestra-operate/SKILL.md",
+    "Sentinel: orchestra-operate/references/gate.md",
+    "Sentinel: orchestra-operate/references/cleanup.md",
+    "Sentinel: orchestra-operate/references/release.md",
+    "exact argv",
+    "exit code",
+    "log path",
+    "explicit release assignment",
+    "failure direction",
+    "path:line",
+    "typed confirmation"
+  ]
+}

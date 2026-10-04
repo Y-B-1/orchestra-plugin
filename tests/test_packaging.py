@@ -1,5 +1,7 @@
 import json
 import os
+import shutil
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -111,9 +113,95 @@ class NativeTests(unittest.TestCase):
                 if selection['model'] == 'gpt-6-luna':
                     small.append((role, preset))
                     self.assertEqual(selection['effort'], 'high')
-        self.assertEqual(matrix['red-teamer']['model'], 'gpt-6.1-sol')
+        self.assertEqual(matrix['critic']['model'], 'gpt-6.1-sol')
         self.assertEqual(matrix['builder']['presets']['repair'], {'model': 'gpt-6.1-sol', 'effort': 'high'})
-        self.assertEqual(small, [('investigator', 'code'), ('janitor', 'default')])
+        self.assertEqual(small, [('investigator', 'code'), ('operator', 'cleanup')])
+
+    def test_role_matrix_files_and_read_only_enforcement(self):
+        claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
+        self.assertEqual(claude, {f'{n}.md' for n in [
+            'builder', 'code-reviewer', 'code-reviewer-checkpoint', 'critic', 'designer-planner',
+            'investigator', 'investigator-code', 'operator', 'orchestrator']})
+        codex = {p.name for p in (PLUGIN / 'profiles/codex').glob('*.toml')}
+        self.assertEqual(codex, {f'orchestra_{n}.toml' for n in [
+            'builder', 'builder_repair', 'code_reviewer', 'critic', 'designer_planner',
+            'investigator', 'investigator_code', 'operator', 'operator_cleanup']})
+        read_only = ('investigator', 'critic', 'code-reviewer')
+        for name in claude - {'orchestrator.md'}:
+            front = (PLUGIN / 'agents' / name).read_text().split('---')[1]
+            want = 'Agent, Edit, Write, NotebookEdit' if name.startswith(read_only) else 'Agent'
+            self.assertIn(f'disallowedTools: {want}\n', front, name)
+        for name in codex:
+            data = tomllib.loads((PLUGIN / 'profiles/codex' / name).read_text())
+            self.assertEqual(data.get('sandbox_mode'), 'read-only' if name.startswith(
+                tuple('orchestra_' + r.replace('-', '_') for r in read_only)) else None, name)
+
+    def test_claude_repair_preset_is_override_dispatch_with_no_variant_file(self):
+        matrix = json.loads((PLUGIN / 'config/models.json').read_text())['claude']
+        self.assertEqual(matrix['builder']['presets']['repair']['dispatch'], 'override')
+        self.assertFalse((PLUGIN / 'agents/builder-repair.md').exists())
+        self.assertTrue((PLUGIN / 'profiles/codex/orchestra_builder_repair.toml').is_file())
+
+    def test_claude_variant_descriptions_name_their_mode(self):
+        def desc(name):
+            line = [l for l in (PLUGIN / 'agents' / name).read_text().split('---')[1].splitlines()
+                    if l.startswith('description:')][0]
+            return json.loads(line.split(':', 1)[1])
+        for base, variant, mode in [('investigator-code', 'investigator', 'Mode: code.'),
+                                    ('code-reviewer-checkpoint', 'code-reviewer', 'Mode: checkpoint.')]:
+            self.assertIn(mode, desc(base + '.md'))
+            self.assertIn(desc(variant + '.md'), desc(base + '.md'))
+            self.assertNotEqual(desc(base + '.md'), desc(variant + '.md'))
+
+    def test_codex_checkpoint_reviewer_runs_at_high_effort(self):
+        matrix = json.loads((PLUGIN / 'config/models.json').read_text())['codex']['code-reviewer']
+        self.assertEqual(matrix['presets']['checkpoint']['effort'], 'high')
+        data = tomllib.loads((PLUGIN / 'profiles/codex/orchestra_code_reviewer.toml').read_text())
+        self.assertEqual(data['model_reasoning_effort'], 'high')
+        self.assertFalse((PLUGIN / 'profiles/codex/orchestra_code_reviewer_checkpoint.toml').exists())
+
+    def test_orchestrator_follows_the_user_selection(self):
+        front = (PLUGIN / 'agents/orchestrator.md').read_text().split('---')[1]
+        self.assertNotIn('model:', front)
+        self.assertNotIn('effort:', front)
+        self.assertIn('skills: [orchestra]\n', front)
+        self.assertNotIn('disallowedTools', front)
+
+    def test_every_codex_worker_profile_carries_worker_and_role_skill_sentinels(self):
+        roles = {r['id']: r['skill'] for r in json.loads((PLUGIN / 'config/roles.json').read_text())['roles']
+                 if r['id'] != 'orchestrator'}
+        for path in sorted((PLUGIN / 'profiles/codex').glob('*.toml')):
+            text = tomllib.loads(path.read_text())['developer_instructions']
+            role = next(r for r in roles if path.name.startswith('orchestra_' + r.replace('-', '_')))
+            self.assertIn('Sentinel: orchestra-worker/SKILL.md', text, path.name)
+            self.assertIn(f'Sentinel: {roles[role]}/SKILL.md', text, path.name)
+
+    def test_generate_refuses_unresolved_preload_skill_and_missing_mode_file(self):
+        def copy_plugin(temp):
+            copy = Path(temp) / 'orchestra'
+            shutil.copytree(PLUGIN, copy, ignore=shutil.ignore_patterns('__pycache__'))
+            return copy
+
+        cases = {
+            'unresolved skill name': (lambda c: shutil.rmtree(c / 'skills/orchestra-operate'), 'orchestra-operate'),
+            'preload blocked by disable-model-invocation': (
+                lambda c: (c / 'skills/orchestra-worker/SKILL.md').write_text(
+                    '---\nname: orchestra-worker\ndescription: x\ndisable-model-invocation: true\n---\nbody\n'),
+                'disable-model-invocation'),
+            'declared mode without a file': (lambda c: (c / 'skills/orchestra-build/references/cleanup.md').unlink(),
+                                            'cleanup'),
+        }
+        for label, (damage, needle) in cases.items():
+            with self.subTest(label), tempfile.TemporaryDirectory() as temp:
+                copy = copy_plugin(temp)
+                damage(copy)
+                with self.assertRaises(ValueError) as caught:
+                    generate.generated(root=copy)
+                self.assertIn(needle, str(caught.exception))
+                result = subprocess.run([sys.executable, str(copy / 'scripts/generate.py'), '--check'],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn('Generate refused', result.stderr)
 
     def test_codex_package_matches_canonical_runtime(self):
         package = ROOT/'plugins/orchestra-codex'
@@ -129,12 +217,49 @@ class NativeTests(unittest.TestCase):
         self.assertFalse((PLUGIN / 'hooks/hooks.json').exists())
         self.assertNotIn('hooks', root)
         compat = json.loads((PLUGIN / '.codex-plugin/plugin.json').read_text())
-        self.assertEqual({root['version'], claude['version'], compat['version']}, {'1.0.1'})
         for path in [ROOT/'.agents/plugins/marketplace.json', ROOT/'.claude-plugin/marketplace.json']:
             source = json.loads(path.read_text())['plugins'][0]['source']
             relative = source['path'] if isinstance(source, dict) else source
             expected = ROOT/'plugins/orchestra-codex' if '.agents/' in str(path) else PLUGIN
             self.assertEqual((ROOT/relative).resolve(), expected.resolve())
+
+    def test_five_manifest_versions_are_equal(self):
+        versions = {
+            name: json.loads((ROOT / name).read_text())['version']
+            for name in [
+                'plugins/orchestra/plugin.json',
+                'plugins/orchestra/.claude-plugin/plugin.json',
+                'plugins/orchestra/.codex-plugin/plugin.json',
+                'plugins/orchestra-codex/.codex-plugin/plugin.json',
+            ]
+        }
+        market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
+        versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
+        self.assertEqual(len(set(versions.values())), 1, versions)
+
+    def test_mod_files_exist_and_are_excluded_from_codex_package(self):
+        claude = json.loads((PLUGIN / '.claude-plugin/plugin.json').read_text())
+        self.assertEqual(claude['hooks'], ['./hooks/claude.json', './hooks/mods.json'])
+        self.assertEqual(claude['types'], './types/index.d.ts')
+        self.assertEqual(json.loads((PLUGIN / 'hooks/mods.json').read_text()), {'modules': ['./mod/orchestra.ts']})
+        for name in ['hooks/mod/orchestra.ts', 'hooks/mod/marker.ts', 'types/index.d.ts']:
+            self.assertTrue((PLUGIN / name).is_file(), name)
+        package = generate.codex_package()
+        leaked = [n for n in package if n == 'hooks/mods.json' or n.startswith(('hooks/mod/', 'types/'))]
+        self.assertEqual(leaked, [])
+        self.assertIn('hooks/codex.json', package)
+        for name in ['hooks/mods.json', 'hooks/mod', 'types']:
+            self.assertFalse((ROOT / 'plugins/orchestra-codex' / name).exists(), name)
+
+    def test_host_written_tsconfig_is_ignored_by_codex_package(self):
+        # Claude Code writes plugins/orchestra/tsconfig.json when it loads a plugin with `types`.
+        with tempfile.TemporaryDirectory() as temp:
+            copy = Path(temp) / 'orchestra'
+            shutil.copytree(PLUGIN, copy, ignore=shutil.ignore_patterns('__pycache__'))
+            (copy / 'tsconfig.json').write_text('{"extends": "./.claude-plugin/types/tsconfig.json"}\n')
+            self.assertNotIn('tsconfig.json', generate.codex_package(root=copy))
+        ignored = (ROOT / '.gitignore').read_text().splitlines()
+        self.assertIn('plugins/orchestra/tsconfig.json', ignored)
 
 
 if __name__ == '__main__':

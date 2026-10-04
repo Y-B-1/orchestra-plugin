@@ -1,14 +1,17 @@
-# Assignment and evidence contract
+Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/implementer-prompt.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/AGENT-BRIEF.md skills/productivity/writing-for-agents/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
+Sentinel: orchestra/references/briefs.md
 
-The coordinator writes one bounded brief per worker. Include:
+# Brief writing
 
-1. Objective, role/mode, immutable starting artifact and requested output path.
-2. Owned files/resources, sibling ownership, worktree, prerequisites and acceptance checks.
-3. Applicable project instructions, path rules, design vocabulary and policy revision. Read linked source rules first and carry their operative requirements inline; a link alone does not carry a rule into an empty worker context.
-4. Selected method paths, tools available, authorization limits and report contract.
+One brief per worker, one responsibility per brief. Write it for a reader with empty context, durable and behavioral: name interfaces and outcomes, and point to files by path instead of copying them.
 
-State that workers are not alone, must preserve sibling edits, and never delegate, change coordinator state, reserve other work or release outside their explicit assignment. Read-only workers may write only the named report. Keep provider/model settings fixed for the assignment. A missing premise, rule or product decision is a blocker to dependent work, not permission to invent it.
+1. Objective: a summary, the current behavior against the desired behavior, and what is out of scope.
+2. `Mode:` line (a review brief adds `Lens:`, a lens name or `specialist:<name>`), the immutable starting artifact and the requested output path.
+3. Ownership: files and resources, sibling ownership, worktree, prerequisites.
+4. Acceptance: criteria a command can check, each ending in a stated done condition.
+5. Rules: the binding project rules, path rules and design vocabulary, carried inline after you read the source. A link alone does not carry a rule into an empty context. Paste the standing orders as coordination.md describes.
+6. Tools, authorization limits and the report contract.
 
-Return the artifact identity, changed paths or inspected symbols, actual commands/exits and log paths, findings, remaining uncertainties and next routing recommendation. Distinguish reasoning from observed proof. Name unavailable checks; never turn missing evidence into a pass. The coordinator checks reports against actual artifacts and logs before accepting them. Reports cannot advance the run after interruption or lease loss.
+Plugin root: state the root path in the brief, the directory holding `skills/` and `scripts/`. The worker reads its role skill and references from `<root>/skills/` and runs the CLI from `<root>/scripts/orchestra.py`.
 
-Evidence binds repository identity, full commit, dirty-tree fingerprint, policy revision and requested action. Later edits invalidate affected evidence. Do not treat a worker success message, stale green check or guessed native identity as proof.
+The worker contract lives in the orchestra-worker skill, so a brief omits it. The engine rejects a card whose brief file lacks its `Mode: <mode>` line.

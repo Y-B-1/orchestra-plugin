@@ -1,0 +1,12 @@
+{
+  "phrases": [
+    "Sentinel: orchestra-worker/SKILL.md",
+    "STATUS: PASS|ISSUES|BLOCKED",
+    "Mode:",
+    "ARTIFACT:",
+    "should",
+    "writes no file in the repository, and no report file anywhere",
+    "Return the report as your final message",
+    "If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`."
+  ]
+}

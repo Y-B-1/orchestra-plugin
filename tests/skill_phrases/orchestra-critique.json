@@ -1,0 +1,20 @@
+{
+  "phrases": [
+    "Sentinel: orchestra-critique/SKILL.md",
+    "Sentinel: orchestra-critique/references/requirements.md",
+    "Sentinel: orchestra-critique/references/feasibility.md",
+    "Sentinel: orchestra-critique/references/scope.md",
+    "Sentinel: orchestra-critique/references/judge.md",
+    "Sentinel: orchestra-critique/references/spec.md",
+    "Sentinel: orchestra-critique/references/standards.md",
+    "Sentinel: orchestra-critique/references/ledger.md",
+    "Sentinel: orchestra-critique/references/surface.md",
+    "Look for what is missing, not only what is wrong",
+    "Refute every finding",
+    "Declined to judge",
+    "DONE: evidence shows it shipped",
+    "Never review an artifact you authored",
+    "Spike-class ticket",
+    "Find and report; never fix"
+  ]
+}

@@ -55,7 +55,7 @@ class WorkflowIntegration(unittest.TestCase):
         return result,json.loads(result.stdout if expected==0 else result.stderr)
 
     def review(self,ids,final=False,summary='Inspected fixture source and concrete failure checks.'):
-        artifact=self.cli('artifact')[1]
+        artifact=self.cli('artifact')[1] if final or not ids else self.cli('artifact','--tasks',','.join(ids))[1]
         p=self.write('final.json' if final else 'checkpoint.json',
                      dict(reviewer='independent-reviewer',categories=CATEGORIES,tasks=ids,findings=[],
                           verdict='CLEAN',final=final,summary=summary,artifact=artifact))
@@ -117,8 +117,11 @@ class WorkflowIntegration(unittest.TestCase):
             self.cli('add',str(self.write(ident+'.json',task)),lease=True)
             token=self.cli('dispatch',ident,'worker-'+ident,lease=True)[1]['assignment']
             self.cli('report','worker-'+ident,token,str(self.write(ident+'.txt','Inspected fixture; no source change needed.')))
-        groups=self.cli('review-groups')[1]
-        self.assertEqual(groups[0]['tasks'],['B1','B2'])
+        self.assertNotIn('lease',json.dumps(self.cli('status')[1]))
+        for removed in ('route','audit-policy','review-groups'):
+            result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--state',str(self.state),removed],
+                                  capture_output=True,text=True,timeout=25)
+            self.assertNotEqual(result.returncode,0,removed)
         self.cli('finish',lease=True,expected=2)
         self.review(['B1','B2'])
         for ident in ['B1','B2']:
@@ -152,6 +155,22 @@ class WorkflowIntegration(unittest.TestCase):
         self.review(['INLINE'])
         self.cli('accept','INLINE',lease=True)
 
+    def test_artifact_tasks_output_is_accepted_by_review(self):
+        task=dict(id='T',role='builder',mode='implementation',inputs=['fixture'],
+                  acceptance=['fixture check'],files=['fixture.txt'],resources=[],dependencies=[])
+        self.cli('add',str(self.write('T.json',task)),lease=True)
+        token=self.cli('dispatch','T','worker',lease=True)[1]['assignment']
+        self.cli('report','worker',token,str(self.write('t.txt','Inspected fixture source.')))
+        artifact=self.cli('artifact','--tasks','T')[1]
+        self.assertEqual(['fixture.txt'],artifact['scope'])
+        self.assertNotIn('scope',self.cli('artifact')[1])
+        (self.repo/'sibling.txt').write_text('sibling uncommitted edit\n')
+        p=self.write('scoped.json',dict(reviewer='independent-reviewer',categories=['correctness'],tasks=['T'],
+                     findings=[],verdict='CLEAN',final=False,summary='Inspected fixture source.',artifact=artifact))
+        self.cli('review',str(p),lease=True)
+        self.cli('accept','T',lease=True)
+        self.cli('artifact','--tasks','NOPE',expected=2)
+
     def test_dirty_candidate_invalidates_review_and_permit(self):
         task=dict(id='I',role='investigator',mode='code',inputs=['fixture'],acceptance=['inspect'],files=[],resources=[],dependencies=[])
         self.cli('add',str(self.write('I.json',task)),lease=True)
@@ -163,6 +182,253 @@ class WorkflowIntegration(unittest.TestCase):
         (self.repo/'fixture.txt').write_text('changed\n')
         self.cli('permit','fixture-remote','main',lease=True,expected=2)
         self.cli('finish',lease=True,expected=2)
+
+
+class LinkedWorktreeHook(unittest.TestCase):
+    """A15 through the real hook script: a linked worktree follows the main worktree's run."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='Orchestra linked ')
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        self.env={**os.environ,'XDG_STATE_HOME':str(self.root/'xdg')}
+        self.env.pop('ORCHESTRA_STATE_DIR',None)
+        self.repo=self.root/'main checkout'
+        self.repo.mkdir()
+        self.git(self.repo,'init','-q','-b','main')
+        self.git(self.repo,'config','user.name','Integration')
+        self.git(self.repo,'config','user.email','integration@example.invalid')
+        (self.repo/'fixture.txt').write_text('ready\n')
+        self.git(self.repo,'add','fixture.txt')
+        self.git(self.repo,'commit','-q','-m','Fixture')
+        self.linked=self.root/'linked checkout'
+        self.git(self.repo,'worktree','add','-q',str(self.linked),'-b','side')
+
+    def git(self,cwd,*args):
+        return subprocess.check_output(['git','-C',str(cwd),*args],stderr=subprocess.PIPE).decode().strip()
+
+    def hook(self,cwd,command):
+        payload={'cwd':str(cwd),'tool_name':'Bash','tool_input':{'command':command}}
+        result=subprocess.run(['/bin/sh',str(HOOK),'PreToolUse','--harness','codex'],input=json.dumps(payload),
+                              capture_output=True,text=True,env=self.env,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout).get('hookSpecificOutput',{}).get('permissionDecision')
+
+    def test_push_from_linked_worktree_follows_the_main_checkout_run(self):
+        command='git push origin side'
+        self.assertIsNone(self.hook(self.linked,command))
+        lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start'],env=self.env,
+                                        capture_output=True,text=True,check=True).stdout)['lease']
+        self.assertEqual(self.hook(self.linked,command),'deny')
+        self.assertEqual(self.hook(self.repo,command),'deny')
+        self.assertIsNone(self.hook(self.linked,'git status'))
+        subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--lease',lease,'interrupt'],env=self.env,
+                       capture_output=True,text=True,check=True)
+        self.assertIsNone(self.hook(self.linked,command))
+
+    def test_bare_common_directory_stays_unarmed(self):
+        # A15: a worktree of a bare repository has no main worktree, so it is never armed,
+        # even with a run state sitting at the bare directory's parent.
+        bare=self.root/'bare.git'
+        subprocess.run(['git','clone','-q','--bare',str(self.repo),str(bare)],check=True,capture_output=True)
+        self.git(bare,'worktree','add','-q',str(self.root/'bare checkout'),'main')
+        subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start'],env=self.env,
+                       capture_output=True,text=True,check=True)
+        parent_state=subprocess.run([sys.executable,'-c',
+                                     'import sys;sys.path.insert(0,sys.argv[1]);'
+                                     'from orchestra_core.paths import state_location;from pathlib import Path;'
+                                     'print(state_location(Path(sys.argv[2])))',
+                                     str(CLI.parent),str(self.root)],env=self.env,capture_output=True,text=True,check=True).stdout.strip()
+        Path(parent_state).mkdir(parents=True)
+        (Path(parent_state)/'state.json').write_text('{}')
+        for command in ['git push origin main','git push origin main && git status']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(self.root/'bare checkout',command))
+
+
+class HarnessSessionIntegration(unittest.TestCase):
+    """B-F5 through the real CLI and run-hook.sh."""
+
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory(prefix='Orchestra harness session ')
+        self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        self.repo=self.root/'repo'
+        self.repo.mkdir()
+        self.state=self.root/'state'
+        for args in (['init','-b','main'],['config','user.name','T'],['config','user.email','t@example.invalid']):
+            subprocess.run(['git','-C',str(self.repo),*args],check=True,capture_output=True)
+        (self.repo/'f').write_text('x')
+        subprocess.run(['git','-C',str(self.repo),'add','f'],check=True,capture_output=True)
+        subprocess.run(['git','-C',str(self.repo),'commit','-qm','f'],check=True,capture_output=True)
+        self.env=dict(os.environ,ORCHESTRA_STATE_DIR=str(self.state))
+
+    def cli(self,*args,expected=0):
+        result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),*args],env=self.env,
+                              capture_output=True,text=True,timeout=25)
+        self.assertEqual(result.returncode,expected,result.stderr+result.stdout)
+        return json.loads(result.stdout) if expected==0 else result.stderr
+
+    def hook(self,event,**payload):
+        payload.setdefault('cwd',str(self.repo))
+        result=subprocess.run(['/bin/sh',str(HOOK),event,'--harness','claude'],input=json.dumps(payload),env=self.env,
+                              capture_output=True,text=True,timeout=25)
+        self.assertEqual(result.returncode,0,result.stderr)
+        return json.loads(result.stdout)
+
+    def session(self):
+        return self.cli('status')['session']
+
+    def test_session_end_releases_so_a_new_run_starts(self):
+        self.cli('start','--harness-session','S')
+        self.assertEqual(self.session()['harness_session'],'S')
+        self.cli('start',expected=2)  # still armed
+        self.hook('SessionEnd',session_id='S',reason='prompt_input_exit')
+        self.assertFalse(self.session()['active'])
+        self.cli('start','--new-run')
+
+    def foreign_policy(self):
+        """A plugin upgrade or policy edit: the stored policy hash no longer matches."""
+        path=self.state/'state.json'
+        data=json.loads(path.read_text())
+        data['policy']='0'*64
+        path.write_text(json.dumps(data))
+
+    def test_new_run_archives_an_ended_run_under_a_changed_policy(self):
+        lease=self.cli('start')['lease']
+        self.cli('--lease',lease,'interrupt')
+        self.foreign_policy()
+        self.assertIn('start --new-run',self.cli('status',expected=2))
+        self.assertIn('start --new-run',self.cli('start',expected=2))
+        push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
+        self.assertEqual(push,{})  # O35: an ended run is unarmed
+        self.cli('start','--new-run')
+        self.assertEqual(len(list((self.state/'history').glob('run-*.json'))),1)
+        self.assertTrue(self.session()['active'])
+
+    def test_changed_policy_message_depends_on_whether_the_run_is_active(self):
+        lease=self.cli('start')['lease']
+        self.foreign_policy()
+        active=self.cli('status',expected=2)
+        self.assertNotIn('start --new-run',active)
+        self.assertIn('state.json',active)
+        self.assertIn('version that started',active)
+        self.cli('start','--new-run',expected=2)
+        path=self.state/'state.json'
+        data=json.loads(path.read_text())
+        data['session']['active']=False
+        path.write_text(json.dumps(data))
+        self.assertIn('start --new-run',self.cli('status',expected=2))
+
+    def test_new_run_refuses_an_active_run_under_a_changed_policy(self):
+        self.cli('start')
+        self.foreign_policy()
+        refused=self.cli('start','--new-run',expected=2)  # FX6: the engine's recovery steps, not interrupt/finish
+        self.assertIn('version that started',refused)
+        self.assertIn('state.json',refused)
+        self.assertNotIn('Stop or finish',refused)
+        self.assertFalse((self.state/'history').exists())
+        push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
+        self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'deny')
+
+    def test_new_run_refuses_an_active_run_under_the_current_policy(self):
+        self.cli('start')
+        self.assertIn('Stop or finish the active run',self.cli('start','--new-run',expected=2))
+        self.assertFalse((self.state/'history').exists())
+
+    def test_clear_and_resume_rebind_then_exit_releases(self):
+        for reason in ('clear','resume'):
+            with self.subTest(reason=reason):
+                self.cli('start','--new-run','--harness-session','S')
+                self.hook('SessionEnd',session_id='S',reason=reason)
+                self.assertTrue(self.session()['active'])
+                out=self.hook('SessionStart',session_id='S2',source=reason)
+                self.assertIn('--harness-session S2',out['hookSpecificOutput']['additionalContext'])
+                self.assertEqual(self.session()['harness_session'],'S2')
+                self.hook('SessionEnd',session_id='S',reason='prompt_input_exit')
+                self.assertTrue(self.session()['active'])  # the old id no longer owns the run
+                self.hook('SessionEnd',session_id='S2',reason='prompt_input_exit')
+                self.assertFalse(self.session()['active'])
+                lease=self.cli('start','--new-run')['lease']
+                self.cli('--lease',lease,'interrupt')
+
+    def test_unbound_run_ignores_session_end_and_where_hides_the_lease(self):
+        self.cli('start')
+        self.hook('SessionEnd',session_id='S',reason='prompt_input_exit')
+        self.assertTrue(self.session()['active'])
+        where=self.cli('where')
+        self.assertEqual(set(where),{'repo','state','standing_orders'})
+        self.assertEqual((where['repo'],where['state'],where['standing_orders']),(str(self.repo),str(self.state),False))
+        (self.state/'standing-orders.md').write_text('rules\n')
+        self.assertTrue(self.cli('where')['standing_orders'])
+
+
+class AutonomyIntegration(unittest.TestCase):
+    """SPEC 12 through the real CLI and run-hook.sh."""
+
+    def ledger(self,passes='1'):
+        from datetime import datetime,timedelta,timezone
+        sys.path.insert(0,str(PLUGIN/'scripts'))
+        from orchestra_core.engine import AUTONOMY_FIXED
+        when=(datetime.now(timezone.utc)+timedelta(hours=2)).isoformat(timespec='seconds')
+        text=['goal: integration','max_passes: '+passes,'max_stalls: 2','deadline: '+when,'','## Completion checks','',
+              'never: '+sys.executable+' -c "import sys; sys.exit(1)"','','## Approval boundaries','',*AUTONOMY_FIXED]
+        (self.state/'autonomy.md').write_text('\n'.join(text)+'\n')
+
+    def card(self,name):
+        task=self.root/(name+'.json')
+        task.write_text(json.dumps(dict(id=name,role='builder',mode='implementation',inputs=['s'],acceptance=['a'],
+                                        files=[name],resources=[],dependencies=[])))
+        self.cli('--lease',self.lease,'add',str(task))
+
+    cli=HarnessSessionIntegration.cli
+    hook=HarnessSessionIntegration.hook
+
+    def setUp(self):
+        HarnessSessionIntegration.setUp(self)
+        self.lease=self.cli('start')['lease']
+
+    def test_arm_needs_no_lease_writes_the_template_then_arms_and_reports_preconditions(self):
+        message=self.cli('autonomy','arm',expected=2)
+        self.assertIn('fill the ledger, then arm again',message)
+        self.assertTrue((self.state/'autonomy.md').is_file())
+        self.ledger()
+        armed=self.cli('autonomy','arm')
+        self.assertTrue(armed['active'])
+        self.assertIn('permission_mode',armed['preconditions'])
+        self.assertTrue(self.cli('autonomy','status')['active'])
+        self.assertTrue(self.cli('autonomy','disarm')['was_active'])
+        self.assertFalse(self.cli('autonomy','status')['active'])
+
+    def test_park_and_unpark_take_the_lease_and_a_reason(self):
+        self.card('c1')
+        self.cli('park','c1','--reason','x',expected=2)  # no lease
+        self.cli('--lease',self.lease,'park','c1',expected=2)  # --reason is required
+        self.cli('--lease',self.lease,'park','c1','--reason','needs a push')
+        self.assertEqual(self.cli('status')['tasks']['c1']['state'],'parked')
+        self.cli('--lease',self.lease,'unpark','c1')
+        self.assertEqual(self.cli('status')['tasks']['c1']['state'],'queued')
+
+    def test_stop_continues_then_caps_then_session_start_shows_the_report(self):
+        self.card('c1')
+        self.ledger('1')
+        self.cli('autonomy','arm')
+        first=self.hook('Stop')
+        self.assertEqual(first['decision'],'block')
+        self.assertEqual(self.hook('Stop'),{})
+        self.assertEqual(self.cli('autonomy','status')['last_stop_reason'],'cap-passes')
+        context=self.hook('SessionStart',session_id='S3',source='startup')['hookSpecificOutput']['additionalContext']
+        self.assertIn('cap-passes',context)
+        self.assertIn('progress.md',context)
+
+    def test_hook_denies_boundary_only_while_active(self):
+        self.card('c1')
+        self.ledger()
+        self.cli('autonomy','arm')
+        out=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'rm -rf build'})
+        self.assertEqual(out['hookSpecificOutput']['permissionDecision'],'deny')
+        self.cli('autonomy','disarm')
+        self.assertEqual(self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'rm -rf build'}),{})
 
 
 if __name__=='__main__':

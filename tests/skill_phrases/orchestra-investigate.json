@@ -1,0 +1,18 @@
+{
+  "phrases": [
+    "Sentinel: orchestra-investigate/SKILL.md",
+    "Sentinel: orchestra-investigate/references/code.md",
+    "Sentinel: orchestra-investigate/references/docs.md",
+    "## Read-only",
+    "Diagnosis grants no repair authority",
+    "## Evidence labels",
+    "OBSERVED:",
+    "REASONED:",
+    "UNKNOWN:",
+    "An unlabeled claim is not reportable",
+    "Build a feedback loop first",
+    "Root cause: what is wrong",
+    "Proposed fix: file and line. You make no edit.",
+    "Do not state a post-cutoff API from memory"
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "phrases": [
+    "Sentinel: orchestra-design/SKILL.md",
+    "Sentinel: orchestra-design/references/design.md",
+    "Sentinel: orchestra-design/references/plan.md",
+    "Sentinel: orchestra-design/references/product.md",
+    "## Glossary first",
+    "Define the domain terms before competing names spread",
+    "## Decisions belong to the user",
+    "Put every decision to the user",
+    "Return the whole frontier in one round",
+    "product mode (design dossier)",
+    "Write only the assigned dossier",
+    "implementation ladder",
+    "five or six named examples",
+    "## Decisions index",
+    "Never write a spec and a plan in the same assignment",
+    "Spike",
+    "Pre-flight"
+  ]
+}

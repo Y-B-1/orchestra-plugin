@@ -3,14 +3,15 @@
   "roles": [
     {
       "id": "orchestrator",
-      "description": "Main coordinator owns routing, state, reservations, dispatch and integration.",
+      "description": "Main-thread coordinator only; never dispatch as a subagent. Owns routing, state, reservations, dispatch and integration.",
       "modes": [
         "main"
       ],
-      "prompt": "Read SKILL.md and references/coordination.md. Use references/briefs.md for every assignment. Read phase methods only when needed. Check actual artifacts and evidence before acceptance; do not infer autonomy or release permission.",
+      "skill": "orchestra",
+      "prompt": "Follow the coordination procedure and briefs guide below. Check actual artifacts and evidence before acceptance; do not infer autonomy or release permission.",
       "methods": [
-        "references/coordination.md",
-        "references/briefs.md"
+        "orchestra/references/coordination.md",
+        "orchestra/references/briefs.md"
       ]
     },
     {
@@ -20,68 +21,66 @@
         "code",
         "docs"
       ],
-      "prompt": "Use references/investigation.md for assigned code or docs mode. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "skill": "orchestra-investigate",
+      "read_only": true,
+      "prompt": "Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.",
       "methods": [
-        "references/briefs.md",
-        "references/investigation.md"
-      ]
-    },
-    {
-      "id": "founder-mind",
-      "description": "Product depth, researched references, user simulation and shipped-surface audit.",
-      "modes": [
-        "design",
-        "audit"
-      ],
-      "prompt": "Use references/founder.md for the assigned design dossier or shipped-surface audit. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
-      "methods": [
-        "references/briefs.md",
-        "references/founder.md"
+        "orchestra-worker/SKILL.md",
+        "orchestra-investigate/SKILL.md"
       ]
     },
     {
       "id": "designer-planner",
-      "description": "Separate design and planning phases and artifacts.",
+      "description": "Separate design and planning phases and artifacts, and the product-depth dossier.",
       "modes": [
         "design",
-        "plan"
+        "plan",
+        "product"
       ],
-      "prompt": "In design mode read references/design.md; in plan mode read references/planning.md. Do not settle product decisions during planning. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "skill": "orchestra-design",
+      "prompt": "Do not settle product decisions during planning. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.",
       "methods": [
-        "references/briefs.md",
-        "references/design.md",
-        "references/planning.md"
+        "orchestra-worker/SKILL.md",
+        "orchestra-design/SKILL.md"
       ]
     },
     {
-      "id": "red-teamer",
-      "description": "Independent requirements, feasibility, scope or judge challenge.",
+      "id": "critic",
+      "description": "Independent requirements, feasibility, scope or judge challenge, conformance on one named axis, and shipped-surface audit.",
       "modes": [
         "requirements",
         "feasibility",
         "scope",
-        "judge"
+        "judge",
+        "spec",
+        "standards",
+        "ledger",
+        "surface"
       ],
-      "prompt": "Use references/red-team.md for the assigned lens. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "skill": "orchestra-critique",
+      "read_only": true,
+      "prompt": "Keep conformance separate from code-diff review; audit one named axis at a time. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.",
       "methods": [
-        "references/briefs.md",
-        "references/red-team.md"
+        "orchestra-worker/SKILL.md",
+        "orchestra-critique/SKILL.md"
       ]
     },
     {
       "id": "builder",
-      "description": "Bounded implementation with checked-findings repair escalation.",
+      "description": "Bounded implementation with checked-findings repair escalation and end-of-run cleanup.",
       "modes": [
         "implementation",
         "frontend",
         "sensitive",
         "mechanical",
-        "repair"
+        "repair",
+        "cleanup"
       ],
-      "prompt": "Use references/building.md. Repair mode needs independently checked coding findings; implementation is the first attempt. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "skill": "orchestra-build",
+      "prompt": "Repair mode needs independently checked coding findings; implementation is the first attempt. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.",
       "methods": [
-        "references/briefs.md",
-        "references/building.md"
+        "orchestra-worker/SKILL.md",
+        "orchestra-build/SKILL.md"
       ]
     },
     {
@@ -91,60 +90,27 @@
         "checkpoint",
         "final"
       ],
-      "prompt": "Use references/review.md. Final mode always covers all categories including security, reuse, simplification, efficiency and layer placement. Never fix reviewed code. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "skill": "orchestra-review",
+      "read_only": true,
+      "prompt": "Final mode covers the categories of the lens its Lens: line names, and the four lens cards together cover every category, including security, reuse, simplification, efficiency and layer placement. Never fix reviewed code. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.",
       "methods": [
-        "references/briefs.md",
-        "references/review.md"
+        "orchestra-worker/SKILL.md",
+        "orchestra-review/SKILL.md"
       ]
     },
     {
-      "id": "auditor",
-      "description": "Independent conformance on one named axis.",
+      "id": "operator",
+      "description": "Run named checks and report actual exits, preserve unfinished work, or execute explicitly project-authorized release at a checked artifact.",
       "modes": [
-        "spec",
-        "standards",
-        "ledger"
-      ],
-      "prompt": "Use references/audit.md only for the named axis; keep conformance separate from code-diff review. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
-      "methods": [
-        "references/briefs.md",
-        "references/audit.md"
-      ]
-    },
-    {
-      "id": "gatekeeper",
-      "description": "Run named checks and report actual exits at an exact artifact.",
-      "modes": [
-        "checks"
-      ],
-      "prompt": "Use references/gates.md; never fix code or invent pass evidence. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
-      "methods": [
-        "references/briefs.md",
-        "references/gates.md"
-      ]
-    },
-    {
-      "id": "janitor",
-      "description": "Inspect hygiene and preserve unfinished work before proposing cleanup.",
-      "modes": [
-        "hygiene"
-      ],
-      "prompt": "Use the janitor section of references/closeout.md. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
-      "methods": [
-        "references/briefs.md",
-        "references/closeout.md"
-      ]
-    },
-    {
-      "id": "releaser",
-      "description": "Execute explicitly project-authorized release at a checked artifact.",
-      "modes": [
+        "gate",
+        "cleanup",
         "release"
       ],
-      "prompt": "Use the releaser section of references/closeout.md. Release is disabled without configured authorization, exact target, commands and checks. Read references/briefs.md and the assigned method before work. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit releaser assignment. Return exact artifact evidence and unresolved gaps.",
+      "skill": "orchestra-operate",
+      "prompt": "Never fix code or invent pass evidence. Release is disabled without configured authorization, exact target, commands and checks. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.",
       "methods": [
-        "references/briefs.md",
-        "references/closeout.md"
+        "orchestra-worker/SKILL.md",
+        "orchestra-operate/SKILL.md"
       ]
     }
   ]
