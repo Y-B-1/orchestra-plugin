@@ -420,7 +420,7 @@ Owned paths:
 
 Acceptance:
 - Every SHA and every idea-level name cited in `docs/SKILL-SOURCES.md` appears in the notices file, with its license text when the source is MIT at that SHA.
-- `python3 -m unittest discover -s tests -p 'test_skills.py'` exits 0 on the B4 stubs, and still exits 0 in a scratch copy where the `Stub:` line is removed from `orchestra-worker/SKILL.md` and from one sourced skill file that has a valid `Source:` header.
+- `python3 -m unittest discover -s tests -p 'test_skills.py'` exits 0 on the B4 stubs, and still exits 0 in a scratch copy where `orchestra-worker/SKILL.md` and one other sourced skill file each get a valid `Source:` header and lose their `Stub:` line.
 - `grep -n "always covers all categories" plugins/orchestra/config/roles.json plugins/orchestra/agents/code-reviewer*.md` prints nothing.
 - `python3 scripts/build_release.py --out "$SCRATCH/s0"` on the committed candidate exits 0.
 - `--check` exits 0 and the Codex package contains `THIRD-PARTY-NOTICES`.
