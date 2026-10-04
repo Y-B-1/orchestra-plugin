@@ -673,6 +673,8 @@ Skill prose naming the removed commands is removed in the same release: `skills/
 - Whole-repo evidence stays for final reviews, gates, release permits, release receipts and completion evidence, because those run on the frozen integrated candidate.
 - HEAD stays bound, so any commit or merge still stales scoped evidence. That is the decided model ("owned paths plus HEAD"). The gain: an uncommitted edit by a sibling outside a card's scope no longer stales that card's evidence.
 - A task with no reserved files gets the whole-repo artifact.
+- If any covered task has no reserved files, the non-final review uses the whole-repo artifact (scope None), so the no-file task keeps whole-repo evidence (O19).
+- The newest receipt per category that covers a task decides that category, even when it is stale; a stale newest receipt means no current verdict, never a fallback to an older receipt (O19).
 - CLI: `orchestra.py artifact --tasks ID[,ID]` prints the scoped artifact, so a reviewer can echo it in review JSON. `artifact` without `--tasks` is unchanged.
 
 Acceptance for section 11:
@@ -783,6 +785,7 @@ Acceptance for section 12:
 | O16 | Runner ending in `<shell> -c` with no payload (R2c minor) | REASONED (coordinator ruling, overnight): stays a malformed deny; fail-safe, rare, recorded as a corpus case. | Morning report; default applies |
 | O17 | Reserved words and groups hide commands (R2d major; also in v1) | REASONED (coordinator ruling, overnight): a defect against A5's intent, not a product choice. Leading reserved words and group openers are skipped before the command name, non-arithmetic `$((` is scanned as a substitution, and mid-pipeline groups carry producer text (A5). Ticket B2-r4; B5 ports the same rule. | Morning report; default applies |
 | O18 | No-`Mode:` BLOCKED rule in worker skill and every role skill (SC2 minor) | REASONED (coordinator ruling, overnight): SPEC 8.1 mandates both copies, so this rule is a named exception to O15; the copies stay, worded identically. | Morning report; default applies |
+| O19 | Mixed-scope reviews and stale newest receipts (R9) | REASONED (coordinator ruling, overnight): a non-final review covering any task with no reserved files uses the whole-repo artifact; the newest receipt per category covering a task decides, and if it is stale there is no current verdict (keeps the 'altered evidence cannot restore an older verdict' rule under scoped receipts). | Morning report; default applies |
 
 ## 14. Exclusions
 
