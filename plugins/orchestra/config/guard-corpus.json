@@ -2210,6 +2210,133 @@
     "command": "xargs sh -c 'git reset --hard'"
    },
    "class": "deny"
+  },
+  {
+   "id": "inline-r3-01",
+   "input": {
+    "command": "bash -c \"$(echo \"git reset --hard\")\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-02",
+   "input": {
+    "command": "bash -c \"$(echo \"$(echo 'git reset --hard')\")\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-03",
+   "input": {
+    "command": "bash -c $(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-04",
+   "input": {
+    "command": "eval $(echo git reset --hard)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-05",
+   "input": {
+    "command": "eval $(echo 'git reset --hard')"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-06",
+   "input": {
+    "command": "echo `echo 'git reset --hard'` | bash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-07",
+   "input": {
+    "command": "echo 'git reset --hard' | (cd x; bash)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-08",
+   "input": {
+    "command": "echo 'git reset --hard' | (cd x && bash)"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-09",
+   "input": {
+    "command": "echo 'git reset --hard' | { cd x; bash; }"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-10",
+   "input": {
+    "command": "echo 'git reset --hard' | { cd x && bash; }"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-11",
+   "input": {
+    "command": "echo 'echo hi' | xargs bash -c"
+   },
+   "class": "deny",
+   "_doc": "O16: a runner ending in a shell -c with no payload word stays a malformed deny (fail-safe, accepted)."
+  },
+  {
+   "id": "inline-r3-12",
+   "input": {
+    "command": "bash -c \"echo $(date)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r3-13",
+   "input": {
+    "command": "bash -c \"echo $((1+2))\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r3-14",
+   "input": {
+    "command": "eval $(ssh-agent -s)"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r3-15",
+   "input": {
+    "command": "bash -c \"echo `date`\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r3-16",
+   "input": {
+    "command": "echo hi | { cd x && cat; }"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "inline-r3-17",
+   "input": {
+    "command": "bash -c \"echo $(date\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "inline-r3-18",
+   "input": {
+    "command": "eval $(echo"
+   },
+   "class": "deny"
   }
  ]
 }

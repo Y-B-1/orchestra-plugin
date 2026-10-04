@@ -36,7 +36,7 @@ class GuardCorpusTest(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         for case in CORPUS:
             with self.subTest(case=case['id']):
-                self.assertEqual(set(case) - {'category'}, {'id', 'input', 'class'})
+                self.assertEqual(set(case) - {'category', '_doc'}, {'id', 'input', 'class'})
                 self.assertIn(case['class'], CLASSES)
                 if case['class'] == 'boundary':
                     self.assertIn(case.get('category'), RULES['boundary_categories'])
