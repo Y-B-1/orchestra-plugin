@@ -1,6 +1,6 @@
 # Orchestra 2.0.0 specification
 
-Status: design revised after the P0 red team, user decisions U1 to U8, coordinator rounds 3 and 4, and the round 5 repair after the second P0 red team. Settled product decisions are quoted under "Settled decisions" and are not reopened here. Open items are listed under "Open decisions" with a recommended default. Each is marked blocking or non-blocking.
+Status: design revised after the P0 red team, user decisions U1 to U8, coordinator rounds 3 and 4, the round 5 repair after the second P0 red team, and the round 6 plan-level repair (no product decision changed). Settled product decisions are quoted under "Settled decisions" and are not reopened here. Open items are listed under "Open decisions" with a recommended default. Each is marked blocking or non-blocking.
 
 - Starting artifact: branch `feat/v2-roles-guard-mods` at `8c1f1953666cc6d5e0e81579e3b37aa2212c26f1`. The tree was clean when inspected. The first SPEC/PLAN draft was written against `0ea2ece`.
 - Policy revision: `AGENTS.md` blob `182417468e23bfa02c1afbd15bac1d031141a18e`.
@@ -231,7 +231,7 @@ Each corpus case is `{id, input, class, category?}`. `input` is `{command}` for 
 | `release-multi` | A release-class segment inside a multi-segment command | allow | deny | deny |
 | `boundary` | A deletion or local merge (A14) | allow | allow | deny, except category `merge` when the current branch is not the default branch |
 
-The default branch is read from `git symbolic-ref --short refs/remotes/origin/HEAD`, falling back to `main`. The branch check runs only when autonomy is active. Both runners (Python unittest and `claude plugin test`) assert the class, and the category where present. Adding a class is a design change.
+The default branch is read from `git symbolic-ref --short refs/remotes/origin/HEAD`, falling back to `main`. The current branch is the branch checked out in the payload `cwd`'s worktree (`git -C <cwd> symbolic-ref --short HEAD`), also in a linked worktree; it is never read from the main worktree whose state A15 resolves. The branch check runs only when autonomy is active. Both runners (Python unittest and `claude plugin test`) assert the class, and the category where present. Adding a class is a design change.
 
 Acceptance criteria for area A, each observable as a unittest or command:
 
@@ -379,13 +379,13 @@ Mode names are the persisted modes of section 7.1. The file list follows from th
 
 | Skill dir | Role | SKILL.md core | `references/` | Sources (candidates) |
 | --- | --- | --- | --- | --- |
-| `orchestra/` | orchestrator | Coordination loop: assign, dispatch, evidence, integration, approval boundaries, autonomy rules, executor choice (8.5) | `coordination.md` (inlined), `briefs.md` (inlined; requires `Mode:` and, for final review, `Lens:`), `cli.md` (B7), `triage.md`, `handoff.md` (E2 resume), `parallel.md` (dispatch, Workflow mechanics of 8.5, plan execution, E3 review package), `worktrees.md`, `finishing.md`, `repair-rounds.md` (E1), `final-review.md` (lenses, cleanup loop, E7), `audit-axes.md` (former `audit-policy` rules), `autonomy.md` (section 12) | superpowers: dispatching-parallel-agents, subagent-driven-development, executing-plans, using-git-worktrees, finishing-a-development-branch. Pocock: triage, handoff, writing-for-agents. |
+| `orchestra/` | orchestrator | Coordination loop: assign, dispatch, evidence, integration, approval boundaries, autonomy rules, executor choice (8.5) | `coordination.md` (inlined), `briefs.md` (inlined; requires `Mode:` and, for final review, `Lens:`), `cli.md` (B7), `triage.md`, `handoff.md` (E2 resume), `parallel.md` (dispatch, Workflow mechanics of 8.5, plan execution, E3 review package), `worktrees.md`, `finishing.md`, `repair-rounds.md` (E1), `final-review.md` (lens routing, cleanup loop, E7 size gate; names the four lenses but not their categories), `audit-axes.md` (former `audit-policy` rules), `autonomy.md` (section 12) | superpowers: dispatching-parallel-agents, subagent-driven-development, executing-plans, using-git-worktrees, finishing-a-development-branch. Pocock: triage, handoff, writing-for-agents. |
 | `orchestra-worker/` | all workers | Worker contract (8.1) | none | superpowers: verification-before-completion (verifier wording). Existing `briefs.md` worker contract. |
 | `orchestra-investigate/` | investigator | Read-only rules, evidence labels | `code.md` (diagnosis), `docs.md` | superpowers: systematic-debugging. Pocock: diagnosing-bugs, grill-with-docs. Existing `investigation.md`. |
 | `orchestra-design/` | designer-planner | Separate design and plan artifacts, decisions to the user, glossary first | `design.md` (with the architecture method), `plan.md`, `product.md` | superpowers: brainstorming, writing-plans. Pocock: grill-with-docs, productivity/grill-me, domain-modeling, codebase-design, improve-codebase-architecture, GLOSSARY/ADR, to-spec, to-tickets, prototype (spikes). Spec-kit assess gate. Plan-conflict pre-flight and the Spike/Bounded/Architectural classes. Existing `design.md`, `planning.md`, `founder.md` (design dossier). |
 | `orchestra-critique/` | critic | Independence, challenge stance | `requirements.md`, `feasibility.md`, `scope.md`, `judge.md`, `spec.md`, `standards.md`, `ledger.md`, `surface.md` | Pocock: grill-me style challenge. BMAD lenses. Existing `red-team.md`, `audit.md`, `founder.md` (shipped-surface audit). |
 | `orchestra-build/` | builder | Tests first, verification before completion, ownership | `implementation.md`, `frontend.md`, `sensitive.md`, `mechanical.md`, `repair.md` (works the round the brief names; the E1 cap lives in `skills/orchestra/`), `cleanup.md` (lean-and-simplify pass) | superpowers: test-driven-development, executing-plans, receiving-code-review (repair). Pocock: tdd, implement. Claude Code built-in simplify and gstack deslop ideas (cleanup). Existing `building.md`. |
-| `orchestra-review/` | code-reviewer | Exact-diff review, anti-tautology rule, verdict JSON with artifact echo | `checkpoint.md`, `final.md`, and the lens files `correctness.md`, `architecture.md`, `security.md`, `cleanliness.md`, plus `specialists.md` (reviewing as the specialist the brief names; the E7 size gate lives in `skills/orchestra/`) | superpowers: requesting-code-review and its reviewer prompt. Pocock: code-review, smell baseline, improve-codebase-architecture and codebase-design (architecture lens). Claude Code built-ins: security-review (security), simplify (cleanliness). gstack: `deslop-shared-libs` and `health` (cleanliness), `cso` (security, only where it adds to the Claude security-review checklist; O11), diff-scope specialists. Existing `review.md`. |
+| `orchestra-review/` | code-reviewer | Exact-diff review, anti-tautology rule, verdict JSON with artifact echo | `checkpoint.md`, `final.md` (holds the E7 lens-to-category table, its only copy), and the lens files `correctness.md`, `architecture.md`, `security.md`, `cleanliness.md`, plus `specialists.md` (reviewing as the specialist the brief names; the E7 size gate lives in `skills/orchestra/`) | superpowers: requesting-code-review and its reviewer prompt. Pocock: code-review, smell baseline, improve-codebase-architecture and codebase-design (architecture lens). Claude Code built-ins: security-review (security), simplify (cleanliness). gstack: `deslop-shared-libs` and `health` (cleanliness), `cso` (security, only where it adds to the Claude security-review checklist; O11), diff-scope specialists. Existing `review.md`. |
 | `orchestra-operate/` | operator | Exact commands, logs and exits; no release outside an assignment | `gate.md`, `cleanup.md` (repo hygiene and retro), `release.md` | superpowers: verification-before-completion (gate), finishing-a-development-branch and using-git-worktrees (release, hygiene). Pocock: retro (cleanup). Existing `gates.md`, `closeout.md`. |
 
 Left out of runtime skills: superpowers `using-superpowers` (a trigger meta-skill, moot with preload) and `writing-skills` (authoring). `writing-skills` informs only the authoring method in 8.4. No contributor document is written (O14).
@@ -397,7 +397,7 @@ Avoid list, enforced by review and by the phrase tests where a phrase exists:
 
 Licensing:
 - `plugins/orchestra/THIRD-PARTY-NOTICES` holds, per source, the repository URL, the pinned 40-character commit SHA, and the full MIT license text as found at that SHA. The Codex package copies it automatically (`codex_package` copies every non-excluded file, OBSERVED).
-- Every `SKILL.md` and every reference file that a matrix row with an upstream or idea-level source names as a destination starts, right after any frontmatter, with one source header line in this grammar:
+- Every `SKILL.md` and every reference file that a matrix row with an upstream or idea-level source names as a destination starts, right after any frontmatter, with one source header line in this grammar (`orchestra/references/cli.md` is exempt, 8.4):
   `Source: derived from <repo>@<sha12> <paths> (MIT)[; <repo>@<sha12> <paths> (MIT)]...[; ideas: <name> (idea level)[, <name> (idea level)]...]; see THIRD-PARTY-NOTICES.`
   A file with only idea-level sources writes `Source: ideas: <name> (idea level); see THIRD-PARTY-NOTICES.`
 - I2 (RESEARCH-v2) confirmed MIT at pinned SHAs for Superpowers, Pocock, gstack, Spec-kit and BMAD (BMAD: do not use its trademark). The Claude Code built-in skills `security-review` and `simplify` have no published license and are used at idea level only, in our own words. pstack and OMC are idea level. An idea-level source is credited by name in THIRD-PARTY-NOTICES without license text. No text from a source whose license is not confirmed is copied.
@@ -426,7 +426,7 @@ Acceptance criteria for area D:
   - the per-directory phrase files in `tests/skill_phrases/<dir>.json`;
   - no phrase of `orchestra-worker/SKILL.md` appears in a role skill;
   - every `Source:` header parses under the 8.2 grammar, and every SHA and every idea-level name in it is credited in `THIRD-PARTY-NOTICES`;
-  - every destination file named in `docs/SKILL-SOURCES.md` by a row with an upstream or idea-level source carries a header, or still carries the B4 `Stub:` line (the gate set requires that no `Stub:` line remains).
+  - every destination file named in `docs/SKILL-SOURCES.md` by a row with an upstream or idea-level source carries a header, or still carries the B4 `Stub:` line (the gate set requires that no `Stub:` line remains). `orchestra/references/cli.md` is skipped (8.4).
 - `generate.py --check` fails on an unresolved skill name or mode file (a test in `tests/test_packaging.py` proves it on a scratch copy).
 - `tests/test_packaging.py` asserts that every generated Codex worker profile's `developer_instructions` contains both skill sentinels: the `orchestra-worker/SKILL.md` sentinel and its role `SKILL.md` sentinel.
 - Every `SKILL.md` and mode file carries one sentinel line, placed after the frontmatter and any `Source:` header. Authoring keeps it unchanged.
@@ -460,13 +460,14 @@ Rules:
 - Nothing is dropped silently. An upstream skill that I2 found and that maps to no row is listed under "Not used", with a reason.
 - License limits from 8.2 apply: an idea-level element can be merged in, but its text is not copied.
 - Every file in the 8.2 table appears as a destination of at least one row.
+- `orchestra/references/cli.md` is Orchestra text only: the engine CLI reference, owned by PLAN B8 and B7. A row may list it as a destination, but no upstream text or idea is written into it, it carries no `Source:` header and no `Stub:` line, and the provenance tests (8.3) skip it.
 
 A critic reviews the matrix before authoring starts (PLAN MXR). Authoring starts only from the accepted matrix.
 
 Authoring method:
 - Each role skill and mode file is new text in Orchestra vocabulary, written from its matrix rows (base plus merged elements plus gap text).
 - No concatenation of upstream texts. One voice across all skill files.
-- No rule is repeated across files. Worker-contract rules live only in `orchestra-worker/SKILL.md`. The E1 cap and the E7 size gate live only in `skills/orchestra/`.
+- No rule is repeated across files. Worker-contract rules live only in `orchestra-worker/SKILL.md`. The E1 cap and the E7 size gate live only in `skills/orchestra/`. The E7 lens-to-category table lives only in `orchestra-review/references/final.md`.
 - Every file stays within its 8.3 budget and carries its `Source:` header (8.2) when a row with an upstream or idea-level source names it.
 
 A critic cohesion review runs over all skill files together after authoring (PLAN SC). It reads the skill files, `docs/SKILL-SOURCES.md` and the 8.2 avoid list. It looks for contradictions, duplicated rules, rules that conflict with the engine or with `briefs.md`, missing provenance headers, content that does not trace to the file's matrix rows, and rejected or avoid-list content.
@@ -534,11 +535,11 @@ Acceptance:
   - Confirmed findings from the architecture, security and cleanliness lenses route to one `builder` `cleanup` card at the end of the run: a lean-and-simplify pass over the cited paths. Fresh review follows: all four lenses on the new frozen candidate. Cleanup findings that survive the fresh review count as E1 fix rounds on the cleanup card.
   - Extra specialists (critic or code-reviewer briefs for frontend, visual or other surfaces beyond the four lenses) are added only when two conditions hold: `git diff --shortstat BASE..HEAD` reports more than 50 changed lines, and the changed paths match the specialist's surface. At 50 lines or fewer, no specialists are added. The four lenses are never gated.
 
-Acceptance: each of E1 to E7 appears in exactly one skill file (orchestrator procedures in `skills/orchestra/`; worker-wide rules E5 and E6 in `skills/orchestra-worker/SKILL.md`; role rules in the matching role skill). The E1 cap and the E7 size gate are coordinator rules in `skills/orchestra/` only; `orchestra-build/references/repair.md` and `orchestra-review/references/specialists.md` describe only the worker's own round or brief. Phrase files:
+Acceptance: each rule of E1 to E7 appears in exactly one skill file (orchestrator procedures in `skills/orchestra/`; worker-wide rules E5 and E6 in `skills/orchestra-worker/SKILL.md`; role rules in the matching role skill). E7 has two parts, each with one owner: the lens-to-category table lives only in `orchestra-review/references/final.md`; the lens routing, the cleanup loop and the specialist size gate live only in `orchestra/references/final-review.md`, which names the four lenses without restating their categories. The E1 cap and the E7 size gate are coordinator rules in `skills/orchestra/` only; `orchestra-build/references/repair.md` and `orchestra-review/references/specialists.md` describe only the worker's own round or brief. Phrase files:
 - `orchestra-worker.json`: `STATUS: PASS|ISSUES|BLOCKED`.
 - `orchestra.json`: `Round 5`, `standing-orders.md`, `progress.md`, `more than 50 changed lines`, and the four lens names.
-- `orchestra-review.json`: the four lens names in the lens files.
-- No other phrase file asserts `Round 5` or `more than 50 changed lines`.
+- `orchestra-review.json`: the four lens names in the lens files, and `requirements, correctness, tests, standards` (the table row) in `final.md`.
+- No other phrase file asserts `Round 5` or `more than 50 changed lines`, and no other phrase file asserts `requirements, correctness, tests, standards`.
 
 ## 10. Area F: mods module (Claude Code only)
 
@@ -700,7 +701,7 @@ Codex uses the same Stop hook (`hooks/codex.json` registers `Stop`, OBSERVED).
 | Boundary | Enforcement |
 | --- | --- |
 | Release | Engine: `permit` and `release` refuse while autonomy is active. Hook: classes `release` and `release-multi` deny while autonomy is active, even with a permit. |
-| Merge | Hook: `gh pr merge` and `az repos pr update --status completed` are class `release` (denied). Local merge-family commands (class `boundary`, category `merge`) deny when the current branch is the default branch, and are allowed on any other branch (O12). |
+| Merge | Hook: `gh pr merge` and `az repos pr update --status completed` are class `release` (denied). Local merge-family commands (class `boundary`, category `merge`) deny when the current branch is the default branch, and are allowed on any other branch (O12). The current branch is read from the payload `cwd`'s worktree (5.1). |
 | Push | Hook: every push, to any branch, is class `release` and denies while autonomy is active (O12). |
 | Deletion | Hook: class `boundary`, category `delete` (A14) denies. Claude has no delete tool. |
 | Credential entry | Prose only. The coordinator skill forbids it and parks the card. Detecting credential entry in arbitrary commands or tools is not claimed (X8). |
@@ -735,7 +736,7 @@ Scope note: a builder working in a linked worktree of the armed repository gets 
 
 Acceptance for section 12:
 - `test_engine.py`: `arm` refuses without a run, without a ledger (and writes the template), with a placeholder, and with a fixed boundary line removed; the pass cap stops; the stall cap stops after passes with no newly accepted card; the deadline stops; completion stops; `parked-only` stops; a tampered ledger stops with `ledger-tampered`; `permit` and `release` refuse while active; `park` and `unpark` move cards and reservations; the morning report is written to `progress.md` with accepted, parked and failures.
-- `test_hooks.py`: Stop returns block while active and in bounds; Stop returns `{}` at a cap and at the deadline; release and `boundary` delete classes deny while active and allow while armed with autonomy off; a merge-family command denies on the default branch and allows on another branch; in a linked worktree of the armed repository (A15) a push and an `rm` deny while autonomy is active; SessionStart shows a pending report.
+- `test_hooks.py`: Stop returns block while active and in bounds; Stop returns `{}` at a cap and at the deadline; release and `boundary` delete classes deny while active and allow while armed with autonomy off; a merge-family command denies on the default branch and allows on another branch; in a linked worktree of the armed repository (A15) a push and an `rm` deny while autonomy is active; with autonomy active, a local `git merge` from a linked worktree on a non-default branch is allowed while the main worktree has the default branch checked out, and denies when the linked worktree has the default branch checked out while the main worktree is on another branch; SessionStart shows a pending report.
 - Live check: in a `--plugin-dir` session with a two-card run, `autonomy arm` with `max_passes: 1`; one Stop continues into the next card; the next Stop stops with `cap-passes`; the next SessionStart shows the report.
 
 ## 13. Open decisions

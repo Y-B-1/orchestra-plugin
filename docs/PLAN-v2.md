@@ -7,6 +7,8 @@
 
 ## 0. How to read this plan
 
+`$SCRATCH` is the fixed directory `~/Documents/Claude/orchestra-v2-build` (coordinator ruling R1, round 6). It is outside the repository and independent of any session, so it survives restarts. It holds the ticket worktrees (`$SCRATCH/wt/<ticket>`), briefs, logs, live-check wizards (`$SCRATCH/wizards/`) and the L1 files (`$SCRATCH/release-notes-log.md`, `$SCRATCH/pr-body.md`, `$SCRATCH/release-notes.md`). The coordinator records it in `docs/BUILD-LEDGER.md`. Every brief and wizard that uses it sets `SCRATCH="$HOME/Documents/Claude/orchestra-v2-build"` explicitly.
+
 ### 0.1 Dispatch names during the build
 
 The installed plugin is 1.0.1 until L1 step 1. Until then, workers are dispatched under their **v1** agent names. Each ticket gives its v2 role first and then the v1 dispatch name in brackets.
@@ -47,7 +49,7 @@ Executor (SPEC 8.5), applied to this build:
 
 ### 0.3 Worktrees
 
-Every builder ticket gets its own git worktree on its own ticket branch. The coordinator creates it before dispatch:
+Every builder ticket, and every card that writes a document (for example an MX repair card), gets its own git worktree on its own ticket branch. The coordinator creates it before dispatch:
 
 ```
 git worktree add "$SCRATCH/wt/<ticket>" -b v2/<ticket> feat/v2-roles-guard-mods
@@ -57,12 +59,14 @@ The path is outside the repository, and the brief names it. Workflow agents do n
 
 Integration is strictly serial, one ticket at a time:
 1. The ticket's builder reports PASS on its branch.
-2. The coordinator merges the ticket branch into `feat/v2-roles-guard-mods` (regenerating per 0.5) and runs `--check`.
+2. The coordinator merges the ticket branch into `feat/v2-roles-guard-mods` (regenerating per 0.5) and runs `--check`. On the merged commit it then reruns the ticket's acceptance test modules, each with `python3 -m unittest discover -s tests -p '<module>.py'`, plus `test_skills.py` for every S ticket. Every module must exit 0 before the checkpoint review or acceptance; a failure is repaired like a BLOCKED checkpoint (below).
 3. The checkpoint reviewer (where named) reviews that merged commit, against the ticket's diff.
 4. On CLEAN, the coordinator accepts the ticket and commits its ledger row with an explicit path (`git add docs/BUILD-LEDGER.md`). A ledger-only commit does not void an accepted checkpoint, because the ledger is not a ticket path.
 5. Only then does the next merge happen.
 
 A BLOCKED checkpoint is repaired under SPEC E1 from a new worktree at the merged HEAD. The repair is merged and re-reviewed before any other merge. The coordinator removes each worktree after inspecting its directory, once its branch is merged and accepted.
+
+A document-writing card commits only its owned path, with an explicit `git add <path>`. One-time exception: MX was dispatched before this rule and runs in the main checkout under its current brief. Its explicit-path commit lands directly on `feat/v2-roles-guard-mods` and counts as its merge (step 2), at its position in the serial order; MXR then reviews that commit. MX's path is disjoint from every ticket, so a coordinator merge may come before it, but the coordinator never starts a merge while MX is committing (an `index.lock` failure is retried, never forced). Any later document-writing card uses a worktree and the serial merge above.
 
 ### 0.4 Rules to restate verbatim in every brief
 
@@ -85,7 +89,7 @@ Every ticket that changes `plugins/orchestra/**` also changes the generated mirr
 
 ### 0.6 Live checks
 
-Interactive checks are human steps. The coordinator writes a bash wizard script in the scratchpad, and the user runs it. Every live-check wizard that loads the worktree with `claude --plugin-dir <worktree>/plugins/orchestra`:
+Interactive checks are human steps. The coordinator writes a bash wizard script in `$SCRATCH/wizards/` (0), and the user runs it. Every live-check wizard that loads the worktree with `claude --plugin-dir <worktree>/plugins/orchestra`:
 
 - runs `claude plugin disable orchestra@orchestra-distribution` first, with a `trap` that runs `claude plugin enable orchestra@orchestra-distribution` on exit;
 - asserts exactly one Orchestra SessionStart context in the session (proof that v1 is not loaded beside v2);
@@ -107,7 +111,7 @@ Unit test modules run one at a time with:
 python3 -m unittest discover -s tests -p '<module>.py'
 ```
 
-`tests/` has no `__init__.py` (OBSERVED), so `discover -p` is the supported form. Every ticket's acceptance includes `--check` exiting 0. A ticket is accepted only after its checkpoint review (where named) is CLEAN on the merged commit (0.3).
+`tests/` has no `__init__.py` (OBSERVED), so `discover -p` is the supported form. Every ticket's acceptance includes `--check` exiting 0. A ticket is accepted only after its acceptance test modules pass on the merged commit and its checkpoint review (where named) is CLEAN on that commit (0.3).
 
 ### P0: confirmation red team of this revision
 
@@ -246,7 +250,7 @@ Owned paths:
 - `plugins/orchestra/config/models.json` (builder `cleanup` preset; `claude.orchestrator` `{"selection": "user"}`)
 - `plugins/orchestra/scripts/generate.py`: `skills:` bare names (two per worker, `orchestra` for the orchestrator); no `model:`/`effort:` for `selection: user`; `sandbox_mode = "read-only"` on investigator, critic and code-reviewer profiles and their variants; refusal on unresolved skill names, `disable-model-invocation: true`, or a missing mode file. B1's exclusion edit stays.
 - `plugins/orchestra/scripts/orchestra_core/engine.py`: `_contracts` root `skills/`; role keys (`releaser` to `operator`/release, `auditor`/`red-teamer` to `critic`); `add_task` `Mode:` line check for cards with a brief file.
-- `plugins/orchestra/skills/**`: create `orchestra-worker/` and the six role skills, each with `SKILL.md` and `references/<mode>.md` for every declared mode, plus the review lens files and `specialists.md`. Move the existing method text into them. Each file carries a one-line sentinel the live check can quote, after the frontmatter and any `Source:` header. Each file that a later S ticket rewrites also carries a line starting `Stub:`; the S ticket removes it. Keep `orchestra/` with `coordination.md`, `cli.md` and `briefs.md`; move the worker contract out of `briefs.md` into `orchestra-worker/SKILL.md`.
+- `plugins/orchestra/skills/**`: create `orchestra-worker/` and the six role skills, each with `SKILL.md` and `references/<mode>.md` for every declared mode, plus the review lens files and `specialists.md`. Move the existing method text into them. Each file carries a one-line sentinel the live check can quote, after the frontmatter and any `Source:` header. Each file that a later S ticket rewrites also carries a line starting `Stub:`; the S ticket removes it. Keep `orchestra/` with `coordination.md`, `cli.md` and `briefs.md`; move the worker contract out of `briefs.md` into `orchestra-worker/SKILL.md`. Create every file named in the SPEC 8.2 table that does not yet exist as a stub with its sentinel and a `Stub:` line, including `orchestra/references/triage.md`, `handoff.md`, `parallel.md`, `worktrees.md`, `finishing.md`, `repair-rounds.md`, `final-review.md`, `audit-axes.md` and `autonomy.md`. B4 leaves `orchestra/references/cli.md` unchanged: it is Orchestra text only, owned by B8 and B7, and gets no `Stub:` line (SPEC 8.4).
 - `tests/test_engine.py`: role names and the `Mode:` check only
 - `tests/test_packaging.py`: role matrix, `sandbox_mode`, orchestrator without `model:`/`effort:`, the generate refusal test, and the two-sentinel test for every Codex worker profile (SPEC 8.3) only
 - New: `tests/test_skills.py` (SPEC 8.3 acceptance list, apart from the provenance tests that S0 adds)
@@ -256,6 +260,7 @@ Acceptance:
 - `test_engine.py`, `test_packaging.py`, `test_routing.py`, `test_integration.py` and `test_skills.py` exit 0.
 - `--check` exits 0 and reports 19 native profiles.
 - `ls plugins/orchestra/agents` and `ls plugins/orchestra/profiles/codex` match SPEC 7.1 acceptance exactly.
+- A `test_skills.py` test lists every file of the SPEC 8.2 table and asserts that each exists, and that each file except `orchestra/references/cli.md` carries its sentinel; every file a later S ticket rewrites carries a `Stub:` line.
 - `grep -rn "Read references/\|Read SKILL.md" plugins/orchestra/agents` prints nothing.
 - `cat plugins/orchestra/agents/*.md | wc -c` prints a number under 32000.
 - `grep -n "^model:\|^effort:" plugins/orchestra/agents/orchestrator.md` prints nothing.
@@ -355,7 +360,7 @@ Owned paths:
 
 Acceptance:
 - `test_engine.py`, `test_hooks.py` and `test_integration.py` exit 0.
-- Every test listed in SPEC 12 acceptance exists: caps, deadline, completion, parked-only, tampered ledger, boundary park, release refusal while active, Stop continue and Stop stop, boundary denial while active and allow while autonomy is off, the default-branch merge rule, push and `rm` denial in a linked worktree of the armed repository (A15), SessionStart report.
+- Every test listed in SPEC 12 acceptance exists: caps, deadline, completion, parked-only, tampered ledger, boundary park, release refusal while active, Stop continue and Stop stop, boundary denial while active and allow while autonomy is off, the default-branch merge rule, push and `rm` denial in a linked worktree of the armed repository (A15), the linked-worktree merge test (SPEC 12 acceptance: the branch is read from the payload `cwd`'s worktree), SessionStart report.
 - Confirm point: before acceptance, the coordinator confirms the SPEC O12 defaults (park and continue; `parked-only`; local merges on non-default branches; every push denied while active) with the user, or records that the defaults apply because the user did not override.
 - Live (0.6): a two-card run, `autonomy arm` with `max_passes: 1`; one Stop continues into the next card; the next Stop stops with `cap-passes`; the next SessionStart shows the report. The `permission_mode` line printed by `arm` is recorded against the session's actual mode.
 
@@ -407,7 +412,7 @@ Acceptance:
 
 Owned paths:
 - New: `plugins/orchestra/THIRD-PARTY-NOTICES`.
-- `tests/test_skills.py`: the provenance tests only. They parse every `Source:` header under the SPEC 8.2 grammar; check that every SHA and every idea-level name in a header is credited in the notices; and check that every destination file named in `docs/SKILL-SOURCES.md` by a row with an upstream or idea-level source carries a header or a `Stub:` line.
+- `tests/test_skills.py`: the provenance tests only. They parse every `Source:` header under the SPEC 8.2 grammar; check that every SHA and every idea-level name in a header is credited in the notices; and check that every destination file named in `docs/SKILL-SOURCES.md` by a row with an upstream or idea-level source carries a header or a `Stub:` line. `orchestra/references/cli.md` is Orchestra text only and exempt: the provenance test skips it even when a row names it (SPEC 8.4).
 
 Acceptance:
 - Every SHA and every idea-level name cited in `docs/SKILL-SOURCES.md` appears in the notices file, with its license text when the source is MIT at that SHA.
@@ -436,11 +441,11 @@ Common acceptance, for the ticket's own directories:
 
 | Ticket | Owned paths | Extra acceptance |
 | --- | --- | --- |
-| S1 | `plugins/orchestra/skills/orchestra/**` except `references/cli.md`; `plugins/orchestra/skills/orchestra-worker/**`; `tests/skill_phrases/orchestra.json`, `tests/skill_phrases/orchestra-worker.json` | `grep -rn "review-groups\|audit-policy\|orchestra.py route" plugins/orchestra/skills/orchestra` prints nothing. Phrases include `STATUS: PASS|ISSUES|BLOCKED` (in `orchestra-worker`), `Mode:`, `Lens:`, `Round 5`, `standing-orders.md`, `progress.md`, `more than 50 changed lines`, the four lens names, `park`, and the `gh api` bypass rule, plus the SPEC 8.5 executor phrases (`Executor choice`, `single Agent dispatch`, `default whenever the host has the Workflow tool`, `reserve every card before the script`, `agentType: 'orchestra:`, `isolation: 'worktree'`, `never approves its own implementation`). `Round 5` and `more than 50 changed lines` appear in `orchestra.json` only (SPEC 9). `orchestrator.md` stays within 10,500 bytes. |
+| S1 | `plugins/orchestra/skills/orchestra/**` except `references/cli.md`; `plugins/orchestra/skills/orchestra-worker/**`; `tests/skill_phrases/orchestra.json`, `tests/skill_phrases/orchestra-worker.json` | `grep -rn --exclude=cli.md "review-groups\|audit-policy\|orchestra.py route" plugins/orchestra/skills/orchestra` prints nothing (`cli.md` belongs to B8, whose own grep covers it). `references/final-review.md` routes the four lenses without restating the lens-to-category table (SPEC 9): `grep -rn "requirements, correctness, tests, standards" plugins/orchestra/skills/orchestra plugins/orchestra/skills/orchestra-worker` prints nothing. Phrases include `STATUS: PASS|ISSUES|BLOCKED` (in `orchestra-worker`), `Mode:`, `Lens:`, `Round 5`, `standing-orders.md`, `progress.md`, `more than 50 changed lines`, the four lens names, `park`, and the `gh api` bypass rule, plus the SPEC 8.5 executor phrases (`Executor choice`, `single Agent dispatch`, `default whenever the host has the Workflow tool`, `reserve every card before the script`, `agentType: 'orchestra:`, `isolation: 'worktree'`, `never approves its own implementation`). `Round 5` and `more than 50 changed lines` appear in `orchestra.json` only (SPEC 9). `orchestrator.md` stays within 10,500 bytes. |
 | S2 | `plugins/orchestra/skills/orchestra-design/**`; `tests/skill_phrases/orchestra-design.json` | Phrases cover glossary-first, decisions to the user, and the `product` mode dossier. |
 | S3 | `plugins/orchestra/skills/orchestra-critique/**`; `tests/skill_phrases/orchestra-critique.json` | Live (0.6): a dispatched `orchestra:critic` with `Mode: spec` reads `references/spec.md` by its plugin-root path and quotes its sentinel. |
 | S4 | `plugins/orchestra/skills/orchestra-build/**`; `tests/skill_phrases/orchestra-build.json` | Phrases cover tests first, `cleanup` lean-and-simplify, and working the round number the brief names. `repair.md` carries no fix-round cap (SPEC 9). |
-| S5 | `plugins/orchestra/skills/orchestra-review/**`; `tests/skill_phrases/orchestra-review.json` | Phrases cover the four lens files, the lens-to-category table, the anti-tautology rule, and reviewing as the specialist the brief names. `specialists.md` carries no size gate (SPEC 9). |
+| S5 | `plugins/orchestra/skills/orchestra-review/**`; `tests/skill_phrases/orchestra-review.json` | Phrases cover the four lens files, the lens-to-category table in `references/final.md` (its only copy, SPEC 9; phrase `requirements, correctness, tests, standards`), the anti-tautology rule, and reviewing as the specialist the brief names. `specialists.md` carries no size gate (SPEC 9). |
 | S6 | `plugins/orchestra/skills/orchestra-investigate/**`; `tests/skill_phrases/orchestra-investigate.json` | Phrases cover evidence labels and read-only reporting. |
 | S7 | `plugins/orchestra/skills/orchestra-operate/**`; `tests/skill_phrases/orchestra-operate.json` | Phrases cover exact command, exit code and log path, and release only under an explicit assignment. |
 
@@ -464,7 +469,7 @@ Acceptance: `grep -n "user's selection" docs/models.md` and `grep -n "disallowed
 | Deps | S0 to S7 accepted and merged |
 | Owned | Nothing |
 | Scope | All files under `plugins/orchestra/skills/**` together, against SPEC 8 and 9, `config/roles.json`, the engine CLI, `orchestra/references/briefs.md`, `docs/SKILL-SOURCES.md` and the SPEC 8.2 avoid list. The brief names the pinned-text path. |
-| Acceptance | `grep -rln "^Stub:" plugins/orchestra/skills` prints nothing. PASS, or ISSUES naming file and line for: contradictions between files; a rule stated in more than one file; a rule that conflicts with the engine or with `briefs.md`; a cited file without its `Source:` header; content that does not trace to the file's matrix rows; rejected or avoid-list content; text that reads as concatenated upstream prose. Findings route to the owning S ticket under E1, then a fresh SC. |
+| Acceptance | `grep -rln "^Stub:" plugins/orchestra/skills` prints nothing. PASS, or ISSUES naming file and line for: contradictions between files; a rule stated in more than one file (including the lens-to-category table anywhere outside `orchestra-review/references/final.md`); a rule that conflicts with the engine or with `briefs.md`; a cited file without its `Source:` header; content that does not trace to the file's matrix rows; rejected or avoid-list content; text that reads as concatenated upstream prose. Findings route to the owning S ticket under E1, then a fresh SC. |
 
 ### B7: user-facing docs
 
@@ -520,7 +525,7 @@ Acceptance:
 
 ### L1, operator/release, executed by the coordinator with the user (U1)
 
-Deps: G1, RF1 to RF4, A1 to A4, all CLEAN on the frozen SHA. This build has no engine run (0.1). Post-freeze evidence goes to the coordinator notes file `$SCRATCH/release-notes-log.md`, outside the repository, and to the user report, not to a repo commit.
+Deps: G1, RF1 to RF4, A1 to A4, all CLEAN on the frozen SHA. This build has no engine run (0.1). Post-freeze evidence goes to the coordinator notes file `$SCRATCH/release-notes-log.md` (fixed path, 0), outside the repository, and to the user report, not to a repo commit.
 
 0. Coordinator: `orchestra.py status` shows no active run (none was started for this build). Autonomy is off. Write the release plan to the notes file (E2).
 1. User wizard, local install of v2 (Orchestra hooks are absent between uninstall and install, so the wizard runs in a plain terminal):
@@ -531,7 +536,7 @@ Deps: G1, RF1 to RF4, A1 to A4, all CLEAN on the frozen SHA. This build has no e
    - `claude plugin install orchestra@orchestra-distribution`;
    - `claude plugin list` shows exactly one `orchestra@orchestra-distribution`, version 2.0.0;
    - `diff -rq ~/.claude/plugins/cache/orchestra-distribution/orchestra/2.0.0 "$REPO/plugins/orchestra"` is empty apart from known install metadata (copy or link is settled by this diff).
-2. **Restart point A.** The user starts a new session in `$REPO`. Checks: exactly one Orchestra SessionStart context with the session-id line; the marker heartbeat advances (in the Desktop app this is the U2 check on embedded 2.1.286); then `orchestra.py start --new-run` and `orchestra.py interrupt` under v2 (archiving any v1 state), and `orchestra.py status` shows inactive. The coordinator resumes from the notes file (E2).
+2. **Restart point A.** The user starts a new session in `$REPO`. Checks: exactly one Orchestra SessionStart context with the session-id line; the marker heartbeat advances (in the Desktop app this is the U2 check on embedded 2.1.286); then `orchestra.py start --new-run` under v2 (archiving any v1 state), then `orchestra.py interrupt --lease <lease>` with the lease that `start --new-run` printed, and `orchestra.py status` shows inactive. The coordinator in the new session resumes from `$SCRATCH/release-notes-log.md` (E2); `$SCRATCH` is fixed (0), so the path survives the restart.
 3. Pre-push checks: no active run; `git stash` is denied by the v2 guard; `git fetch origin`; `git merge-base --is-ancestor origin/main "$FROZEN"` exits 0, else stop.
 4. `git push origin feat/v2-roles-guard-mods` (non-force; allowed unarmed by A1).
 5. `gh pr create --base main --head feat/v2-roles-guard-mods --title "Orchestra 2.0.0" --body-file "$SCRATCH/pr-body.md"` (body lists the role mapping and breaking changes).
@@ -652,6 +657,7 @@ Counts: builder tickets B1 to B5, B7 to B11 (10) and S0 to S8 (9). Checkpoints: 
 - O5: accept the 32,000-byte agent-file limit.
 - O6 (SessionEnd reasons), O7 (autonomy caps), O8 (lease-free autonomy toggle): defaults in SPEC 13 apply unless the user overrides at the named confirmation point.
 - Round 5 (user asleep, overnight run authorized): O12 autonomy boundary details as REASONED defaults, confirmed before B10 acceptance; O13 linked-worktree state resolution (A15); O14 no `docs/skill-authoring.md`. FF1/FF3: this build is tracked in `docs/BUILD-LEDGER.md`, not the engine (0.1). Worktrees are created by the coordinator (0.3). FF2: L1 step 2 always resets state under v2.
+- Round 6: R1 fixes `$SCRATCH` at `~/Documents/Claude/orchestra-v2-build` (0). R2: B1 was dispatched under its current text; its owned paths and acceptance are unchanged. MX runs in the main checkout as a one-time exception (0.3).
 - O9, O10, O11: confirmed by the user (round 4, SPEC 3.4). Option A trim ships in 2.0.0, and every in-scope item ships in 2.0.0.
 - U5, coordinator only, after release (L1 step 17). `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` must state:
   - the v1-to-v2 role mapping;
