@@ -19,3 +19,13 @@ Native model evidence: older Codex CLI 0.158.0 rejected Sol, while desktop-bundl
 ## 1.0.1 update — 2026-09-30
 
 The update removes Astra from Codex routing, adds reserved inline assignments beside disjoint workers, and fixes native hook discovery. Codex 0.159.0 selects the generated compatibility package; the canonical portable manifest and Claude package stay separate. All 44 native package bytes and 27 profiles match generation. The suite passes 89 tests; native isolated hook listing returns five untrusted definitions exactly once. Final artifact review and publication receipts follow these checks. No hook trust is written.
+
+## 2.0.0 build — 2026-10-04
+
+Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, checkpoint review on the merged commit, accept (PLAN-v2 0.3). Worktrees live under the session scratchpad (`$SCRATCH/wt/<ticket>`).
+
+| Card | Owner | Worktree | Merged commit | Review verdict | Acceptance |
+| --- | --- | --- | --- | --- | --- |
+| I1 | investigator | none | 512bfac (RESEARCH-v2) | coordinator check | ACCEPTED |
+| I2 | investigator | none | 512bfac (RESEARCH-v2 I2) | coordinator re-check of SHAs and licenses | ACCEPTED |
+| P0 r1 | critic feasibility + scope | none | e9140d0 (round 5 repair) | ISSUES FF1-FF3, SF1-SF10, routed to designer-planner | REPAIRED |
