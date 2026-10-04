@@ -1,7 +1,9 @@
 import { expect, test } from 'claude-code/testing';
 import type { On } from 'claude-code';
 
-import { encode, rig, toBase64 } from './testkit.js';
+import { RULES_JSON } from './fixtures/guard-fixtures.js';
+import { classifyCommand, klassOf, loadRules } from './guard.js';
+import { encode, EXPECTED_DIGEST, rig, toBase64 } from './testkit.js';
 import type { Rig } from './testkit.js';
 
 const start = { cwd: '/work/proj', surface: null, isInteractive: false } as const;
@@ -202,4 +204,152 @@ test('verdict toasts: review, gate and accept receipts toast; other commands do 
   expect(r.toasts.length).toBe(2);
   expect(b.calls.length).toBe(5);
   expect(toBase64(encode('é'))).toBe('w6k=');
+});
+
+/** Mirrors hooks.py _mod_is_live: Python skips only for a marker under 15 s old whose digest matches its own. */
+function pythonSkips(r: Rig, sid: string): boolean {
+  const last = r.of(sid).at(-1);
+  if (last === undefined) return false;
+  const age = r.clock.now() - last.json.heartbeat_ms;
+  return last.json.heartbeat_ms > 0 && age >= 0 && age < 15000 && last.json.rules_sha256 === EXPECTED_DIGEST;
+}
+
+test('R5 F1: a re-fired session.start that throws hands git stash to the Python fallback', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  await $.session.start(start);
+  await r.clock.advance(5000);
+  expect(pythonSkips(r, 'sid-1')).toBe(true);
+  r.files['.claude-plugin/plugin.json'] = null;
+  await $.session.start(start);
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' });
+  // The module did not decide: the call went on to the classic hook, and that hook guards in full.
+  expect('deny' in res).toBe(false);
+  expect(b.calls.length).toBe(1);
+  expect(pythonSkips(r, 'sid-1')).toBe(false);
+  await r.clock.advance(5000);
+  expect(pythonSkips(r, 'sid-1')).toBe(false);
+});
+
+const PANE = { title: 'Orchestra board', isFocused: true, bodyColumns: 80, placement: 'inline', scroll: { offset: 0, bodyRows: 20 }, view: {} } as const;
+
+function texts(node: unknown, out: string[] = []): string[] {
+  if (typeof node === 'string') out.push(node);
+  else if (Array.isArray(node)) for (const n of node) texts(n, out);
+  else if (node !== null && typeof node === 'object') {
+    const n = node as { props?: { children?: unknown }; children?: unknown };
+    texts(n.props?.children, out);
+    texts(n.children, out);
+  }
+  return out;
+}
+
+async function board($: Parameters<Parameters<typeof test>[1]>[0], r: Rig, status: unknown): Promise<string[]> {
+  r.runAnswer = () => ({ exitCode: 0, stdout: JSON.stringify(status) });
+  await $.command.run({ command: 'orchestra-board', args: '' } as never);
+  const ui = await $.ui.mount({ plugin: 'orchestra', surface: 'terminal', component: 'Pane', props: PANE as never, requestId: 'orchestra-board' });
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  return drawn;
+}
+
+const TASKS = {
+  A: { role: 'builder', mode: 'implementation', state: 'running', worker: 'w1' },
+  B: { role: 'reviewer', mode: 'review', state: 'queued', worker: null },
+  C: { role: 'builder', mode: 'repair', state: 'running', worker: 'w2' },
+};
+
+test('R5 F3 and O21: the board renders the session and autonomy flags and the running-card count', async ($, on) => {
+  const r = rig(on);
+  bottom(on, r);
+  await $.session.start(start);
+  const off = await board($, r, { version: 2, tasks: TASKS, session: { active: false, actor: 'x' }, autonomy: { active: false, passes: 3 } });
+  expect(off).toContain('Session: inactive');
+  expect(off).toContain('Autonomy: off');
+  expect(off).toContain('Running cards: 2');
+  const on2 = await board($, r, { version: 2, tasks: TASKS, session: { active: true, actor: 'x' }, autonomy: { active: true, passes: 0 } });
+  expect(on2).toContain('Session: active');
+  expect(on2).toContain('Autonomy: on');
+  const none = await board($, r, { version: 2, tasks: {}, session: null, autonomy: null });
+  expect(none).toContain('Session: inactive');
+  expect(none).toContain('Autonomy: off');
+  expect(none).toContain('Running cards: 0');
+});
+
+function whereRuns(r: Rig): number {
+  return r.runs.filter((run) => run.argv.join(' ').includes('--cli where')).length;
+}
+
+test('O21: a where result without standing orders is not cached; one with them is, until session.start', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  r.files['/s/state/standing-orders.md'] = 'Orders\n';
+  whereAnswer(r, false);
+  await $.session.start(start);
+  await $.agent.spawn({ prompt: 'one', subagentType: 'orchestra:builder' } as never);
+  expect(b.spawned[0]!.prompt).toBe('one');
+  whereAnswer(r, true);
+  await $.agent.spawn({ prompt: 'two', subagentType: 'orchestra:builder' } as never);
+  expect(b.spawned[1]!.prompt).toContain('## Standing orders (verbatim)');
+  expect(whereRuns(r)).toBe(2);
+  await $.agent.spawn({ prompt: 'three', subagentType: 'orchestra:builder' } as never);
+  expect(whereRuns(r)).toBe(2);
+  whereAnswer(r, false);
+  await $.session.start(start);
+  await $.agent.spawn({ prompt: 'four', subagentType: 'orchestra:builder' } as never);
+  expect(whereRuns(r)).toBe(3);
+  expect(b.spawned[3]!.prompt).toBe('four');
+});
+
+// O20 (SPEC A5): the TypeScript classifier mirrors the five shapes the Python guard closes.
+const O20_DENY = [
+  'function f { git reset --hard; }; f',
+  'function f() { git reset --hard; }',
+  'function f () { git reset --hard; }',
+  'coproc git reset --hard',
+  'coproc NAME { git reset --hard; }',
+  "coproc bash -c 'git reset --hard'",
+  'echo `git reset --hard`',
+  '`echo git reset --hard`',
+  'x="`git reset --hard`"',
+  'case `git reset --hard` in x) ;; esac',
+  'if `git reset --hard`; then :; fi',
+  "echo 'git reset --hard' | (cat) 2>/dev/null | bash",
+  "echo 'git reset --hard' | (cd x; cat) 2>/dev/null | bash",
+  "echo 'git reset --hard' | (cd x; cat) 2>&1 | bash",
+  "echo 'git reset --hard' | (cd x; cat) >&1 | bash",
+  "echo 'git reset --hard' | (cd x; cat) </dev/stdin | bash",
+  'eval $(time case x in x) echo git reset --hard;; esac)',
+  'eval "$(time case x in x) echo git reset --hard;; esac)"',
+  'bash -c "$(time case x in x) echo git reset --hard;; esac)"',
+  'eval "$(cat >/dev/null <<EOF\n)\nEOF\necho git reset --hard)"',
+  "eval \"$(cat >/dev/null <<'EOF'\n)\nEOF\necho git reset --hard)\"",
+  "bash -c \"$(cat >/dev/null <<'EOF'\n)\nEOF\necho git reset --hard)\"",
+];
+
+const O20_ALLOW = [
+  'function f { echo hi; }; f',
+  'coproc cat',
+  'echo `date`',
+  'cd `git rev-parse --show-toplevel`',
+  'echo "`date`"',
+  'echo hi | (cat) 2>/dev/null | bash',
+  'eval "$(time case x in x) echo ok;; esac)"',
+  "eval \"$(cat >/dev/null <<'EOF'\n)\nEOF\necho ok)\"",
+  '{ eval "$(ssh-agent -s)"; }',
+  'if git diff --quiet; then echo clean; fi',
+  'ls | (cd x; wc -l)',
+  'echo $((1+2))',
+];
+
+test('O20: function/coproc, top-level backticks, redirected groups, time case and heredocs in $(...) deny', () => {
+  loadRules(RULES_JSON);
+  const wrong = O20_DENY.filter((c) => klassOf(classifyCommand(c)) !== 'deny');
+  expect(wrong).toEqual([]);
+});
+
+test('O20: the benign shapes and controls still allow', () => {
+  loadRules(RULES_JSON);
+  const wrong = O20_ALLOW.filter((c) => klassOf(classifyCommand(c)) !== 'allow');
+  expect(wrong).toEqual([]);
 });

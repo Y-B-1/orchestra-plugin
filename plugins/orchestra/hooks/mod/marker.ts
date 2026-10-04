@@ -17,10 +17,20 @@ export type Marker = {
   rules_sha256: string | null;
 };
 
-/** ${XDG_STATE_HOME:-$HOME/.local/state}/orchestra/mods/<session_id>.json */
-export function markerPath(xdg: string | undefined, home: string | undefined, sessionId: string): string {
-  const base = xdg ? xdg : `${home}/.local/state`;
-  return `${base}/orchestra/mods/${sessionId}.json`;
+/**
+ * The state base: an absolute XDG_STATE_HOME, else an absolute HOME + /.local/state, else null. A relative
+ * or `~` XDG_STATE_HOME counts as unset, as the XDG spec says (R5 finding 4).
+ */
+export function stateBase(xdg: string | undefined, home: string | undefined): string | null {
+  if (xdg && xdg.startsWith('/')) return xdg;
+  if (home && home.startsWith('/')) return `${home}/.local/state`;
+  return null;
+}
+
+/** <state base>/orchestra/mods/<session_id>.json, or null when there is no usable base. */
+export function markerPath(xdg: string | undefined, home: string | undefined, sessionId: string): string | null {
+  const base = stateBase(xdg, home);
+  return base === null ? null : `${base}/orchestra/mods/${sessionId}.json`;
 }
 
 export function markerJson(sessionId: string, version: string, rules: string | null, heartbeat: number): string {

@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing';
 
-import { deferred, EXPECTED_DIGEST, rig } from './testkit.js';
+import { markerPath } from './marker.js';
+import { deferred, EXPECTED_DIGEST, rig, ROOT_FILES } from './testkit.js';
 
 const start = { cwd: '/work/proj', surface: null, isInteractive: false } as const;
 const end = (reason: string, sessionId: string) => ({ reason, sessionId, resume: {} as never }) as never;
@@ -188,4 +189,66 @@ test('a throwing tick writes nothing and the next tick still runs', async ($, on
   r.idGate = null;
   await r.clock.advance(5000);
   expect(r.writes.length).toBe(before + 1);
+});
+
+// R5 finding 4: a relative or `~` XDG_STATE_HOME is ignored, as the XDG spec says.
+test('markerPath: a non-absolute XDG_STATE_HOME falls back to HOME; no usable base gives null', () => {
+  expect(markerPath('/xdg', '/home/x', 's')).toBe('/xdg/orchestra/mods/s.json');
+  expect(markerPath('rel/state', '/home/x', 's')).toBe('/home/x/.local/state/orchestra/mods/s.json');
+  expect(markerPath('~/state', '/home/x', 's')).toBe('/home/x/.local/state/orchestra/mods/s.json');
+  expect(markerPath('', '/home/x', 's')).toBe('/home/x/.local/state/orchestra/mods/s.json');
+  expect(markerPath('rel', undefined, 's')).toBe(null);
+  expect(markerPath('rel', 'relhome', 's')).toBe(null);
+  expect(markerPath(undefined, undefined, 's')).toBe(null);
+});
+
+test('a relative XDG_STATE_HOME writes the marker under HOME', async ($, on) => {
+  const r = rig(on, { env: { XDG_STATE_HOME: 'rel/state', HOME: '/home/x' } });
+  await $.session.start(start);
+  expect(r.writes.map((w) => w.path)).toEqual(['/home/x/.local/state/orchestra/mods/sid-1.json']);
+});
+
+test('a `~` XDG_STATE_HOME and no HOME: no marker and no tick', async ($, on) => {
+  const r = rig(on, { env: { XDG_STATE_HOME: '~/state' } });
+  await $.session.start(start);
+  await r.clock.advance(20000);
+  expect(r.started).toEqual([]);
+});
+
+// R5 finding 2: the generation is captured at handler entry.
+test('two overlapping session.start calls leave exactly one tick', async ($, on) => {
+  const r = rig(on);
+  await Promise.all([$.session.start(start), $.session.start(start)]);
+  const before = r.writes.length;
+  await r.clock.advance(5000);
+  expect(r.writes.length - before).toBe(1);
+  await r.clock.advance(5000);
+  expect(r.writes.length - before).toBe(2);
+});
+
+// R5 finding 1: whenever the TypeScript guard is not ready, no fresh marker may exist.
+test('a re-fired session.start that throws leaves a zero marker and no tick', async ($, on) => {
+  const r = rig(on);
+  await $.session.start(start);
+  await r.clock.advance(5000);
+  expect(r.of('sid-1').at(-1)!.json.heartbeat_ms).toBe(6000);
+  r.files['.claude-plugin/plugin.json'] = null;
+  await $.session.start(start);
+  expect(r.of('sid-1').at(-1)!.json.heartbeat_ms).toBe(0);
+  await r.clock.advance(20000);
+  expect(r.of('sid-1').at(-1)!.json.heartbeat_ms).toBe(0);
+  expect(r.started.filter((w) => w.json.heartbeat_ms > 6000)).toEqual([]);
+});
+
+test('a failed re-start then a good start writes fresh markers again', async ($, on) => {
+  const r = rig(on);
+  await $.session.start(start);
+  r.files['config/guard-rules.json'] = '{bad';
+  await $.session.start(start);
+  expect(r.of('sid-1').at(-1)!.json.heartbeat_ms).toBe(0);
+  r.files['config/guard-rules.json'] = ROOT_FILES['config/guard-rules.json']!;
+  await $.session.start(start);
+  expect(r.of('sid-1').at(-1)!.json.heartbeat_ms).toBe(1000);
+  await r.clock.advance(5000);
+  expect(r.of('sid-1').at(-1)!.json.heartbeat_ms).toBe(6000);
 });

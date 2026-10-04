@@ -91,8 +91,10 @@ export const register: Register = (on: On) => {
   let queue: Promise<void> = Promise.resolve();
   let digest: string | null = null;
   let version = '';
+  let rawXdg: string | undefined;
   let xdg: string | undefined;
   let home: string | undefined;
+  let starting: Promise<void> | null = null;
   let where: Where | null = null;
   let boardRegistered = false;
   let boardTimer: { cancel: () => void } | null = null;
@@ -111,71 +113,116 @@ export const register: Register = (on: On) => {
   };
 
   on('session.start', async ($, e, next) => {
+    // R5 finding 2: the generation is taken before any await, so of overlapping starts only the last runs on.
     cancelTick();
+    const mine = gen;
     guardReady = false;
     where = null;
+    const prevSeen = lastSeen;
+    const prevWriters = writers;
+    let done: () => void = () => undefined;
+    const settled = new Promise<void>((resolve) => (done = resolve));
+    starting = settled;
+    // R5 finding 1: the guard is not ready from here on, so no fresh marker of the last session may stay.
+    const zeroPrev = async (): Promise<void> => {
+      if (prevWriters === null || prevSeen === null) return;
+      await Promise.race([enqueue(prevWriters.zero(prevSeen)), $.clock.sleep(2000)]);
+    };
+    let ready = false;
     try {
-      const x = await $.env.get('XDG_STATE_HOME');
-      const h = await $.env.get('HOME');
-      xdg = x ? x : undefined;
-      home = h ? h : undefined;
-      if (xdg === undefined && home === undefined) return next(e);
-      const root = $.plugin.root;
-      loadRules(await $.fs.read(`${root}/config/guard-rules.json`));
-      version = String(asJson(await $.fs.read(`${root}/.claude-plugin/plugin.json`))?.['version'] ?? '');
-      const contents: (Uint8Array | null)[] = [];
-      for (const rel of GUARD_DIGEST_FILES) {
-        try {
-          const bytes = await $.fs.read(`${root}/${rel}`, { as: 'bytes' });
-          contents.push(fromBase64(bytes.base64));
-        } catch {
-          contents.push(null);
-        }
-      }
-      digest = guardDigest(contents);
-      guardReady = true;
-
-      const mine = gen;
-      const id = await $.session.id();
-      retired.delete(id);
-      lastSeen = id;
-      const fresh = (sid: string) => async (): Promise<void> => {
-        const now = await $.clock.now();
-        if (retired.has(sid)) return;
-        await $.fs.write(markerPath(xdg, home, sid), markerJson(sid, version, digest, now));
-      };
-      const zero = (sid: string) => async (): Promise<void> => {
-        await $.fs.write(markerPath(xdg, home, sid), markerJson(sid, version, digest, 0));
-      };
-      writers = { fresh, zero };
-      await Promise.race([enqueue(fresh(id)), $.clock.sleep(2000)]);
-      if (mine === gen) {
-        tick = $.clock.every(HEARTBEAT_MS, async () => {
-          let current: string;
+      ready = await (async (): Promise<boolean> => {
+        await zeroPrev();
+        const x = await $.env.get('XDG_STATE_HOME');
+        const h = await $.env.get('HOME');
+        const envXdg = x ? x : undefined;
+        const envHome = h ? h : undefined;
+        if (mine !== gen) return false;
+        rawXdg = envXdg;
+        xdg = envXdg && envXdg.startsWith('/') ? envXdg : undefined;
+        home = envHome && envHome.startsWith('/') ? envHome : undefined;
+        if (xdg === undefined && home === undefined) return false;
+        const root = $.plugin.root;
+        const rules = await $.fs.read(`${root}/config/guard-rules.json`);
+        const pluginJson = await $.fs.read(`${root}/.claude-plugin/plugin.json`);
+        const contents: (Uint8Array | null)[] = [];
+        for (const rel of GUARD_DIGEST_FILES) {
           try {
-            current = await $.session.id();
+            const bytes = await $.fs.read(`${root}/${rel}`, { as: 'bytes' });
+            contents.push(fromBase64(bytes.base64));
           } catch {
-            return;
+            contents.push(null);
           }
-          if (mine !== gen || lastSeen === null) return;
-          if (current !== lastSeen) {
-            const old = lastSeen;
-            retired.add(old);
-            enqueue(zero(old));
-            retired.delete(current);
-            lastSeen = current;
-          }
-          enqueue(fresh(current));
-        });
+        }
+        if (mine !== gen) return false;
+        loadRules(rules);
+        const ver = String(asJson(pluginJson)?.['version'] ?? '');
+        const dig = guardDigest(contents);
+        version = ver;
+        digest = dig;
+        const sx = xdg;
+        const sh = home;
+        const id = await $.session.id();
+        if (mine !== gen) return false;
+        guardReady = true;
+        retired.delete(id);
+        lastSeen = id;
+        const write = async (sid: string, heartbeat: number): Promise<void> => {
+          const path = markerPath(sx, sh, sid);
+          if (path !== null) await $.fs.write(path, markerJson(sid, ver, dig, heartbeat));
+        };
+        const fresh = (sid: string) => async (): Promise<void> => {
+          const now = await $.clock.now();
+          if (retired.has(sid)) return;
+          await write(sid, now);
+        };
+        const zero = (sid: string) => async (): Promise<void> => {
+          await write(sid, 0);
+        };
+        writers = { fresh, zero };
+        await Promise.race([enqueue(fresh(id)), $.clock.sleep(2000)]);
+        if (mine === gen) {
+          tick = $.clock.every(HEARTBEAT_MS, async () => {
+            let current: string;
+            try {
+              current = await $.session.id();
+            } catch {
+              return;
+            }
+            if (mine !== gen || lastSeen === null) return;
+            if (current !== lastSeen) {
+              const old = lastSeen;
+              retired.add(old);
+              enqueue(zero(old));
+              retired.delete(current);
+              lastSeen = current;
+            }
+            enqueue(fresh(current));
+          });
+        }
+        return true;
+      })();
+    } catch {
+      // No guard and no fresh marker: Python covers the session.
+      if (mine === gen) {
+        cancelTick();
+        guardReady = false;
+        const w = writers;
+        const sid = lastSeen;
+        if (w !== null && sid !== null) await Promise.race([enqueue(w.zero(sid)), $.clock.sleep(2000)]).catch(() => undefined);
       }
-      if (!boardRegistered) {
+    } finally {
+      done();
+      if (starting === settled) starting = null;
+    }
+    try {
+      if (ready && !boardRegistered) {
         boardRegistered = true;
         await $.command.register({ name: BOARD, description: 'Show the Orchestra board: cards, session and autonomy' });
       }
-      // B11 seam: autonomy startup goes here (autonomy.ts is owned by that card).
     } catch {
-      // No guard and no marker: Python covers the session.
+      // The board is a convenience; it never takes the guard down.
     }
+    // B11 seam: autonomy startup goes here (autonomy.ts is owned by that card).
     return next(e);
   });
 
@@ -199,6 +246,8 @@ export const register: Register = (on: On) => {
   });
 
   on('tool.call', async ($, e, next) => {
+    // A start in flight first zeroes the last marker or makes the guard ready (R5 finding 1).
+    while (starting !== null) await starting;
     if (!guardReady) return next(e);
     const input = e as unknown as Json;
     const tool = String(input['tool']);
@@ -231,7 +280,10 @@ export const register: Register = (on: On) => {
       const target = input['file_path'] !== undefined ? input['file_path'] : input['path'];
       const cwd = await $.session.cwd();
       const stateDir = await $.env.get('ORCHESTRA_STATE_DIR');
-      const denied = editDenied(target === undefined ? undefined : String(target), cwd, { stateDir: stateDir ? stateDir : null, xdg, home });
+      const path = target === undefined ? undefined : String(target);
+      const sd = stateDir ? stateDir : null;
+      // Both the base Python reads (XDG_STATE_HOME as given) and the marker base are protected.
+      const denied = editDenied(path, cwd, { stateDir: sd, xdg: rawXdg, home }) || (rawXdg !== xdg && editDenied(path, cwd, { stateDir: sd, xdg, home }));
       if (denied) return { deny: STATE_DENY };
     }
     return next(e);
@@ -248,7 +300,8 @@ export const register: Register = (on: On) => {
   on('agent.spawn', async ($, e, next) => {
     if (!e.subagentType.startsWith('orchestra:')) return next(e);
     try {
-      if (where === null) where = await readWhere($);
+      // O21: only a result with standing orders is cached; session.start clears it.
+      if (where === null || !where.standingOrders) where = await readWhere($);
       const w = where;
       if (w !== null && w.standingOrders && w.state !== '') {
         const text = await $.fs.read(`${w.state}/standing-orders.md`);
@@ -294,16 +347,20 @@ export const register: Register = (on: On) => {
     const status = boardStatus;
     if (status === null) return Box({ children: [Text({ children: 'Orchestra: no status yet' })] });
     const rows: string[] = [];
+    let running = 0;
     const tasks = asJson(JSON.stringify(status['tasks'] ?? {})) ?? {};
     for (const id of Object.keys(tasks)) {
       const t = asJson(JSON.stringify(tasks[id])) ?? {};
+      if (t['state'] === 'running') running += 1;
       rows.push(`${id}  ${String(t['role'] ?? '-')}  ${String(t['mode'] ?? '-')}  ${String(t['state'] ?? '-')}  ${String(t['worker'] ?? '-')}`);
     }
-    const session = status['session'];
-    const autonomy = asJson(JSON.stringify(status['autonomy'] ?? {}));
+    // The engine's own flags: session.active and autonomy.active (null or absent reads as off).
+    const session = asJson(JSON.stringify(status['session'] ?? null));
+    const autonomy = asJson(JSON.stringify(status['autonomy'] ?? null));
     const lines = [
-      `Session: ${session === null || session === undefined ? 'inactive' : 'active'}`,
-      `Autonomy: ${autonomy === null ? 'off' : String(autonomy['mode'] ?? autonomy['state'] ?? 'set')}`,
+      `Session: ${session !== null && session['active'] === true ? 'active' : 'inactive'}`,
+      `Autonomy: ${autonomy !== null && autonomy['active'] === true ? 'on' : 'off'}`,
+      `Running cards: ${running}`,
       `Cards: ${rows.length}`,
       ...rows,
     ];
