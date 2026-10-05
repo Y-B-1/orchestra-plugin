@@ -40,7 +40,7 @@ class EngineFixture(unittest.TestCase):
         self.engine.add_task('main', self.lease, task)
 
     def review(self, path, reviewer='reviewer', categories=None, tasks=None, findings=None, final=False, engine=None,
-               task_findings=None, repair_check=None):
+               task_findings=None, repair_check=None, cleared=None):
         engine = engine or self.engine
         artifact = engine.artifact() if final or not tasks else engine.artifact(engine.scope_for(tasks))
         body = dict(reviewer=reviewer, categories=categories or ['correctness'],
@@ -53,6 +53,8 @@ class EngineFixture(unittest.TestCase):
             body['task_findings'] = task_findings
         if repair_check is not None:
             body['repair_check'] = repair_check
+        if cleared is not None:
+            body['cleared'] = cleared
         path.write_text(json.dumps(body))
 
 
@@ -1116,7 +1118,7 @@ class ScopedEvidenceTests(EngineFixture):
         self.reported('a')
         self.checkpoint('a')
         report = self.root / 'final-blocked.json'
-        self.review(report, tasks=['a'], findings=['bug in a'], final=True)
+        self.review(report, tasks=['a'], findings=['bug in a'], final=True, task_findings={'a': ['bug in a']})
         receipt = self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a'], final=True, findings=['bug in a'])
         self.assertIsNone(receipt['scope'])
         with self.assertRaisesRegex(EngineError, 'findings'):
@@ -2386,9 +2388,7 @@ class WaveReviewTests(EngineFixture):
         self.assertEqual({'W1': True, 'W2': False, 'W3': True, 'W4': True, 'W5': False, 'W6': False}, waves)
 
 
-class HoldTests(EngineFixture):
-    """SPEC 5.2 (repair ladder ending in hold), 5.3 (held work at completion), 5.4 item 3 (held-tip gate attribution)."""
-
+class HoldFixture(EngineFixture):
     ALL = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
 
     def built(self, name, **kw):
@@ -2397,10 +2397,10 @@ class HoldTests(EngineFixture):
         self.engine.report('w-' + name, token, 'Built ' + name)
 
     def reviewed(self, name, tasks, findings=None, task_findings=None, repair_check=None, categories=None,
-                 final=False, mutate=None):
+                 final=False, mutate=None, cleared=None):
         path = self.root / (name + '.json')
         self.review(path, reviewer='reviewer', tasks=tasks, findings=findings, task_findings=task_findings,
-                    repair_check=repair_check, categories=categories, final=final)
+                    repair_check=repair_check, categories=categories, final=final, cleared=cleared)
         if mutate:
             body = json.loads(path.read_text())
             mutate(body)
@@ -2431,6 +2431,9 @@ class HoldTests(EngineFixture):
     def progress(self):
         path = self.engine.state_dir / 'progress.md'
         return path.read_text() if path.exists() else ''
+
+class HoldTests(HoldFixture):
+    """SPEC 5.2 (repair ladder ending in hold), 5.3 (held work at completion), 5.4 item 3 (held-tip gate attribution)."""
 
     def test_hold_moves_whole_chain_and_logs(self):
         self.blocked_chain()
@@ -2523,7 +2526,7 @@ class HoldTests(EngineFixture):
     def test_review_may_cover_held_cards(self):
         self.blocked_chain()
         self.engine.hold('main', self.lease, 'R1', 'g')
-        receipt = self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL)
+        receipt = self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL, cleared={'R1': 'no defect'})
         self.assertEqual(['B1', 'R1'], receipt['tasks'])
         self.task('V1', role='code-reviewer', mode='checkpoint', files=[], review_of=['R1'])
         self.assertIn('V1', self.engine.ready('main', self.lease))
@@ -2557,7 +2560,7 @@ class HoldTests(EngineFixture):
     def test_completion_refuses_while_card_held(self):
         self.blocked_chain()
         self.engine.hold('main', self.lease, 'R1', 'g')
-        self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL)
+        self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL, cleared={'R1': 'no defect'})
         with self.assertRaisesRegex(EngineError, 'accepted'):
             self.engine.check_completion('main', self.lease)
 
@@ -2595,3 +2598,103 @@ class HoldTests(EngineFixture):
             with self.subTest(label), self.assertRaisesRegex(EngineError, 'Task findings name an uncovered task'):
                 self.w2_review('w2-' + label.split()[0], keys, gate)
         self.assertNotIn('attributed', self.progress())
+
+
+class FinalReceiptTests(HoldFixture):
+    """SPEC 5.5 items 3 and 4 (final receipts, held tips, final repair rounds) and section 6 (`cleared`)."""
+
+    LENSES = (['requirements', 'correctness', 'tests', 'architecture'], ['security'], ['standards', 'cleanup'])
+
+    def final_lenses(self, ids, cleared, tag='lens'):
+        return [self.reviewed('%s%d' % (tag, n), ids, final=True, categories=cats, cleared=cleared)
+                for n, cats in enumerate(self.LENSES)]
+
+    def test_contract_hash_unchanged_by_lens_change(self):
+        from orchestra_core.engine import _contracts
+        self.assertEqual('7e12cdf268d85df0aac178c92f1577a3ce2ffbf686fbc536204b4677dfe3a942', _contracts()[1])
+
+    def test_final_findings_need_task_findings_on_chain_tips(self):
+        self.built('B1', wave='W1')
+        self.reviewed('wave', ['B1'], findings=['f'])
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), 'Repaired')
+        with self.assertRaisesRegex(EngineError, 'Attribute final findings to the chain tip R1'):
+            self.reviewed('bare', ['B1', 'R1'], findings=['h'], final=True)
+        with self.assertRaisesRegex(EngineError, 'Attribute final findings to the chain tip R1'):
+            self.reviewed('ancestor', ['B1', 'R1'], findings=['h'], final=True, task_findings={'B1': ['h'], 'R1': []})
+        receipt = self.reviewed('tip', ['B1', 'R1'], findings=['h'], final=True, task_findings={'R1': ['h']})
+        self.assertEqual({'R1': ['h']}, receipt['task_findings'])
+
+    def accepted_b1_with_final_finding(self):
+        self.built('B1')
+        self.reviewed('clean', ['B1'])
+        self.engine.accept('main', self.lease, 'B1')
+        self.reviewed('final', ['B1'], findings=['f'], final=True, task_findings={'B1': ['f']})
+
+    def test_repair_of_accepted_tip_with_final_finding_allowed(self):
+        self.accepted_b1_with_final_finding()
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        self.assertEqual(['repairing'], self.states('B1'))
+
+    def test_final_repair_card_stores_round_and_findings(self):
+        self.accepted_b1_with_final_finding()
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        task = self.engine.status()['tasks']['R1']
+        self.assertEqual((1, ['f']), (task['final_round'], task['final_findings']))
+
+    def test_final_round_counts_up_only_after_a_card_of_the_round_reported(self):
+        for name in ('B1', 'B2', 'B3'):
+            self.built(name)
+        self.reviewed('clean', ['B1', 'B2', 'B3'])
+        for name in ('B1', 'B2', 'B3'):
+            self.engine.accept('main', self.lease, name)
+        self.reviewed('final', ['B1', 'B2', 'B3'], findings=['f1', 'f2', 'f3'], final=True,
+                      task_findings={'B1': ['f1'], 'B2': ['f2'], 'B3': ['f3']})
+        rounds = []
+        for repair, target in (('R1', 'B1'), ('R2', 'B2')):
+            self.task(repair, mode='repair', repair_of=target, files=[target])
+            rounds.append(self.engine.status()['tasks'][repair]['final_round'])
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), 'Repaired')
+        self.task('R3', mode='repair', repair_of='B3', files=['B3'])
+        rounds.append(self.engine.status()['tasks']['R3']['final_round'])
+        self.assertEqual([1, 1, 2], rounds)
+
+    def test_build_phase_repair_has_no_final_fields(self):
+        self.built('B1', wave='W1')
+        self.reviewed('wave', ['B1'], findings=['f'])
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        task = self.engine.status()['tasks']['R1']
+        self.assertNotIn('final_round', task)
+        self.assertNotIn('final_findings', task)
+
+    def test_final_receipt_must_address_every_held_tip(self):
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g')
+        with self.assertRaisesRegex(EngineError, 'Final receipt must address held tip R1'):
+            self.reviewed('omitted', ['B1', 'R1'], final=True)
+        with self.assertRaisesRegex(EngineError, 'cleared'):
+            self.reviewed('blank', ['B1', 'R1'], final=True, cleared={'R1': '  '})
+        with self.assertRaisesRegex(EngineError, 'cleared'):
+            self.reviewed('not held', ['B1', 'R1'], final=True, cleared={'R1': 'ok', 'B1': 'ancestor'})
+        cleared = self.reviewed('cleared', ['B1', 'R1'], final=True, cleared={'R1': 'no security defect'})
+        self.assertEqual({'R1': 'no security defect'}, cleared['cleared'])
+        found = self.reviewed('found', ['B1', 'R1'], findings=['still g'], final=True, task_findings={'R1': ['still g']})
+        self.assertEqual({}, found['cleared'])
+
+    def test_cleared_refused_on_non_final_receipt(self):
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g')
+        with self.assertRaisesRegex(EngineError, 'Cleared entries are allowed only on final receipts'):
+            self.reviewed('wave', ['B1', 'R1'], cleared={'R1': 'fine'})
+
+    def test_held_tip_cleared_by_every_lens_accepts_without_repair(self):
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g')
+        self.final_lenses(['B1', 'R1'], {'R1': 'the held finding no longer reproduces'})
+        with self.assertRaisesRegex(EngineError, 'Repair needs earlier checked coding findings'):
+            self.task('R2', mode='repair', repair_of='R1', files=['B1'])
+        with self.assertRaisesRegex(EngineError, 'repair must be accepted first'):
+            self.engine.accept('main', self.lease, 'B1')
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
+        self.assertEqual(['accepted', 'accepted'], self.states('R1', 'B1'))
