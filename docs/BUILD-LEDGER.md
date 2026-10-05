@@ -138,4 +138,7 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | REL | coordinator | c98c444, 7b53a2d | version 2.2.0 in both manifests and plugin.json; CHANGELOG 2.2.0 | reported (final round 3) |
 | FC3 / FS3 / FT3 | final review, three lenses | 4eaf3b9 | security CLEAN, standards CLEAN (notes); correctness BLOCKED: with a packed branch and a loose case twin, `rev-parse` read the twin's tip, so the merged check ran on the wrong commit (G2 chain) | round 3 of the final loop |
 | R11 | code-reviewer checkpoint | 42cd7ed | G2x fixes FS2-1; notes on test isolation | CLEAN |
-| G2y | builder (Opus) | 89d2877 | namespace listing with exact row; case-variant twin always denied; tip from the exact row; tests isolate each deny; CHANGELOG heading test; 2.2 repair ladder in docs/models.md and SKILL-SOURCES | reported (final round 4) |
+| G2y | builder (Opus) | 89d2877 | namespace listing with exact row; case-variant twin always denied; tip from the exact row; tests isolate each deny; CHANGELOG heading test; 2.2 repair ladder in docs/models.md and SKILL-SOURCES | ACCEPTED (R12 CLEAN) |
+| FC4 / FS4 / FT4 | final review, three lenses | 5b46ba6 | all CLEAN; notes for the next phase: the default-ref read can still pick a loose case twin of a packed default (no data loss), the SKILL-SOURCES E1 row title and closing cells still name the 2.0 round cap, and a comment cites the review tag FC3 | round 4 of the final loop: PASS |
+| R12 | code-reviewer checkpoint | 89d2877 | G2y fixes the case-twin finding; merged exact-name deletes still allowed; tests fail without the fix | CLEAN |
+| Gate | coordinator | 5b46ba6 | unittest 557 OK, fixture sync 0, plugin test 89 pass, generate --check 0, build_release 0 | PASS |
