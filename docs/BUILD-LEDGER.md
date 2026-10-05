@@ -108,3 +108,9 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | E5 | builder | 7e4ed32 | final receipts attribute to chain tips, address every held tip (finding or `cleared`), final repair `final_round`/`final_findings`; 5 tests red then green, 4 regression guards | ACCEPTED (R5 CLEAN) |
 | W5 gate | coordinator | 018d580 | engine 207, hooks 143, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
 | R5 | code-reviewer checkpoint | 7e4ed32 | no approval or release fail-open; notes: checkpoint after final hides final blame (fails closed), non-builder final key stalls, falsy `cleared` stored silently | CLEAN |
+| E6 | builder | 25e452f | run brief on every end path (`## Run brief`), hook `lock_wait=2.0`, BUSY and MISSING_CWD denies, `brief` CLI | ACCEPTED (after E6r) |
+| W6 gate | coordinator | 22b3dd1 | engine 225, hooks 153, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R6 | code-reviewer checkpoint | 25e452f | two confirmed findings: eager `os.getcwd()` crashes the hook from a deleted cwd (fails open); busy lock drops Interrupt and SessionEnd records | BLOCKED (superseded by R6r) |
+| E6r | builder repair (Opus) | d637e4a | guarded cwd, unavailable cwd treated as missing; Interrupt and SessionEnd block on the lock; 4 tests red then green | ACCEPTED (R6r CLEAN) |
+| R6r | code-reviewer checkpoint | d637e4a | both R6 findings fixed; notes: empty-string cwd resolves to `/`, `mark_harness_rebind` still gives up after 2 s | CLEAN |
+| W6r gate | coordinator | b30d1cc | engine 226, hooks 156, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
