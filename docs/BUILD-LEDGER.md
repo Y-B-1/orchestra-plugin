@@ -117,3 +117,10 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | E7 | builder | 4311e20 | autonomy without caps (2.1 caps recorded, not enforced), signature stalls, `_complete` all-accepted first, held work live, band "pass N"; 15 tests red then green | ACCEPTED (R7 CLEAN) |
 | W7 gate | coordinator | 7fcfa85 | engine 239, hooks 156, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
 | R7 | code-reviewer checkpoint | 4311e20 | mutation probes kill each completion guard; real 2.1 state loads; notes: ts test name missing, 2.1 fixture not an inline dict, open final finding idles `no-ready-card` | CLEAN |
+| E8 | builder | 4316cb3 | ledger `Release:` pre-authorization (exact pair), relaunch autonomy surviving session ends, `settle`, `end_pass_session`, pass nonce from env or marker; 29 tests red then green | ACCEPTED (after E8r) |
+| W8 gate | coordinator | 2162ef0 | engine 264, hooks 161, integration 25 OK; corpus FAILED (2 inline commands without corpus cases); plugin test 88/88; sync, generate 0 | FAILED |
+| R8 | code-reviewer checkpoint | 4316cb3 | no pre-authorization widening or relaunch escape; R8-1 failed gate (guard corpus) | BLOCKED (superseded by R8r) |
+| E8r | builder repair (Opus) | 91f886b | two guard-corpus cases from `classify_command`, fixtures resynced; env pass nonce held to the marker pattern | ACCEPTED (R8r CLEAN) |
+| DOC1 (plan D1) | builder | 1104b71 | docs for 2.2 CLI, hooks and the 2.1 upgrade; merged at 959ea36 | reported (W9 review) |
+| W8r gate | coordinator | 959ea36 | engine 265, hooks 161, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R8r | code-reviewer checkpoint | 91f886b | R8-1 fixed; no-fallback on malformed env nonce is fail-safe | CLEAN |
