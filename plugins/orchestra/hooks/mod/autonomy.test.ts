@@ -188,6 +188,21 @@ test('autonomy: the status band shows pass N/M and deadline while active and cle
   expect(s.bands.at(-1)).toBeUndefined();
 });
 
+test('autonomy: band renders pass count without maximum', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const { max_passes: _passes, max_stalls: _stalls, ...uncapped } = ACTIVE;
+  answers(r, {
+    arm: { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/l', preconditions: {} }) },
+    status: { exitCode: 0, stdout: JSON.stringify(uncapped) },
+  });
+  await $.session.start(start);
+  await run($ as never, 'on');
+  await run($ as never, 'status');
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2, deadline 07:30');
+  expect(s.bands.at(-1)).not.toContain('/');
+});
+
 test('autonomy: session.end clears a shown band and stops reading', async ($, on) => {
   const r = rig(on);
   const s = stage(on);

@@ -526,9 +526,11 @@ class Engine:
 
     @staticmethod
     def _added_order(state):
-        """Task ids in the order they were added; a 2.1 card without `seq` keeps its stored position."""
+        """Task ids in the order they were added; a migrated 2.1 card without `seq` sorts before every card with one,
+        in its stored position."""
         tasks = state['tasks']
-        return sorted(tasks, key=lambda i: tasks[i].get('seq', list(tasks).index(i)))
+        stored = {ident: n for n, ident in enumerate(tasks)}
+        return sorted(tasks, key=lambda i: (0, stored[i]) if 'seq' not in tasks[i] else (1, tasks[i]['seq']))
 
     @staticmethod
     def _waves(state):
@@ -829,7 +831,7 @@ class Engine:
                 raise EngineError('Hold needs a reported builder card without an existing repair')
             blocked = any(self._task_findings(r, task_id) for r in self._review_verdicts(state, {}, task_id=task_id).values())
             if not ((task['mode'] == 'repair' and blocked)
-                    or (task['mode'] == 'implementation' and self._blocked_by_repair_check(state, task_id))):
+                    or (task['mode'] != 'repair' and self._blocked_by_repair_check(state, task_id))):
                 raise EngineError('Hold needs a repair card with current blocking findings, '
                                   'or a card blocked by a repair-diff check')
             chain = [task_id]
@@ -1766,7 +1768,9 @@ class Engine:
         held = (any(t['state'] == 'held' for t in tasks)
                 and not any(t['state'] == 'parked' and not self._is_release(t) for t in tasks))
         live = any(t['state'] in ('running', 'reported') for t in tasks) or bool(self._ready(state))
-        if not live and not held:
+        final_open = not live and any(t['role'] == 'builder' and t['state'] == 'accepted' and not t.get('repaired_by')
+                                      and self._final_blocks(state, t['id']) for t in tasks)
+        if not live and not held and not final_open:
             return ('parked-only' if parked else 'no-ready-card'), None
         if not count:
             return None, None
@@ -1774,6 +1778,9 @@ class Engine:
         if live:
             return None, ('Autonomy pass %d: continue with the next ready card; park any card that '
                           'reaches an approval boundary.' % auto['passes'])
+        if final_open:
+            return None, ('Autonomy pass %d: start the final repair round; a current final finding is still '
+                          'open.' % auto['passes'])
         return None, ('Autonomy pass %d: start or continue the final phase; held work is still owed a '
                       'final review.' % auto['passes'])
 
@@ -1800,14 +1807,20 @@ class Engine:
     def settle(self):
         """SPEC 5.10 item 4: lease-free; evaluates the stop conditions of an armed autonomy, with or without a
         session, without counting a pass, and stops autonomy (brief written) when one holds."""
+        with self._state(False) as state:
+            if not (state['autonomy'] and state['autonomy']['active']):
+                return self._settled(state)  # not armed: read-only
         with self._state() as state:
             auto = state['autonomy']
             if auto and auto['active']:
                 reason, _ = self._stop_check(state, False)
                 if reason is not None:
                     self._stop_autonomy(state, reason)
-            auto = state['autonomy'] or {}
-            stopped = bool(auto) and not auto['active'] and bool(auto.get('last_stop_reason'))
-            return dict(armed=bool(auto.get('active')), stopped=stopped,
-                        reason=auto.get('last_stop_reason') if stopped else None,
-                        signature=self._signature(state), passes=auto.get('passes'), stalls=auto.get('stalls'))
+            return self._settled(state)
+
+    def _settled(self, state):
+        auto = state['autonomy'] or {}
+        stopped = bool(auto) and not auto['active'] and bool(auto.get('last_stop_reason'))
+        return dict(armed=bool(auto.get('active')), stopped=stopped,
+                    reason=auto.get('last_stop_reason') if stopped else None,
+                    signature=self._signature(state), passes=auto.get('passes'), stalls=auto.get('stalls'))

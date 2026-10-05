@@ -2208,6 +2208,18 @@ class WaveReviewTests(EngineFixture):
         self.assertEqual([('W2', ['Z1', 'Y2']), ('W1', ['M1']), ('W3', ['A1'])],
                          [(w['wave'], w['tasks']) for w in waves])
 
+    def test_added_order_puts_migrated_cards_before_new_cards_after_reload(self):
+        self.task('Z1', wave='W2')
+        self.task('M1', wave='W1')
+        state = json.loads(self.engine.state_path.read_text())
+        for card in state['tasks'].values():
+            del card['seq']  # a 2.1 card carries no seq
+        self.engine.state_path.write_text(json.dumps(state, sort_keys=True, indent=2))
+        self.task('A1', wave='W3')  # sorts first by id and is the newest
+        order = Engine._added_order(self.engine.status())
+        self.assertEqual('A1', order[-1])
+        self.assertEqual(['W1', 'W2', 'W3'], [w['wave'] for w in self.engine.status()['waves']])
+
     def test_wave_review_task_findings_block_only_named_card(self):
         self.built('B1', wave='W1')
         self.built('B2', wave='W1')
@@ -2509,6 +2521,15 @@ class HoldTests(HoldFixture):
         self.assertEqual(['held', 'accepted'], self.states('B2', 'B1'))
         self.assertIn('- held B2 (chain B2): g needs a design call', self.progress())
 
+    def test_hold_accepts_frontend_card_blocked_by_repair_check(self):
+        self.built('F1', mode='frontend')
+        self.reviewed('check', ['F1'], findings=['g'], task_findings={'F1': ['g']}, repair_check=True)
+        with self.assertRaisesRegex(EngineError, 'Repair-diff check blocked F1; hold the chain'):
+            self.task('RF1', mode='repair', repair_of='F1', files=['F1'])
+        result = self.engine.hold('main', self.lease, 'F1', 'g needs a design call')
+        self.assertEqual(['F1'], result['held'])
+        self.assertEqual(['held'], self.states('F1'))
+
     def test_repair_diff_check_without_repair_card_holds_rejected_only_card(self):
         self.rejected_only()
         check = self.reviewed('check', ['B2'], findings=['g'], task_findings={'B2': ['g']}, repair_check=True)
@@ -2719,6 +2740,29 @@ class FinalReceiptTests(HoldFixture):
         self.assertEqual({'R1': 'no security defect'}, cleared['cleared'])
         found = self.reviewed('found', ['B1', 'R1'], findings=['still g'], final=True, task_findings={'R1': ['still g']})
         self.assertEqual({}, found['cleared'])
+
+    def test_final_receipt_with_falsy_cleared(self):
+        # Code decides: a final receipt's `cleared` must be an object, so a falsy non-object is refused;
+        # an empty object is the same as none. A non-final receipt treats any falsy value as empty.
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g')
+        for name, falsy in (('list', []), ('none', None), ('empty-string', ''), ('zero', 0)):
+            with self.assertRaisesRegex(EngineError, 'Invalid cleared entries', msg=name):
+                self.reviewed('falsy-' + name, ['B1', 'R1'], final=True, mutate=lambda body, v=falsy: body.update(cleared=v))
+        with self.assertRaisesRegex(EngineError, 'Final receipt must address held tip R1'):
+            self.reviewed('empty-object', ['B1', 'R1'], final=True, cleared={})
+        receipt = self.reviewed('wave2', ['B1', 'R1'], mutate=lambda body: body.update(cleared=[]))
+        self.assertEqual({}, receipt['cleared'])
+
+    def test_final_receipt_must_cover_every_task(self):
+        self.built('B1')
+        self.built('B2')
+        self.reviewed('clean', ['B1', 'B2'])
+        with self.assertRaisesRegex(EngineError, 'Final review must explicitly cover every task'):
+            self.reviewed('partial', ['B1'], final=True)
+        with self.assertRaisesRegex(EngineError, 'Final review must explicitly cover every task'):
+            self.reviewed('repeated', ['B1', 'B2', 'B2'], final=True)
+        self.assertTrue(self.reviewed('whole', ['B1', 'B2'], final=True)['final'])
 
     def test_cleared_refused_on_non_final_receipt(self):
         self.blocked_chain()
@@ -3055,6 +3099,18 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.finish_line()
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.last_stop(), 'complete')
+
+    def test_stop_check_continues_while_final_finding_open_without_cards(self):
+        self.arm()
+        self.built('B1')
+        self.reviewed('clean', ['B1'])
+        self.engine.accept('main', self.lease, 'B1')
+        self.reviewed('final', ['B1'], findings=['f'], final=True, task_findings={'B1': ['f']})
+        reason = self.engine.hook_stop()
+        self.assertIsInstance(reason, str)
+        self.assertIn('start the final repair round', reason)
+        self.assertIsNone(self.last_stop())
+        self.assertTrue(self.engine.autonomy_active())
 
     def test_hook_stop_never_stops_on_pass_count(self):
         self.arm()
@@ -3430,6 +3486,16 @@ class RelaunchTests(AutonomyFixture, HoldFixture):
         self.assertEqual((result['armed'], result['stopped'], result['reason'], result['passes']), (False, False, None, None))
         self.assertRegex(result['signature'], r'^[0-9a-f]{64}$')
         self.assertEqual(before, self.engine.state_path.read_bytes())
+
+    def test_settle_unarmed_does_not_write_state(self):
+        self.task('x')
+        before = (self.engine.state_path.read_bytes(), self.engine.state_path.stat().st_mtime_ns,
+                  self.engine.state_path.stat().st_ino)
+        result = self.engine.settle()
+        self.assertEqual((False, False, None), (result['armed'], result['stopped'], result['reason']))
+        after = (self.engine.state_path.read_bytes(), self.engine.state_path.stat().st_mtime_ns,
+                 self.engine.state_path.stat().st_ino)
+        self.assertEqual(before, after)
 
     def test_settle_stops_idle_and_on_a_tampered_ledger(self):
         self.arm_relaunch()
