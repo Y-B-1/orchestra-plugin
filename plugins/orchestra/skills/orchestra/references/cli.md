@@ -68,7 +68,7 @@ Outside an armed run, the guard allows a non-force push of one branch or tag, `g
 
 `brief` (no lease, read-only) prints the newest run brief. Every end of a run writes one to `<state>/progress.md`. Put its Needs you, Still failing, Held log, Final rounds and Notes sections in the PR body under "Held / next phase".
 
-`relaunch --permission-mode MODE [--model ID] [--launcher ARGV...]` runs in the user's terminal after the interactive session ends, with `autonomy arm --relaunch` set. It runs one fresh `claude -p` pass at a time until a stop and never stops for stalls. Exit codes: 0 complete, 3 idle, 4 deadline, 5 disarmed, tampered or not armed, 2 usage or an active session, 127 launcher not found, 130 interrupted.
+`relaunch --permission-mode MODE [--model ID] [--launcher ARGV...]` runs in the user's terminal after the interactive session ends, with `autonomy arm --relaunch` set. It runs one fresh `claude -p` pass at a time until a stop and never stops for stalls. `--launcher ARGV...` must come last; every later word goes to the launcher. Each pass gets `ORCHESTRA_RELAUNCH_PASS` and `ORCHESTRA_STATE_DIR` in its environment, and after forwarding a signal the harness waits up to 10 seconds for the pass. Exit codes: 0 `complete`; 3 idle (`parked-only`, `no-ready-card`); 4 `deadline`; 5 `disarmed` or `ledger-tampered`; 2 usage or precondition (not armed with `--relaunch`, an active session, or a session not started by this pass); 127 launcher not found; 130 interrupted. If autonomy already stopped, `relaunch` exits with that stop's code.
 
 ## Other commands
 

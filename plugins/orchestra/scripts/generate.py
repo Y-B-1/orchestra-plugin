@@ -56,7 +56,7 @@ def variants_of(matrix):
 
 
 VARIANT_NOTES = {('investigator', 'code'): ' Mode: code. Read-only bounded code discovery.',
-                 ('code-reviewer', 'checkpoint'): ' Mode: checkpoint. Exact-diff checkpoint review of one reported ticket.',
+                 ('code-reviewer', 'checkpoint'): " Mode: checkpoint. Exact-diff checkpoint review of one wave's reported tickets.",
                  ('code-reviewer', 'standards'): ' Mode: final. Lens: standards. Standards and cleanup categories only.'}
 
 
