@@ -56,7 +56,19 @@ def parser():
     review.add_argument('report', help='Structured review JSON path')
     gate = sub.add_parser('gate')
     gate.add_argument('name')
+    gate.add_argument('--again', action='store_true', help='Rerun a gate that already passed on this artifact')
     gate.add_argument('argv', nargs=argparse.REMAINDER)
+    finding = sub.add_parser('finding', help='Record or list dispositions of review findings')
+    findings = finding.add_subparsers(dest='finding_command', required=True)
+    fadd = findings.add_parser('add')
+    fadd.add_argument('--review', required=True)
+    fadd.add_argument('--kind', required=True, choices=['finding', 'out_of_scope'])
+    fadd.add_argument('--index', required=True, type=int)
+    fadd.add_argument('--disposition', required=True)
+    fadd.add_argument('--reason', required=True)
+    fadd.add_argument('--card')
+    flist = findings.add_parser('list')
+    flist.add_argument('--for-brief', action='store_true')
     for name in ['permit','release']:
         action = sub.add_parser(name)
         action.add_argument('remote')
@@ -116,6 +128,9 @@ def execute(args):
         return engine.artifact(engine.scope_for(ids) if ids else None),0
     if args.command=='inline':
         return {'token':engine.start_inline(args.actor,args.lease,args.task_id), 'executor':args.actor, 'inline':True},0
+    if args.command=='finding' and args.finding_command=='list':  # lease-free, like status
+        result = engine.list_findings(args.for_brief)
+        return ({'findings':result} if isinstance(result,str) else result),0
     if args.command=='board':
         cards = engine.status()['tasks'].values()
         board = {}
@@ -150,9 +165,14 @@ def execute(args):
                                      review['categories'],review['tasks'],review['final'],review['findings'])
         return result,0
     if args.command=='gate':
-        argv = args.argv[1:] if args.argv[:1]==['--'] else args.argv
-        result = engine.run_gate(args.actor,args.lease,args.name,argv)
+        argv, again = args.argv, args.again
+        if argv[:1]==['--again']:  # REMAINDER swallows a flag written after NAME
+            argv, again = argv[1:], True
+        argv = argv[1:] if argv[:1]==['--'] else argv
+        result = engine.run_gate(args.actor,args.lease,args.name,argv,again=again)
         return result,0 if result['passed'] else 1
+    if args.command=='finding':
+        return engine.add_finding(args.actor,args.lease,args.review,args.kind,args.index,args.disposition,args.reason,args.card),0
     if args.command=='scan':
         result=engine.run_secret_scan(args.actor,args.lease)
         return result,0 if result.get('passed') or result.get('unavailable') else 1
