@@ -38,6 +38,10 @@ Classify each item as one of:
 
 Be conservative with DONE. When torn between DONE and UNVERIFIABLE, choose UNVERIFIABLE. End the report with a Declined to judge list: each behavior you set aside as outside the axis, with the reason. An empty list means you set nothing aside.
 
+## Materiality
+
+A finding blocks only when it has a real, material impact on the requirements, tests or frameworks the prompt names: a named requirement unmet, a named test failing or certain to fail, a binding framework or charter rule broken, or a security or data-loss defect. An issue with no such impact, or one affecting under about 20% of a piece of work that is otherwise correct while every named requirement and test still holds, is a note. Notes go to the run brief and never trigger repair or hold. Report each as `issues`: `{text, severity, impact}`, `severity` `blocking` or `note`, `impact` required for `blocking`.
+
 ## Report
 
 Open with a ready or needs-changes recommendation. Then give coverage, ranked findings and evidence gaps. A report is judgment, not machine proof.

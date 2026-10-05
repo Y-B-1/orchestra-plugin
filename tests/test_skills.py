@@ -205,7 +205,8 @@ class SkillTreeTests(unittest.TestCase):
 
     def test_budgets(self):
         for d in TABLE:
-            self.assertLessEqual(len(read(f'{d}/SKILL.md').encode()), 4096, d)
+            # K2 (budget rule): review SKILL.md holds the materiality paragraph, so its cap is 4480 (was 4096).
+            self.assertLessEqual(len(read(f'{d}/SKILL.md').encode()), 4480 if d == 'orchestra-review' else 4096, d)
         self.assertLessEqual(len(read('orchestra-worker/SKILL.md').encode()), 2048)
         for rel in files():
             if '/references/' in rel and rel not in (CLI, 'orchestra/references/coordination.md'):
