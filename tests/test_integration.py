@@ -1,7 +1,10 @@
 """Exercise a real local repository and release target through the public CLI."""
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -592,6 +595,223 @@ class AutonomyIntegration(unittest.TestCase):
         self.assertEqual(out['hookSpecificOutput']['permissionDecision'],'deny')
         self.cli('autonomy','disarm')
         self.assertEqual(self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'rm -rf build'}),{})
+
+
+FAKE_PASS = r"""
+import json, os, signal, subprocess, sys, time
+from pathlib import Path
+plan_path, repo, cli = sys.argv[1:4]
+root = Path(plan_path).parent
+counter = root / 'count.txt'
+n = int(counter.read_text()) + 1 if counter.exists() else 1
+counter.write_text(str(n))
+plan = json.loads(Path(plan_path).read_text())
+steps = plan[min(n, len(plan)) - 1]
+(root / ('prompt-%d.txt' % n)).write_text(sys.stdin.read())
+state = Path(os.environ['ORCHESTRA_STATE_DIR'])
+CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
+
+def run(*args, env=None, lease=True):
+    cmd = [sys.executable, cli, '--repo', repo]
+    if lease:
+        cmd += ['--lease', (root / 'lease.txt').read_text()]
+    done = subprocess.run(cmd + list(args), capture_output=True, text=True, env=env)
+    if done.returncode:
+        sys.exit('fake pass: %s failed: %s' % (args, done.stderr))
+    return json.loads(done.stdout)
+
+def review(ids, final):
+    artifact = run('artifact') if final else run('artifact', '--tasks', ','.join(ids))
+    path = root / 'review.json'
+    path.write_text(json.dumps(dict(reviewer='independent-reviewer', categories=CATEGORIES, tasks=ids, findings=[],
+                                    issues=[], verdict='CLEAN', final=final, summary='Inspected fixture source.',
+                                    artifact=artifact)))
+    run('review', str(path))
+
+def start(env=None):
+    (root / 'lease.txt').write_text(run('start', '--harness-session', 'S%d' % n, env=env, lease=False)['lease'])
+
+for step in steps:
+    if step == 'start':
+        start()
+    elif step == 'start_noenv':
+        names = sorted(p.name for p in (state / 'relaunch').glob('pass-*.marker'))
+        (root / 'markers.json').write_text(json.dumps(names))
+        start({k: v for k, v in os.environ.items() if k != 'ORCHESTRA_RELAUNCH_PASS'})
+    elif step == 'start_foreign':
+        (state / 'relaunch' / 'pass-other.marker').write_text('other\n')
+        start({k: v for k, v in os.environ.items() if k != 'ORCHESTRA_RELAUNCH_PASS'})
+    elif step == 'work1':
+        token = run('dispatch', 'B1', 'worker')['assignment']
+        (root / 'b1.txt').write_text('Inspected fixture; no source change needed.')
+        run('report', 'worker', token, str(root / 'b1.txt'), lease=False)
+    elif step == 'work2':
+        review(['B1'], False)
+        run('accept', 'B1')
+        run('gate', 'ok', '--', sys.executable, '-c', 'pass')
+        review(['B1'], True)
+        run('finish')
+    elif step == 'disarm':
+        run('autonomy', 'disarm', lease=False)
+    elif step == 'wait_signal':
+        def on_signal(signum, frame):
+            status = run('autonomy', 'status', lease=False)
+            (root / 'signal.json').write_text(json.dumps(dict(signum=signum, active=status['active'],
+                                                              last_stop_reason=status['last_stop_reason'])))
+            sys.exit(0)
+        signal.signal(signal.SIGINT, on_signal)
+        signal.signal(signal.SIGTERM, on_signal)
+        (root / 'ready.txt').write_text('ready')
+        time.sleep(60)
+"""
+
+
+class RelaunchIntegration(unittest.TestCase):
+    """SPEC 5.10 items 5 and 10: the harness drives a fake launcher; the clock and sleep are injected."""
+
+    def setUp(self):
+        HarnessSessionIntegration.setUp(self)
+        self.fake=self.root/'fake_pass.py'
+        self.fake.write_text(FAKE_PASS)
+        self.plan_path=self.root/'plan.json'
+        lease=self.cli('start')['lease']
+        task=self.root/'B1.json'
+        task.write_text(json.dumps(dict(id='B1',role='builder',mode='implementation',inputs=['s'],acceptance=['a'],
+                                        files=['b1.txt'],resources=[],dependencies=[])))
+        self.cli('--lease',lease,'add',str(task))
+        self.arm()
+        self.cli('--lease',lease,'interrupt')
+
+    cli=HarnessSessionIntegration.cli
+
+    def arm(self,hours=1):
+        from datetime import datetime,timedelta,timezone
+        sys.path.insert(0,str(PLUGIN/'scripts'))
+        from orchestra_core.engine import AUTONOMY_FIXED
+        when=(datetime.now(timezone.utc)+timedelta(hours=hours)).isoformat(timespec='seconds')
+        text=['goal: relaunch','deadline: '+when,'','## Completion checks','','ok: '+shlex.join([sys.executable,'-c','pass']),'','## Approval boundaries','',*AUTONOMY_FIXED]
+        (self.state/'autonomy.md').write_text('\n'.join(text)+'\n')
+        self.cli('autonomy','arm','--relaunch')
+
+    def plan(self,steps):
+        self.plan_path.write_text(json.dumps(steps))
+        return [sys.executable,str(self.fake),str(self.plan_path),str(self.repo),str(CLI)]
+
+    def harness(self,steps,clock=None,sleep=None):
+        sys.path.insert(0,str(PLUGIN/'scripts'))
+        from orchestra_core import relaunch
+        env=os.environ.copy()
+        os.environ['ORCHESTRA_STATE_DIR']=str(self.state)
+        self.addCleanup(lambda: (os.environ.clear(),os.environ.update(env)))
+        kw={}
+        if clock:
+            kw.update(clock=clock,sleep=sleep)
+        with contextlib.redirect_stderr(io.StringIO()):
+            return relaunch.run(self.repo,self.state,'default',launcher=self.plan(steps),**kw)
+
+    def fake_time(self):
+        import time
+        now=[time.time()]
+        sleeps=[]
+        def sleep(seconds):
+            sleeps.append(seconds)
+            now[0]+=seconds
+        return (lambda: now[0]),sleep,sleeps
+
+    def brief(self):
+        return (self.state/'progress.md').read_text()
+
+    def test_relaunch_runs_passes_until_complete(self):
+        code=self.harness([['start','work1'],['start','work2']])
+        self.assertEqual(code,0)
+        harness=json.loads((self.state/'relaunch/harness.json').read_text())
+        self.assertEqual((harness['pass'],harness['stalled_streak']),(2,0))
+        self.assertEqual(len(harness['signature']),64)
+        self.assertTrue((self.state/'relaunch/pass-1.log').is_file())
+        self.assertIn('orchestra',(self.root/'prompt-1.txt').read_text())
+        self.assertIn('stop reason: complete',self.brief())
+        self.assertEqual(self.cli('status')['tasks']['B1']['state'],'accepted')
+        self.assertEqual(list((self.state/'relaunch').glob('pass-*.marker')),[])
+
+    def test_relaunch_refuses_with_active_session(self):
+        self.cli('start')
+        self.assertEqual(self.harness([['start']]),2)
+        self.assertTrue(self.session()['active'])
+        self.assertFalse((self.root/'count.txt').exists())  # no pass was launched
+
+    session=HarnessSessionIntegration.session
+
+    def test_relaunch_requires_permission_mode(self):
+        message=self.cli('relaunch','--launcher',sys.executable,'-c','pass',expected=2)
+        self.assertIn('--permission-mode',message)
+        self.assertFalse((self.state/'relaunch').exists())
+
+    def test_relaunch_backs_off_after_stall_and_never_exits_on_stalls(self):
+        clock,sleep,sleeps=self.fake_time()
+        code=self.harness([['nothing']],clock,sleep)
+        self.assertEqual(code,4)  # only the deadline stopped it
+        self.assertEqual(sleeps[:6],[60,120,240,480,900,900])
+        self.assertLessEqual(max(sleeps),900)
+        harness=json.loads((self.state/'relaunch/harness.json').read_text())
+        self.assertEqual((harness['pass'],harness['stalled_streak']),(len(sleeps),len(sleeps)))
+
+    def test_relaunch_ends_orphaned_pass_session(self):
+        clock,sleep,sleeps=self.fake_time()
+        code=self.harness([['start'],['disarm']],clock,sleep)
+        self.assertEqual(code,5)
+        session=self.session()
+        self.assertEqual((session['active'],session['outcome']),(False,'pass-exited'))
+        self.assertIn('stop reason: ended',self.brief())
+
+    def test_relaunch_leaves_foreign_session_and_exits_2(self):
+        self.assertEqual(self.harness([['start_foreign']]),2)
+        session=self.session()
+        self.assertTrue(session['active'])
+        self.assertNotIn('relaunch_pass',session)
+        self.assertEqual([p.name for p in (self.state/'relaunch').glob('pass-*.marker')],['pass-other.marker'])
+        self.assertTrue(self.cli('autonomy','status')['active'])
+
+    def test_relaunch_sigint_disarms_before_forwarding(self):
+        import signal,time
+        cmd=[sys.executable,str(CLI),'--repo',str(self.repo),'relaunch','--permission-mode','default','--launcher',
+             *self.plan([['start','wait_signal']])]
+        process=subprocess.Popen(cmd,env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        self.addCleanup(process.kill)
+        ready=self.root/'ready.txt'
+        for _ in range(300):
+            if ready.exists() or process.poll() is not None:
+                break
+            time.sleep(0.1)
+        self.assertTrue(ready.exists(),process.poll())
+        process.send_signal(signal.SIGINT)
+        out,err=process.communicate(timeout=30)
+        self.assertEqual(process.returncode,130,err)
+        received=json.loads((self.root/'signal.json').read_text())
+        self.assertEqual(received['signum'],signal.SIGINT)
+        self.assertFalse(received['active'])  # already disarmed when the pass saw the signal
+        self.assertEqual(received['last_stop_reason'],'disarmed')
+        self.assertIn('stop reason: disarmed',self.brief())
+
+    def test_relaunch_pass_marker_binds_session_without_env(self):
+        marks=self.state/'relaunch'
+        marks.mkdir(parents=True,exist_ok=True)
+        (marks/'pass-stale.marker').write_text('stale\n')
+        clock,sleep,sleeps=self.fake_time()
+        code=self.harness([['start_noenv'],['disarm']],clock,sleep)
+        self.assertEqual(code,5)  # not 2: the marker bound the pass
+        seen=json.loads((self.root/'markers.json').read_text())
+        self.assertEqual(len(seen),1)
+        self.assertNotEqual(seen[0],'pass-stale.marker')
+        self.assertEqual(self.session()['outcome'],'pass-exited')
+        self.assertEqual(list(marks.glob('pass-*.marker')),[])
+
+    def test_relaunch_exits_127_when_the_launcher_is_missing(self):
+        sys.path.insert(0,str(PLUGIN/'scripts'))
+        from orchestra_core import relaunch
+        with contextlib.redirect_stderr(io.StringIO()):
+            code=relaunch.run(self.repo,self.state,'default',launcher=[str(self.root/'no-such-launcher')])
+        self.assertEqual(code,127)
+        self.assertEqual(list((self.state/'relaunch').glob('pass-*.marker')),[])
 
 
 if __name__=='__main__':

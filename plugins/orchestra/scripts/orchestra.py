@@ -15,6 +15,7 @@ import uuid
 from orchestra_core.engine import ACTIVE_MISMATCH, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, repository, state_location
+from orchestra_core import relaunch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -78,6 +79,10 @@ def parser():
     autonomy = sub.add_parser('autonomy', help='Arm, disarm or inspect the autonomous loop; takes no lease')
     autonomy.add_argument('action', choices=['arm','disarm','status','settle'])
     autonomy.add_argument('--relaunch', action='store_true', help='With arm: keep autonomy armed between sessions for the relaunch harness')
+    rl = sub.add_parser('relaunch', help='Run fresh `claude -p` passes until autonomy stops; run it in your terminal with no session active')
+    rl.add_argument('--permission-mode', required=True, help='Permission mode for each pass; no default')
+    rl.add_argument('--model', help='Model id for each pass; unset by default')
+    rl.add_argument('--launcher', nargs=argparse.REMAINDER, help='Replace the claude command with this argv (prompt on stdin); must come last')
     park = sub.add_parser('park', help='Set a card aside at an approval boundary')
     park.add_argument('task_id')
     park.add_argument('--reason', required=True)
@@ -116,6 +121,8 @@ def execute(args):
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
     if args.command=='where':
         return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file()},0
+    if args.command=='relaunch':
+        return None,relaunch.run(repo,state,args.permission_mode,model=args.model,launcher=args.launcher or None)
     policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
     engine = Engine(state,repo,policy)
     if args.command=='start':
@@ -255,7 +262,8 @@ def main(argv=None):
     except (EngineError,ValueError,OSError,KeyError,subprocess.SubprocessError) as exc:
         print(json.dumps({'error':str(exc)}),file=sys.stderr)
         return 2
-    print(json.dumps(result,indent=2))
+    if result is not None:
+        print(json.dumps(result,indent=2))
     return code
 
 
