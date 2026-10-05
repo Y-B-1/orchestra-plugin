@@ -74,26 +74,56 @@ def run(repo, state_dir, permission_mode, model=None, launcher=None, clock=time.
             command += ['--model', model]
         command += ['--output-format', 'text']
     current = {}  # the running pass: process, marker
+    state = {'busy': False, 'signals': []}  # busy: the main thread is inside an engine call (it may hold the state lock)
 
-    def forward(signum, _frame):
-        """Disarm first, so no continuation survives, then forward the signal to the pass; then stop (SPEC 5.10 item 5.7)."""
-        for name in ('SIGINT', 'SIGTERM'):
-            signal.signal(getattr(signal, name), signal.SIG_DFL)
+    def call(function, *args):
+        state['busy'] = True
         try:
-            engine.disarm_autonomy()
-        except (EngineError, OSError, ValueError):
-            pass
+            return function(*args)
+        finally:
+            state['busy'] = False
+            if state['signals']:
+                raise _Interrupted()
+
+    def send(signum):
         process = current.get('process')
         if process is not None:
             try:
                 os.killpg(process.pid, signum)
             except (ProcessLookupError, PermissionError):
                 pass
+
+    def forward(signum, _frame):
+        """Record the signal and never take the state lock here (SPEC 5.10 item 5.7). Outside an engine call the main
+        loop is interrupted at once; inside one the pass gets the signal now and the loop stops when the call returns."""
+        first = not state['signals']
+        state['signals'].append(signum)
+        if state['busy']:
+            if first:
+                send(signum)
+                state['sent'] = True
+            return
+        if first:
+            raise _Interrupted()
+
+    def stop():
+        """Disarm first, outside any engine call, so no continuation survives; the pass gets the signal; then 130."""
+        signum = state['signals'][0] if state['signals'] else signal.SIGTERM
+        state['busy'] = True
+        try:
+            engine.disarm_autonomy()
+        except (EngineError, OSError, ValueError):
+            pass
+        finally:
+            state['busy'] = False
+        if not state.get('sent'):
+            send(signum)
+        process = current.get('process')
+        if process is not None:
             try:
                 process.wait(timeout=FORWARD_WAIT)
             except subprocess.TimeoutExpired:
                 pass
-        raise _Interrupted()
 
     previous = {}
     if threading.current_thread() is threading.main_thread():
@@ -101,7 +131,7 @@ def run(repo, state_dir, permission_mode, model=None, launcher=None, clock=time.
             previous[name] = signal.signal(getattr(signal, name), forward)
     try:
         while True:
-            settled = engine.settle()
+            settled = call(engine.settle)
             if settled['stopped']:
                 return _code(settled['reason'])
             if not settled['armed']:
@@ -133,10 +163,10 @@ def run(repo, state_dir, permission_mode, model=None, launcher=None, clock=time.
                             pass
                     process.wait()
                     current.pop('process', None)
-                session = engine.status().get('session')
+                session = call(engine.status).get('session')
                 if session and session.get('active'):
                     try:
-                        engine.end_pass_session(nonce)
+                        call(engine.end_pass_session, nonce)
                     except EngineError:
                         _say('A session not started by this pass is active')
                         return 2
@@ -145,7 +175,7 @@ def run(repo, state_dir, permission_mode, model=None, launcher=None, clock=time.
                     marker.unlink()
                 except FileNotFoundError:
                     pass
-            after = engine.settle()
+            after = call(engine.settle)
             streak = streak + 1 if after['signature'] == before else 0
             atomic(harness_path, json.dumps({'pass': number, 'signature': after['signature'],
                                              'stalled_streak': streak}, indent=2).encode())
@@ -155,6 +185,7 @@ def run(repo, state_dir, permission_mode, model=None, launcher=None, clock=time.
             if streak:
                 sleep(_backoff(streak))
     except _Interrupted:
+        stop()
         return 130
     finally:
         for name, handler in previous.items():
