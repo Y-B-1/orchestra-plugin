@@ -18,7 +18,7 @@ Each worker role skill lives at `plugins/orchestra/skills/<skill>/SKILL.md`. Its
 
 ## Two-skill preload
 
-Every worker agent file preloads exactly two skills: `skills: [orchestra-worker, <role skill>]`. Variant files (such as the checkpoint reviewer) preload the same two as their base role. `orchestra-worker` holds the shared contract: you are not alone, preserve sibling edits, never delegate or change coordinator state, the `STATUS:`/`ARTIFACT:` report shape and the `Mode:` line rule. Role skills do not restate it. The orchestrator file preloads only `orchestra`. Workers read mode files by plugin-root path.
+Every worker agent file preloads exactly two skills: `skills: [orchestra-worker, <role skill>]`. Variant files (such as the checkpoint reviewer and the standards-lens reviewer, `code-reviewer-standards`, Mode: final, Lens: standards, on Sonnet 5.5 medium) preload the same two as their base role. `orchestra-worker` holds the shared contract: you are not alone, preserve sibling edits, never delegate or change coordinator state, the `STATUS:`/`ARTIFACT:` report shape and the `Mode:` line rule. Role skills do not restate it. The orchestrator file preloads only `orchestra`. Workers read mode files by plugin-root path.
 
 ## Tool restrictions and independence
 
@@ -44,7 +44,7 @@ Final review covers requirements, correctness, security, tests, architecture, st
 | auditor | critic / spec, standards, ledger |
 | builder | builder / implementation, frontend, sensitive, mechanical |
 | builder-repair | builder / repair (Claude: dispatch-time model override) |
-| code-reviewer, code-reviewer-checkpoint | code-reviewer / final, checkpoint |
+| code-reviewer, code-reviewer-checkpoint, code-reviewer-standards | code-reviewer / final, checkpoint, final with `Lens: standards` |
 | gatekeeper | operator / gate |
 | janitor | operator / cleanup |
 | releaser | operator / release |
