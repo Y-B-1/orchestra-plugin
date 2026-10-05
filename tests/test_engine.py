@@ -389,7 +389,7 @@ class IntegrationRepairTests(EngineFixture):
             with self.assertRaises(EngineError):
                 self.task(**values)
         brief = self.root / 'brief.md'
-        brief.write_text('Mode: implementation\nObjective and bounded acceptance criteria.')
+        brief.write_text('Mode: implementation\nObjective and bounded acceptance criteria.\n## Keep\nnone\n## Remove\nnone\n')
         self.task(brief=str(brief))
         brief.unlink()
         with self.assertRaises(EngineError):
@@ -406,11 +406,11 @@ class IntegrationRepairTests(EngineFixture):
             with self.assertRaises(EngineError, msg=name):
                 self.task(name, brief=str(brief))
         ok = self.root / 'ok.md'
-        ok.write_text('# Brief\nMode: implementation\nObjective.\n')
+        ok.write_text('# Brief\nMode: implementation\nObjective.\n## Keep\nnone\n## Remove\nnone\n')
         self.task('with-brief', brief=str(ok))
         self.task('without-brief')
         cleanup = self.root / 'cleanup.md'
-        cleanup.write_text('Mode: cleanup\n')
+        cleanup.write_text('Mode: cleanup\n## Keep\nnone\n## Remove\nnone\n')
         self.task('cleanup-brief', mode='cleanup', brief=str(cleanup))
 
     def test_scanner_availability_and_required_release_evidence(self):
@@ -1710,6 +1710,157 @@ class AutonomyReportTests(AutonomyFixture):
         self.engine.state_path.write_text(json.dumps(state))
         with self.assertRaises(EngineError):
             self.engine.status()
+
+
+class MaterialityTests(EngineFixture):
+    """SPEC 5.6 items 2 to 4, 5.13 items 1 and 2, and 5.17."""
+
+    def reported(self, name='a', **kw):
+        self.task(name, **kw)
+        self.engine.report('w' + name, self.engine.dispatch('main', self.lease, name, 'w' + name), 'checked')
+
+    def issues_review(self, name, tasks, issues, findings=None, verdict=None):
+        path = self.root / (name + '.json')
+        blocking = [i['text'] for i in issues or [] if i.get('severity') == 'blocking']
+        findings = blocking if findings is None else findings
+        body = dict(reviewer='reviewer', categories=['correctness'], tasks=tasks, findings=findings, final=False,
+                    verdict=verdict or ('BLOCKED' if findings else 'CLEAN'),
+                    artifact=self.engine.artifact(self.engine.scope_for(tasks)),
+                    summary='Behavior checked against acceptance criteria.')
+        if issues is not None:
+            body['issues'] = issues
+        path.write_text(json.dumps(body))
+        return path, findings
+
+    def record(self, name, tasks, issues, findings=None, verdict=None):
+        path, findings = self.issues_review(name, tasks, issues, findings, verdict)
+        return self.engine.record_review('main', self.lease, 'reviewer', path, ['correctness'], tasks, findings=findings)
+
+    def brief(self, name, text):
+        path = self.root / name
+        path.write_text(text)
+        return str(path)
+
+    def drop_rev(self, name):
+        state = json.loads(self.engine.state_path.read_text())
+        state['tasks'][name].pop('rev')
+        self.engine.state_path.write_text(json.dumps(state))
+
+    def test_notes_only_report_is_clean_and_accepts(self):
+        self.reported('a')
+        notes = [dict(text='Rename helper', severity='note'), dict(text='Trailing comment', severity='note')]
+        receipt = self.record('r', ['a'], notes)
+        self.assertEqual([], receipt['findings'])
+        self.assertEqual(['Rename helper', 'Trailing comment'], receipt['notes'])
+        self.assertEqual('CLEAN', json.loads(Path(receipt['path']).read_text())['verdict'])
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
+    def test_blocking_issue_needs_impact(self):
+        self.reported('a')
+        for impact in ['', '  ', None]:
+            issue = dict(text='Bug', severity='blocking')
+            if impact is not None:
+                issue['impact'] = impact
+            with self.assertRaisesRegex(EngineError, 'impact'):
+                self.record('r', ['a'], [issue])
+        self.record('ok', ['a'], [dict(text='Bug', severity='blocking', impact='Named test fails')])
+
+    def test_issues_must_match_findings_and_verdict(self):
+        self.reported('a')
+        blocking = dict(text='Bug', severity='blocking', impact='Named requirement unmet')
+        with self.assertRaisesRegex(EngineError, 'blocking'):
+            self.record('differs', ['a'], [blocking], findings=['Other text'])
+        with self.assertRaises(EngineError):
+            self.record('clean-with-blocking', ['a'], [blocking], findings=[], verdict='CLEAN')
+        with self.assertRaises(EngineError):
+            self.record('note-as-finding', ['a'], [dict(text='Nit', severity='note')], findings=['Nit'])
+        with self.assertRaises(EngineError):
+            self.record('bad-severity', ['a'], [dict(text='Nit', severity='major', impact='x')])
+        self.assertEqual([], self.engine.status()['reviews'])
+
+    def test_repair_refused_for_notes_only(self):
+        self.reported('a')
+        self.record('r', ['a'], [dict(text='Nit', severity='note')])
+        with self.assertRaisesRegex(EngineError, 'Repair needs earlier checked coding findings'):
+            self.task('fix', mode='repair', files=['a'], repair_of='a')
+
+    def test_review_of_2_2_card_without_issues_refused(self):
+        self.reported('a')
+        self.assertEqual('2.2', self.engine.status()['tasks']['a']['rev'])
+        with self.assertRaisesRegex(EngineError, 'Review of 2.2 cards needs issues with severity'):
+            self.record('r', ['a'], None)
+        with self.assertRaisesRegex(EngineError, 'Review of 2.2 cards needs issues with severity'):
+            self.record('r2', ['a'], None, findings=['bug'])
+
+    def test_review_of_migrated_card_keeps_string_findings(self):
+        self.reported('a')
+        self.drop_rev('a')
+        receipt = self.record('r', ['a'], None, findings=['bug'])
+        self.assertEqual(['bug'], receipt['findings'])
+        self.assertEqual([], receipt['notes'])
+        with self.assertRaisesRegex(EngineError, 'findings'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_clean_report_with_empty_issues_accepts(self):
+        self.reported('a')
+        receipt = self.record('r', ['a'], [])
+        self.assertEqual([], receipt['findings'])
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
+    def test_builder_brief_without_keep_remove_refused_at_add(self):
+        for name, text, missing in [('none.md', 'Mode: implementation\nObjective.\n', '## Keep'),
+                                    ('keep-only.md', 'Mode: implementation\n## Keep\nnone\n', '## Remove'),
+                                    ('remove-only.md', 'Mode: implementation\n## Remove\nnone\n', '## Keep')]:
+            with self.assertRaisesRegex(EngineError, missing, msg=name):
+                self.task(name, brief=self.brief(name, text))
+        self.assertEqual({}, self.engine.status()['tasks'])
+
+    def test_builder_brief_with_none_lists_accepted(self):
+        self.task('a', brief=self.brief('ok.md', 'Mode: implementation\nObjective.\n## Keep\nnone\n## Remove\nnone\n'))
+        self.assertIn('a', self.engine.status()['tasks'])
+
+    def test_queued_2_1_builder_without_headings_still_dispatches(self):
+        path = self.brief('old.md', 'Mode: implementation\nObjective.\n')
+        self.task('old')  # stored without a brief, then given a 2.1 brief that has no headings
+        state = json.loads(self.engine.state_path.read_text())
+        state['tasks']['old'].update(brief=path)
+        state['tasks']['old'].pop('rev')
+        self.engine.state_path.write_text(json.dumps(state))
+        self.engine.dispatch('main', self.lease, 'old', 'worker')
+        self.assertEqual('running', self.engine.status()['tasks']['old']['state'])
+
+    def test_reviewer_brief_needs_no_keep_remove(self):
+        self.task('B1')
+        self.task('V1', role='code-reviewer', mode='checkpoint', files=[], review_of=['B1'],
+                  brief=self.brief('rev.md', 'Mode: checkpoint\nObjective.\n'))
+        self.assertIn('V1', self.engine.status()['tasks'])
+
+    def two_reviews(self, resources1=(), resources2=()):
+        self.reported('B1')
+        self.task('V1', role='critic', mode='spec', files=['a'], resources=list(resources1), review_of=['B1'])
+        self.task('V2', role='critic', mode='spec', files=['a'], resources=list(resources2), review_of=['B1'])
+        self.engine.dispatch('main', self.lease, 'V1', 'review-1')
+
+    def test_two_read_only_reviews_on_same_file_do_not_collide(self):
+        self.two_reviews()
+        self.assertEqual(['V2'], self.engine.ready('main', self.lease))
+        self.engine.dispatch('main', self.lease, 'V2', 'review-2')
+
+    def test_read_only_reviews_sharing_a_resource_still_collide(self):
+        self.two_reviews(['db'], ['db'])
+        self.assertEqual([], self.engine.ready('main', self.lease))
+        with self.assertRaises(EngineError):
+            self.engine.dispatch('main', self.lease, 'V2', 'review-2')
+
+    def test_review_still_collides_with_running_writer(self):
+        self.task('B0', files=['x'])
+        self.engine.report('w0', self.engine.dispatch('main', self.lease, 'B0', 'w0'), 'checked')
+        self.task('W', files=['a'])
+        self.engine.dispatch('main', self.lease, 'W', 'writer')
+        self.task('V', role='critic', mode='spec', files=['a'], review_of=['B0'])
+        self.assertEqual([], self.engine.ready('main', self.lease))
 
 
 class AutonomyPreconditionsTests(unittest.TestCase):

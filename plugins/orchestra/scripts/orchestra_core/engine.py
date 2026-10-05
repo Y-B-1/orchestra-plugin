@@ -34,6 +34,7 @@ class EngineError(ValueError):
 REVIEW_ROLES = ('code-reviewer', 'critic')
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
 REBIND_WINDOW_SECONDS = 60
+KEEP_REMOVE = ('## Keep', '## Remove')  # builder briefs carry both headings; checked at add only (SPEC 5.13)
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
                gate_timeout_seconds=300, secret_scan=dict(required=False, argv=[]),
@@ -410,6 +411,15 @@ class Engine:
             if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', brief.read_text(errors='replace'), re.M):
                 raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
 
+    def _check_keep_remove(self, task):
+        brief = Path(task['brief'])
+        if not brief.is_absolute():
+            brief = self.repo / brief
+        text = brief.read_text(errors='replace')
+        for heading in KEEP_REMOVE:
+            if not re.search(r'^' + re.escape(heading) + r'[ \t]*$', text, re.M):
+                raise EngineError('Builder brief needs the heading ' + heading)
+
     @staticmethod
     def _redact_leases(value):
         if isinstance(value, dict):
@@ -535,6 +545,8 @@ class Engine:
             if task['id'] in state['tasks']:
                 raise EngineError('Duplicate task')
             self._check_contract(task)
+            if task['role'] == 'builder' and 'brief' in task:
+                self._check_keep_remove(task)
             if self._is_release(task) and any(self._is_release(t) for t in state['tasks'].values()):
                 raise EngineError('A run supports one terminal release task')
             for key in ('inputs', 'acceptance', 'files', 'resources', 'dependencies'):
@@ -589,6 +601,7 @@ class Engine:
                     ancestor = state['tasks'][ancestor['repair_of']]
             # Dependencies refer only to existing immutable cards, making cycles impossible.
             task['state'] = 'queued'
+            task['rev'] = '2.2'
             state['tasks'][task['id']] = task
 
     @staticmethod
@@ -664,6 +677,8 @@ class Engine:
                 and not any(other['id'] != t['id']
                             and self._collides(self._reservation(t, state), self._reservation(other, state))
                             and not (other['id'] in t.get('review_of', []) and other['state'] == 'reported'
+                                     and not set(t['resources']) & set(other['resources']))
+                            and not (self._read_review(t) and self._read_review(other)
                                      and not set(t['resources']) & set(other['resources']))
                             for other in occupied)]
 
@@ -765,12 +780,32 @@ class Engine:
                 raise EngineError('Review report metadata, verdict or artifact does not match')
             if not isinstance(body.get('summary'), str) or not body['summary'].strip():
                 raise EngineError('Review needs a nonempty semantic summary')
+            notes = self._check_issues(body, findings, covered)
             evidence = self._snapshot(report_path, 'review')
             receipt = dict(id=uuid.uuid4().hex, reviewer=reviewer, categories=categories,
-                           tasks=ids, final=bool(final), findings=findings, artifact=artifact, scope=scope,
-                           action='review', **evidence)
+                           tasks=ids, final=bool(final), findings=findings, notes=notes, artifact=artifact,
+                           scope=scope, action='review', **evidence)
             state['reviews'].append(receipt)
             return copy.deepcopy(receipt)
+
+    @staticmethod
+    def _check_issues(body, findings, covered):
+        """Materiality (SPEC 5.6): blocking issues are the findings; note texts are returned."""
+        if 'issues' not in body:
+            if any('rev' in t for t in covered):
+                raise EngineError('Review of 2.2 cards needs issues with severity')
+            return []
+        issues = body['issues']
+        if not isinstance(issues, list) or any(
+                not isinstance(i, dict) or not isinstance(i.get('text'), str) or not i['text'].strip()
+                or i.get('severity') not in ('blocking', 'note') for i in issues):
+            raise EngineError('Review issues need text and a severity of blocking or note')
+        if any(i['severity'] == 'blocking' and (not isinstance(i.get('impact'), str) or not i['impact'].strip())
+               for i in issues):
+            raise EngineError('A blocking issue needs an impact')
+        if findings != [i['text'] for i in issues if i['severity'] == 'blocking']:
+            raise EngineError('Review findings must equal the blocking issues in order')
+        return [i['text'] for i in issues if i['severity'] == 'note']
 
     def _review_verdicts(self, state, cache, task_id=None, final=False):
         """Newest relevant verdict wins; altered evidence cannot restore an older verdict."""
