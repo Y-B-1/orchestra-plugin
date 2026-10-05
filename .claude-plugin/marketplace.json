@@ -8,7 +8,7 @@
       "name": "orchestra",
       "source": "./plugins/orchestra",
       "description": "Coordinate independent coding agents with explicit ownership, evidence and release checks.",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "author": {
         "name": "Orchestra contributors"
       }
