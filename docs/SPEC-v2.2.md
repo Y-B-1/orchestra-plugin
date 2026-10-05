@@ -1,8 +1,8 @@
 # Orchestra 2.2.0 design specification
 
-Card D2, mode design: a revision of the card D1 draft (commit `15ba4e79`) after two critic challenges. Base: `origin/main` at `0e778c73292d72dbc4ce9a6d725c97cb72bc1d31` (Orchestra 2.1.0, tag `v2.1.0`). All citations are to that commit and are relative to the repository root. The plugin root is `plugins/orchestra`; `P/` below abbreviates it.
+Card D3, mode design: the second revision of the card D1 draft (commit `15ba4e79`), after the round-1 critics (C1, C2F) and the round-2 critics (C3 spec lens, C4 feasibility lens). Base: `origin/main` at `0e778c73292d72dbc4ce9a6d725c97cb72bc1d31` (Orchestra 2.1.0, tag `v2.1.0`). All citations are to that commit and are relative to the repository root. The plugin root is `plugins/orchestra`; `P/` below abbreviates it.
 
-This revision adopts the user's held repair model (Round 2) and the Round 3 rulings (an uncapped final repair loop, the materiality rule, and full autonomy for this run). It resolves every confirmed critic finding (section 12) and removes what the held model makes unnecessary (section 11). No decision is left open: section 10 lists the accepted answers, every override of them and each choice decided by coordinator recommendation.
+This revision adopts the user's held repair model (Round 2), the Round 3 rulings (an uncapped final repair loop, the materiality rule, and full autonomy for this run), the Coordinator ruling on release pre-authorization and the coordinator decisions on the round-2 findings. It resolves every critic finding (section 12) and removes what the held model makes unnecessary (section 11). No decision is left open: section 10 lists the accepted answers, every override of them and each choice decided by coordinator recommendation.
 
 ## 0. Evidence labels and do-not-touch list
 
@@ -33,17 +33,20 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 |---|---|
 | Wave | A named set of builder implementation cards that run together and are reviewed together, joined through the card's `wave` field. Waves are ordered by the first `add` of each label. |
 | Wave review | One checkpoint-mode code-reviewer card whose `review_of` covers every builder implementation card of one wave. Its findings are attributed per card. |
-| Repair-diff check | The one checkpoint review of a wave's repair commits. Its `review_of` covers each repair card, that card's chain ancestors, and each card whose wave findings were all rejected. |
+| Repair-diff check | The one checkpoint review of a wave's repair commits: a checkpoint receipt whose coverage includes a builder repair card. Its `review_of` covers each repair card, that card's chain ancestors, and each card whose wave findings were all rejected. Its blocking findings sit on chain tips. |
 | Chain | A builder card and the repair cards linked to it through `repair_of` / `repaired_by`. The chain tip is the newest card, the one without `repaired_by`. |
-| Held | The task state of a chain that still fails after its Opus repair and repair-diff check. Its work stays integrated. It blocks nothing until the final phase, and it must be accepted before completion. |
-| Held log | The `held_finding` on each held card plus one line per hold in `<state>/progress.md`. |
+| Held | The task state of a chain that still fails after its Opus repair and repair-diff check, or of an unrepaired card the repair-diff check blocks. Its work stays integrated. It blocks nothing until the final phase, and it must be accepted before completion. |
+| Held log | The `held_finding` on each held card plus one line per hold, and per gate failure attributed to a held tip, in `<state>/progress.md`. |
+| Cleared | A final receipt's `cleared` entry: a held tip the lens checked and found no longer failing in its categories, with the reason. |
+| Superseded review | An unstarted review card whose every target an accepted newer review card covers; `supersede` accepts it with `superseded_by`. |
+| Release pre-authorization | The optional ledger line `- Release: pre-authorized <remote> <target>` that lets an armed run release that one configured target. |
 | Final phase | Operator gate, three parallel lens cards, then final repair rounds until every lens is CLEAN on the current candidate. |
-| Final repair round | One Opus repair card per failing chain (held chains and chains with blocking lens findings), then a re-check by each failed lens of only the still-failing items. |
+| Final repair round | One Opus repair card per chain with a current attributed final finding, held or not, then a re-check by each failed lens of only the still-failing items. |
 | Closing confirmation | One final receipt by a lens whose last CLEAN receipt went stale during the final repair rounds, over the cumulative final-repair diff. |
-| Finding | A blocking issue: severity `blocking`, with a stated material impact on a named requirement, test or framework (section 5.6). |
+| Finding | A blocking issue: severity `blocking`, with a stated material impact on a named requirement, test or framework (section 5.6). Receipts covering cards added under 2.2 carry them in `issues`. |
 | Note | A non-blocking issue: severity `note`. It goes to the run brief and never triggers repair or hold. |
-| Fingerprint | The first 12 hex digits of SHA-256 over a finding's text, lowercased with whitespace collapsed. It keys triage entries and detects an unchanged finding across final rounds. |
-| Run brief | The report written to `<state>/progress.md` when autonomy stops or the session closes, and printed by `orchestra.py brief`. It replaces the 2.1 "Autonomy report". |
+| Fingerprint | The first 12 hex digits of SHA-256 over a finding's text, lowercased with whitespace collapsed. It keys triage entries. With the chain id and lens category it detects a repeated finding across final rounds. |
+| Run brief | The report written to `<state>/progress.md` on every session end path and every autonomy stop, shown at SessionStart and printed by `orchestra.py brief`. It replaces the 2.1 "Autonomy report". |
 | Findings ledger | The `findings` list in `state.json`: each finding the coordinator rejected, deferred or triaged, with the reason. It is distinct from the progress ledger, the autonomy ledger and the critic `ledger` axis. |
 | Out-of-scope finding | A defect outside the change under review. Only final lens cards raise it, in `out_of_scope`. It never blocks a verdict. |
 | Triage | The coordinator's disposition of an out-of-scope finding: `inline`, `card` or `brief`. |
@@ -75,6 +78,8 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 1. The final repair loop has no count limit. Anything still failing is repaired again until it passes. Each round re-checks only the still-failing items. A finding that comes back unchanged gets a fresh approach: investigator re-diagnosis, then repair. The run deadline is the only outer limit. The merge-block recommendation is dropped.
 2. Materiality: a finding blocks only with a real, material impact on the named requirements, tests or frameworks. No impact, or under about 20% impact on otherwise mostly correct work, makes it a note. The rule lives in the reviewer and critic skills, the review report schema and the engine's BLOCKED rule.
 3. Full autonomy for this run. No decision stays open.
+
+**Coordinator ruling (handoff, 2026-10-05, verbatim):** "Approval boundaries stay hard by default under armed autonomy, but the autonomy ledger may pre-authorize release explicitly (its approval-boundaries field names "release: pre-authorized" plus the exact remote/target). With that line, an armed run releases at the end through the permit with no user input (Round 2 "seamless"); without it, the run ends "ready to release" in the brief. Never inferred, never default."
 
 **Carried from the standing orders into every build card:** tests come first for new behavior; stage explicit paths only; Opus 5.5 and Sonnet 5.5 only, with no 1M-context variants; the repository never names local home paths or downstream product names (charter).
 
@@ -118,20 +123,22 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 2. A review card may name `"wave:W"` in `review_of`. `add` resolves it to the ids of every card labelled W, freezes the list and stores plain ids (N3). `add` of a W card after a W review exists is refused: "Wave W already has a review; start a new wave".
 3. Wave order is the order of each label's first `add`. `status` lists waves in that order (S-g).
 4. The wave review is code-reviewer `Mode: checkpoint` over the wave. Its report may carry `task_findings`, which maps each covered id to that card's blocking findings:
-   - `record_review` refuses a key that is not covered, or an ordered union of the values that differs from `findings`.
-   - A covered card with an empty list gets a CLEAN verdict from that receipt.
-   - Without `task_findings`, the 2.1 rule holds: every covered card gets the whole list.
-5. The coordinator tries to refute each finding (coordination.md:48). A refuted finding is recorded as `rejected` in the findings ledger (5.12). Each card with a remaining finding gets one Opus repair card (5.2).
+   - `record_review` refuses a key that is not covered (except a held tip, 5.4 item 3), or an ordered union of the values that differs from `findings`.
+   - **Per-task findings (C4/R2-2):** a receipt's findings for task T are `task_findings[T]` when `task_findings` exists; an empty list or an absent key means CLEAN for T. Without `task_findings`, the 2.1 rule holds: every covered card gets the whole list. One helper, `_task_findings(receipt, T)`, serves all five readers: final coverage in `record_review` (engine.py:749), `_review_verdicts` (775-796), the repair precondition (577-579), `accept` (805-807) and the per-task completion loop (914-918).
+   - The O22 void (engine.py:790) applies per task: a stale newest receipt voids T's verdicts only when its findings for T are non-empty. The final computation (`final=True`) keeps the whole-receipt rule.
+5. The coordinator tries to refute each finding (coordination.md:48). A refuted finding is recorded as `rejected` in the findings ledger (5.12). Each card with a remaining finding gets one Opus repair card (5.2), added after the accept step of item 10.
 6. After the repairs report, one repair-diff check runs. Its `review_of` lists, in one card:
    - every repair card of the wave and each one's chain ancestors (B2, F1)
    - every wave card whose wave findings were all rejected in the ledger (S-d)
 
-   Its brief names the fix range and the rejected findings. The check gives each ancestor a verdict newer than its `review_since`, so the original can be accepted after its repair.
-7. One loop per wave: no third review of that wave runs. A chain that still has a blocking finding after the check is held (5.2).
+   Its brief names the fix range and the rejected findings. The check gives each ancestor a verdict newer than its `review_since`, so the original can be accepted after its repair. Tip rule (C3/R2-4): a BLOCKED check must carry `task_findings`, and every key with a non-empty list must be a chain tip: "Attribute repair-diff findings to the chain tip X".
+7. One loop per wave: no third review of that wave runs. A chain that still has a blocking finding after the check is held (5.2), including a rejected-only card the check blocks (5.2 item 2b).
 8. A consequential foundation becomes a wave of one, reviewed before dependent waves start.
-9. A wave member parked at an approval boundary (2.1 `park`) before its wave review runs would leave the review never ready. The coordinator then parks the queued wave review and adds a replacement review whose `review_of` names the other members explicitly (S-a, F5). The parked member, once unparked, gets its own explicit review.
+9. A wave member parked at an approval boundary (2.1 `park`) before its wave review runs would leave the review never ready. The coordinator then parks the queued wave review and adds a replacement review whose `review_of` names the other members explicitly (S-a, F5). The parked member, once unparked, gets its own explicit review. The parked original is then cleared with `supersede` (item 11).
+10. **Accept before repair (C3/R2-5, C4/R2-4).** After any review receipt, in the build and in the final phase, the coordinator works in this order: record ledger rejections, accept every card that is acceptable now (CLEAN members, the review card, investigator cards), then add and dispatch repairs. A repair lands in the shared tree, so it would make whole-repository report artifacts and wave-scope receipts stale. The engine enforces it: dispatching or starting a builder repair card is refused while any `reported` card passes every `accept` check: "Accept X first; a repair would make its evidence stale".
+11. **Supersede (C3/R2-10).** `orchestra.py supersede TASK` needs the lease. It accepts TASK and stores `superseded_by` (the covering ids) only when TASK is a review-role card with `review_of`, in state `queued` or `parked`, never dispatched (no `worker`), and every id in its `review_of` is in the `review_of` of an `accepted` review card added after it. Otherwise refused, naming the uncovered id. The brief lists it under Accepted as "superseded by".
 
-**Files:** `P/scripts/orchestra_core/engine.py` (`add_task`, `record_review`, `_review_verdicts`); `P/scripts/orchestra.py` (`add` help, `status` waves); `P/skills/orchestra/references/coordination.md`; `P/skills/orchestra-review/references/checkpoint.md`; `P/skills/orchestra/references/cli.md`, `docs/cli.md`; `tests/test_engine.py`; `tests/skill_phrases/orchestra.json`, `orchestra-review.json`.
+**Files:** `P/scripts/orchestra_core/engine.py` (`add_task`, `record_review`, `_task_findings`, `_review_verdicts`, `accept`, `_start_assignment`, `supersede`, `_completion_evidence`); `P/scripts/orchestra.py` (`add` help, `status` waves, `supersede`); `P/skills/orchestra/references/coordination.md`; `P/skills/orchestra-review/references/checkpoint.md`; `P/skills/orchestra/references/cli.md`, `docs/cli.md`; `tests/test_engine.py`; `tests/skill_phrases/orchestra.json`, `orchestra-review.json`.
 
 **No lost functionality:** a wave of one is per-ticket review. Explicit `review_of` ids work unchanged. A report without `task_findings` behaves as in 2.1. Review independence (engine.py:752-753) and artifact binding (engine.py:762-764) are unchanged.
 
@@ -149,6 +156,11 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | `test_repair_diff_check_covering_chain_accepts_original` | Build B1, wave review with a finding on B1, repair R1, check over R1 and B1 CLEAN: R1 then B1 accept. |
 | `test_repair_diff_check_covers_card_with_all_findings_rejected` | B2's only finding is rejected in the ledger. The check covers B2 and is CLEAN: B2 accepts with no repair. |
 | `test_replacement_wave_review_after_member_parked` | B2 parked before review; the queued wave review parked; a replacement over B1 and B3 runs and both accept. |
+| `test_absent_task_findings_key_is_clean_at_every_reader` | Covered C with no key: C accepts; a repair of C is refused ("Repair needs earlier checked coding findings"); the per-task completion loop passes; a stale newest receipt with findings only for B leaves C's verdict. |
+| `test_repair_diff_check_finding_on_ancestor_refused` | A BLOCKED check keyed on B1 (repaired by R1) is refused; keyed on R1 it records. |
+| `test_clean_wave_member_accepts_after_sibling_repair` | Dispatching R2 while B1 and the review card are acceptable is refused naming B1; after both accept, R2 dispatches and lands, and B1 stays accepted. |
+| `test_supersede_unstarted_review_when_replacements_cover_it` | Accepted with `superseded_by`; refused for a dispatched card, a non-review card, or a target no accepted newer review covers. |
+| `test_parked_member_wave_reaches_completion` (test_integration.py) | B2 parked, wave review parked, replacement over B1 and B3, B2 unparked and reviewed, original superseded, final phase: completion succeeds. |
 
 ### 5.2 Repair ladder ending in hold (S2 as amended by Round 2)
 
@@ -163,17 +175,17 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 1. Rung 1 is the Sonnet implementation card. Rung 2 is one builder `repair` card on Opus medium (dispatch override, unchanged).
 2. `TASK_STATES` gains `held`. `orchestra.py hold TASK --finding TEXT` needs the lease. It is refused unless TASK:
-   - is a builder `repair` card in state `reported` with no `repaired_by`, and
-   - has a current verdict with at least one blocking finding (notes never count, 5.6).
+   - (a) is a builder `repair` card in state `reported` with no `repaired_by` and a current verdict with at least one blocking finding, or
+   - (b) is a builder implementation card in state `reported` with no `repaired_by` whose current blocking verdict comes from a repair-diff check (the rejected-only card of 5.1 item 6; C3/R2-4).
 
-   It moves the whole chain to `held`, stores `held_finding` on the tip, and appends `- held <id> (chain <ids>): <finding>` with the time to `<state>/progress.md`. This is the held log (N8: it replaces the per-round log of repair-rounds.md:6).
+   Notes never count (5.6). It moves the whole chain to `held`, stores `held_finding` on the tip, and appends `- held <id> (chain <ids>): <finding>` with the time to `<state>/progress.md`. This is the held log (N8: it replaces the per-round log of repair-rounds.md:6).
 3. A held card blocks nothing during the build:
    - `_ready` treats a dependency in state `held` as satisfied, so a later wave that depends on held work still runs.
    - A held card reserves no files or resources (it is not in `occupied`).
 4. `repair_of` may name a repair card only when that card is `held`, or has a current final receipt with blocking findings attributed to it. During the build this refuses a third try with "Escalation ends at one repair; hold the chain". The final phase (5.5) uses the two allowed forms.
 5. The repair target states become `reported`, `accepted` or `held`. Adding a repair to a held tip moves the chain from `held` to `repairing`, as for any repair.
 6. `record_review` accepts covered cards in state `reported`, `accepted` or `held`. `_ready` lets a review run when every `review_of` target is in one of those states.
-7. `accept` also accepts a `held` card whose current verdicts carry no blocking finding, after the existing `repaired_by` rule. This covers a held chain whose last finding the final lens does not confirm.
+7. `accept` also accepts a `held` card whose current verdicts carry no blocking finding, after the existing `repaired_by` rule. This covers a held tip that every current final receipt lists under `cleared` (5.5 item 3).
 8. No round counter, cap or breaker. repair-rounds.md is rewritten to this ladder.
 
 **Files:** `P/scripts/orchestra_core/engine.py` (`TASK_STATES`, `add_task`, `hold`, `_ready`, `record_review`, `accept`, `_validate_state`); `P/scripts/orchestra.py` (`hold`); `P/skills/orchestra/references/repair-rounds.md` (rewrite), `parallel.md:16`; `P/skills/orchestra-build/references/repair.md:7`; `cli.md`, `docs/cli.md`; `tests/test_engine.py`; phrase files.
@@ -185,7 +197,8 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | Test | Behavior |
 |---|---|
 | `test_hold_moves_whole_chain_and_logs` | Hold of R1 sets R1 and B1 to `held`, stores the finding, and appends the progress line. |
-| `test_hold_refused_without_current_blocking_findings` | A CLEAN repair card, a non-repair card, or a card with `repaired_by` is refused. |
+| `test_hold_refused_without_current_blocking_findings` | A CLEAN repair card, an implementation card blocked only by its wave review, or a card with `repaired_by` is refused. |
+| `test_hold_rejected_only_card_blocked_by_repair_diff_check` | B2 (findings all rejected) blocked on itself by the check: hold succeeds, the chain is B2 alone. |
 | `test_dependency_on_held_card_is_ready` | A queued card depending on a held card is ready. |
 | `test_held_card_reserves_no_files` | A card writing the held card's files is ready. |
 | `test_repair_of_repair_refused_during_build` | A repair of reported R1 raises the hold hint. |
@@ -212,6 +225,7 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 1. A wave-boundary gate runs for wave N only when a card of the next wave lists a wave-N card in `dependencies`, or names in `files` or `inputs` a path a wave-N card owns. Otherwise no gate runs between them; the operator gates the candidate once in the final phase.
 2. The wave-boundary gate runs after wave N's builders report and before its wave review, so the wave reviewer cites the receipt (5.11).
 3. A failed gate enters the ladder as a finding: a reviewer who cites a failed receipt must return BLOCKED and attribute the failure to the responsible cards (S-b). The engine refuses a CLEAN report that cites a failed receipt: "A failed gate receipt needs a blocking finding". In the final phase, the correctness lens does the same with the operator gate.
+   - **Held work (C3/R2-1):** when the failure comes from a held chain, the reviewer attributes it in `task_findings` to that held tip. `record_review` accepts the key although the tip is outside the coverage, only when the tip is in state `held` and the report cites a failed gate receipt; otherwise "Task findings name an uncovered task". The finding stays on the receipt and in the held log (`- gate <receipt> attributed to held <tip>: <finding>`), enters no covered card's verdict, and reaches the final lenses with the held log. Wave review briefs carry the held log.
 4. `status` shows each wave and whether the next wave depends on it. The engine computes it from stored fields and schedules nothing.
 
 **Files:** `P/skills/orchestra/references/coordination.md`; `P/skills/orchestra-review/references/checkpoint.md`, `final.md`; `P/scripts/orchestra_core/engine.py` (`record_review`, a read-only helper for `status`); `P/scripts/orchestra.py`; `tests/test_engine.py`; phrase files.
@@ -224,6 +238,8 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 |---|---|
 | `test_status_marks_wave_dependency_from_dependencies_and_paths` (test_engine.py) | W2 depends on W1 through `dependencies` and through an owned path: true. An unrelated W3: false. |
 | `test_clean_review_citing_failed_gate_refused` (test_engine.py) | Refused. The same report as BLOCKED with the finding records. |
+| `test_failed_gate_from_held_chain_does_not_block_later_wave` (test_engine.py) | B1 held, W2 gate failed: a BLOCKED W2 receipt with `{B1: [f], C1: []}` records, C1 accepts, the held log gains the gate line. |
+| `test_uncovered_key_refused_unless_held_tip_and_failed_gate` (test_engine.py) | An uncovered key on a non-held card, or with no failed receipt cited, is refused. |
 | `wave gate rule` phrase (skill_phrases/orchestra.json) | coordination.md states rules 1 and 2. |
 
 ### 5.5 Final phase: parallel lenses and final repair rounds (S5, Round 2, Round 3)
@@ -249,10 +265,10 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 1. The operator gates the integrated candidate.
 2. The three lens cards run in parallel. Each covers every task, held ones included, and receives the held log and the gate receipts. Each in-scope blocking finding is attributed in `task_findings` to the chain tip whose change introduced it. A defect no card's change introduced is out of scope (5.7).
-3. Engine rules for final receipts: a receipt with blocking findings must carry `task_findings`, and every key must be a chain tip ("Attribute final findings to the chain tip X").
-4. **Final repair round.** One Opus repair card per failing chain: each held chain, and each chain with a blocking lens finding. They are added together and dispatched through the Agent tool, as the override preset requires (parallel.md:16). The `repair_of` target is the chain tip (5.2 item 4).
+3. Engine rules for final receipts: a receipt with blocking findings must carry `task_findings`, and every key must be a chain tip ("Attribute final findings to the chain tip X"). Every final receipt addresses each tip in state `held` at record time (C3/R2-6, C4/R2-3): a blocking finding in `task_findings`, or an entry in `cleared` (tip to a non-empty reason). Omission is refused: "Final receipt must address held tip X". The correctness lens judges the held finding itself; a lens whose categories it does not touch clears it with a lens-scoped reason ("no security defect").
+4. **Final repair round.** First the accept step of 5.1 item 10: the lens cards, investigator cards and every acceptable chain. Then one Opus repair card per chain with a current attributed final finding, held or not. A held chain that every current final receipt clears accepts under 5.2 item 7 with no repair. The repairs are added together and dispatched through the Agent tool, as the override preset requires (parallel.md:16). The `repair_of` target is the chain tip (5.2 item 4).
 5. **Re-check.** After the round's repairs report, each lens that failed re-runs as a final card over all tasks. Its brief limits the work to the still-failing items and the round's repair diff. Chains that pass are accepted tip-first.
-6. **Next round.** Each chain still failing gets another repair round. No count limit. If a finding's fingerprint matches the previous round, an investigator-code card re-diagnoses it first, and the next repair brief carries the diagnosis and the previous approach to avoid. The run deadline is the only outer limit.
+6. **Next round.** Each chain still failing gets another repair round. No count limit. If a finding repeats (same fingerprint as the previous round, or the same chain blocked again by the same lens, keyed on chain id and lens category: C3/N-1), an investigator-code card re-diagnoses it first, and the next repair brief carries the diagnosis and the previous approach to avoid. The run deadline is the only outer limit.
 7. **Closing confirmation.** When every re-check is CLEAN, the operator re-gates the candidate. Each lens whose last CLEAN receipt is now stale records one closing confirmation over the cumulative final-repair diff. This keeps "any later edit voids earlier evidence" and engine.py:919-921. A blocking finding there starts another round.
 8. Notes never start a round (5.6). Out-of-scope items follow the triage in 5.7.
 
@@ -271,9 +287,12 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | `test_contract_hash_unchanged_by_lens_change` (test_engine.py) | `_contracts()[1]` equals the 2.1 digest. |
 | `test_final_findings_need_task_findings_on_chain_tips` (test_engine.py) | A BLOCKED final without `task_findings`, or keyed on a card with `repaired_by`, is refused. |
 | `test_repair_of_accepted_tip_with_final_finding_allowed` (test_engine.py) | Accepted chain, final finding on its tip: the repair is added and the chain becomes `repairing`. |
-| `test_final_round_repairs_held_and_lens_chains_then_completes` (test_integration.py) | One held chain and one lens finding: round 1 repairs both, re-checks pass, closing confirmations and the gate pass, completion succeeds. |
+| `test_final_receipt_must_address_every_held_tip` (test_engine.py) | A final receipt naming a held tip in neither `task_findings` nor `cleared` is refused; an empty reason is refused. |
+| `test_held_tip_cleared_by_every_lens_accepts_without_repair` (test_engine.py) | Three lens receipts clear H1: H1 accepts tip-first; a repair of H1 is refused. |
+| `test_final_lens_then_repair_then_completion` (test_integration.py) | Lens BLOCKED on B2: repair dispatch refused until the lens card accepts; then repair, re-check, closing confirmation, completion succeeds. |
+| `test_final_round_repairs_held_and_lens_chains_then_completes` (test_integration.py) | One held chain with a correctness finding and one lens finding on another chain: round 1 repairs both, re-checks pass, closing confirmations and the gate pass, completion succeeds. |
 | `test_final_rounds_repeat_until_clean_with_no_cap` (test_integration.py) | A fake repair fails four times, then passes: five rounds, no stop, completion succeeds. |
-| `final round rediagnosis` phrase (skill_phrases/orchestra.json) | final-review.md routes an unchanged fingerprint to investigator-code before the next repair. |
+| `final round rediagnosis` phrase (skill_phrases/orchestra.json) | final-review.md routes a repeat (fingerprint, or chain id and lens category) to investigator-code before the next repair, and states the accept-before-repair order. |
 
 ### 5.6 Materiality: findings and notes (Round 3)
 
@@ -283,12 +302,13 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 1. **Rule text** (one paragraph, the same in the review SKILL.md and the critique SKILL.md): a finding blocks only when it has a real, material impact on the requirements, tests or frameworks the prompt names: a named requirement unmet, a named test failing or certain to fail, a binding framework or charter rule broken, or a security or data-loss defect. An issue with no such impact, or one affecting under about 20% of a piece of work that is otherwise correct while every named requirement and test still holds, is a note. Notes go to the run brief and never trigger repair or hold.
 2. **Report schema:** the body may carry `issues`, a list of `{text, severity, impact}` with `severity` of `blocking` or `note`. `impact` is required for `blocking`: the requirement, test or framework and the effect.
-3. **Engine BLOCKED rule:** with `issues`, `findings` must equal the blocking texts in order, and the verdict is BLOCKED exactly when one exists. Note texts are stored on the receipt as `notes`. Without `issues`, every finding is blocking, as in 2.1.
+3. **Engine BLOCKED rule:** with `issues`, `findings` must equal the blocking texts in order, and the verdict is BLOCKED exactly when one exists. Note texts are stored on the receipt as `notes`. `add_task` stamps `rev: "2.2"` on every new card. A review or critic receipt covering any card with `rev` must carry `issues`: "Review of 2.2 cards needs issues with severity" (C3/R2-9). String-only reports, every finding blocking, stay accepted only when every covered card predates 2.2.
 4. Notes never count for `accept`, `hold`, the repair precondition "Repair needs earlier checked coding findings" or completion. The run brief lists them.
+5. **Severity scale:** review SKILL.md's "Grade severity: critical, major, minor or trivial" is replaced by "Grade each issue `blocking` or `note` by the materiality rule". Mapping: critical and major become `blocking` when the impact test holds; minor, trivial and anything without a named impact become `note`. Confidence and confirmed/plausible stay. The critique SKILL.md requires the same `issues` shape.
 
 **Files:** `P/skills/orchestra-review/SKILL.md`, `P/skills/orchestra-critique/SKILL.md`; `P/scripts/orchestra_core/engine.py` (`record_review`); `P/scripts/orchestra.py` (`review` reads the body); `tests/test_engine.py`; `tests/skill_phrases/orchestra-review.json`, `orchestra-critique.json`.
 
-**No lost functionality:** string-only reports keep 2.1 behavior. The 2.1 sentence at SKILL.md:41 is replaced by the rule text, which is stricter about what blocks.
+**No lost functionality:** string-only reports keep 2.1 behavior for cards migrated from 2.1. The four grades map onto the two severities (item 5). The 2.1 sentence at SKILL.md:41 is replaced by the rule text, which is stricter about what blocks.
 
 **Acceptance tests:**
 
@@ -300,7 +320,9 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | `test_repair_refused_for_notes_only` (test_engine.py) | "Repair needs earlier checked coding findings". |
 | `test_hold_refused_for_notes_only` (test_engine.py) | Refused. |
 | `test_run_brief_lists_notes` (test_engine.py) | Notes appear under "Notes". |
-| `materiality rule` phrases | Both SKILL.md files contain the rule paragraph. |
+| `test_review_of_2_2_card_without_issues_refused` (test_engine.py) | A string-only report covering a card with `rev` is refused. |
+| `test_review_of_migrated_card_keeps_string_findings` (test_engine.py) | Regression: a 2.1 fixture card without `rev` accepts a string-only report, all findings blocking. |
+| `materiality rule` phrases | Both SKILL.md files contain the rule paragraph; review SKILL.md no longer contains "critical, major, minor or trivial". |
 
 ### 5.7 Out-of-scope findings and triage (S6)
 
@@ -335,12 +357,19 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 1. `cap-passes` and `cap-stalls` are removed as stop reasons. No count stops the loop.
 2. Remaining stop reasons: `deadline`, `complete`, `ledger-tampered`, `disarmed`, and `parked-only` / `no-ready-card` (OD-6).
-3. `complete` additionally needs no `held` card. Live work includes any `held` card, because the final phase is still owed. The continuation text then says "start or continue the final phase".
+3. `complete` needs the ledger checks and `_completion_evidence` to pass (C3/R2-2): every task accepted (so no `held` or `repairing` card), no current final or per-task finding, full category coverage, the required gates and the out-of-scope triage. `_complete` returns false on its refusal. Live work includes any `held` card, because the final phase is still owed. The continuation text then says "start or continue the final phase".
 4. A stall is a pass that leaves the progress signature (5.10) unchanged. Stalls are counted and reported, and never stop or park (OD-7 C).
 5. `max_passes` and `max_stalls` become optional; recorded and shown, never enforced (OD-8 A). The template drops them. The continuation text drops "of %d".
 6. A card that fails its wave review goes to repair, and a chain that fails its repair-diff check is held. The loop takes the next ready card. Approval-boundary parks are unchanged from 2.1.
+7. Under `relaunch`, `hook_stop` with no active session is a no-op: no pass, stall or stop is counted, so a Stop in another session between passes changes nothing (C3/N-6). PreToolUse still applies the boundaries then (5.10 item 3), by design.
+8. **Release pre-authorization (Coordinator ruling; C3/R2-3, C4/R2-6):**
+   1. Approval boundaries hold exactly one `- Release:` line: the fixed `- Release: no release, permit or deploy.` or `- Release: pre-authorized <remote> <target>` (two tokens). Any other `- Release:` line, or two of them, refuses `arm`: "Approval boundaries need exactly one Release line". Every other fixed line (engine.py:69-76) stays required.
+   2. The pair must equal `policy.release` `remote` and `target` with `enabled` true, or `arm` refuses: "Release pre-authorization must match policy.release". `arm` stores `autonomy.release = {remote, target}`.
+   3. `_refuse_under_autonomy` (engine.py:983-986) lets `release_permit` and `check_release` through only for that exact pair. The hooks release deny (hooks.py:193-194) skips class `release` only when the decision's remote and target equal it; the normal permit check (hooks.py:199-209) then runs. `release-multi`, merges, pushes, deletions and every other permit stay denied.
+   4. With the line, the coordinator adds the terminal release card after the closing confirmations, and `complete` waits for its acceptance (REASONED: item 3 needs every task accepted). Without it, an armed coordinator adds no release card and the brief's Needs you says "ready to release".
+   5. The template names the optional line in its comment; autonomy.md:22 becomes "Hard by default; the ledger may pre-authorize the one configured release".
 
-**Files:** `P/scripts/orchestra_core/engine.py` (`parse_ledger`, `hook_stop`, `_complete` caller, `_validate_state`, `autonomy_status`); `P/config/autonomy-template.md`; `P/hooks/mod/autonomy.ts`, `autonomy.test.ts`; `P/skills/orchestra/references/autonomy.md`; `docs/hooks.md`; `tests/test_engine.py`.
+**Files:** `P/scripts/orchestra_core/engine.py` (`parse_ledger`, `arm_autonomy`, `hook_stop`, `_complete`, `_refuse_under_autonomy`, `release_permit`, `check_release`, `_validate_state`, `autonomy_status`); `P/scripts/orchestra_core/hooks.py` (release deny); `P/config/autonomy-template.md`; `P/skills/orchestra/references/finishing.md`; `tests/test_hooks.py`; `P/hooks/mod/autonomy.ts`, `autonomy.test.ts`; `P/skills/orchestra/references/autonomy.md`; `docs/hooks.md`; `tests/test_engine.py`.
 
 **No lost functionality:** the deadline, completion, tamper and disarm stops stay. Pass and stall counts are still reported. The caps are replaced by the deadline (named under S7).
 
@@ -352,6 +381,14 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | `test_hook_stop_never_stops_on_stalls` (test_engine.py) | Ten stalled passes continue; `stalls` reads 10. |
 | `test_hook_stop_continues_while_held_cards_remain` (test_engine.py) | Only a held card left, nothing ready: continuation, not `no-ready-card`. |
 | `test_hook_stop_not_complete_while_held` (test_engine.py) | Ledger checks pass with a held card: no `complete` stop. |
+| `test_hook_stop_not_complete_while_final_finding_open` (test_engine.py) | Ledger checks pass, a current final receipt blocks accepted B2: no `complete` stop. |
+| `test_hook_stop_not_complete_while_card_repairing` (test_engine.py) | Ledger checks pass, B2 `repairing`, its repair queued: no `complete` stop. |
+| `test_hook_stop_without_session_under_relaunch_is_noop` (test_engine.py) | `passes`, `stalls` and state unchanged. |
+| `test_arm_preauthorized_release_permits_exact_pair` (test_engine.py) | Present: `release_permit` and `check_release` succeed under autonomy for the pair. |
+| `test_permit_refused_under_autonomy_without_preauthorization` (test_engine.py) | Absent: refused as in 2.1 (regression). |
+| `test_preauthorization_mismatch_refused` (test_engine.py) | Mismatched: `arm` refuses a pair unlike `policy.release`; a permit for another target is refused. |
+| `test_arm_refuses_malformed_release_line` (test_engine.py) | Malformed (`pre-authorized origin`) and doubled Release lines refuse `arm`. |
+| `test_pretooluse_preauthorized_release_reaches_permit_check` (test_hooks.py) | Exact pair with a permit: allowed; another target: the autonomy deny. |
 | `test_hook_stop_deadline_still_stops` (test_engine.py) | Regression. |
 | `test_ledger_without_caps_arms` (test_engine.py) | Arms. |
 | `test_2_1_ledger_with_caps_still_arms_and_caps_are_ignored` (test_engine.py) | Passes continue beyond `max_passes`. |
@@ -365,16 +402,17 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 1. One writer, `_brief_text`, replaces `_report_text`. Heading `## Run brief <time>`. Sections in this order, so the 2000-character excerpt keeps what needs the user:
    1. stop or close reason, deadline, passes, stalls
-   2. **Needs you**: approval-boundary parks and their staged actions, `brief`-triaged out-of-scope items, deferred findings, and "ready to release" when an armed run completed
-   3. **Held log**: `id (chain): held finding`, and whether a final round fixed it
-   4. **Final rounds**: per round, the chains repaired and the findings that cleared
-   5. **Notes** (5.6)
-   6. **Deferred findings**, from the findings ledger
-   7. **Parked**, **Accepted**, **Failures**: as in 2.1
-2. `close_session` writes the brief too, with reason `closed`, so a run without autonomy gets one.
-3. `orchestra.py brief` is new, lease-free and read-only. It prints the current brief text. finishing.md puts its Held log, Final rounds, Notes and Needs you sections in the PR body under "Held / next phase".
+   2. **Needs you**: approval-boundary parks and their staged actions, `brief`-triaged out-of-scope items, deferred findings, and "ready to release" when an armed run completed without release pre-authorization
+   3. **Still failing / next phase** (C3/R2-8): each chain with a current blocking finding at the stop or close, and each held tip not yet cleared, with its last finding and final round
+   4. **Held log**: `id (chain): held finding`, gate attributions, and whether a final round fixed it or a lens cleared it (reason)
+   5. **Final rounds**: per round, the chains repaired and the findings that cleared
+   6. **Notes** (5.6)
+   7. **Deferred findings**, from the findings ledger
+   8. **Parked**, **Accepted** (superseded cards marked), **Failures**: as in 2.1
+2. **Every end path writes it, armed or not (C4/R2-5, C3/N-3, C3/N-4):** `close_session` (reason `complete` when `relaunch` autonomy is armed, which it stops; otherwise `closed`), `interrupt` and `interrupt_active` (`interrupted`), `end_harness_session` (`ended`), each autonomy stop and `settle` (the stop reason). The engine stores top-level `last_brief = {reason, at, text, path}`. SessionStart shows the first 2000 characters of `last_brief` whatever the autonomy state, falling back to the 2.1 `autonomy.report` (hooks.py:261-269).
+3. `orchestra.py brief` is new, lease-free and read-only. It prints `last_brief`. finishing.md puts its Still failing, Held log, Final rounds, Notes and Needs you sections in the PR body under "Held / next phase".
 
-**Files:** `P/scripts/orchestra_core/engine.py` (`_brief_text`, `_stop_autonomy`, `close_session`); `P/scripts/orchestra.py` (`brief`); `P/scripts/orchestra_core/hooks.py` (label only); `P/skills/orchestra/references/autonomy.md`, `finishing.md`, `handoff.md`; `tests/test_engine.py`, `tests/test_hooks.py`.
+**Files:** `P/scripts/orchestra_core/engine.py` (`_brief_text`, `_stop_autonomy`, `close_session`, `interrupt`, `interrupt_active`, `end_harness_session`); `P/scripts/orchestra.py` (`brief`); `P/scripts/orchestra_core/hooks.py` (`_report_context`); `P/skills/orchestra/references/autonomy.md`, `finishing.md`, `handoff.md`; `tests/test_engine.py`, `tests/test_hooks.py`.
 
 **No lost functionality:** every 2.1 report line survives. `autonomy.ts` matches on `last_stop_reason`, not the heading (autonomy.ts:81).
 
@@ -384,11 +422,15 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 |---|---|
 | `test_run_brief_lists_held_log_and_final_rounds` (test_engine.py) | Both sections carry the ids and findings. |
 | `test_close_session_writes_run_brief` (test_engine.py) | A completed non-autonomy run appends the brief. |
+| `test_close_session_brief_reason_by_mode` (test_engine.py) | Unarmed or in-session autonomy: `closed`; armed `relaunch`: `complete` and autonomy stopped. |
+| `test_interrupt_and_harness_end_write_run_brief` (test_engine.py) | Unarmed: `interrupt` gives `interrupted`, `end_harness_session` gives `ended`; `last_brief` updated. |
+| `test_run_brief_lists_still_failing_on_deadline` (test_engine.py) | Deadline stop mid-round with B2 blocked: B2 and its finding under "Still failing / next phase". |
+| `test_session_start_shows_newest_brief_without_autonomy` (test_hooks.py) | Never armed, closed run: the excerpt is the `closed` brief. |
 | `test_brief_command_is_read_only` (test_engine.py) | `state.json` and `progress.md` are unchanged after `brief`. |
 | `test_run_brief_needs_you_precedes_accepted` (test_engine.py) | Ordering. |
 | `test_session_start_excerpt_contains_needs_you` (test_hooks.py) | With 40 accepted cards the excerpt still holds "Needs you". |
 | `test_run_brief_keeps_2_1_lines` (test_engine.py) | Regression of every 2.1 line. |
-| `PR held section` phrase (skill_phrases/orchestra.json) | finishing.md names the "Held / next phase" section. |
+| `PR held section` phrase (skill_phrases/orchestra.json) | finishing.md names the "Held / next phase" section with "Still failing". |
 
 ### 5.10 Fresh-context relaunch harness
 
@@ -407,8 +449,8 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 5. `orchestra.py relaunch --permission-mode MODE [--model ID] [--launcher ARGV...]` runs from the repository in the user's terminal:
    1. Preconditions: an active run, autonomy armed with `relaunch`, no active session. Otherwise "End the interactive session first" and exit 2.
    2. It calls `settle`. If the run stopped, it exits with that reason's code.
-   3. It launches one pass, `claude -p "$(cat P/config/relaunch-prompt.md)" --permission-mode MODE [--model ID] --output-format text`, with `start_new_session=True`, cwd at the repository and output to `<state>/relaunch/pass-N.log`. `--launcher` replaces the command (prompt on stdin); tests use it.
-   4. After the pass exits, it ends any active session, bound to a harness id or not, with outcome `pass-exited` (F10).
+   3. It launches one pass, `claude -p "$(cat P/config/relaunch-prompt.md)" --permission-mode MODE [--model ID] --output-format text`, with `start_new_session=True`, cwd at the repository and output to `<state>/relaunch/pass-N.log`. The pass environment carries `ORCHESTRA_RELAUNCH_PASS=<fresh nonce>`, and `start` stores it as `session.relaunch_pass`. `--launcher` replaces the command (prompt on stdin); tests use it.
+   4. After the pass exits, it ends the active session, bound to a harness id or not, with outcome `pass-exited` (F10), only when its `relaunch_pass` equals the pass nonce. Any other active session is left alone and the harness exits 2: "A session not started by this pass is active" (C4/R2-9). The nonce is a cooperative marker, not authentication.
    5. It records `{pass, signature, stalled_streak}` in `<state>/relaunch/harness.json`, outside the repository.
    6. After a stalled pass it waits `min(60 * 2^(streak-1), 900)` seconds, and never stops for stalls (OD-7 C).
    7. On SIGINT or SIGTERM it disarms first (reason `disarmed`, brief written), then forwards the signal to the pass's process group, then exits 130.
@@ -433,7 +475,7 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | `harness-state.json` resume | `<state>/relaunch/harness.json` plus engine state. |
 | STATE.md OPEN check | Active run and armed `relaunch` autonomy. |
 
-**Files:** `P/scripts/orchestra_core/relaunch.py` (new, stdlib); `P/scripts/orchestra.py`; `P/scripts/orchestra_core/engine.py` (`interrupt`, `interrupt_active`, `end_harness_session`, `close_session`, `_autonomy_on`, `hook_stop`, `settle`, `signature`); `P/scripts/orchestra_core/hooks.py` (armed check with no session); `P/config/relaunch-prompt.md` (new); `autonomy.md`, `cli.md`, `docs/cli.md`, `docs/hooks.md`; `README.md`; `tests/test_engine.py`, `tests/test_hooks.py`, `tests/test_integration.py`, `tests/test_packaging.py`.
+**Files:** `P/scripts/orchestra_core/relaunch.py` (new, stdlib); `P/scripts/orchestra.py`; `P/scripts/orchestra_core/engine.py` (`open_session` stores `relaunch_pass`, `interrupt`, `interrupt_active`, `end_harness_session`, `close_session`, `_autonomy_on`, `hook_stop`, `settle`, `signature`); `P/scripts/orchestra_core/hooks.py` (armed check with no session); `P/config/relaunch-prompt.md` (new); `autonomy.md`, `cli.md`, `docs/cli.md`, `docs/hooks.md`; `README.md`; `tests/test_engine.py`, `tests/test_hooks.py`, `tests/test_integration.py`, `tests/test_packaging.py`.
 
 **No lost functionality:** in-session autonomy without `--relaunch` behaves as in 2.1 apart from 5.8. Every downstream feature has the named replacement.
 
@@ -452,7 +494,8 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | `test_relaunch_refuses_with_active_session` (test_integration.py) | Exit 2. |
 | `test_relaunch_requires_permission_mode` (test_integration.py) | Exit 2. |
 | `test_relaunch_backs_off_after_stall_and_never_exits_on_stalls` (test_integration.py) | Injected clock: growing waits, still running after five stalls, deadline exits 4. |
-| `test_relaunch_ends_orphaned_pass_session` (test_integration.py) | Both a bound and an unbound session left by a dead pass are ended; the next `start` succeeds. |
+| `test_relaunch_ends_orphaned_pass_session` (test_integration.py) | A bound and an unbound session carrying the pass nonce are ended; the next `start` succeeds. |
+| `test_relaunch_leaves_foreign_session_and_exits_2` (test_integration.py) | A session without the nonce stays active; exit 2. |
 | `test_relaunch_sigint_disarms_before_forwarding` (test_integration.py) | Exit 130; reason `disarmed`; the brief exists before the fake pass sees the signal. |
 | `test_relaunch_prompt_ships_and_forbids_background_work` (test_packaging.py) | The file ships and contains the foreground-only sentence. |
 
@@ -550,12 +593,14 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
    - a git global repository option (`-C`, `--git-dir`, `--work-tree`), a `GIT_DIR` / `GIT_WORK_TREE` assignment, a wrapper (`sudo`, `env`, `nice`, `xargs`) or a command substitution: "Branch deletion must run plainly in the session repository"
 3. **Still denied:** multi-branch deletes, `:b` refspecs, `--delete` with other push options, forced remote-tracking deletes (`branch -D -r`). Non-forced `branch -d -r` stays boundary/delete as today (F16).
 4. **Python check** in hooks.py, when the category is `merged-delete`. It runs before the autonomy-off allow (hooks.py:211) and also when `engine` is None:
-   1. Under active autonomy (including relaunch, 5.10), deny with the 2.1 delete-boundary reason (OD-13 A).
+   1. Under active autonomy (including relaunch, 5.10), deny with the 2.1 delete-boundary reason (OD-13 A). The autonomy deny at hooks.py:196 changes from `category == 'boundary' and boundary == 'delete'` to `boundary == 'delete'`, so it also matches category `merged-delete` (C4/R2-7).
    2. Resolve the default ref as `_on_default_branch` does (hooks.py:272-285); for a remote delete use `refs/remotes/<remote>/HEAD`, else `<remote>/main`. Unresolvable: deny.
    3. Tip: `refs/heads/<b>` or `refs/remotes/<remote>/<b>`. Missing, the default branch or the checked-out branch: deny.
    4. Remote delete (OD-14 A): `git ls-remote <remote> refs/heads/<b>` with `GIT_TERMINAL_PROMPT=0` and a 3 s timeout must return the tracking sha; otherwise deny (F15).
    5. Merged if (a) `merge-base --is-ancestor <tip> <default>`, or (b) `<tip>^{tree}` is in one `git rev-list --first-parent -n2000 --format=%T <default>` call's output (F15), or (c) `<tip>` is an ancestor of a local branch or remote-tracking ref that meets (b), evaluated afresh at each delete (OD-12 A).
    6. Otherwise deny: "Branch B is not merged into DEFAULT (no ancestor, tree or covering-branch evidence)".
+5. **Gate argv (C4/R2-1).** `run_gate` (engine.py:826-828) refuses every decision whose class is not `allow`, not only a non-allow action. No boundary argv (merged-delete, delete, merge) runs unchecked through `gate`: "Gate command forbidden: boundary actions run only through the guarded hook".
+6. **Corpus schema (C4/R2-7).** A corpus case may carry `decision_category`; merged-delete cases read `"class": "boundary", "category": "delete", "decision_category": "merged-delete"`. tests/test_guard_corpus.py:37-59 and guard.test.ts:19 accept the key and assert that `decision.category` equals it in both guards.
 
 **Test and corpus flips (F12), each with its new expected class:**
 
@@ -568,15 +613,15 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | corpus `deny-destructive-3`, `deny-destructive-36`, `deny-push-destination-4`, `inline-r2b-55`, `inline-r2b-60` | deny | boundary/merged-delete |
 | corpus `guard-r12-16` (`git -C $(pwd) branch -D x`), `guard-r12-17` (`sudo ...`), `guard-fx4-3` (`nice ... $(echo)`), `inline-r2b-54`, `inline-r2b-80` (`xargs`) | deny | deny (unchanged) |
 
-**Files:** `P/scripts/orchestra_core/guards.py` (`_git`, `_boundary`, chain combine); `P/hooks/mod/guard.ts`; `P/config/guard-rules.json` (`_doc` text); `P/config/guard-corpus.json`; `P/scripts/orchestra_core/hooks.py`; `docs/hooks.md`; `tests/test_guard_corpus.py`, `tests/test_hooks.py`, `P/hooks/mod/guard.test.ts`, `P/hooks/mod/orchestra.test.ts`.
+**Files:** `P/scripts/orchestra_core/guards.py` (`_git`, `_boundary`, chain combine); `P/hooks/mod/guard.ts`; `P/config/guard-rules.json` (`_doc` text); `P/config/guard-corpus.json`; `P/scripts/orchestra_core/hooks.py`; `P/scripts/orchestra_core/engine.py` (`run_gate`); `tests/test_engine.py`; `docs/hooks.md`; `tests/test_guard_corpus.py`, `tests/test_hooks.py`, `P/hooks/mod/guard.test.ts`, `P/hooks/mod/orchestra.test.ts`.
 
-**No lost functionality:** every denied shape outside the listed ones stays denied; non-forced `branch -d` keeps its class; the autonomy deletion boundary and the release permit path are unchanged.
+**No lost functionality:** every denied shape outside the listed ones stays denied; non-forced `branch -d` keeps its class; the autonomy deletion boundary and the release permit path are unchanged. Named replacement: a boundary argv in `gate`, accepted by 2.1, is refused; that step runs as a plain command through the hook.
 
 **Acceptance tests:**
 
 | Test | Behavior |
 |---|---|
-| Corpus, both guards | merged-delete: `git branch -D x`, `git branch --delete --force x`, `git branch -df x`, `git push origin --delete x`, `git push --delete origin x`, `git push origin -d x`, `git push origin --del x`. |
+| Corpus, both guards | merged-delete (with `decision_category`): `git branch -D x`, `git branch --delete --force x`, `git branch -df x`, `git branch --del --forc x` (C3/R2-7), `git push origin --delete x`, `git push --delete origin x`, `git push origin -d x`, `git push origin --del x`. |
 | Corpus, both guards | deny: `git branch -D x y`, `git push origin --delete x y`, `git push origin :x`, `git push https://h/r.git --delete x`, `git push origin --delete --force x`, `git branch -D -r origin/x`, `git branch -d y && git branch -D x`, `git branch -D a; git branch -D b`, `cd /o && git branch -D x`, `GIT_DIR=/o git branch -D x`. |
 | Corpus | `git branch -d -r origin/x` stays boundary/delete. |
 | `test_merged_delete_allows_ancestor_branch` (test_hooks.py) | Fast-forward merged branch: allowed. |
@@ -587,6 +632,8 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | `test_merged_delete_denied_under_autonomy` (test_hooks.py) | Denied. |
 | `test_remote_delete_denied_when_ls_remote_differs_or_times_out` (test_hooks.py) | Moved tip and unreachable remote: denied. |
 | `merged-delete is delegated` (orchestra.test.ts) | The mod calls the Python hook for `git branch -D x`. |
+| `test_gate_refuses_merged_delete_and_boundary_argv` (test_engine.py) | `gate` with `git branch -D x`, `git branch -d x` or `git worktree remove x`: refused, nothing runs. |
+| `test_corpus_decision_category_matches` (test_guard_corpus.py, guard.test.ts) | Every case with `decision_category` matches `decision.category` in both guards. |
 
 ### 5.15 Guard: abbreviated long options
 
@@ -607,7 +654,7 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 | Test | Behavior |
 |---|---|
-| Corpus deny, both guards | `git add --al`, `git add --a`, `git add --upd`, `git add --no-ignore-rem`, `git reset --har`, `git clean --forc`, `git clean --f`, `git branch --del --forc x`, `git checkout --forc`, `git switch --disc`, `git push --mir origin`, `git push --ta origin`, `git push --pru origin`, `git push --al origin`, `git commit --am -m x`, `git commit --amend`, `git clean -f --dry`. |
+| Corpus deny, both guards | `git add --al`, `git add --a`, `git add --upd`, `git add --no-ignore-rem`, `git reset --har`, `git clean --forc`, `git clean --f`, `git branch --del --forc x y`, `git checkout --forc`, `git switch --disc`, `git push --mir origin`, `git push --ta origin`, `git push --pru origin`, `git push --al origin`, `git commit --am -m x`, `git commit --amend`, `git clean -f --dry`. |
 | Corpus release | `git push --push-o=x origin main`. |
 | Corpus allow | `git commit -m x file`. |
 | `test_no_harmless_option_is_prefix_of_guarded_option` (test_guard_corpus.py) | For each verb in the fixture, no full option outside the guarded set is a strict prefix of a guarded one. |
@@ -616,7 +663,7 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 **Current (OBSERVED):** the handoff's chain `git status && git diff --quiet && git worktree remove X && rmdir Y || true` and 13 variants classify as boundary/delete in both guards without throwing. The Python hook returns `{}` in about 0.18 s, also with a payload `cwd` that does not exist. The message is the mod's `FAIL_CLOSED` (orchestra.ts:18), returned by `delegate` (orchestra.ts:79-92) on a non-zero exit, non-JSON stdout, malformed output or any thrown error (orchestra.ts:403-406). `runHook` spawns `/bin/sh run-hook.sh` in the session cwd with an 8000 ms timeout (orchestra.ts:75-77) and is shared by `delegate`, `readWhere` (orchestra.ts:95-96), `autonomyCli` (orchestra.ts:104-105) and `--cli status` (orchestra.ts:436-437). In Node, a spawn with a missing cwd throws ENOENT.
 
-**Hypotheses:** H1 (REASONED): the session cwd was a removed worktree, so the spawn failed before Python ran. H2 (REASONED): the hook waited behind an exclusive `state.lock` held during artifact hashing past the timeout. H3 (UNKNOWN): another mod-side exception.
+**Hypotheses:** H1 (REASONED): the session cwd was a removed worktree, so the spawn failed before Python ran. H2 (REASONED): the hook waited behind an exclusive `state.lock` held during artifact hashing past the timeout. H3 (UNKNOWN): another mod-side exception. H4 (REASONED, C4/R2-8): a malformed deny exits 2 (hooks.py:44-47, 191) and `delegate` maps every non-zero exit to `FAIL_CLOSED` (orchestra.ts:83), hiding the reason.
 
 **New:**
 
@@ -627,6 +674,7 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 5. Lock hardening: the hook's state read waits at most 2 s for the lock and then fails closed with "Orchestra state is busy; retry".
 6. If neither hypothesis reproduces, items 2 to 5 ship as hardening and the CHANGELOG records the unreproduced gap (S-e). 2.2.0 is not held for it.
 7. Regression corpus cases add the literal chain and its 13 variants.
+8. On exit 2, `delegate` parses stdout and returns its deny reason when one is present; otherwise the item 4 reason (H4).
 
 **Files:** `P/hooks/mod/orchestra.ts`, `orchestra.test.ts`; `P/scripts/orchestra_core/hooks.py` (`main`, missing cwd); `P/scripts/orchestra_core/engine.py` (lock wait for the hook read); `P/config/guard-corpus.json`; `tests/test_hooks.py`; `CHANGELOG.md`.
 
@@ -639,6 +687,7 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 | `delegate spawns the hook from the plugin root when the session cwd is gone` (orchestra.test.ts) | Spawn cwd is `plugin.root`; payload cwd is the removed directory. |
 | `cli reads pass --repo and keep their spawn cwd` (orchestra.test.ts) | `where`, `status` and `autonomy` calls carry `--repo <session cwd>`. |
 | `delegate failure reason names the failure class` (orchestra.test.ts) | Exit 3, a thrown spawn and a timeout each give their class. |
+| `delegate surfaces the reason of an exit-2 deny` (orchestra.test.ts) | Exit 2 with a deny payload: that reason, not `FAIL_CLOSED`. |
 | `test_pretooluse_missing_cwd_denies_delegated_class_with_reason` (test_hooks.py) | `git worktree remove X` with a missing cwd: the cd message. |
 | `test_pretooluse_missing_cwd_allows_nothing_new` (test_hooks.py) | Regression for allow-class commands. |
 | `test_hook_state_read_fails_closed_after_lock_wait` (test_hooks.py) | A held exclusive lock: the busy reason within 3 s. |
@@ -668,7 +717,7 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 ### 5.19 Repository follow-up after 2.2 (this repository only)
 
-Not part of the 2.2.0 change set. After 2.2.0 is installed, an operator cleanup card deletes the 56 `v2/*` branches first, while `feat/v2-roles-guard-mods` still provides covering evidence, then `feat/v2-roles-guard-mods` and `fix/agent-matcher`. Each deletion is one plain `git branch -D <b>` the guard allows. Acceptance for that card: `git for-each-ref refs/heads/v2` prints nothing, and the card log shows each allow decision.
+Not part of the 2.2.0 change set. After 2.2.0 is installed, an operator cleanup card deletes the `v2/*` branches (56 OBSERVED again in D3 by `git for-each-ref refs/heads/v2`; the handoff says 55; the card recounts, C3/N-7) first, while `feat/v2-roles-guard-mods` still provides covering evidence, then `feat/v2-roles-guard-mods` and `fix/agent-matcher`. Each deletion is one plain `git branch -D <b>` the guard allows. Acceptance for that card: `git for-each-ref refs/heads/v2` prints nothing, and the card log shows each allow decision.
 
 ## 6. Engine and state changes
 
@@ -678,6 +727,9 @@ State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17
 |---|---|---|---|---|
 | `tasks[*]` | `wave` | non-empty str, builder implementation only | absent | 5.1 |
 | `tasks[*]` | `held_finding` | non-empty str, on the held tip | absent | 5.2 |
+| `tasks[*]` | `rev` | `"2.2"`, stamped by `add_task` | absent (2.1 card) | 5.6 |
+| `tasks[*]` | `superseded_by` | list of ids | absent | 5.1 |
+| `reviews[*]` | `cleared` | object of held tip id to reason, final only | `{}` | 5.5 |
 | `reviews[*]` | `task_findings` | object of id to list of str | absent | 5.1 |
 | `reviews[*]` | `notes` | list of str | `[]` | 5.6 |
 | `reviews[*]` | `out_of_scope` | list of str, final only | `[]` | 5.7 |
@@ -686,14 +738,17 @@ State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17
 | `autonomy` | `max_passes`, `max_stalls` | int, optional | absent | 5.8 |
 | `autonomy` | `relaunch` | bool | `false` | 5.10 |
 | `autonomy` | `signature` | str | absent | 5.10 |
+| `autonomy` | `release` | `{remote, target}` | absent | 5.8 |
+| `session` | `relaunch_pass` | str | absent | 5.10 |
+| top level | `last_brief` | `{reason, at, text, path}` | absent | 5.9 |
 
-**Card states:** `TASK_STATES` gains `held` (5.2). `PARKABLE` stays `queued`, `running`, `reported`; `park` and `unpark` keep their 2.1 behavior for approval boundaries.
+**Card states:** `TASK_STATES` gains `held` (5.2); `supersede` reuses `accepted` (5.1 item 11). `PARKABLE` stays `queued`, `running`, `reported`; `park` and `unpark` keep their 2.1 behavior for approval boundaries.
 
-**Report body keys read by `record_review`** (F17: read from the report body, so `orchestra.py review` needs no new flags): `task_findings`, `issues`, `out_of_scope`, `gate_receipts`.
+**Report body keys read by `record_review`** (F17: read from the report body, so `orchestra.py review` needs no new flags): `task_findings`, `issues`, `out_of_scope`, `gate_receipts`, `cleared`. Corpus cases gain the optional key `decision_category` (5.14 item 6).
 
-**Stop reasons:** removed `cap-passes`, `cap-stalls` (still readable in 2.1 reports); kept `deadline`, `complete`, `ledger-tampered`, `disarmed`, `parked-only`, `no-ready-card`; new close reason `closed` for the run brief.
+**Stop reasons:** removed `cap-passes`, `cap-stalls` (still readable in 2.1 reports); kept `deadline`, `complete`, `ledger-tampered`, `disarmed`, `parked-only`, `no-ready-card`; new brief reasons `closed`, `interrupted` and `ended` (5.9).
 
-**New CLI:** `hold`, `brief`, `finding add|list`, `gate --again`, `autonomy arm --relaunch`, `autonomy settle`, `relaunch`; `add` accepts `wave` and `review_of: ["wave:W"]`; `status` lists waves.
+**New CLI:** `hold`, `supersede`, `brief`, `finding add|list`, `gate --again`, `autonomy arm --relaunch`, `autonomy settle`, `relaunch`; `add` accepts `wave` and `review_of: ["wave:W"]`; `status` lists waves.
 
 **Policy:** `DEFAULT` (engine.py:38-40) is unchanged, so `policy_hash` (engine.py:201-202) keeps 2.1 runs loadable.
 
@@ -730,8 +785,8 @@ State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17
 
 ## 9. Risks
 
-- **K1:** Held work stays in the candidate between the build and the final phase, so later waves may build on a defect. Mitigation: the final lenses cover held chains first, and completion refuses until they are accepted. Residual: a later wave's own review may flag an effect of held work; the reviewer attributes it to the held chain, not the later card.
-- **K2:** No cap on passes or final rounds means a confused run spends until the deadline. Mitigation: stall back-off, the idle stop, and fingerprint-driven re-diagnosis. Cost is bounded only by the deadline; without a deadline, by the user.
+- **K1:** Held work stays in the candidate between the build and the final phase, so later waves may build on a defect. Mitigation: the final lenses cover held chains first, and completion refuses until they are accepted. Residual: a later wave's gate may fail because of held work; the reviewer attributes it to the held tip outside the coverage (5.4 item 3), so the later cards are not blocked.
+- **K2:** No cap on passes or final rounds means a confused run spends until the deadline. Mitigation: stall back-off, the idle stop, and repeat-driven re-diagnosis. `parse_ledger` requires a deadline to arm (engine.py:95-113), so every armed run has that bound (C3/N-5); an unarmed run has no loop.
 - **K3:** Under `relaunch`, autonomy outlives sessions by design. If the harness itself dies, the run stays armed with no session until `disarm`. Recovery is manual, as for 2.1 lease loss. Because `_autonomy_on` reads true in that state (5.10 item 3), the boundaries keep applying.
 - **K4:** Merged-branch evidence: an offline remote delete is denied (OD-14). The covering rule depends on deletion order. A squash landing does not keep the covered commits; work reverted on the covering branch before landing is gone once the children are deleted (OD-12 A accepts this). The 2000-commit window may deny very old squash merges, the safe direction.
 - **K5:** The fail-closed root cause may stay UNKNOWN; then only hardening ships and the gap is in the CHANGELOG.
@@ -740,7 +795,9 @@ State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17
 - **K8:** Architecture checks inside the correctness lens put more on one Opus card (OD-4 A).
 - **K9:** Abbreviation matching depends on git's option set; the pinned fixture catches drift only when refreshed.
 - **K10:** The materiality line ("about 20%") needs judgment. A reviewer could under-block. Mitigation: blocking requires a named impact, security and data-loss defects always block, and notes reach the brief.
-- **K11:** Workflow under `-p` is UNKNOWN until the 5.10 live check; the fallback is foreground Agent calls.
+- **K11:** Workflow under `-p` is UNKNOWN until the 5.10 live check; the fallback is foreground Agent calls. Whether the pass's Bash calls inherit `ORCHESTRA_RELAUNCH_PASS` is also UNKNOWN (REASONED likely); the same live check records it. If not, step 4 exits 2 and the user ends the session.
+- **K12:** Under `relaunch`, every pass end appends a brief, so `progress.md` grows by one brief per pass. The relaunch prompt reads only `orchestra.py brief`.
+- **K13:** A lens may clear a held tip on judgment. Mitigation: every lens addresses every held tip with a reason, the reasons reach the brief, and a correctness-lens finding still blocks.
 
 ## 10. Decisions
 
@@ -776,19 +833,37 @@ State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17
 3. Final in-scope findings must be attributed to chain tips; a defect no card introduced is out of scope (5.5 items 2-3).
 4. Each round's re-check is the failed lens over all tasks with its brief limited to the still-failing items; an unchanged fingerprint gets investigator-code re-diagnosis first (5.5 items 5-6).
 5. When all re-checks are CLEAN, each stale lens records one closing confirmation over the cumulative final-repair diff, after a re-gate (5.5 item 7). The alternative, completing on stale lens receipts, would break "any later edit voids earlier evidence".
-6. Materiality schema: an `issues` list with `severity` and a required `impact` for blocking; string-only reports stay 2.1 (5.6).
+6. Materiality schema: an `issues` list with `severity` and a required `impact` for blocking; string-only reports are refused for 2.2 cards and stay 2.1 only for migrated cards (5.6 item 3; coordinator decision 9 below).
 7. Security and data-loss defects are always material (5.6 item 1).
-8. Approval boundaries stay hard under autonomy: an armed run never pushes, merges or releases, and ends with "ready to release" in the brief; an unarmed run releases through the permit. This keeps autonomy.md's "hard and not configurable" against Round 2's "armed or not, seamless". The Round 3 grant covers this build run's coordinator, not the product rule.
+8. Overridden by the Coordinator ruling (section 2): approval boundaries stay hard by default; a ledger line may pre-authorize the one configured release (5.8 item 8). The Round 3 grant covers this build run's coordinator, not the product rule.
 9. The wave-boundary gate runs after the builders report and before the wave review (5.4).
-10. A wave member parked at a boundary before review: park the wave review and add a replacement with explicit ids (5.1 item 9).
+10. A wave member parked at a boundary before review: park the wave review, add a replacement with explicit ids, and clear the original with `supersede` (5.1 items 9 and 11).
 11. Waves are ordered by first add (5.1 item 3).
 12. The run brief is written by `close_session` too, and `orchestra.py brief` prints it (5.9).
-13. A held card counts as live for the idle stop and blocks the `complete` stop (5.8).
+13. A held card counts as live for the idle stop; the `complete` stop needs `_completion_evidence` (5.8 item 3).
 14. Relaunch passes use foreground Agent calls; Workflow is allowed only if the live check passes (5.10 item 9).
-15. Fingerprint: first 12 hex of SHA-256 over the normalized text; it keys triage and final-round repetition (glossary, 5.7).
+15. Fingerprint: first 12 hex of SHA-256 over the normalized text; it keys triage; final-round repetition is the fingerprint or chain id plus lens category (glossary, 5.5 item 6, 5.7).
 16. Lock hardening for the hook read: 2 s wait, then fail closed with a named reason (5.16).
 17. "Morning brief" is renamed "Run brief", because every run writes it.
 18. Downstream repositories are named generically in this spec, per the charter.
+
+**Coordinator decisions after round 2 (binding; recorded as given):**
+
+1. A gate failure from a held chain is attributed to the held tip outside the coverage and does not block the covered cards (5.4 item 3; C3/R2-1).
+2. The `complete` stop requires completion evidence: all accepted, nothing held or repairing, no current final finding (5.8 item 3; C3/R2-2).
+3. Release pre-authorization: one optional ledger line `- Release: pre-authorized <remote> <target>` matching `policy.release`; only that pair is exempt; a malformed line refuses `arm`; without it the run ends "ready to release" (5.8 item 8; C3/R2-3, C4/R2-6).
+4. `run_gate` refuses every boundary argv (5.14 item 5; C4/R2-1).
+5. An absent `task_findings` key means CLEAN for that task at every reader; the O22 void applies per task (5.1 item 4; C4/R2-2).
+6. Every final receipt addresses each held tip with an attributed finding or a `cleared` reason; only chains with a current attributed finding get a repair (5.5 items 3-4; C3/R2-6, C4/R2-3).
+7. An unstarted review card fully replaced by newer accepted reviews leaves through `supersede` (5.1 item 11; C3/R2-10).
+8. The brief is written on close, interrupt and harness end, armed or not; SessionStart shows the newest; it has "Still failing / next phase", mirrored in the PR (5.9; C4/R2-5, C3/N-4, C3/R2-8).
+9. New 2.2 cards need `issues` on review and critic receipts; string-only findings stay only for migrated 2.1 cards; the four-grade scale is mapped (5.6; C3/R2-9).
+10. Tip rule on repair-diff checks; `hold` of a builder card blocked by the check; accept clean members, reviews and investigators before repairs dispatch (5.1 items 6 and 10, 5.2 item 2; C3/R2-4, C3/R2-5, C4/R2-4).
+11. Repetition is also keyed on chain id plus lens category (5.5 item 6; C3/N-1).
+12. One Opus repair card per chain, not one batched card: a declared change from the handoff's "batched for efficiency"; the batching is the parallel dispatch of those cards in one final repair wave (5.5 item 4; C3/N-2).
+13. The deadline stays required for armed autonomy (K2; C3/N-5).
+
+Also declared: 5.2 item 7 (a held chain accepts without repair) needs every final lens to record `cleared` for it with a reason (5.5 item 4).
 
 ## 11. Removed from the draft
 
@@ -803,48 +878,50 @@ State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17
 
 ## 12. Critic finding disposition
 
-C1 (spec lens):
+C1 (spec lens), round 1:
 
-- **B1:** resolved in §5.5 (final repair rounds, re-check, closing confirmation; cleanup card replaced).
-- **B2:** resolved in §5.1 item 6 (check covers repairs and chain ancestors; `test_repair_diff_check_covering_chain_accepts_original`).
-- **B3:** removed by held model (§11).
-- **S-a:** resolved in §5.1 item 9 (boundary parks only; replacement review).
-- **S-b:** resolved in §5.4 items 2-3 and §5.11 item 1 (failed gate becomes a blocking finding).
-- **S-c:** resolved in §5.9 (run brief on every close; `brief` command; PR section).
-- **S-d:** resolved in §5.1 item 6 (rejected-only cards ride the repair-diff check).
-- **S-e:** resolved in §5.16 item 6 (Round 2 item 6: ship the hardening, record the gap).
-- **S-g:** resolved in §5.1 item 3 (first-add order).
-- **S-h:** resolved in §5.13 item 2 (check at add only).
-- **N1:** removed by held model (§5.3: held cards must be accepted, so no exclusion exists).
-- **N2:** resolved in §5.10 item 2.
-- **N3:** resolved in §5.1 items 1-2 (builder implementation cards only).
-- **N4:** resolved in §5.1 item 1 (repair cards carry no label).
-- **N5:** resolved in §5.7 item 3 (triage keyed by fingerprint).
-- **N6:** resolved in §5.18.
-- **N7:** removed by held model (no branch is recorded).
-- **N8:** resolved in §5.2 item 2 (held log line in `progress.md`) and §5.9 (Final rounds section).
-- **N9:** resolved in §7 and §11 (K6 dropped; models.json the only matrix source).
+- **B1:** §5.5 (final repair rounds, re-check, closing confirmation). **B2:** §5.1 item 6 (check covers repairs and chain ancestors). **B3:** removed by held model (§11).
+- **S-a:** §5.1 items 9 and 11. **S-b:** §5.4 items 2-3, §5.11 item 1. **S-c:** §5.9. **S-d:** §5.1 item 6, §5.2 item 2. **S-e:** §5.16 item 6. **S-g:** §5.1 item 3. **S-h:** §5.13 item 2.
+- **N1:** removed by held model (§5.3). **N2:** §5.10 item 2. **N3:** §5.1 items 1-2. **N4:** §5.1 item 1. **N5:** §5.7 item 3. **N6:** §5.18. **N7:** removed by held model. **N8:** §5.2 item 2, §5.9. **N9:** §7, §11.
 
-C2F (feasibility lens):
+C2F (feasibility lens), round 1:
 
-- **F1:** resolved in §5.1 item 6.
-- **F2:** removed by held model (§11).
-- **F3:** resolved in §5.14 items 1-2 and 4 (stand-alone rule; Decision carries kind, remote, branch, argv; category vs boundary kind).
-- **F4:** removed by held model (§5.3).
-- **F5:** removed by held model for failed tickets; boundary parks resolved in §5.1 item 9.
-- **F6:** removed by held model (§11).
-- **F7:** resolved in §5.13 item 2.
-- **F8:** resolved in §5.16 item 2.
-- **F9:** resolved in §5.10 item 2 and item 5 step 7.
-- **F10:** resolved in §5.10 item 5 step 4.
-- **F11:** resolved in §5.10 item 3.
-- **F12:** resolved in §5.14 flip table.
-- **F13:** resolved in §5.14 item 1 and §5.15 item 1.
-- **F14:** resolved in §5.11 item 3 (re-gate documented).
-- **F15:** resolved in §5.14 item 4 steps 4-5.
-- **F16:** resolved in §5.14 item 3.
-- **F17:** resolved in §5.10 item 7 (no `--json`), §6 (body keys) and §5.5 item 4 (repairs through the Agent tool).
-- **F18:** resolved in §5.10 items 8-9 (foreground only; live Workflow check with fallback).
+- **F1:** §5.1 item 6. **F2:** removed (§11). **F3:** §5.14 items 1-2, 4. **F4:** removed (§5.3). **F5:** removed for failed tickets; boundary parks §5.1 item 9. **F6:** removed (§11).
+- **F7:** §5.13 item 2. **F8:** §5.16 item 2. **F9:** §5.10 items 2, 5 step 7. **F10:** §5.10 item 5 step 4. **F11:** §5.10 item 3. **F12:** §5.14 flip table.
+- **F13:** §5.14 item 1, §5.15 item 1. **F14:** §5.11 item 3. **F15:** §5.14 item 4 steps 4-5. **F16:** §5.14 item 3. **F17:** §5.10 item 7, §6, §5.5 item 4. **F18:** §5.10 items 8-9.
+
+Round 2, C3 (spec lens):
+
+- **C3/R2-1:** resolved in §5.4 item 3 (held-tip gate attribution outside coverage; coordinator decision 1).
+- **C3/R2-2:** resolved in §5.8 item 3 (`_completion_evidence` on the `complete` stop).
+- **C3/R2-3:** resolved in §5.8 item 8 (release pre-authorization line, exact pair).
+- **C3/R2-4:** resolved in §5.1 item 6 (tip rule on checks) and §5.2 item 2 (b) (hold of a check-blocked builder card).
+- **C3/R2-5:** resolved in §5.1 item 10 (accept before repair, engine-enforced).
+- **C3/R2-6:** resolved in §5.5 items 3-4 (every held tip addressed; `cleared` with reason).
+- **C3/R2-7:** resolved in §5.14 acceptance (`git branch --del --forc x` is merged-delete) and §5.15 (deny case becomes the multi-branch `x y`).
+- **C3/R2-8:** resolved in §5.9 item 1 section 3 (Still failing / next phase) and the PR section.
+- **C3/R2-9:** resolved in §5.6 items 3 and 5 (`rev` stamp; `issues` required for 2.2 cards; scale mapping).
+- **C3/R2-10:** resolved in §5.1 item 11 (`supersede`) with the completion integration test.
+- **C3/N-1:** resolved in §5.5 item 6 (chain id plus lens category).
+- **C3/N-2:** resolved in §10 coordinator decision 12 (declared).
+- **C3/N-3:** resolved in §5.9 item 2 (reason by mode; `test_close_session_brief_reason_by_mode`).
+- **C3/N-4:** resolved in §5.9 item 2 (`last_brief` shown at SessionStart regardless of autonomy).
+- **C3/N-5:** resolved in §9 K2 (deadline stays required).
+- **C3/N-6:** resolved in §5.8 item 7 (no-session Stop is a no-op; PreToolUse boundaries documented as intended).
+- **C3/N-7:** resolved in §5.19 (count re-observed; recount at execution).
+- **S-a, S-b, S-d (partial in round 2):** completed by C3/R2-10, C3/R2-1 and C3/R2-4 above.
+
+Round 2, C4 (feasibility lens):
+
+- **C4/R2-1:** resolved in §5.14 item 5 (`run_gate` refuses every boundary argv).
+- **C4/R2-2:** resolved in §5.1 item 4 (absent key CLEAN at five readers; per-task O22 void).
+- **C4/R2-3:** resolved in §5.5 item 4 (repair only chains with a current attributed finding).
+- **C4/R2-4:** resolved in §5.1 item 10 and §5.5 item 4 (accept before repair; `test_final_lens_then_repair_then_completion`).
+- **C4/R2-5:** resolved in §5.9 item 2 (brief on interrupt, harness end and close; SessionStart).
+- **C4/R2-6:** resolved in §5.8 item 8.
+- **C4/R2-7:** resolved in §5.14 items 4.1 and 6 (hooks.py:196 change; `decision_category` corpus key).
+- **C4/R2-8:** resolved in §5.16 hypothesis H4 and item 8.
+- **C4/R2-9:** resolved in §5.10 item 5 steps 3-4 (pass nonce; foreign session left, exit 2).
 
 ## 13. Out of scope
 
@@ -863,5 +940,7 @@ C2F (feasibility lens):
   - S4, S5 and S6 hold (5.4, 5.5, 5.7).
   - S7 holds: each section names its replacements.
   - Round 3 holds: the final loop has no cap (5.5), materiality lives in both skills, the schema and the engine rule (5.6), and no decision is open (10).
+  - The Coordinator ruling holds: release is pre-authorized only by an explicit ledger line naming the configured pair (5.8 item 8).
+  - Round 2 critics: every C3 and C4 id has a disposition in section 12, and the 13 coordinator decisions are recorded in section 10.
 - **Untestable requirements:** none. Each changed behavior names at least one test a builder can write first.
 - **Readiness:** ready for independent critic challenge (spec and feasibility) and then planning.
