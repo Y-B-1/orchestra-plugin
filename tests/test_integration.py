@@ -570,16 +570,18 @@ class AutonomyIntegration(unittest.TestCase):
         self.cli('--lease',self.lease,'unpark','c1')
         self.assertEqual(self.cli('status')['tasks']['c1']['state'],'queued')
 
-    def test_stop_continues_then_caps_then_session_start_shows_the_report(self):
+    def test_stop_continues_then_parks_then_session_start_shows_the_report(self):
         self.card('c1')
         self.ledger('1')
         self.cli('autonomy','arm')
         first=self.hook('Stop')
         self.assertEqual(first['decision'],'block')
+        self.cli('--lease',self.lease,'park','c1','--reason','needs a push')
         self.assertEqual(self.hook('Stop'),{})
-        self.assertEqual(self.cli('autonomy','status')['last_stop_reason'],'cap-passes')
+        self.assertEqual(self.cli('autonomy','status')['last_stop_reason'],'parked-only')
         context=self.hook('SessionStart',session_id='S3',source='startup')['hookSpecificOutput']['additionalContext']
-        self.assertIn('cap-passes',context)
+        self.assertIn('parked-only',context)
+        self.assertIn('Run brief',context)
         self.assertIn('progress.md',context)
 
     def test_hook_denies_boundary_only_while_active(self):
