@@ -74,11 +74,11 @@ export function subOf(args: string): Sub | null {
 function bandText(status: Json): string {
   const when = String(status['deadline'] ?? '');
   const hhmm = /T(\d{2}:\d{2})/.exec(when);
-  return `Orchestra autonomy: pass ${num(status['passes'])}/${num(status['max_passes'])}, deadline ${hhmm !== null ? hhmm[1]! : when !== '' ? when : '?'}`;
+  return `Orchestra autonomy: pass ${num(status['passes'])}, deadline ${hhmm !== null ? hhmm[1]! : when !== '' ? when : '?'}`;
 }
 
 export function stopLine(status: Json): string {
-  return `Orchestra autonomy stopped: ${String(status['last_stop_reason'] ?? 'unknown')} (passes ${num(status['passes'])}/${num(status['max_passes'])}, stalls ${num(status['stalls'])}/${num(status['max_stalls'])})`;
+  return `Orchestra autonomy stopped: ${String(status['last_stop_reason'] ?? 'unknown')} (pass ${num(status['passes'])}, stalls ${num(status['stalls'])})`;
 }
 
 /** Applies one status read. `stopped` is true when it was active until now and is not in this read. */
@@ -116,7 +116,7 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
   const seen = apply(auto, body);
   const parked = Array.isArray(body['parked']) ? body['parked'].length : 0;
   const band = { text: seen.band };
-  if (body['active'] === true) return { text: `${bandText(body)}\nstalls ${num(body['stalls'])}/${num(body['max_stalls'])}, parked ${String(parked)}`, band };
+  if (body['active'] === true) return { text: `${bandText(body)}\nstalls ${num(body['stalls'])}, parked ${String(parked)}`, band };
   const last = body['last_stop_reason'];
   return { text: `Orchestra autonomy: inactive${last !== undefined && last !== null ? ` (last stop: ${String(last)})` : ''}`, band };
 }

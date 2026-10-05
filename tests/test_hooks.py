@@ -1633,14 +1633,17 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(self.stop_as(self.linked, 's-1')['decision'], 'block')
         self.assertEqual(self.engine.status()['autonomy']['passes'], 1)
 
-    def test_stop_continues_while_active_and_stops_at_the_pass_cap(self):
+    def test_stop_continues_while_active_and_stops_at_the_deadline(self):
         self.arm(passes='1')
         self.add_card('c1')
         first = self.stop()
         self.assertEqual(first['decision'], 'block')
-        self.assertIn('Autonomy pass 1 of 1', first['reason'])
+        self.assertIn('Autonomy pass 1', first['reason'])
+        self.assertNotIn('Autonomy pass 1 of', first['reason'])
+        self.assertEqual(self.stop()['decision'], 'block')  # the old cap of 1 no longer stops the loop
+        self.now[0] += 7200
         self.assertEqual(self.stop(), {})
-        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'cap-passes')
+        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'deadline')
 
     def test_stop_stops_at_the_deadline(self):
         self.arm()

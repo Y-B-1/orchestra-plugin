@@ -131,12 +131,16 @@ def parse_ledger(text, now):
     fields = {}
     for name in ('goal', 'max_passes', 'max_stalls', 'deadline'):
         match = re.search(r'^' + name + r':[ \t]*(.*?)[ \t]*$', text, re.M)
+        if not match and name in ('max_passes', 'max_stalls'):
+            continue  # SPEC 5.8 item 5: a 2.1 cap is optional, recorded and never enforced
         if not match or not match.group(1):
             raise EngineError('Ledger field %s is missing or empty' % name)
         if re.fullmatch(r'<.*>', match.group(1)):
             raise EngineError('Ledger field %s still holds its template placeholder' % name)
         fields[name] = match.group(1)
     for name, top in (('max_passes', 20), ('max_stalls', 2)):
+        if name not in fields:
+            continue
         if not re.fullmatch(r'[0-9]{1,6}', fields[name]) or not 1 <= int(fields[name]) <= top:
             raise EngineError('Ledger field %s must be an integer from 1 to %d' % (name, top))
         fields[name] = int(fields[name])
@@ -175,8 +179,8 @@ def parse_ledger(text, now):
     for line in AUTONOMY_FIXED:
         if line not in boundaries:
             raise EngineError('Approval boundaries must keep the fixed line: ' + line)
-    return dict(goal=fields['goal'], max_passes=fields['max_passes'], max_stalls=fields['max_stalls'],
-                deadline=fields['deadline'], checks=checks)
+    caps = {k: fields[k] for k in ('max_passes', 'max_stalls') if k in fields}
+    return dict(goal=fields['goal'], deadline=fields['deadline'], checks=checks, **caps)
 
 
 def autonomy_preconditions(repo, home=None):
@@ -402,8 +406,10 @@ class Engine:
                 raise EngineError('Invalid run state ' + key)
         auto = state['autonomy']
         if auto is not None:
-            ints = ('passes', 'stalls', 'max_passes', 'max_stalls', 'armed_gates', 'armed_reviews')
-            if (not isinstance(auto.get('active'), bool) or ('report' in auto and not isinstance(auto['report'], dict))
+            ints = ('passes', 'stalls', 'armed_gates', 'armed_reviews')
+            if (not isinstance(auto.get('active'), bool)
+                    or any(k in auto and (isinstance(auto[k], bool) or not isinstance(auto[k], int))
+                           for k in ('max_passes', 'max_stalls')) or ('report' in auto and not isinstance(auto['report'], dict))
                     or (auto['active'] and (any(isinstance(auto.get(k), bool) or not isinstance(auto.get(k), int) for k in ints)
                                             or any(not isinstance(auto.get(k), str) for k in ('goal', 'deadline'))
                                             or any(not isinstance(auto.get(k), list) for k in ('checks', 'accepted'))
@@ -1481,8 +1487,17 @@ class Engine:
             parked = [dict(id=t['id'], reason=t.get('parked_reason', ''))
                       for t in state['tasks'].values() if t['state'] == 'parked']
             keys = ('passes', 'max_passes', 'stalls', 'max_stalls', 'deadline')
-            return dict(active=self._autonomy_on(state), parked=parked,
+            return dict(active=self._autonomy_on(state), parked=parked, signature=self._signature(state),
                         last_stop_reason=auto.get('last_stop_reason'), **{k: auto.get(k) for k in keys})
+
+    @staticmethod
+    def _signature(state):
+        """SPEC 5.10 item 7: SHA-256 of canonical JSON of the sorted (id, state, report fingerprint, repaired_by)
+        tuples and the counts of reviews, gates and findings. A pass that leaves it unchanged is a stall."""
+        tasks = sorted([t['id'], t['state'], (t.get('report_artifact') or {}).get('fingerprint'), t.get('repaired_by')]
+                       for t in state['tasks'].values())
+        return _digest(dict(tasks=tasks, reviews=len(state['reviews']), gates=len(state['gates']),
+                            findings=len(state.get('findings', []))))
 
     def autonomy_report(self):
         """The morning report shown at SessionStart, or None. Read-only."""
@@ -1531,8 +1546,11 @@ class Engine:
         header = ['## Run brief ' + at, '', '- stop reason: ' + reason]
         if auto:
             header += ['- deadline: ' + str(auto.get('deadline')),
-                       '- passes: %d of %d' % (auto['passes'], auto['max_passes']),
-                       '- stalls: %d of %d' % (auto['stalls'], auto['max_stalls'])]
+                       '- passes: %d' % auto['passes'],
+                       '- stalls: %d' % auto['stalls']]
+            caps = ['%s %d' % (k, auto[k]) for k in ('max_passes', 'max_stalls') if k in auto]
+            if caps:
+                header += ['- caps from the 2.1 ledger: %s (recorded, not enforced)' % ', '.join(caps)]
         else:
             header += ['- autonomy: not armed']
         parked = ['%s: %s' % (t['id'], t.get('parked_reason', '')) for t in tasks.values() if t['state'] == 'parked']
@@ -1547,6 +1565,9 @@ class Engine:
             if review.get('final'):
                 cleared_by.update(review.get('cleared') or {})
         held_tips = [t for t in tasks.values() if t.get('held_finding')]
+        if any(t['state'] == 'parked' and not self._is_release(t) for t in tasks.values()):
+            needs += ['%s (chain %s): held -- %s' % (t['id'], ', '.join(chain_of(t['id'])), t['held_finding'])
+                      for t in held_tips if t['id'] not in cleared_by and not t.get('repaired_by')]
         failing = []
         cache = {}
         for task in tasks.values():
@@ -1634,7 +1655,11 @@ class Engine:
             chain.append(tasks[chain[-1]]['repaired_by'])
         return chain
 
-    def _complete(self, state, auto):
+    def _complete(self, state):
+        """SPEC 5.8 item 3: the cheap all-accepted check first, then the ledger checks, then the completion evidence."""
+        if any(t['state'] != 'accepted' for t in state['tasks'].values()):
+            return False
+        auto = state['autonomy']
         matches = []
         for check in auto['checks']:
             same = [g for g in state['gates'] if g['name'] == check['name'] and g['argv'] == check['argv']]
@@ -1642,10 +1667,17 @@ class Engine:
                 return False
             matches.append(same[-1])
         artifact = self.artifact()
-        return all(g['artifact'] == artifact for g in matches)
+        if not all(g['artifact'] == artifact for g in matches):
+            return False
+        try:
+            self._completion_evidence(state)
+        except EngineError:
+            return False
+        return True
 
     def hook_stop(self):
-        """The bounded Stop continuation of SPEC 12.3. Caller identifiers do not authenticate."""
+        """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm and
+        an idle run. Caller identifiers do not authenticate."""
         with self._state(False) as state:
             if not self._autonomy_on(state):
                 return None  # Read-only unless autonomy is active
@@ -1653,29 +1685,31 @@ class Engine:
             if not self._autonomy_on(state):
                 return None
             auto = state['autonomy']
-            accepted = self._accepted(state)
+            tasks = state['tasks'].values()
             if not self._intact(auto['ledger']):
                 reason = 'ledger-tampered'
             elif self._clock() >= datetime.fromisoformat(auto['deadline']).timestamp():
                 reason = 'deadline'
-            elif self._complete(state, auto):
+            elif self._complete(state):
                 reason = 'complete'
             else:
+                signature = self._signature(state)
                 if auto['passes'] > 0:  # the arming turn is not a pass
-                    auto['stalls'] = 0 if set(accepted) - set(auto['accepted']) else auto['stalls'] + 1
-                auto['accepted'] = accepted
-                live = (any(t['state'] in ('running', 'reported') for t in state['tasks'].values())
-                        or bool(self._ready(state)))
-                if auto['stalls'] >= auto['max_stalls']:
-                    reason = 'cap-stalls'
-                elif auto['passes'] >= auto['max_passes']:
-                    reason = 'cap-passes'
-                elif not live:
-                    parked = any(t['state'] == 'parked' for t in state['tasks'].values())
+                    auto['stalls'] = auto['stalls'] + 1 if signature == auto.get('signature') else 0
+                auto['signature'] = signature
+                auto['accepted'] = self._accepted(state)
+                parked = any(t['state'] == 'parked' for t in tasks)
+                held = (any(t['state'] == 'held' for t in tasks)
+                        and not any(t['state'] == 'parked' and not self._is_release(t) for t in tasks))
+                live = any(t['state'] in ('running', 'reported') for t in tasks) or bool(self._ready(state))
+                if not live and not held:
                     reason = 'parked-only' if parked else 'no-ready-card'
                 else:
                     auto['passes'] += 1
-                    return ('Autonomy pass %d of %d: continue with the next ready card; park any card that '
-                            'reaches an approval boundary.' % (auto['passes'], auto['max_passes']))
+                    if live:
+                        return ('Autonomy pass %d: continue with the next ready card; park any card that '
+                                'reaches an approval boundary.' % auto['passes'])
+                    return ('Autonomy pass %d: start or continue the final phase; held work is still owed a '
+                            'final review.' % auto['passes'])
             self._stop_autonomy(state, reason)
             return None
