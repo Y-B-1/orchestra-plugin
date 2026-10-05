@@ -155,6 +155,14 @@ HEREDOC_ALLOWED = ["cat <<'EOF'\nit's fine\nEOF",
                    "cat <<'EOF'\n$(date)\nEOF",
                    'cat <<< "git reset --hard"',
                    'echo $((1 << 2))']
+# G2f item 4: raw ref deletion skips the branch-delete rules, so it denies; a create or move stays allowed.
+UPDATE_REF_DENIED = ['git update-ref -d refs/heads/x', 'git update-ref --delete refs/heads/x',
+                     'git update-ref --stdin', 'git update-ref -z --stdin', 'git update-ref --std',
+                     'git update-ref --no-deref -d refs/heads/x', 'git update-ref -m why -d refs/heads/x',
+                     'git -C wt update-ref -d refs/heads/x', 'true && git update-ref -d refs/heads/x',
+                     'git update-ref refs/heads/x ' + '0' * 40]
+UPDATE_REF_ALLOWED = ['git update-ref refs/heads/x HEAD', 'git update-ref refs/heads/x abc123 def456',
+                      'git update-ref -m dated refs/heads/x HEAD']
 LINKED_WORKTREE_COMMANDS = {'git push origin side': 'release', 'git -C ../linked push origin side': 'release',
                             'git push origin side && git status': 'release-multi'}
 
@@ -442,6 +450,30 @@ class HooksTest(unittest.TestCase):
         for command in ['git push origin feat/x', 'gh release create v1 --verify-tag']:
             self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'deny')
         self.assertEqual(self.pre('Bash', {'command': 'git status'}, armed=True).output, {})
+
+    def test_update_ref_delete_denied(self):
+        for command in UPDATE_REF_DENIED:
+            with self.subTest(command=command):
+                result = self.pre('Bash', {'command': command})
+                self.assertEqual(decision_of(result), 'deny')
+                self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
+                                 'Raw ref deletion is not allowed; use git branch -d')
+        for command in UPDATE_REF_ALLOWED:
+            with self.subTest(command=command):
+                self.assertEqual(self.pre('Bash', {'command': command}).output, {})
+
+    def test_edit_relative_path_with_empty_cwd_denies_missing_cwd(self):
+        with tempfile.TemporaryDirectory() as state, mock.patch.dict(os.environ, {'XDG_STATE_HOME': state}):
+            for name in ('Edit', 'Write'):
+                with self.subTest(tool=name):
+                    result = handle_event('PreToolUse', {'cwd': '', 'tool_name': name,
+                                                         'tool_input': {'file_path': 'notes.txt'}})
+                    self.assertEqual(decision_of(result), 'deny')
+                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
+                                     'Session directory no longer exists: cd to an existing directory, then retry')
+            # An absolute path needs no cwd and keeps its ordinary verdict.
+            self.assertEqual(handle_event('PreToolUse', {'cwd': '', 'tool_name': 'Edit',
+                                                         'tool_input': {'file_path': '/tmp/notes.txt'}}).output, {})
 
     def test_boundary_class_is_allowed_without_autonomy(self):
         for command in BOUNDARY_DELETE + BOUNDARY_MERGE:
@@ -879,6 +911,61 @@ class MergedDeleteHookTest(unittest.TestCase):
         self.assertLess(time.monotonic() - start, 9)
         for conn in held:
             conn.close()
+
+    def divergent_target(self):
+        """A second bare repository whose x carries a commit the fetch remote and the tracking ref lack."""
+        root = Path(self.temp.name)
+        target = root / 'target.git'
+        git(root, 'clone', '-q', '--bare', str(self.origin), str(target))
+        scratch = root / 'scratch'
+        git(root, 'clone', '-q', '-b', 'x', str(target), str(scratch))
+        for key, value in (('user.name', 'T'), ('user.email', 't@example.invalid')):
+            git(scratch, 'config', key, value)
+        (scratch / 'only-there.txt').write_text('unmerged\n')
+        git(scratch, 'add', 'only-there.txt')
+        git(scratch, 'commit', '-q', '-m', 'unmerged')
+        git(scratch, 'push', '-q', 'origin', 'x')
+        return target
+
+    def test_merged_remote_delete_denies_divergent_pushurl(self):
+        self.remote_branch()
+        self.assertAllowed('git push origin --delete x')  # matching push and fetch URL: still allowed
+        target = self.divergent_target()
+        git(self.repo, 'config', 'remote.origin.pushurl', str(target))
+        self.assertDenied('git push origin --delete x', 'push URL')
+        self.assertNotEqual(git(target, 'rev-parse', 'refs/heads/x'), git(self.repo, 'rev-parse', 'refs/remotes/origin/x'))
+
+    def test_merged_remote_delete_denies_pushinsteadof(self):
+        self.remote_branch()
+        target = self.divergent_target()
+        git(self.repo, 'config', 'url.%s.pushInsteadOf' % target, str(self.origin))
+        self.assertDenied('git push origin --delete x', 'push URL')
+
+    def remove_default_refs(self):
+        """No real default ref: origin/HEAD, origin/main and the local main are all absent."""
+        git(self.repo, 'remote', 'set-head', 'origin', '-d')
+        git(self.repo, 'update-ref', '-d', 'refs/remotes/origin/main')
+        git(self.repo, 'branch', '-q', '-m', 'main', 'trunk')
+
+    def assert_decoys_ignored(self, namespace):
+        self.side('x', 'x.txt', 'x\n', start='main')
+        self.remove_default_refs()
+        tip = git(self.repo, 'rev-parse', 'refs/heads/x')
+        for name in ('refs/remotes/origin/main', 'refs/remotes/origin/HEAD', 'refs/heads/main'):
+            decoy = namespace + name
+            with self.subTest(decoy=decoy):
+                git(self.repo, 'update-ref', decoy, tip)
+                try:
+                    self.assertEqual(git(self.repo, 'rev-parse', '--verify', '--quiet', name + '^{commit}'), tip)
+                    self.assertDenied('git branch -D x', 'The default branch cannot be resolved; refusing to delete x')
+                finally:
+                    git(self.repo, 'update-ref', '-d', decoy)
+
+    def test_merged_delete_ignores_decoy_branch_named_like_default_ref(self):
+        self.assert_decoys_ignored('refs/heads/')
+
+    def test_merged_delete_ignores_decoy_tag_named_like_default_ref(self):
+        self.assert_decoys_ignored('refs/tags/')
 
 
 class MarkerHandshakeTest(unittest.TestCase):
@@ -1857,6 +1944,16 @@ class RunBriefHookTest(unittest.TestCase):
         self.assertIsNone(self.hook(self.repo, 'git status'))
         self.assertEqual(self.hook(self.repo, 'git reset --hard'), 'deny')
         self.assertEqual(self.hook(self.repo, 'rm -rf build'), 'deny')  # raw armed state still guards the boundary
+
+    def test_ended_run_busy_lock_does_not_deny_non_delegated(self):
+        from orchestra_core.engine import Engine, StateBusy
+        self.engine.interrupt('main', self.lease)  # the run's session has ended
+        # The first read (status) succeeds; the second read (autonomy_active) meets a busy lock.
+        with mock.patch.object(Engine, 'autonomy_active', side_effect=StateBusy('Orchestra state is busy; retry')) as second:
+            self.assertIsNone(self.hook(self.repo, 'git status'))
+            self.assertIsNone(self.hook(self.repo, 'git commit -m done'))
+            self.assertEqual(self.hook(self.repo, 'git reset --hard'), 'deny')  # a plain deny keeps its verdict
+        self.assertTrue(second.called)
 
     def test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout(self):
         self.arm()

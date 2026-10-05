@@ -505,6 +505,26 @@ def _read_long_options(verb, options):
     return read
 
 
+def _raw_ref_delete(args):
+    """`git update-ref` that can delete: -d (alone or in a cluster), a long option that abbreviates --delete or
+    --stdin (its input can delete), or an all-zero new value. The value of -m is a message. Doubt reads as a delete."""
+    i = 0
+    while i < len(args):
+        x = args[i]
+        i += 1
+        if x == '-m':
+            i += 1
+        elif x.startswith('--'):
+            name = x.split('=', 1)[0]
+            if len(name) > 2 and ('--delete'.startswith(name) or '--stdin'.startswith(name)):
+                return True
+        elif x.startswith('-') and not x.startswith('-m') and 'd' in x[1:]:
+            return True
+        elif re.fullmatch(r'0{40}|0{64}', x):
+            return True
+    return False
+
+
 def _git(words):
     args = words[1:]
     changed_repo = False
@@ -527,6 +547,8 @@ def _git(words):
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
         return _deny('Git stash shares state across worktrees', 'stash')
+    if verb == 'update-ref' and _raw_ref_delete(args):
+        return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):
         return _deny('Hard reset discards work')
     if verb == 'clean' and ('f' in short or '--force' in flags) and not ('n' in short or '--dry-run' in flags):

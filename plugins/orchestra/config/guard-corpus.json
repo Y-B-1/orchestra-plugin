@@ -10355,6 +10355,97 @@
     "command": "git push origin other"
    },
    "class": "release"
+  },
+  {
+   "id": "update-ref-deny-1",
+   "input": {
+    "command": "git update-ref -d refs/heads/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-2",
+   "input": {
+    "command": "git update-ref --delete refs/heads/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-3",
+   "input": {
+    "command": "git update-ref --stdin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-4",
+   "input": {
+    "command": "git update-ref -z --stdin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-5",
+   "input": {
+    "command": "git update-ref --std"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-6",
+   "input": {
+    "command": "git update-ref --no-deref -d refs/heads/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-7",
+   "input": {
+    "command": "git update-ref -m why -d refs/heads/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-8",
+   "input": {
+    "command": "git -C wt update-ref -d refs/heads/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-9",
+   "input": {
+    "command": "true && git update-ref -d refs/heads/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-deny-10",
+   "input": {
+    "command": "git update-ref refs/heads/x 0000000000000000000000000000000000000000"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "update-ref-allow-1",
+   "input": {
+    "command": "git update-ref refs/heads/x HEAD"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "update-ref-allow-2",
+   "input": {
+    "command": "git update-ref refs/heads/x abc123 def456"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "update-ref-allow-3",
+   "input": {
+    "command": "git update-ref -m dated refs/heads/x HEAD"
+   },
+   "class": "allow"
   }
  ]
 }
