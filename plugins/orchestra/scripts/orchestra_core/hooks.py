@@ -187,6 +187,8 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         cwd = payload['cwd']
         if not isinstance(cwd, str):
             return _deny('Malformed cwd', True)
+        if not cwd:
+            cwd, missing_cwd = None, True  # An empty cwd is a missing one, as main() reads it
     else:
         try:
             cwd = os.getcwd()
@@ -413,15 +415,25 @@ def _merged_delete_check(decision, cwd, autonomy):
         return _deny('Branch deletion must run plainly in the session repository').output
     if remote and _git_out(cwd, 'config', '--get', 'remote.%s.url' % remote)[1] == '':
         return _deny('Remote %s is not configured' % remote).output
-    # Full refnames only (R2): a local branch or tag named origin/main must not shadow the default.
+    if remote:
+        # The delete goes to the push URL and ls-remote reads the fetch URL: both must name one repository.
+        code, fetch = _git_out(cwd, 'remote', 'get-url', remote)
+        pcode, pushes = _git_out(cwd, 'remote', 'get-url', '--push', '--all', remote)
+        if code != 0 or pcode != 0 or not fetch or any(url != fetch for url in pushes.splitlines() or ['']):
+            return _deny('Remote %s push URL differs from its fetch URL; refusing to delete %s' % (remote, branch)).output
+    # Full refnames only (R2): a local branch or tag named origin/main must not shadow the default, and a ref
+    # is read only after it exists exactly, so rev-parse's short-name lookup never finds a decoy (G2f).
     tracked = 'refs/remotes/%s/' % (remote or 'origin')
     heads = [tracked + 'HEAD', tracked + 'main'] + ([] if remote else ['refs/heads/main'])
     default = sha = None
     for ref in heads:
+        if ref.endswith('/HEAD'):
+            ref = _git_out(cwd, 'symbolic-ref', '--quiet', ref)[1]
+        if not ref or _git_out(cwd, 'show-ref', '--verify', '--quiet', ref)[0] != 0:
+            continue
         code, target = _git_out(cwd, 'rev-parse', '--verify', '--quiet', ref + '^{commit}')
         if code == 0 and target:
-            default = _git_out(cwd, 'symbolic-ref', '-q', ref)[1] if ref.endswith('/HEAD') else ref
-            default, sha = default or ref, target
+            default, sha = ref, target
             break
     if sha is None:
         return _deny('The default branch cannot be resolved; refusing to delete %s' % branch).output

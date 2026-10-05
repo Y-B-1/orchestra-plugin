@@ -668,6 +668,20 @@ function mergedDelete(verb: string, options: string[], allFlags: string[], short
   return dec('allow', 'Deletion is a boundary action', MERGED, { remote, argv: words.slice(), boundary: 'delete', kind, branch });
 }
 
+/** `git update-ref` that can delete: -d (alone or in a cluster), a long option that abbreviates --delete or --stdin (its input can delete), or an all-zero new value. The value of -m is a message. Doubt reads as a delete. */
+function rawRefDelete(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const x = args[i]!;
+    if (x === '-m') i++;
+    else if (x.startsWith('--')) {
+      const name = x.split('=')[0]!;
+      if (name.length > 2 && ('--delete'.startsWith(name) || '--stdin'.startsWith(name))) return true;
+    } else if (x.startsWith('-') && !x.startsWith('-m') && x.slice(1).includes('d')) return true;
+    else if (/^(?:0{40}|0{64})$/.test(x)) return true;
+  }
+  return false;
+}
+
 function git(words: string[]): Decision {
   let args = words.slice(1);
   let changedRepo = false;
@@ -691,6 +705,7 @@ function git(words: string[]): Decision {
   if (verb === 'stash') {
     return denyOf('Git stash shares state across worktrees', 'stash');
   }
+  if (verb === 'update-ref' && rawRefDelete(args)) return denyOf('Raw ref deletion is not allowed; use git branch -d');
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
   if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');
   if (verb === 'branch' && (short.includes('D') || ((short.includes('d') || hasFlag('--delete')) && (short.includes('f') || hasFlag('--force'))))) {
