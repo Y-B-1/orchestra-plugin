@@ -285,7 +285,7 @@ class CohesionTests(unittest.TestCase):
             self.assertEqual(read(f'{d}/SKILL.md').count(MODE_RULE), 1, d)
 
     def test_worker_does_not_cap_fix_rounds(self):
-        # E1: the round cap belongs to the coordinator; the worker stops on its own blockers only.
+        # 2.2 ladder: repair and hold belong to the coordinator (no round cap); the worker stops on its own blockers only.
         worker = read('orchestra-worker/SKILL.md').lower()
         self.assertNotIn('failed fixes', worker)
         self.assertIn('blocker in your own assignment', worker)
