@@ -10345,5 +10345,20 @@ export const CORPUS: CorpusCase[] = [
   },
   "class": "boundary",
   "category": "delete"
+ },
+ {
+  "id": "inline-e8-1",
+  "input": {
+   "command": "git worktree remove x"
+  },
+  "class": "boundary",
+  "category": "delete"
+ },
+ {
+  "id": "inline-e8-2",
+  "input": {
+   "command": "git push origin other"
+  },
+  "class": "release"
  }
 ];
