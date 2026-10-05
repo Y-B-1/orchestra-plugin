@@ -3541,6 +3541,20 @@ class RelaunchTests(AutonomyFixture, HoldFixture):
         self.engine.open_session('main')
         self.assertNotIn('relaunch_pass', self.engine.status()['session'])
 
+    def test_open_session_ignores_malformed_env_pass_nonce(self):
+        """SPEC 5.10 item 5.3: the env nonce takes the marker-name check; a malformed one stores no nonce."""
+        marks = self.state / 'relaunch'
+        marks.mkdir()
+        self.arm_relaunch()
+        self.end_session()
+        (marks / 'pass-abc123.marker').write_text('')
+        for bad in ('../x', 'a b', 'n;rm', 'x\n'):
+            self.engine.open_session('main', relaunch_pass=bad)
+            self.assertNotIn('relaunch_pass', self.engine.status()['session'], bad)
+            self.engine.interrupt_active()
+        self.engine.open_session('main', relaunch_pass='ok_Nonce-1')
+        self.assertEqual(self.engine.status()['session']['relaunch_pass'], 'ok_Nonce-1')
+
     def test_open_session_ignores_a_marker_when_relaunch_is_not_armed(self):
         marks = self.state / 'relaunch'
         marks.mkdir()

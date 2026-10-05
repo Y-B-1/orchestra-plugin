@@ -583,7 +583,7 @@ class Engine:
             auto = state['autonomy']
             if relaunch_pass is None and auto and auto['active'] and auto.get('relaunch'):
                 relaunch_pass = self._marker_nonce()  # the environment may not reach the pass's tool calls (K11)
-            if relaunch_pass is not None:
+            if relaunch_pass is not None and re.fullmatch(r'[A-Za-z0-9_-]+', relaunch_pass):
                 state['session']['relaunch_pass'] = relaunch_pass
             for task in state['tasks'].values():
                 if task['state'] == 'running':
