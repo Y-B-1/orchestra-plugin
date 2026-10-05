@@ -1839,6 +1839,14 @@ class RunBriefHookTest(unittest.TestCase):
                 result = self.run_hook_from_deleted_cwd(lambda gone: make(gone, 'git status'))
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), {})
+        with self.subTest(label='no payload cwd', tool='Edit relative path'):
+            result = self.run_hook_from_deleted_cwd(
+                lambda gone: {'tool_name': 'Edit', 'tool_input': {'file_path': 'notes.txt', 'old_string': 'a', 'new_string': 'b'}})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            decision = json.loads(result.stdout)['hookSpecificOutput']
+            self.assertEqual(decision['permissionDecision'], 'deny')
+            self.assertEqual(decision['permissionDecisionReason'],
+                             'Session directory no longer exists: cd to an existing directory, then retry')
 
     def hold_lock_in_process(self, seconds):
         """Hold the state lock exclusively from another process for `seconds`."""
