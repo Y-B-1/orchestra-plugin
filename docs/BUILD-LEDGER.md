@@ -80,3 +80,16 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | FX5 | builder | $SCRATCH/wt/FX5 | 55e3394 (26c13fb) | final wave r2 minors: dead `held` removed, SessionEnd silent for an ended run, changed-policy message depends on active state, shared raw-state helper, codex.orchestrator removed, docs counts and O35 wording; red then green; full suite 338 OK | ACCEPTED; final wave r3 (12d2b9b) closed the r2 findings; r3 remainders repaired by FX6 |
 | FX6 | builder-repair | $SCRATCH/wt/FX6 | ac5b084 (3837e2d) | final wave r3 rf_security major (extra readings whose unwrap fails denied ordinary commands, since B2-r11) plus minors: failing extra readings dropped; 1024 extra-reading budget per call (crafted 97 KB input 0.38 s Python, 0.05 s TS, was up to 437 s); SessionEnd build_error silent for an ended run; `start --new-run` recovery message for an active run under a changed policy; Stop from another bound session consumes no pass (SPEC O37); O35 wording; corpus guard-fx6-1..22; red then green; 37,175-command differential: 0 Python/TS mismatches, 26 deny-to-allow (all allowed by 1.0.1), 0 new denies; full suite 345 OK; plugin test 76/76 | ACCEPTED; checkpoint FX6-R on 0755b81 CLEAN (35,281 probes: 0 Python/TS mismatches, 0 new allows of 1.0.1 denies; one minor, `start --new-run --policy` message, recorded as a known limit); gates G2 CLEAN (345 OK, plugin test 76/76, validate, build_release, manifests 2.0.0) |
 | B5-r2 | builder-repair | $SCRATCH/wt/B5-r2 | 2db0fa5 (6c0e433) | O24 Python delegation; 6 red then green + 1 regression guard; plugin test 59/59; R5c CLEAN (payload contract checked against hooks.py with a real-hook probe) | ACCEPTED |
+
+## 2.2 build (design/2.2)
+
+| Card | Role | Commit | Evidence | Status |
+|---|---|---|---|---|
+| C8, C9 | critic | dd9b9d2, d9e6767 | plan feasibility (P-1 personal path, P-2 park cascade) and re-check (H-1 held reservation) blocking; both fixed by coordinator plan amendments | ACCEPTED |
+| X1 | builder (spike) | none | L0 under `claude -p` (claude 2.1.289): Workflow = yes (a.txt/b.txt written, WORKFLOW-DONE with both results, no denial); env inheritance = yes (`probe-123`) | REPORTED; spike, no code |
+| E1 | builder | 3a7248a | materiality `issues`, `rev` stamp, keep/remove at add, read-only review overlap; 14 tests red then green | ACCEPTED (R1 CLEAN) |
+| G1 | builder | 1d8750c | long-option prefix reading, `commit --amend` deny, chain regression corpus; corpus 30 OK, plugin test 79/79 | ACCEPTED (R1 CLEAN) |
+| M1, M1f | builder, coordinator | bb2253b, ca80ac2 | mod delegate spawns from plugin root, `--repo` on CLI reads, failure class reasons; H1 reproduced at the seam, H2 inconclusive; M1f flips autonomy.test.ts argv tail | ACCEPTED (R1 CLEAN) |
+| K1, K2, P1x | builder | 574135c, ff04220, b8b251a | coordinator references, role skills, standards reviewer variant. K2 budget: test_skills.py review SKILL.md cap 4096 → 4480 (+9.4%), file measures 4463 after compression | ACCEPTED (R1 CLEAN) |
+| W1 gate | coordinator | acca191 | 363 Python tests OK, generate/sync 0, plugin test 84/84 | CLEAN |
+| R1 | code-reviewer checkpoint | acca191 | wave 1, every hunk; G1 probes against git 2.50.1 options; 5 notes (M1 reader text, timeout match guess, `--amend=x` consistency, ledger entry, red-run exit codes) | CLEAN |
