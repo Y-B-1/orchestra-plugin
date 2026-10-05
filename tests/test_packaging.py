@@ -113,6 +113,14 @@ class NativeTests(unittest.TestCase):
         for name in ['hooks/mod/orchestra.ts', 'hooks/mod/marker.ts', 'types/index.d.ts']:
             self.assertTrue((PLUGIN / name).is_file(), name)
 
+    def test_relaunch_prompt_ships_and_forbids_background_work(self):
+        text = (PLUGIN / 'config/relaunch-prompt.md').read_text()
+        for phrase in ['orchestra` skill', 'start --harness-session', 'progress.md', 'orchestra.py status', 'Park a card',
+                       'Never end your turn to wait', 'context nears its ceiling', 'foreground (blocking) Agent calls only',
+                       'Never run background Bash', 'Workflow is allowed in the foreground']:
+            self.assertIn(phrase, text)
+        self.assertNotIn('Do not use the Workflow tool', text)
+        self.assertNotRegex(text, r'/Users/')
 
 
 if __name__ == '__main__':
