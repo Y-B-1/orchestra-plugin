@@ -640,7 +640,7 @@ const SEPARATE_REASON = 'Execute branch deletions separately';
 
 /** SPEC 5.14 item 1: the exact merged-delete shapes, else null. `options` is what precedes `--` with abbreviated
  * long options spelled in full (5.15). A shape has one branch positional and no other option. */
-function mergedDelete(verb: string, options: string[], allFlags: string[], short: string, words: string[], changedRepo: boolean, raw: string[]): Decision | null {
+function mergedDelete(verb: string, options: string[], allFlags: string[], short: string, words: string[], redirected: boolean, raw: string[]): Decision | null {
   if (raw.length !== options.length) return null; // A value option and its value were read away: not a bare delete.
   const positional = options.filter((x) => !x.startsWith('-'));
   const shorts = new Set(short);
@@ -664,13 +664,14 @@ function mergedDelete(verb: string, options: string[], allFlags: string[], short
     if (!REMOTE_NAME.test(remote)) return null;
   } else return null;
   if (!BRANCH_NAME.test(branch)) return null;
-  if (changedRepo) return denyOf(PLAIN_REASON);
+  if (redirected) return denyOf(PLAIN_REASON); // A git global option precedes the verb.
   return dec('allow', 'Deletion is a boundary action', MERGED, { remote, argv: words.slice(), boundary: 'delete', kind, branch });
 }
 
 function git(words: string[]): Decision {
   let args = words.slice(1);
   let changedRepo = false;
+  const plain = !(args.length && args[0]!.startsWith('-')); // Any global option can redirect a merged-delete (R2): fail closed.
   while (args.length && args[0]!.startsWith('-')) {
     const opt = args.shift()!;
     if (GIT.global_value_options!.has(opt)) {
@@ -693,7 +694,7 @@ function git(words: string[]): Decision {
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
   if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');
   if (verb === 'branch' && (short.includes('D') || ((short.includes('d') || hasFlag('--delete')) && (short.includes('f') || hasFlag('--force'))))) {
-    const merged = !args.includes('--') ? mergedDelete(verb, options, flags, short, words, changedRepo, args) : null;
+    const merged = !args.includes('--') ? mergedDelete(verb, options, flags, short, words, !plain, args) : null;
     return merged ?? denyOf('Forced branch deletion discards refs');
   }
   const wholesale = args.includes('.') || args.includes(':/');
@@ -719,7 +720,7 @@ function git(words: string[]): Decision {
     const dryRun = hasFlag('--dry-run') || short.includes('n');
     const positional = options.filter((x) => !x.startsWith('-'));
     if ((hasFlag('--delete') || short.includes('d')) && !dryRun && !args.includes('--')) {
-      const merged = mergedDelete(verb, options, flags, short, words, changedRepo, args);
+      const merged = mergedDelete(verb, options, flags, short, words, !plain, args);
       if (merged) return merged;
     }
     if (positional.length > 2 || [...GIT.push_multi_flags!].some((x) => hasFlag(x)) || short.includes('d')) return denyOf('Push needs one explicit remote and refspec', 'release');

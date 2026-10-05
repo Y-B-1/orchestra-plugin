@@ -63,6 +63,16 @@ test('merged-delete: kind, remote, branch and argv ride the decision; stand-alon
   expect(classifyCommand('git branch -d -r origin/x').category).toBe('boundary');
 });
 
+test('merged-delete: any git global option before the verb denies (R2 test_merged_delete_global_config_option_denied)', () => {
+  for (const command of ['git -c remote.origin.pushurl=/tmp/x push origin --delete x2', 'git -c remote.origin.url=https://h/r.git push origin --delete x2',
+    'git --config-env=remote.origin.pushurl=E push origin --delete x2', 'git -c x=y branch -D b', 'git --config-env=x=E branch -D b',
+    'git --namespace=n branch -D b', 'git --namespace n push origin -d x2', 'git --exec-path=/x branch -D b', 'git --bare branch -D b',
+    'git -p push origin --delete x2', 'git --no-pager branch -D b']) {
+    const d = classifyCommand(command);
+    expect([klassOf(d), d.reason]).toEqual(['deny', 'Branch deletion must run plainly in the session repository']);
+  }
+});
+
 test('corpus parity: O17 cases (reserved words, groups, arithmetic, case patterns)', () => {
   expect(O17_CASES.length).toBeGreaterThan(50);
   expect(run(O17_CASES as Case[])).toEqual([]);

@@ -440,7 +440,7 @@ _PLAIN_REASON = 'Branch deletion must run plainly in the session repository'
 _SEPARATE_REASON = 'Execute branch deletions separately'
 
 
-def _merged_delete(verb, options, flags, short, words, changed_repo, raw):
+def _merged_delete(verb, options, flags, short, words, redirected, raw):
     """SPEC 5.14 item 1: the exact merged-delete shapes, else None. `options` is what precedes `--`
     with abbreviated long options spelled in full (5.15). A shape has one branch positional and no other option."""
     if len(raw) != len(options):
@@ -465,7 +465,7 @@ def _merged_delete(verb, options, flags, short, words, changed_repo, raw):
         return None
     if not _BRANCH_NAME.fullmatch(branch):
         return None
-    if changed_repo:
+    if redirected:  # A git global option precedes the verb.
         return _deny(_PLAIN_REASON)
     return Decision('allow', 'Deletion is a boundary action', _MERGED, remote, None, tuple(words),
                     boundary='delete', kind=kind, branch=branch)
@@ -508,6 +508,7 @@ def _read_long_options(verb, options):
 def _git(words):
     args = words[1:]
     changed_repo = False
+    plain = not (args and args[0].startswith('-'))  # Any global option can redirect a merged-delete (R2): fail closed.
     while args and args[0].startswith('-'):
         opt = args.pop(0)
         if opt in _GIT['global_value_options']:
@@ -531,7 +532,7 @@ def _git(words):
     if verb == 'clean' and ('f' in short or '--force' in flags) and not ('n' in short or '--dry-run' in flags):
         return _deny('Forced clean discards files')
     if verb == 'branch' and ('D' in short or (('d' in short or '--delete' in flags) and ('f' in short or '--force' in flags))):
-        merged = '--' not in args and _merged_delete(verb, options, flags, short, words, changed_repo, args)
+        merged = '--' not in args and _merged_delete(verb, options, flags, short, words, not plain, args)
         if merged:
             return merged
         return _deny('Forced branch deletion discards refs')
@@ -560,7 +561,7 @@ def _git(words):
         dry_run = '--dry-run' in flags or 'n' in short
         positional = [x for x in options if not x.startswith('-')]
         if (('--delete' in flags or 'd' in short) and not dry_run and '--' not in args and
-                (merged := _merged_delete(verb, options, flags, short, words, changed_repo, args))):
+                (merged := _merged_delete(verb, options, flags, short, words, not plain, args))):
             return merged
         if len(positional) > 2 or any(x in flags for x in _GIT['push_multi_flags']) or 'd' in short:
             return _deny('Push needs one explicit remote and refspec', 'release')
