@@ -7,8 +7,10 @@ import types
 import os
 import re
 from pathlib import Path
+import socket
 import subprocess
 import sys
+import threading
 import unittest
 from unittest import mock
 import tempfile
@@ -24,7 +26,7 @@ RUN_HOOK = PLUGIN / 'scripts/run-hook.sh'
 
 # Command lists shared with tests/test_guard_corpus.py, which requires each one in the corpus.
 DENY_COMMANDS = [
-    'git reset --hard', 'git clean -fd', 'git branch -D topic',
+    'git reset --hard', 'git clean -fd',
     'git checkout -- .', 'git restore .', 'git stash push',
     'git add -A', 'git add .', 'git add -u src', 'git commit -am done',
     'exec env X=1 git -C "a b" -c color.ui=never reset --hard',
@@ -39,8 +41,10 @@ DENY_COMMANDS = [
     'time git reset --hard', 'time -p git reset --hard',
     "builtin eval 'git reset --hard'", 'command -p git reset --hard', 'builtin command git reset --hard',
     "eval 'git reset --hard'", 'git --exec-path /tmp reset --hard',
-    'git reset --hard=HEAD', 'cd other && git push origin main', 'git branch --delete --force topic',
+    'git reset --hard=HEAD', 'cd other && git push origin main',
 ]
+# SPEC 5.14: classified boundary/delete with Decision category merged-delete; the hook decides on merge evidence.
+MERGED_DELETE_COMMANDS = ['git branch -D topic', 'git branch --delete --force topic']
 DENY_GROUPED = ['sudo -nu root git reset --hard',
                 'sudo -nuroot git reset --hard',
                 'sudo -nEu root git reset --hard',
@@ -61,7 +65,7 @@ RELEASE_COMMANDS = ['git push origin HEAD:main', 'gh pr merge 3',
                     'npm publish', 'vercel --prod', 'az deployment group create',
                     'git push -o "--dry-run" origin main', 'git push -o "--force" origin main']
 DENY_PUSH_DESTINATION = ['git push origin main side', 'git push --all origin',
-                         'git push --tags origin', 'git push --delete origin main',
+                         'git push --tags origin',
                          'git push origin :main', "git push origin 'refs/heads/*:refs/heads/*'",
                          'git push --follow-tags origin main']
 DENY_MALFORMED = ["git 'reset"]
@@ -151,6 +155,14 @@ HEREDOC_ALLOWED = ["cat <<'EOF'\nit's fine\nEOF",
                    "cat <<'EOF'\n$(date)\nEOF",
                    'cat <<< "git reset --hard"',
                    'echo $((1 << 2))']
+# G2f item 4: raw ref deletion skips the branch-delete rules, so it denies; a create or move stays allowed.
+UPDATE_REF_DENIED = ['git update-ref -d refs/heads/x', 'git update-ref --delete refs/heads/x',
+                     'git update-ref --stdin', 'git update-ref -z --stdin', 'git update-ref --std',
+                     'git update-ref --no-deref -d refs/heads/x', 'git update-ref -m why -d refs/heads/x',
+                     'git -C wt update-ref -d refs/heads/x', 'true && git update-ref -d refs/heads/x',
+                     'git update-ref refs/heads/x ' + '0' * 40]
+UPDATE_REF_ALLOWED = ['git update-ref refs/heads/x HEAD', 'git update-ref refs/heads/x abc123 def456',
+                      'git update-ref -m dated refs/heads/x HEAD']
 LINKED_WORKTREE_COMMANDS = {'git push origin side': 'release', 'git -C ../linked push origin side': 'release',
                             'git push origin side && git status': 'release-multi'}
 
@@ -164,6 +176,13 @@ class GuardsTest(unittest.TestCase):
         for command in DENY_COMMANDS:
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).action, 'deny')
+
+    def test_merged_delete_commands_are_boundary_delete_with_the_merged_delete_category(self):
+        for command in MERGED_DELETE_COMMANDS:
+            with self.subTest(command=command):
+                decision = classify_command(command)
+                self.assertEqual((decision.klass, decision.action, decision.boundary, decision.category),
+                                 ('boundary', 'allow', 'delete', 'merged-delete'))
 
     def test_grouped_wrapper_options(self):
         for command in DENY_GROUPED:
@@ -228,8 +247,8 @@ class GuardsTest(unittest.TestCase):
     def test_a2_always_deny_rules_remain(self):
         for command in ['git push --force origin x', 'git push -f origin x', 'git push --mirror origin',
                         'git push origin +x', 'git push --all origin', 'git push --tags origin',
-                        'git push --delete origin x', 'git push origin a b', 'git reset --hard',
-                        'git clean -f', 'git branch -D x', 'git add -A', 'git commit -a -m x',
+                        'git push origin a b', 'git reset --hard',
+                        'git clean -f', 'git add -A', 'git commit -a -m x',
                         'git checkout .', 'git checkout -f x', 'git restore .']:
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).klass, 'deny')
@@ -432,6 +451,30 @@ class HooksTest(unittest.TestCase):
             self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'deny')
         self.assertEqual(self.pre('Bash', {'command': 'git status'}, armed=True).output, {})
 
+    def test_update_ref_delete_denied(self):
+        for command in UPDATE_REF_DENIED:
+            with self.subTest(command=command):
+                result = self.pre('Bash', {'command': command})
+                self.assertEqual(decision_of(result), 'deny')
+                self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
+                                 'Raw ref deletion is not allowed; use git branch -d')
+        for command in UPDATE_REF_ALLOWED:
+            with self.subTest(command=command):
+                self.assertEqual(self.pre('Bash', {'command': command}).output, {})
+
+    def test_edit_relative_path_with_empty_cwd_denies_missing_cwd(self):
+        with tempfile.TemporaryDirectory() as state, mock.patch.dict(os.environ, {'XDG_STATE_HOME': state}):
+            for name in ('Edit', 'Write'):
+                with self.subTest(tool=name):
+                    result = handle_event('PreToolUse', {'cwd': '', 'tool_name': name,
+                                                         'tool_input': {'file_path': 'notes.txt'}})
+                    self.assertEqual(decision_of(result), 'deny')
+                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
+                                     'Session directory no longer exists: cd to an existing directory, then retry')
+            # An absolute path needs no cwd and keeps its ordinary verdict.
+            self.assertEqual(handle_event('PreToolUse', {'cwd': '', 'tool_name': 'Edit',
+                                                         'tool_input': {'file_path': '/tmp/notes.txt'}}).output, {})
+
     def test_boundary_class_is_allowed_without_autonomy(self):
         for command in BOUNDARY_DELETE + BOUNDARY_MERGE:
             with self.subTest(command=command):
@@ -603,7 +646,7 @@ class HooksTest(unittest.TestCase):
             with mock.patch.dict(sys.modules, {'orchestra_core.engine': types.SimpleNamespace(Engine=constructor)}), mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), mock.patch('sys.stdout', new_callable=io.StringIO) as output:
                 self.assertEqual(main(['PreToolUse']), 0)
                 self.assertEqual(json.loads(output.getvalue()), {})
-            constructor.assert_called_once_with(state, repo.resolve(), policy=policy)
+            constructor.assert_called_once_with(state, repo.resolve(), policy=policy, lock_wait=2.0)
 
     def test_main_without_run_creates_no_state(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': str(Path(directory) / 'absent')}):
@@ -664,6 +707,303 @@ def run_main(payload, *args, env=None):
 
 def git(cwd, *args):
     return subprocess.check_output(['git', '-C', str(cwd), *args], stderr=subprocess.PIPE, text=True).strip()
+
+
+class MergedDeleteHookTest(unittest.TestCase):
+    """SPEC 5.14 item 4: a merged-delete command is checked in Python against merge evidence, whatever the autonomy state."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name).resolve()
+        self.origin = root / 'origin.git'
+        git(root, 'init', '-q', '--bare', '-b', 'main', str(self.origin))
+        self.repo = root / 'work'
+        git(root, 'clone', '-q', str(self.origin), str(self.repo))
+        for key, value in (('user.name', 'T'), ('user.email', 't@example.invalid')):
+            git(self.repo, 'config', key, value)
+        git(self.repo, 'checkout', '-q', '-b', 'main')
+        self.commit('base.txt', 'base\n')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        git(self.repo, 'remote', 'set-head', 'origin', 'main')
+
+    def commit(self, name, text):
+        (self.repo / name).write_text(text)
+        git(self.repo, 'add', name)
+        git(self.repo, 'commit', '-q', '-m', name)
+
+    def side(self, branch, name, text, start='main'):
+        """A branch off `start` with one commit; HEAD returns to main."""
+        git(self.repo, 'checkout', '-q', '-b', branch, start)
+        self.commit(name, text)
+        git(self.repo, 'checkout', '-q', 'main')
+
+    def land_squash(self, branch):
+        git(self.repo, 'merge', '-q', '--squash', branch)
+        git(self.repo, 'commit', '-q', '-m', 'squash ' + branch)
+        git(self.repo, 'push', '-q', 'origin', 'main')
+
+    def run_hook(self, command, **kw):
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo)}
+        return handle_event('PreToolUse', payload, harness='claude', **kw)
+
+    def assertAllowed(self, command, **kw):
+        result = self.run_hook(command, **kw)
+        self.assertEqual(result.output, {}, command)
+
+    def assertDenied(self, command, text, **kw):
+        result = self.run_hook(command, **kw)
+        self.assertEqual(decision_of(result), 'deny', command)
+        self.assertIn(text, result.output['hookSpecificOutput']['permissionDecisionReason'])
+
+    def is_ancestor(self, tip, ref):
+        return subprocess.run(['git', '-C', str(self.repo), 'merge-base', '--is-ancestor', tip, ref]).returncode == 0
+
+    def test_merged_delete_allows_ancestor_branch(self):
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.assertTrue(self.is_ancestor('x', 'origin/main'))
+        self.assertAllowed('git branch -D x')
+
+    def test_merged_delete_allows_squash_tree_equal_branch(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.land_squash('x')
+        self.assertFalse(self.is_ancestor('x', 'origin/main'))
+        self.assertEqual(git(self.repo, 'rev-parse', 'x^{tree}'), git(self.repo, 'rev-parse', 'origin/main^{tree}'))
+        self.assertAllowed('git branch -D x')
+
+    def test_merged_delete_allows_branch_covered_by_tree_equal_branch(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.side('cover', 'cover.txt', 'c\n', start='x')
+        self.land_squash('cover')
+        self.assertFalse(self.is_ancestor('x', 'origin/main'))
+        self.assertNotIn(git(self.repo, 'rev-parse', 'x^{tree}'),
+                         git(self.repo, 'rev-list', '--first-parent', '--format=%T', 'origin/main').split())
+        self.assertAllowed('git branch -D x')
+        # The evidence is read afresh at each delete: without the covering branch the same tip is unmerged.
+        git(self.repo, 'branch', '-q', '-D', 'cover')
+        self.assertDenied('git branch -D x', 'Branch x is not merged into origin/main')
+
+    def test_merged_delete_denies_unmerged_branch(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.assertDenied('git branch -D x',
+                          'Branch x is not merged into origin/main (no ancestor, tree or covering-branch evidence)')
+        self.assertDenied('git branch --delete --force x', 'Branch x is not merged into origin/main')
+        self.assertDenied('git branch -D missing', 'does not exist')
+        git(self.repo, 'branch', 'y', 'main')
+        git(self.repo, 'checkout', '-q', 'y')
+        self.assertDenied('git branch -D y', 'checked out')
+        git(self.repo, 'checkout', '-q', 'main')
+        self.assertDenied('git branch -D main', 'default branch')
+        self.assertDenied('git push --delete origin main', 'default branch')
+
+    def test_merged_delete_shadowed_default_ref_denies_unmerged(self):
+        # R2: a local branch or tag named origin/main must not stand in for the remote-tracking default.
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'remote', 'set-head', 'origin', '-d')
+        for kinds in (('branch',), ('tag',), ('branch', 'tag')):
+            with self.subTest(shadow=kinds):
+                for kind in kinds:
+                    git(self.repo, kind, 'origin/main', 'x')
+                try:
+                    self.assertDenied('git branch -D x', 'Branch x is not merged into origin/main')
+                finally:
+                    for kind in kinds:
+                        git(self.repo, kind, '-D' if kind == 'branch' else '-d', 'origin/main')
+
+    def test_merged_delete_default_branch_denied_with_ambiguous_short_name(self):
+        # R2: with a local branch origin/main, `symbolic-ref --short` reads remotes/origin/main; the name comes from the full ref.
+        self.remote_branch()
+        git(self.repo, 'branch', 'origin/main', 'main')
+        git(self.repo, 'checkout', '-q', '-b', 'y')
+        self.assertDenied('git branch -D main', 'Branch main is the default branch')
+        self.assertDenied('git push --delete origin main', 'Branch main is the default branch')
+
+    def test_merged_delete_case_variant_of_default_denied(self):
+        # FS2-1: on a case-insensitive filesystem refs/heads/Main resolves to refs/heads/main.
+        git(self.repo, 'config', 'core.ignorecase', 'true')
+        git(self.repo, 'remote', 'remove', 'origin')  # the default is the local refs/heads/main
+        git(self.repo, 'checkout', '-q', '-b', 'y')
+        self.assertDenied('git branch -D Main', 'default branch')
+        self.assertEqual(git(self.repo, 'rev-parse', '--verify', 'refs/heads/main'), git(self.repo, 'rev-parse', 'main'))
+
+    def test_merged_delete_case_variant_of_checked_out_denied(self):
+        git(self.repo, 'config', 'core.ignorecase', 'true')  # main is checked out; the default compare fires first
+        self.assertDenied('git branch -D Main', 'Branch Main is the default branch')
+
+    def test_merged_delete_case_variant_checked_out_reason(self):
+        self.side('feat', 'f.txt', 'f\n')
+        git(self.repo, 'checkout', '-q', 'feat')
+        git(self.repo, 'config', 'core.ignorecase', 'true')
+        self.assertDenied('git branch -D Feat', 'Branch Feat is checked out')
+
+    def test_merged_delete_exact_ref_without_ignorecase(self):
+        git(self.repo, 'branch', 'feat', 'main')
+        git(self.repo, 'config', 'core.ignorecase', 'false')
+        self.assertDenied('git branch -D Feat', 'Branch Feat does not exist')
+
+    def test_merged_delete_case_twin_packed_denied(self):
+        # FC3: a packed feat and a loose Feat; on a case-insensitive filesystem rev-parse refs/heads/feat reads
+        # the loose Feat file, and git deletes both refs. A case-sensitive filesystem keeps two distinct refs.
+        self.side('feat', 'f.txt', 'f\n')
+        git(self.repo, 'pack-refs', '--all')
+        made = subprocess.run(['git', '-C', str(self.repo), 'branch', 'Feat', 'main'], capture_output=True, text=True)
+        refs = git(self.repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/').split()
+        if made.returncode != 0 or not {'refs/heads/feat', 'refs/heads/Feat'} <= set(refs):
+            self.skipTest('git cannot create the case twin here: %s' % made.stderr.strip())
+        for ignorecase in ('true', 'false'):
+            git(self.repo, 'config', 'core.ignorecase', ignorecase)
+            for name in ('feat', 'Feat'):
+                with self.subTest(ignorecase=ignorecase, name=name):
+                    self.assertDenied('git branch -D ' + name, 'Branch %s has a case-variant twin; refusing to delete' % name)
+
+    def test_merged_delete_unresolvable_default_denies(self):
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'remote', 'remove', 'origin')
+        git(self.repo, 'branch', '-q', '-m', 'main', 'trunk')
+        self.assertDenied('git branch -D x', 'cannot be resolved')
+
+    def test_merged_delete_checked_with_autonomy_off_and_no_engine(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.assertDenied('git branch -D x', 'is not merged')  # engine None
+        engine = mock.Mock()
+        engine.autonomy_active.return_value = False
+        self.assertDenied('git branch -D x', 'is not merged', engine=engine, armed=True)  # armed run, autonomy off
+        self.assertDenied('git branch -D x', 'is not merged', armed=True, autonomy=False)  # state unloadable, autonomy off
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.assertAllowed('git branch -D x', engine=engine, armed=True)
+
+    def test_merged_delete_denied_under_autonomy(self):
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.assertAllowed('git branch -D x')  # merged: the autonomy-off verdict
+        engine = mock.Mock()
+        engine.autonomy_active.return_value = True
+        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', engine=engine, armed=True)
+        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', armed=True, autonomy=True)
+        flaky = mock.Mock()
+        flaky.autonomy_active.side_effect = RuntimeError('state changed')  # O29: an unreadable status counts as active
+        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', engine=flaky, armed=True)
+
+    def remote_branch(self):
+        """A branch x merged into main and pushed, so origin and the tracking ref both carry it."""
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'push', '-q', 'origin', 'x')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+
+    def test_remote_delete_allowed_when_merged_and_ls_remote_matches(self):
+        self.remote_branch()
+        self.assertAllowed('git push origin --delete x')
+        self.assertAllowed('git push origin -d x')
+
+    def test_remote_delete_denied_when_ls_remote_differs_or_times_out(self):
+        self.remote_branch()
+        # Moved tip: another clone advanced origin/x after our last fetch.
+        other = Path(self.temp.name) / 'other'
+        git(Path(self.temp.name), 'clone', '-q', str(self.origin), str(other))
+        for key, value in (('user.name', 'T'), ('user.email', 't@example.invalid')):
+            git(other, 'config', key, value)
+        git(other, 'checkout', '-q', 'x')
+        (other / 'late.txt').write_text('late\n')
+        git(other, 'add', 'late.txt')
+        git(other, 'commit', '-q', '-m', 'late')
+        git(other, 'push', '-q', 'origin', 'x')
+        self.assertDenied('git push origin --delete x', 'does not report x at the tracking tip')
+        git(self.repo, 'fetch', '-q', 'origin')
+        # The fetched tip carries the late commit: the ls-remote check passes and the merge evidence now fails.
+        self.assertDenied('git push origin --delete x', 'Branch x is not merged into origin/main')
+
+    def test_remote_delete_unreachable_remote_denied(self):
+        self.remote_branch()
+        probe = socket.socket()
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+        probe.close()  # nothing listens: connection refused
+        git(self.repo, 'remote', 'set-url', 'origin', f'git://127.0.0.1:{port}/r.git')
+        self.assertDenied('git push origin --delete x', 'does not report x at the tracking tip')
+
+    def test_remote_delete_denied_when_the_remote_hangs(self):
+        self.remote_branch()
+        server = socket.socket()
+        server.bind(('127.0.0.1', 0))
+        server.listen(4)
+        self.addCleanup(server.close)
+        held = []
+
+        def accept():
+            try:
+                while True:
+                    held.append(server.accept()[0])  # accept, never answer
+            except OSError:
+                pass
+
+        threading.Thread(target=accept, daemon=True).start()
+        git(self.repo, 'remote', 'set-url', 'origin', f'git://127.0.0.1:{server.getsockname()[1]}/r.git')
+        start = time.monotonic()
+        self.assertDenied('git push origin --delete x', 'does not report x at the tracking tip')
+        self.assertLess(time.monotonic() - start, 9)
+        for conn in held:
+            conn.close()
+
+    def divergent_target(self):
+        """A second bare repository whose x carries a commit the fetch remote and the tracking ref lack."""
+        root = Path(self.temp.name)
+        target = root / 'target.git'
+        git(root, 'clone', '-q', '--bare', str(self.origin), str(target))
+        scratch = root / 'scratch'
+        git(root, 'clone', '-q', '-b', 'x', str(target), str(scratch))
+        for key, value in (('user.name', 'T'), ('user.email', 't@example.invalid')):
+            git(scratch, 'config', key, value)
+        (scratch / 'only-there.txt').write_text('unmerged\n')
+        git(scratch, 'add', 'only-there.txt')
+        git(scratch, 'commit', '-q', '-m', 'unmerged')
+        git(scratch, 'push', '-q', 'origin', 'x')
+        return target
+
+    def test_merged_remote_delete_denies_divergent_pushurl(self):
+        self.remote_branch()
+        self.assertAllowed('git push origin --delete x')  # matching push and fetch URL: still allowed
+        target = self.divergent_target()
+        git(self.repo, 'config', 'remote.origin.pushurl', str(target))
+        self.assertDenied('git push origin --delete x', 'push URL')
+        self.assertNotEqual(git(target, 'rev-parse', 'refs/heads/x'), git(self.repo, 'rev-parse', 'refs/remotes/origin/x'))
+
+    def test_merged_remote_delete_denies_pushinsteadof(self):
+        self.remote_branch()
+        target = self.divergent_target()
+        git(self.repo, 'config', 'url.%s.pushInsteadOf' % target, str(self.origin))
+        self.assertDenied('git push origin --delete x', 'push URL')
+
+    def remove_default_refs(self):
+        """No real default ref: origin/HEAD, origin/main and the local main are all absent."""
+        git(self.repo, 'remote', 'set-head', 'origin', '-d')
+        git(self.repo, 'update-ref', '-d', 'refs/remotes/origin/main')
+        git(self.repo, 'branch', '-q', '-m', 'main', 'trunk')
+
+    def assert_decoys_ignored(self, namespace):
+        self.side('x', 'x.txt', 'x\n', start='main')
+        self.remove_default_refs()
+        tip = git(self.repo, 'rev-parse', 'refs/heads/x')
+        for name in ('refs/remotes/origin/main', 'refs/remotes/origin/HEAD', 'refs/heads/main'):
+            decoy = namespace + name
+            with self.subTest(decoy=decoy):
+                git(self.repo, 'update-ref', decoy, tip)
+                try:
+                    self.assertEqual(git(self.repo, 'rev-parse', '--verify', '--quiet', name + '^{commit}'), tip)
+                    self.assertDenied('git branch -D x', 'The default branch cannot be resolved; refusing to delete x')
+                finally:
+                    git(self.repo, 'update-ref', '-d', decoy)
+
+    def test_merged_delete_ignores_decoy_branch_named_like_default_ref(self):
+        self.assert_decoys_ignored('refs/heads/')
+
+    def test_merged_delete_ignores_decoy_tag_named_like_default_ref(self):
+        self.assert_decoys_ignored('refs/tags/')
 
 
 class MarkerHandshakeTest(unittest.TestCase):
@@ -1223,6 +1563,82 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertIn('park', reason)
         self.assertIn('--reason', reason)
 
+    def test_pretooluse_armed_without_session_under_relaunch(self):
+        self.ledger()
+        self.engine.arm_autonomy(relaunch=True)
+        self.engine.interrupt('main', self.lease)  # between passes: no active session, relaunch autonomy stays armed
+        self.assertFalse(self.engine.status()['session']['active'])
+        for command in ['git worktree remove x', 'rm -rf build']:
+            with self.subTest(command=command):
+                code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                decision = output['hookSpecificOutput']
+                self.assertEqual(decision['permissionDecision'], 'deny')
+                self.assertIn('Approval boundary under autonomy', decision['permissionDecisionReason'])
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')  # no session: no release, fail closed
+        self.assertIsNone(self.hook(self.repo, 'git status'))
+
+    def test_pretooluse_without_session_and_without_relaunch_stays_unarmed(self):
+        self.ledger()
+        self.engine.arm_autonomy()
+        self.engine.interrupt('main', self.lease)  # 2.1: a session end clears in-session autonomy
+        self.assertIsNone(self.hook(self.repo, 'git worktree remove x'))
+
+    def test_pretooluse_relaunch_armed_with_an_unloadable_state_is_active_without_a_session(self):
+        self.ledger()
+        self.engine.arm_autonomy(relaunch=True)
+        self.engine.interrupt('main', self.lease)
+        data = json.loads((self.state / 'state.json').read_text())
+        data['policy'] = 'changed'  # the engine cannot load this state any more
+        (self.state / 'state.json').write_text(json.dumps(data))
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git worktree remove x'}})
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_stop_without_session_under_relaunch_changes_nothing(self):
+        self.ledger()
+        self.engine.arm_autonomy(relaunch=True)
+        self.engine.interrupt('main', self.lease)
+        before = (self.state / 'state.json').read_bytes()
+        with mock.patch('sys.stdin', io.StringIO(json.dumps({'cwd': str(self.repo), 'session_id': 'other'}))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(main(['Stop']), 0)
+        self.assertEqual(json.loads(output.getvalue()), {})
+        self.assertEqual(before, (self.state / 'state.json').read_bytes())
+
+    def test_pretooluse_preauthorized_release_reaches_permit_check(self):
+        from orchestra_core.engine import Engine
+        unit = [sys.executable, '-c', 'print("passed")']
+        policy = {'schema_version': 1, 'required_checks': [{'name': 'unit', 'argv': unit}],
+                  'release': {'enabled': True, 'authorization': 'user request', 'remote': 'origin', 'target': 'side',
+                              'argv': ['git', 'push', 'origin', 'side']}}
+        (self.state / 'state.json').unlink()
+        (self.state / 'policy.json').write_text(json.dumps(policy))
+        self.engine = Engine(self.state, self.repo, policy=policy, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main')
+        categories = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
+        report = self.root / 'final.json'
+        report.write_text(json.dumps(dict(reviewer='reviewer', categories=categories, tasks=[], findings=[], issues=[], final=True,
+                                          verdict='CLEAN', artifact=self.engine.artifact(),
+                                          summary='Behavior checked against acceptance criteria.')))
+        self.engine.record_review('main', self.lease, 'reviewer', report, categories, final=True)
+        self.engine.run_gate('main', self.lease, 'unit', unit)
+        push = ['git', 'push', 'origin', 'side']
+        self.fixed = [('- Release: pre-authorized origin side' if line.startswith('- Release:') else line) for line in self.fixed]
+        self.arm()
+        self.assertEqual(self.engine.status()['autonomy']['release'], {'remote': 'origin', 'target': 'side'})
+        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'deny')  # exact pair, no permit yet: the permit check
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
+        self.assertIn('No current explicit release permit', output['hookSpecificOutput']['permissionDecisionReason'])
+        self.engine.release_permit('main', self.lease, 'origin', 'side')
+        self.assertIsNone(self.hook(self.repo, ' '.join(push)))  # exact pair with a permit: allowed
+        for command in ['git push origin other', 'git push origin side && git status', 'rm -rf build']:
+            with self.subTest(command=command):
+                code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                decision = output['hookSpecificOutput']
+                self.assertEqual(decision['permissionDecision'], 'deny')
+                self.assertTrue(decision['permissionDecisionReason'].startswith(('Autonomy is active: ', 'Approval boundary under autonomy')),
+                                decision['permissionDecisionReason'])
+
     def test_release_is_denied_while_active_even_with_a_permit(self):
         from orchestra_core.engine import Engine
         unit = [sys.executable, '-c', 'print("passed")']
@@ -1235,7 +1651,7 @@ class AutonomyHookTest(unittest.TestCase):
         self.lease = self.engine.open_session('main')
         categories = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
         report = self.root / 'final.json'
-        report.write_text(json.dumps(dict(reviewer='reviewer', categories=categories, tasks=[], findings=[], final=True,
+        report.write_text(json.dumps(dict(reviewer='reviewer', categories=categories, tasks=[], findings=[], issues=[], final=True,
                                           verdict='CLEAN', artifact=self.engine.artifact(),
                                           summary='Behavior checked against acceptance criteria.')))
         self.engine.record_review('main', self.lease, 'reviewer', report, categories, final=True)
@@ -1418,14 +1834,17 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(self.stop_as(self.linked, 's-1')['decision'], 'block')
         self.assertEqual(self.engine.status()['autonomy']['passes'], 1)
 
-    def test_stop_continues_while_active_and_stops_at_the_pass_cap(self):
+    def test_stop_continues_while_active_and_stops_at_the_deadline(self):
         self.arm(passes='1')
         self.add_card('c1')
         first = self.stop()
         self.assertEqual(first['decision'], 'block')
-        self.assertIn('Autonomy pass 1 of 1', first['reason'])
+        self.assertIn('Autonomy pass 1', first['reason'])
+        self.assertNotIn('Autonomy pass 1 of', first['reason'])
+        self.assertEqual(self.stop()['decision'], 'block')  # the old cap of 1 no longer stops the loop
+        self.now[0] += 7200
         self.assertEqual(self.stop(), {})
-        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'cap-passes')
+        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'deadline')
 
     def test_stop_stops_at_the_deadline(self):
         self.arm()
@@ -1445,12 +1864,14 @@ class AutonomyHookTest(unittest.TestCase):
                 mock.patch('sys.stdout', new_callable=io.StringIO) as out:
             main(['SessionStart', '--harness', 'claude'])
         context = json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
-        self.assertIn('Autonomy report', context)
+        self.assertIn('Run brief', context)
+        self.assertNotIn('Autonomy report', context)
         self.assertIn('deadline', context)
         self.assertIn(str(self.state / 'progress.md'), context)
 
     def test_session_start_report_is_capped_at_2000_characters(self):
         engine = mock.Mock()
+        engine.status.return_value = {}
         engine.autonomy_report.return_value = {'reason': 'complete', 'text': 'Q' * 5000, 'path': '/p/progress.md'}
         context = handle_event('SessionStart', {'session_id': 's-1', 'source': 'startup'}, harness='claude',
                                engine=engine).output['hookSpecificOutput']['additionalContext']
@@ -1461,14 +1882,232 @@ class AutonomyHookTest(unittest.TestCase):
         context = handle_event('SessionStart', {'session_id': 's-1', 'source': 'startup'}, harness='claude',
                                engine=self.engine).output['hookSpecificOutput']['additionalContext']
         self.assertNotIn('Autonomy report', context)
+        self.assertNotIn('Run brief', context)
 
     def test_session_start_worker_gets_no_report(self):
         engine = mock.Mock()
+        engine.status.return_value = {}
         engine.autonomy_report.return_value = {'reason': 'complete', 'text': 'T', 'path': '/p'}
         with mock.patch.dict(os.environ, {'ORCHESTRA_ROLE': 'builder'}):
             context = handle_event('SessionStart', {'session_id': 's-1'}, harness='claude',
                                    engine=engine).output['hookSpecificOutput']['additionalContext']
         self.assertNotIn('Autonomy report', context)
+        self.assertNotIn('Run brief', context)
+
+
+class RunBriefHookTest(unittest.TestCase):
+    """SPEC 5.9 and 5.16: the run brief at SessionStart, the missing-cwd and busy-lock behavior of the hooks."""
+
+    setUp = AutonomyHookTest.setUp
+    ledger = AutonomyHookTest.ledger
+    arm = AutonomyHookTest.arm
+    hook = AutonomyHookTest.hook
+    stop_main = AutonomyHookTest.stop_main
+
+    def session_context(self):
+        payload = {'cwd': str(self.repo), 'session_id': 's-9', 'source': 'startup'}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            main(['SessionStart', '--harness', 'claude'])
+        return json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
+
+    def hold_lock(self):
+        import fcntl
+        self.engine.status()
+        handle = open(self.state / 'state.lock', 'a+')
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        self.addCleanup(handle.close)
+        return handle
+
+    def release_lock(self, handle):
+        import fcntl
+        fcntl.flock(handle, fcntl.LOCK_UN)
+
+    def test_session_start_shows_newest_brief_without_autonomy(self):
+        self.engine.interrupt('main', self.lease)
+        context = self.session_context()
+        self.assertIn('Run brief (interrupted): ', context)
+        self.assertIn('## Run brief', context)
+        self.assertIn(str(self.state / 'progress.md'), context)
+
+    def test_session_start_excerpt_contains_needs_you(self):
+        self.engine.add_task('main', self.lease, dict(id='p', role='builder', mode='implementation', inputs=['spec'],
+                             acceptance=['check'], files=['p'], resources=[], dependencies=[]))
+        self.engine.park('main', self.lease, 'p', 'needs a push')
+        self.engine.interrupt('main', self.lease)
+        context = self.session_context()
+        self.assertIn('Needs you', context)
+        self.assertLess(context.index('Needs you'), context.index('p: needs a push') + 1)
+
+    def test_session_start_falls_back_to_2_1_autonomy_report(self):
+        self.arm()
+        self.stop_main(self.repo)
+        data = json.loads((self.state / 'state.json').read_text())
+        self.assertIn('report', data['autonomy'])
+        del data['last_brief']
+        (self.state / 'state.json').write_text(json.dumps(data))
+        context = self.session_context()
+        self.assertIn('Autonomy report (no-ready-card): ## Run brief', context)  # the hook runs on the real clock
+        self.assertNotIn('Run brief (', context)
+
+    def test_pretooluse_missing_cwd_denies_delegated_class_with_reason(self):
+        gone = self.root / 'gone'
+        for command in ['git push origin side', 'rm -rf build']:
+            with self.subTest(command=command):
+                code, output = run_main({'cwd': str(gone), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                self.assertEqual(code, 0)
+                decision = output['hookSpecificOutput']
+                self.assertEqual(decision['permissionDecision'], 'deny')
+                self.assertEqual(decision['permissionDecisionReason'],
+                                 'Session directory no longer exists: cd to an existing directory, then retry')
+
+    def test_pretooluse_missing_cwd_allows_nothing_new(self):
+        gone = self.root / 'gone'
+        self.assertEqual(self.hook(gone, 'git status'), None)  # an allowed class stays allowed
+        self.assertEqual(self.hook(gone, 'git reset --hard'), 'deny')  # a plain deny stays denied
+        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'deny')  # existing cwd: unchanged
+
+    def test_hook_state_read_fails_closed_after_lock_wait(self):
+        self.arm()
+        self.hold_lock()
+        started = time.monotonic()
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
+        self.assertLess(time.monotonic() - started, 6)
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertEqual(output['hookSpecificOutput']['permissionDecisionReason'], 'Orchestra state is busy; retry')
+
+    def test_hook_busy_lock_keeps_raw_fallback_for_other_classes(self):
+        self.arm()
+        self.hold_lock()
+        self.assertIsNone(self.hook(self.repo, 'git status'))
+        self.assertEqual(self.hook(self.repo, 'git reset --hard'), 'deny')
+        self.assertEqual(self.hook(self.repo, 'rm -rf build'), 'deny')  # raw armed state still guards the boundary
+
+    def test_ended_run_busy_lock_does_not_deny_non_delegated(self):
+        from orchestra_core.engine import Engine, StateBusy
+        self.engine.interrupt('main', self.lease)  # the run's session has ended
+        # The first read (status) succeeds; the second read (autonomy_active) meets a busy lock.
+        with mock.patch.object(Engine, 'autonomy_active', side_effect=StateBusy('Orchestra state is busy; retry')) as second:
+            self.assertIsNone(self.hook(self.repo, 'git status'))
+            self.assertIsNone(self.hook(self.repo, 'git commit -m done'))
+            self.assertEqual(self.hook(self.repo, 'git reset --hard'), 'deny')  # a plain deny keeps its verdict
+        self.assertTrue(second.called)
+
+    def test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout(self):
+        self.arm()
+        self.hold_lock()
+        progress = self.state / 'progress.md'
+        before = progress.read_text() if progress.exists() else ''
+        with mock.patch.object(hooks_module, 'STOP_LOCK_BUDGET', 3.0):
+            started = time.monotonic()
+            self.assertEqual(self.stop_main(self.repo), {})
+            self.assertLess(time.monotonic() - started, 9)
+        added = progress.read_text()[len(before):]
+        self.assertIn('## Run brief', added)
+        self.assertIn('state busy', added)
+        self.assertTrue(json.loads((self.state / 'state.json').read_text())['autonomy']['active'])
+
+    def test_hook_stop_busy_unarmed_writes_no_brief(self):
+        self.hold_lock()
+        progress = self.state / 'progress.md'
+        before = progress.read_bytes() if progress.exists() else None
+        with mock.patch.object(hooks_module, 'STOP_LOCK_BUDGET', 3.0):
+            self.assertEqual(self.stop_main(self.repo), {})
+        self.assertEqual(before, progress.read_bytes() if progress.exists() else None)
+
+    def test_hook_stop_runs_when_lock_frees_within_budget(self):
+        self.arm()
+        self.engine.add_task('main', self.lease, dict(id='c1', role='builder', mode='implementation', inputs=['spec'],
+                             acceptance=['check'], files=['c1'], resources=[], dependencies=[]))
+        handle = self.hold_lock()
+        timer = threading.Timer(2.5, self.release_lock, [handle])
+        timer.start()
+        self.addCleanup(timer.cancel)
+        with mock.patch.object(hooks_module, 'STOP_LOCK_BUDGET', 8.0):
+            output = self.stop_main(self.repo)
+        self.assertEqual(output['decision'], 'block')
+        self.assertEqual(json.loads((self.state / 'state.json').read_text())['autonomy']['passes'], 1)
+
+    def run_hook_from_deleted_cwd(self, payload):
+        """Run the hook process with a cwd that is removed before Python starts (the H1 removed-worktree case)."""
+        gone = self.root / 'removed-worktree'
+        gone.mkdir()
+        script = PLUGIN / 'scripts/orchestra_hook.py'
+        shell = 'cd "$1" && rmdir "$1" && exec "$2" "$3" PreToolUse --harness claude'
+        return subprocess.run(['/bin/sh', '-c', shell, 'sh', str(gone), sys.executable, str(script)],
+                              input=json.dumps(payload(gone)), text=True, capture_output=True, timeout=60)
+
+    def test_pretooluse_deleted_process_cwd_denies_delegated(self):
+        payloads = {'payload cwd removed': lambda gone, c: {'cwd': str(gone), 'tool_name': 'Bash', 'tool_input': {'command': c}},
+                    'no payload cwd': lambda gone, c: {'tool_name': 'Bash', 'tool_input': {'command': c}}}
+        for label, make in payloads.items():
+            for command in ['git push origin side', 'rm -rf build']:
+                with self.subTest(label=label, command=command):
+                    result = self.run_hook_from_deleted_cwd(lambda gone: make(gone, command))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    decision = json.loads(result.stdout)['hookSpecificOutput']
+                    self.assertEqual(decision['permissionDecision'], 'deny')
+                    self.assertEqual(decision['permissionDecisionReason'],
+                                     'Session directory no longer exists: cd to an existing directory, then retry')
+            with self.subTest(label=label, command='git status'):
+                result = self.run_hook_from_deleted_cwd(lambda gone: make(gone, 'git status'))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), {})
+        with self.subTest(label='no payload cwd', tool='Edit relative path'):
+            result = self.run_hook_from_deleted_cwd(
+                lambda gone: {'tool_name': 'Edit', 'tool_input': {'file_path': 'notes.txt', 'old_string': 'a', 'new_string': 'b'}})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            decision = json.loads(result.stdout)['hookSpecificOutput']
+            self.assertEqual(decision['permissionDecision'], 'deny')
+            self.assertEqual(decision['permissionDecisionReason'],
+                             'Session directory no longer exists: cd to an existing directory, then retry')
+
+    def hold_lock_in_process(self, seconds):
+        """Hold the state lock exclusively from another process for `seconds`."""
+        self.engine.status()
+        code = ('import fcntl, sys, time\nf = open(sys.argv[1], "a+")\nfcntl.flock(f, fcntl.LOCK_EX)\n'
+                'print("held", flush=True)\ntime.sleep(float(sys.argv[2]))\n')
+        proc = subprocess.Popen([sys.executable, '-c', code, str(self.state / 'state.lock'), str(seconds)],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        self.assertEqual(proc.stdout.readline().strip(), 'held')
+        return proc
+
+    def add_permit(self):
+        data = json.loads((self.state / 'state.json').read_text())
+        data['permits'] = [dict(id='p', action='release', remote='r', target='t', argv=[], artifact={}, lease=self.lease)]
+        (self.state / 'state.json').write_text(json.dumps(data))
+
+    def hook_event(self, event, payload):
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            code = main([event, '--harness', 'claude'])
+        return code, json.loads(out.getvalue())
+
+    def test_interrupt_recorded_when_lock_busy_past_hook_wait(self):
+        self.add_permit()
+        self.hold_lock_in_process(5.0)
+        code, output = self.hook_event('Interrupt', {'cwd': str(self.repo), 'session_id': 's-9'})
+        self.assertEqual((code, output), (0, {}))
+        data = json.loads((self.state / 'state.json').read_text())
+        self.assertIs(data['session']['active'], False)
+        self.assertEqual(data['permits'], [])
+        self.assertEqual(data['last_brief']['reason'], 'interrupted')
+
+    def test_session_end_recorded_when_lock_busy_past_hook_wait(self):
+        self.engine.interrupt('main', self.lease)
+        self.lease = self.engine.open_session('main', harness_session='S')
+        self.add_permit()
+        self.hold_lock_in_process(5.0)
+        code, output = self.hook_event('SessionEnd', {'cwd': str(self.repo), 'session_id': 'S', 'reason': 'other'})
+        self.assertEqual((code, output), (0, {}))
+        data = json.loads((self.state / 'state.json').read_text())
+        self.assertIs(data['session']['active'], False)
+        self.assertEqual(data['session']['outcome'], 'ended')
+        self.assertEqual(data['permits'], [])
+        self.assertEqual(data['last_brief']['reason'], 'ended')
 
 
 if __name__ == '__main__':

@@ -41,7 +41,7 @@ Inline assignments share worker ownership, dependency, capacity, lease and indep
 
 Checked in the 2.0.0 candidate worktree, headless: the Python 3.14 unit and integration suite (338 tests), generator drift check (Claude agents match the canonical source), skill byte budgets and provenance tests, packaging and release-archive builds. The suite adds guard corpus parity, scoped-evidence, autonomy, SessionEnd and linked-worktree cases. The TypeScript guard and mods tests run through `claude plugin test` with function hooks enabled; their results belong in BUILD-LEDGER.md with the candidate hash, not here.
 
-Not established by the headless checks, and recorded separately as live user checks when performed: trusted automatic startup with exactly one SessionStart context, the mods heartbeat marker advancing in an interactive session, `/orchestra-board` and `/orchestra-autonomy` rendering, the SessionEnd release after `/exit`, `clear` and `resume` rebinding, the picker's model reaching the main session, and an autonomy run that stops at its pass cap. Treat any of these not listed as observed in the ledger as unperformed.
+Not established by the headless checks, and recorded separately as live user checks when performed: trusted automatic startup with exactly one SessionStart context, the mods heartbeat marker advancing in an interactive session, `/orchestra-board` and `/orchestra-autonomy` rendering, the SessionEnd release after `/exit`, `clear` and `resume` rebinding, the picker's model reaching the main session, and a relaunch autonomy run that stops at `complete` or `deadline`. Treat any of these not listed as observed in the ledger as unperformed.
 
 Known limits are in the [release notes](RELEASE-NOTES-2.0.0.md).
 

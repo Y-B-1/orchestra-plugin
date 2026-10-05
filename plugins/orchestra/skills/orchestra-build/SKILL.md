@@ -51,6 +51,8 @@ Read your own diff before reporting.
 - Honest tests: each asserts behavior and none asserts a mock.
 - Quiet output: no stray warnings or debug lines.
 
+Builder briefs carry `## Keep` and `## Remove` lists. Every Keep item still holds and every Remove item is gone when you report; name each in the report.
+
 Stop and report a blocker when the task needs an architecture choice the brief left open, when the code you must change is beyond what the brief explains, or when you cannot say whether your approach is right. Bad work is worse than no work.
 
 ## Commit and report

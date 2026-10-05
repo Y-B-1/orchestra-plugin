@@ -3,8 +3,6 @@
 > Replace every placeholder, then run `orchestra.py autonomy arm` again. Change nothing in this file after `arm`: a change stops the loop.
 
 goal: <one line goal>
-max_passes: <integer, 1 to 20>
-max_stalls: <integer, 1 to 2>
 deadline: <ISO 8601 time with a UTC offset, in the future>
 
 ## Completion checks
@@ -16,6 +14,8 @@ deadline: <ISO 8601 time with a UTC offset, in the future>
 ## Approval boundaries
 
 > Fixed. Do not remove a line. Add your own lines below them.
+>
+> <!-- Release: replace the Release line with `- Release: pre-authorized <remote> <target>` to pre-authorize the one release that policy.release configures. The Release line overrides Push and Engine-gated actions for that remote and target only. -->
 
 - Release: no release, permit or deploy.
 - Merge: no pull request merge, and no local merge on the default branch.

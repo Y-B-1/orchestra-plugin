@@ -15,6 +15,7 @@ import uuid
 from orchestra_core.engine import ACTIVE_MISMATCH, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, repository, state_location
+from orchestra_core import relaunch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -37,9 +38,11 @@ def parser():
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
     for name in ['status','ready','board','interrupt','finish','scan']:
         sub.add_parser(name)
+    sub.add_parser('brief', help='Print the newest run brief; no lease, read-only')
     art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
     art.add_argument('--tasks', help='Comma-separated task IDs')
-    add = sub.add_parser('add')
+    add = sub.add_parser('add', help='Add a card from a task JSON file; a builder implementation card may carry "wave": "W", '
+                                     'and a review card may name "review_of": ["wave:W"] for every card of wave W')
     add.add_argument('task', help='Task JSON path')
     dispatch = sub.add_parser('dispatch')
     dispatch.add_argument('task_id')
@@ -56,18 +59,40 @@ def parser():
     review.add_argument('report', help='Structured review JSON path')
     gate = sub.add_parser('gate')
     gate.add_argument('name')
+    gate.add_argument('--again', action='store_true', help='Rerun a gate that already passed on this artifact')
     gate.add_argument('argv', nargs=argparse.REMAINDER)
+    finding = sub.add_parser('finding', help='Record or list dispositions of review findings')
+    findings = finding.add_subparsers(dest='finding_command', required=True)
+    fadd = findings.add_parser('add')
+    fadd.add_argument('--review', required=True)
+    fadd.add_argument('--kind', required=True, choices=['finding', 'out_of_scope'])
+    fadd.add_argument('--index', required=True, type=int)
+    fadd.add_argument('--disposition', required=True)
+    fadd.add_argument('--reason', required=True)
+    fadd.add_argument('--card')
+    flist = findings.add_parser('list')
+    flist.add_argument('--for-brief', action='store_true')
     for name in ['permit','release']:
         action = sub.add_parser(name)
         action.add_argument('remote')
         action.add_argument('target')
     autonomy = sub.add_parser('autonomy', help='Arm, disarm or inspect the autonomous loop; takes no lease')
-    autonomy.add_argument('action', choices=['arm','disarm','status'])
+    autonomy.add_argument('action', choices=['arm','disarm','status','settle'])
+    autonomy.add_argument('--relaunch', action='store_true', help='With arm: keep autonomy armed between sessions for the relaunch harness')
+    rl = sub.add_parser('relaunch', help='Run fresh `claude -p` passes until autonomy stops; run it in your terminal with no session active')
+    rl.add_argument('--permission-mode', required=True, help='Permission mode for each pass; no default')
+    rl.add_argument('--model', help='Model id for each pass; unset by default')
+    rl.add_argument('--launcher', nargs=argparse.REMAINDER, help='Replace the claude command with this argv (prompt on stdin); must come last')
     park = sub.add_parser('park', help='Set a card aside at an approval boundary')
     park.add_argument('task_id')
     park.add_argument('--reason', required=True)
     unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
     unpark.add_argument('task_id')
+    hold = sub.add_parser('hold', help='End the repair ladder: move a blocked repair chain to held and log the finding')
+    hold.add_argument('task_id')
+    hold.add_argument('--finding', required=True)
+    supersede = sub.add_parser('supersede', help='Accept an unstarted review that newer accepted reviews cover in full')
+    supersede.add_argument('task_id')
     route = sub.add_parser('classify')
     route.add_argument('shell_command')
     return p
@@ -96,19 +121,28 @@ def execute(args):
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
     if args.command=='where':
         return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file()},0
+    if args.command=='relaunch':
+        return None,relaunch.run(repo,state,args.permission_mode,model=args.model,launcher=args.launcher or None)
     policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
     engine = Engine(state,repo,policy)
     if args.command=='start':
         if args.new_run:
             archive_inactive(state,engine)
-        lease = engine.open_session(args.actor,args.harness_session)
+        lease = engine.open_session(args.actor,args.harness_session,relaunch_pass=os.environ.get('ORCHESTRA_RELAUNCH_PASS') or None)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
     if args.command=='status':
         return engine.status(),0
+    if args.command=='brief':  # lease-free and read-only, like status
+        text=engine.brief()
+        return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
     if args.command=='autonomy':  # O8: no lease, so the ledger is armed from outside the run
-        return {'arm':engine.arm_autonomy,'disarm':engine.disarm_autonomy,'status':engine.autonomy_status}[args.action](),0
+        if args.relaunch and args.action!='arm':
+            raise EngineError('--relaunch is only valid with arm')
+        if args.action=='arm':
+            return engine.arm_autonomy(relaunch=args.relaunch),0
+        return {'disarm':engine.disarm_autonomy,'status':engine.autonomy_status,'settle':engine.settle}[args.action](),0
     if args.command=='artifact':
         ids=[i for i in (args.tasks or '').split(',') if i]
         if args.tasks is not None and not ids:
@@ -116,6 +150,9 @@ def execute(args):
         return engine.artifact(engine.scope_for(ids) if ids else None),0
     if args.command=='inline':
         return {'token':engine.start_inline(args.actor,args.lease,args.task_id), 'executor':args.actor, 'inline':True},0
+    if args.command=='finding' and args.finding_command=='list':  # lease-free, like status
+        result = engine.list_findings(args.for_brief)
+        return ({'findings':result} if isinstance(result,str) else result),0
     if args.command=='board':
         cards = engine.status()['tasks'].values()
         board = {}
@@ -150,9 +187,14 @@ def execute(args):
                                      review['categories'],review['tasks'],review['final'],review['findings'])
         return result,0
     if args.command=='gate':
-        argv = args.argv[1:] if args.argv[:1]==['--'] else args.argv
-        result = engine.run_gate(args.actor,args.lease,args.name,argv)
+        argv, again = args.argv, args.again
+        if argv[:1]==['--again']:  # REMAINDER swallows a flag written after NAME
+            argv, again = argv[1:], True
+        argv = argv[1:] if argv[:1]==['--'] else argv
+        result = engine.run_gate(args.actor,args.lease,args.name,argv,again=again)
         return result,0 if result['passed'] else 1
+    if args.command=='finding':
+        return engine.add_finding(args.actor,args.lease,args.review,args.kind,args.index,args.disposition,args.reason,args.card),0
     if args.command=='scan':
         result=engine.run_secret_scan(args.actor,args.lease)
         return result,0 if result.get('passed') or result.get('unavailable') else 1
@@ -205,6 +247,11 @@ def execute(args):
     if args.command=='unpark':
         engine.unpark(args.actor,args.lease,args.task_id)
         return {'unparked':args.task_id},0
+    if args.command=='hold':
+        return engine.hold(args.actor,args.lease,args.task_id,args.finding),0
+    if args.command=='supersede':
+        engine.supersede(args.actor,args.lease,args.task_id)
+        return {'superseded':args.task_id},0
     raise EngineError('Unsupported command')
 
 
@@ -215,7 +262,8 @@ def main(argv=None):
     except (EngineError,ValueError,OSError,KeyError,subprocess.SubprocessError) as exc:
         print(json.dumps({'error':str(exc)}),file=sys.stderr)
         return 2
-    print(json.dumps(result,indent=2))
+    if result is not None:
+        print(json.dumps(result,indent=2))
     return code
 
 

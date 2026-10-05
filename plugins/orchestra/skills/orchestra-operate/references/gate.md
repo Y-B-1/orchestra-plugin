@@ -38,6 +38,7 @@ Run the project's required checks against the assigned repository and artifact, 
 - Full suite: without the owner's trigger in the brief, report it as not run.
 - Visual or live acceptance: walk the actual user path and take the screenshots the brief lists. A built artifact is not a deployed observation.
 - Engine gates: the coordinator records gates with `orchestra.py gate <name> -- <argv>`, which checks artifact binding itself. Run that line only when the brief gives it with its lease. Your own run is evidence for the report, not a stamped pass.
+- Gate once per artifact: a passed gate with the same name and argv on the current artifact is not rerun, and the engine refuses it without `--again`. Cite the existing receipt. A failed gate always reruns; a later change to the tree makes receipts stale, so gate again then. A wave-boundary gate runs after the wave's builders report and before its review, so the reviewer cites its receipt.
 
 ## Report
 

@@ -5,6 +5,8 @@ https://code.claude.com/docs/en/hooks (checked 2026-09-30).
 """
 import argparse
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -21,6 +23,10 @@ _MOD_TOOLS = {'Bash', 'Edit', 'Write', 'MultiEdit'}  # The mod guards only these
 _EDIT_TOOLS = set(RULES['tools']['edit'])
 _SHELL_TOOLS = set(RULES['tools']['shell'])
 _REBIND_SOURCES = ('clear', 'resume', 'fork')
+STOP_LOCK_BUDGET = 8.0  # SPEC 5.16 item 4: seconds from hook start that a busy-state Stop waits for the lock
+LOCK_WAIT = 2.0  # SPEC 5.16 item 3: seconds a hook read waits for the state lock
+MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry'
+BUSY = 'Orchestra state is busy; retry'
 
 
 CONTEXT = (
@@ -88,12 +94,15 @@ def _patch_paths(command):
     return paths
 
 
-def handle_event(event, payload, *, harness='claude', state_dir=None, engine=None, armed=False, autonomy=False):
+def handle_event(event, payload, *, harness='claude', state_dir=None, engine=None, armed=False, autonomy=False,
+                 busy=False, missing_cwd=False, started=None):
     """Decide output; optional engine adapter owns locked state operations.
 
     `armed` marks a run whose state could not be loaded: release classes deny (fail closed).
     `autonomy` marks such a state whose raw autonomy flag is true or unreadable (O29): the
     autonomy-active column applies to every class. A loaded engine implies an armed run; neither means unarmed.
+    `busy` marks a state lock held past the read wait, `missing_cwd` a payload cwd that no longer exists: the
+    delegated classes (release, release-multi, boundary) deny; the other classes keep their ordinary path.
     """
     if harness != 'claude':
         raise ValueError('Unsupported harness')
@@ -147,6 +156,16 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     if event == 'Stop':
         if engine is None:
             return HookResult({})
+        if busy:
+            if not (_raw_autonomy_active(engine.state_path) and _raw_session_active(engine.state_path)):
+                return HookResult({})  # Unarmed and busy, or between relaunch passes: nothing to stop, nothing to write
+            if not _wait_for_lock(engine.state_dir / 'state.lock', started):
+                from .engine import write_busy_brief  # Lazy: tests replace the engine module
+                try:
+                    write_busy_brief(engine.state_dir, datetime.now(timezone.utc).isoformat(timespec='seconds'))
+                except OSError:
+                    pass
+                return HookResult({})  # Allow the stop; autonomy.active stays true
         if _other_session(engine, payload.get('session_id')):
             return HookResult({})  # O37: a Stop from another harness session neither continues nor spends a pass
         try:
@@ -164,9 +183,17 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         role = 'subagent'  # Claude Code sets agent_id only for calls made inside a subagent.
     if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
         return _deny('Workers do not delegate')
-    cwd = payload.get('cwd', os.getcwd())
-    if not isinstance(cwd, str):
-        return _deny('Malformed cwd', True)
+    if 'cwd' in payload:
+        cwd = payload['cwd']
+        if not isinstance(cwd, str):
+            return _deny('Malformed cwd', True)
+        if not cwd:
+            cwd, missing_cwd = None, True  # An empty cwd is a missing one, as main() reads it
+    else:
+        try:
+            cwd = os.getcwd()
+        except OSError:  # The process cwd was removed: a missing cwd, never a crash that lets the call run
+            cwd, missing_cwd = None, True
     if name in _EDIT_TOOLS:
         try:
             if name == 'apply_patch':
@@ -176,7 +203,9 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
                 if not isinstance(path, str) or not path:
                     raise ValueError('Missing file path')
                 paths = [path]
-            if any(_protected(path, cwd, state_dir) for path in paths):
+            if cwd is None and not all(os.path.isabs(path) for path in paths):
+                return _deny(MISSING_CWD)
+            if any(_protected(path, cwd or '/', state_dir) for path in paths):
                 return _deny('Use the structured coordinator API for state; protect installed runtime configuration')
         except (ValueError, OSError) as exc:
             return _deny(str(exc), True)
@@ -189,11 +218,22 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     klass = decision.klass
     if klass == 'deny':
         return _deny(decision.reason, decision.category == 'malformed')
-    if (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy):
+    if klass in {'release', 'release-multi', 'boundary'}:
+        if missing_cwd:
+            return _deny(MISSING_CWD)
+        if busy:
+            return _deny(BUSY)
+    active = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
+    if decision.category == 'merged-delete':
+        # SPEC 5.14 item 4: before the autonomy-off allow, and with or without an engine.
+        denied = _merged_delete_check(decision, cwd, active)
+        if denied:
+            return HookResult(denied)
+    if active:
         # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
-        if klass in {'release', 'release-multi'}:
+        if klass in {'release', 'release-multi'} and not (klass == 'release' and _preauthorized(engine, decision)):
             return _deny('Autonomy is active: ' + _PARK_HINT)
-        if decision.category == 'boundary' and decision.boundary == 'delete':
+        if decision.boundary == 'delete':
             return _deny('Approval boundary under autonomy: ' + _PARK_HINT)
         if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
             return _deny('Approval boundary under autonomy: no merge on the default branch. ' + _PARK_HINT)
@@ -214,11 +254,43 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
 _PARK_HINT = 'park this card with `orchestra.py park TASK --reason ...` and continue with other cards.'
 
 
+def _wait_for_lock(lock_path, started):
+    """Poll for the exclusive state lock until STOP_LOCK_BUDGET seconds after `started`; True when it freed (and is released)."""
+    end = (started if started is not None else time.monotonic()) + STOP_LOCK_BUDGET
+    with open(lock_path, 'a+') as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True  # Closing the file releases it
+            except OSError:
+                if time.monotonic() >= end:
+                    return False
+                time.sleep(0.05)
+
+
 def _autonomy_active(engine):
     try:
         return engine.autonomy_active() is True  # Strict: an opaque adapter never reads as active.
     except Exception:
         return True  # O29: an error while reading autonomy status counts as active.
+
+
+def _preauthorized(engine, decision):
+    """SPEC 5.8 item 8.3: the ledger pre-authorized exactly this remote and target. Any doubt reads as no (fail closed);
+    the normal permit check still runs after it."""
+    try:
+        release = engine.status()['autonomy']['release']
+        return (isinstance(decision.remote, str) and bool(decision.remote) and isinstance(decision.target, str)
+                and bool(decision.target) and release['remote'] == decision.remote and release['target'] == decision.target)
+    except Exception:
+        return False
+
+
+def _raw_relaunch_active(state_file):
+    """SPEC 5.10 item 3: armed `relaunch` autonomy in a state file the engine cannot load counts as armed."""
+    data = _raw_state(state_file)
+    auto = data.get('autonomy') if isinstance(data, dict) else None
+    return isinstance(auto, dict) and auto.get('active') is True and auto.get('relaunch') is True
 
 
 def _raw_state(state_file):
@@ -260,6 +332,10 @@ def _raw_session_active(state_file):
 
 def _report_context(engine):
     try:
+        brief = engine.status().get('last_brief')
+        if isinstance(brief, dict) and isinstance(brief.get('text'), str):
+            return ' Run brief (' + str(brief.get('reason')) + '): ' + brief['text'][:2000] \
+                + ' Full report: ' + str(brief.get('path')) + '.'
         report = engine.autonomy_report()
     except Exception:
         return ''
@@ -267,6 +343,131 @@ def _report_context(engine):
         return ''
     return ' Autonomy report (' + str(report.get('reason')) + '): ' + report['text'][:2000] \
         + ' Full report: ' + str(report.get('path')) + '.'
+
+
+def _git_out(repo, *args, timeout=10):
+    """(returncode, stdout) of a git command in repo; a spawn error or timeout is (1, '') so callers fail closed."""
+    try:
+        done = subprocess.run(['git', '-C', str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+        return done.returncode, done.stdout.decode(errors='replace').strip()
+    except (OSError, subprocess.SubprocessError):
+        return 1, ''
+
+
+def _first_parent_trees(repo, default):
+    """The trees of the first-parent commits of default, at most 2000 (one rev-list call)."""
+    code, out = _git_out(repo, 'rev-list', '--first-parent', '-n2000', '--format=%T', default, timeout=30)
+    return {line for line in out.splitlines() if line and not line.startswith('commit ')} if code == 0 else set()
+
+
+def _branch_merged(repo, tip, default):
+    """SPEC 5.14 item 4.5: tip is an ancestor of default, or its tree is a first-parent tree of default,
+    or tip is an ancestor of a local or remote-tracking ref whose tree is (evaluated afresh at each delete)."""
+    if _git_out(repo, 'merge-base', '--is-ancestor', tip, default)[0] == 0:
+        return True
+    trees = _first_parent_trees(repo, default)
+    if not trees:
+        return False
+    code, tree = _git_out(repo, 'rev-parse', '--verify', '--quiet', tip + '^{tree}')
+    if code == 0 and tree in trees:
+        return True
+    code, out = _git_out(repo, 'for-each-ref', '--contains', tip, '--format=%(refname)%09%(tree)', 'refs/heads', 'refs/remotes', timeout=30)
+    if code != 0:
+        return False
+    return any(line.partition('\t')[2] in trees for line in out.splitlines() if '\t' in line)
+
+
+def _remote_tip_matches(repo, remote, branch):
+    """SPEC 5.14 item 4.4: `git ls-remote` reports the branch at the remote-tracking tip. Prompts are off and
+    the call has a 3 s limit; any failure, timeout or difference is False."""
+    code, tracking = _git_out(repo, 'rev-parse', '--verify', '--quiet', 'refs/remotes/%s/%s' % (remote, branch))
+    if code != 0 or not tracking:
+        return False
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0')
+    try:
+        proc = subprocess.Popen(['git', '-C', str(repo), 'ls-remote', remote, 'refs/heads/' + branch], env=env,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                start_new_session=True)
+    except OSError:
+        return False
+    try:
+        out, _ = proc.communicate(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, 9)
+        except OSError:
+            pass
+        proc.communicate()
+        return False
+    if proc.returncode != 0:
+        return False
+    rows = [line.split() for line in out.decode(errors='replace').splitlines() if line.strip()]
+    return len(rows) == 1 and len(rows[0]) == 2 and rows[0][0] == tracking and rows[0][1] == 'refs/heads/' + branch
+
+
+def _merged_delete_check(decision, cwd, autonomy):
+    """SPEC 5.14 item 4: a deny payload for a merged-delete that is not safe, else None."""
+    if autonomy:
+        return _deny('Approval boundary under autonomy: ' + _PARK_HINT).output
+    branch, remote = decision.branch, decision.remote if decision.kind == 'remote' else None
+    if not branch:
+        return _deny('Branch deletion must run plainly in the session repository').output
+    if remote and _git_out(cwd, 'config', '--get', 'remote.%s.url' % remote)[1] == '':
+        return _deny('Remote %s is not configured' % remote).output
+    if remote:
+        # The delete goes to the push URL and ls-remote reads the fetch URL: both must name one repository.
+        code, fetch = _git_out(cwd, 'remote', 'get-url', remote)
+        pcode, pushes = _git_out(cwd, 'remote', 'get-url', '--push', '--all', remote)
+        if code != 0 or pcode != 0 or not fetch or any(url != fetch for url in pushes.splitlines() or ['']):
+            return _deny('Remote %s push URL differs from its fetch URL; refusing to delete %s' % (remote, branch)).output
+    # Full refnames only (R2): a local branch or tag named origin/main must not shadow the default, and a ref
+    # is read only after it exists exactly, so rev-parse's short-name lookup never finds a decoy (G2f).
+    tracked = 'refs/remotes/%s/' % (remote or 'origin')
+    heads = [tracked + 'HEAD', tracked + 'main'] + ([] if remote else ['refs/heads/main'])
+    default = sha = None
+    for ref in heads:
+        if ref.endswith('/HEAD'):
+            ref = _git_out(cwd, 'symbolic-ref', '--quiet', ref)[1]
+        if not ref or _git_out(cwd, 'show-ref', '--verify', '--quiet', ref)[0] != 0:
+            continue
+        code, target = _git_out(cwd, 'rev-parse', '--verify', '--quiet', ref + '^{commit}')
+        if code == 0 and target:
+            default, sha = ref, target
+            break
+    if sha is None:
+        return _deny('The default branch cannot be resolved; refusing to delete %s' % branch).output
+    if default.startswith(tracked):
+        name, label = default[len(tracked):], default[len('refs/remotes/'):]
+    elif default.startswith('refs/heads/'):
+        name = label = default[len('refs/heads/'):]
+    else:
+        return _deny('The default branch cannot be resolved; refusing to delete %s' % branch).output
+    # FS2-1: on a case-insensitive filesystem refs/heads/Main is the file refs/heads/main.
+    fold = (lambda text: text.casefold()) if _git_out(cwd, 'config', '--bool', 'core.ignorecase')[1] == 'true' else (lambda text: text)
+    if fold(branch) == fold(name):
+        return _deny('Branch %s is the default branch' % branch).output
+    code, current = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'HEAD')
+    if code == 0 and fold(current) == fold(branch):
+        return _deny('Branch %s is checked out' % branch).output
+    namespace = 'refs/remotes/%s/' % remote if remote else 'refs/heads/'
+    tracking = namespace + branch
+    # The tip comes from the exact listed row: rev-parse would resolve a case variant to another branch's tip,
+    # and with a case twin (FC3) git deletes both refs, so a twin is never deleted whatever core.ignorecase says.
+    code, listing = _git_out(cwd, 'for-each-ref', '--format=%(refname)%09%(objectname)', namespace)
+    rows = dict(line.split('\t', 1) for line in listing.splitlines() if '\t' in line) if code == 0 else {}
+    if tracking not in rows:
+        return _deny('Branch %s does not exist' % branch).output
+    if any(ref != tracking and ref.casefold() == tracking.casefold() for ref in rows):
+        return _deny('Branch %s has a case-variant twin; refusing to delete' % branch).output
+    code, tip = _git_out(cwd, 'rev-parse', '--verify', '--quiet', rows[tracking] + '^{commit}')
+    if code != 0 or not tip:
+        return _deny('Branch %s does not exist' % branch).output
+    if remote and not _remote_tip_matches(cwd, remote, branch):
+        return _deny('Remote %s does not report %s at the tracking tip' % (remote, branch)).output
+    if not _branch_merged(cwd, tip, sha):
+        return _deny('Branch %s is not merged into %s (no ancestor, tree or covering-branch evidence)' % (branch, label)).output
+    return None
 
 
 def _on_default_branch(cwd):
@@ -321,6 +522,7 @@ def _mod_is_live(payload):
 
 
 def main(argv=None):
+    started = time.monotonic()
     parser = argparse.ArgumentParser()
     parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd'])
     parser.add_argument('--harness', choices=['claude'], default='claude')
@@ -338,8 +540,11 @@ def main(argv=None):
     engine = None
     armed = False
     autonomy = False
+    busy = False
+    missing_cwd = False
     build_error = None
     if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
+        missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
             from .paths import load_policy
             repo, state_dir = _run_location(payload['cwd'])
@@ -348,15 +553,20 @@ def main(argv=None):
                 armed = True  # A state file that cannot be loaded fails closed: armed, no permit.
                 try:
                     from .engine import Engine
-                    engine = Engine(state_dir, repo, policy=load_policy(state_dir))
+                    engine = Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT)
                     try:
                         session = engine.status()['session']
                         armed = bool(session and session.get('active'))
+                        if not armed and engine.autonomy_active() is True:
+                            armed = True  # SPEC 5.10 item 3: armed relaunch autonomy applies between passes
                     except (TypeError, KeyError, AttributeError):
                         pass  # Opaque engine adapters stay armed.
-                except Exception:
-                    engine = None
-                    armed = _raw_session_active(state_dir / 'state.json')  # O35
+                except Exception as exc:
+                    busy = type(exc).__name__ == 'StateBusy'  # By name: the engine module may be replaced in tests
+                    if not (busy and args.event != 'PreToolUse'):
+                        engine = None  # A busy Stop or Interrupt keeps its engine: Stop polls the lock, Interrupt blocks on it
+                    armed = (_raw_session_active(state_dir / 'state.json')  # O35
+                             or _raw_relaunch_active(state_dir / 'state.json'))
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
                 if args.event == 'PreToolUse' and not armed:
                     engine = None  # An inactive session is an unarmed run.
@@ -369,14 +579,14 @@ def main(argv=None):
             from .engine import Engine
             repo, state_dir = _run_location(payload['cwd'])
             if (state_dir / 'state.json').is_file():
-                engine = Engine(state_dir, repo, policy=load_policy(state_dir))
+                engine = Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT)
         except Exception as exc:
             engine = None  # Unloadable state: SessionStart still returns context; a lost lease is recovered by hand
             if (args.event == 'SessionEnd' and state_dir is not None and (Path(state_dir) / 'state.json').is_file()
                     and _raw_session_active(Path(state_dir) / 'state.json')):  # O35: an ended run has nothing to record
                 build_error = exc
     result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed,
-                          autonomy=autonomy)
+                          autonomy=autonomy, busy=busy, missing_cwd=missing_cwd, started=started)
     if build_error is not None and not result.output:
         result = HookResult({'systemMessage': 'Orchestra session end could not be recorded: ' + str(build_error)
                              + '. A run that holds a lost lease is recovered by hand with '

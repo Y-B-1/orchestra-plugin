@@ -2,12 +2,12 @@ import { expect, test } from 'claude-code/testing';
 
 import { CORPUS, RULES_JSON } from './fixtures/guard-fixtures.js';
 import { O17_CASES } from './fixtures/o17-cases.js';
-import { classifyCommand, editDenied, klassOf, loadRules } from './guard.js';
+import { classifyCommand, editDenied, klassOf, loadRules, longPrefix } from './guard.js';
 import { GUARD_DIGEST_FILES, guardDigest } from './marker.js';
 
 loadRules(RULES_JSON);
 
-type Case = { id: string; input: unknown; class: string; category?: string };
+type Case = { id: string; input: unknown; class: string; category?: string; decision_category?: string };
 
 function run(cases: Case[]): string[] {
   const wrong: string[] = [];
@@ -18,6 +18,8 @@ function run(cases: Case[]): string[] {
       const klass = klassOf(d);
       if (klass !== c.class || (d.boundary ?? undefined) !== c.category) {
         wrong.push(`${c.id}: want ${c.class}/${c.category ?? ''} got ${klass}/${d.boundary ?? ''} for ${JSON.stringify(input.command)}`);
+      } else if (c.decision_category !== undefined && d.category !== c.decision_category) {
+        wrong.push(`${c.id}: want decision category ${c.decision_category} got ${d.category} for ${JSON.stringify(input.command)}`);
       }
     } else {
       const denied = editDenied(input.path, input.cwd ?? '/', { stateDir: null, xdg: '/tmp/b5-state', home: '/home/u' });
@@ -30,6 +32,45 @@ function run(cases: Case[]): string[] {
 test('corpus parity: every guard-corpus.json case gets the Python verdict', () => {
   expect(CORPUS.length).toBeGreaterThan(300);
   expect(run(CORPUS as Case[])).toEqual([]);
+});
+
+test('test_corpus_decision_category_matches: every case with decision_category matches decision.category', () => {
+  const named = (CORPUS as Case[]).filter((c) => c.decision_category !== undefined);
+  expect(named.length).toBeGreaterThanOrEqual(8);
+  for (const c of named) {
+    const d = classifyCommand((c.input as { command: string }).command);
+    expect(d.category).toBe(c.decision_category);
+    expect(klassOf(d)).toBe('boundary');
+  }
+});
+
+test('merged-delete: kind, remote, branch and argv ride the decision; stand-alone denials hold', () => {
+  const local = classifyCommand('git branch --del --forc x');
+  expect([klassOf(local), local.category, local.kind, local.remote, local.branch]).toEqual(['boundary', 'merged-delete', 'local', null, 'x']);
+  expect(local.argv).toEqual(['git', 'branch', '--del', '--forc', 'x']);
+  const remote = classifyCommand('git push --delete origin x');
+  expect([klassOf(remote), remote.category, remote.kind, remote.remote, remote.branch]).toEqual(['boundary', 'merged-delete', 'remote', 'origin', 'x']);
+  for (const command of ['git branch -d y && git branch -D x', 'git branch -D a; git branch -D b', 'cd /o && git branch -D x']) {
+    expect(classifyCommand(command).reason).toBe('Execute branch deletions separately');
+  }
+  for (const command of ['git -C /o branch -D x', 'GIT_DIR=/o git branch -D x', 'sudo git branch -D x', 'xargs git branch -D x', 'echo $(git branch -D x)', "bash -c 'git branch -D x'"]) {
+    expect(classifyCommand(command).reason).toBe('Branch deletion must run plainly in the session repository');
+  }
+  for (const command of ['git branch -D x y', 'git branch -D -r origin/x', 'git push origin :x', 'git push origin --delete x y', 'git push https://h/r.git --delete x', 'git push origin --delete --force x']) {
+    expect(klassOf(classifyCommand(command))).toBe('deny');
+  }
+  expect(klassOf(classifyCommand('git branch -d -r origin/x'))).toBe('boundary');
+  expect(classifyCommand('git branch -d -r origin/x').category).toBe('boundary');
+});
+
+test('merged-delete: any git global option before the verb denies (R2 test_merged_delete_global_config_option_denied)', () => {
+  for (const command of ['git -c remote.origin.pushurl=/tmp/x push origin --delete x2', 'git -c remote.origin.url=https://h/r.git push origin --delete x2',
+    'git --config-env=remote.origin.pushurl=E push origin --delete x2', 'git -c x=y branch -D b', 'git --config-env=x=E branch -D b',
+    'git --namespace=n branch -D b', 'git --namespace n push origin -d x2', 'git --exec-path=/x branch -D b', 'git --bare branch -D b',
+    'git -p push origin --delete x2', 'git --no-pager branch -D b']) {
+    const d = classifyCommand(command);
+    expect([klassOf(d), d.reason]).toEqual(['deny', 'Branch deletion must run plainly in the session repository']);
+  }
 });
 
 test('corpus parity: O17 cases (reserved words, groups, arithmetic, case patterns)', () => {
@@ -143,4 +184,42 @@ test('digest parity: guardDigest matches hashlib for fixed synthetic file conten
   const enc = (s: string): Uint8Array => Uint8Array.from(Array.from(s).map((c) => c.charCodeAt(0)));
   const digest = guardDigest([enc('{"a":1}\n'), enc('print("g")\n'), null, Uint8Array.from([0xc3, 0xa9, 0xc3, 0xbf, 0x00, 0x78])]);
   expect(digest).toBe('976961f81917e588edc5430271e54fe0bb6c80491ee9800dcfcf35a5b779678c');
+});
+
+test('SPEC 5.15: a strict prefix of a guarded long option reads as that option, the first listed winning', () => {
+  const guarded = ['--all', '--amend'];
+  expect(longPrefix('commit', '--am', guarded)).toBe('--amend');
+  expect(longPrefix('commit', '--am=x', guarded)).toBe('--amend');
+  expect(longPrefix('commit', '--a', guarded)).toBe('--all');
+  for (const token of ['--amend', '--', '-a', '-am', 'am', '--x', '--amendx', '']) expect(longPrefix('commit', token, guarded)).toBeNull();
+  expect(longPrefix('worktree', '--am', guarded)).toBeNull();
+  expect(longPrefix('log', '--am', guarded)).toBeNull();
+});
+
+test('SPEC 5.15: abbreviated long options classify as the full option, exemptions only in full', () => {
+  const deny = [
+    'git add --al', 'git add --a', 'git add --upd', 'git add --no-ignore-rem', 'git reset --har', 'git clean --forc', 'git clean --f',
+    'git branch --del --forc x y', 'git checkout --forc', 'git switch --disc', 'git push --mir origin', 'git push --ta origin',
+    'git push --pru origin', 'git push --al origin', 'git commit --am -m x', 'git commit --amend', 'git clean -f --dry',
+    'git restore --staged --work .',
+  ];
+  for (const command of deny) expect([command, klassOf(classifyCommand(command))]).toEqual([command, 'deny']);
+  // SPEC 5.14 (F13): `--del` is `--delete`, and a plain `push --delete` is now a merged-delete boundary, not a release.
+  const del = classifyCommand('git push --del origin x');
+  expect([klassOf(del), del.category]).toEqual(['boundary', 'merged-delete']);
+  expect(klassOf(classifyCommand('git push --push-o=x origin main'))).toBe('release');
+  expect(klassOf(classifyCommand('git push --push-o x origin main'))).toBe('release');
+  for (const command of ['git commit -m x file', 'git commit --mess --amend', 'git commit --messa=--amend', 'git clean --dry-run -f', 'git restore --staged .', 'git worktree rem X', 'git worktree prun']) {
+    expect([command, klassOf(classifyCommand(command))]).toEqual([command, 'allow']);
+  }
+  const tag = classifyCommand('git tag --del v1');
+  expect([klassOf(tag), tag.boundary]).toEqual(['boundary', 'delete']);
+});
+
+test('SPEC 5.15: commit --amend is denied with its reason, in full and abbreviated', () => {
+  for (const command of ['git commit --amend', 'git commit --am -m x', 'git commit --amen', 'git commit -m x --amend']) {
+    const d = classifyCommand(command);
+    expect([d.action, d.reason]).toEqual(['deny', 'Amend rewrites history']);
+  }
+  expect(classifyCommand('git commit -m --amend').action).toBe('allow');
 });

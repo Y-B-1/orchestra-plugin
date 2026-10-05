@@ -21,13 +21,13 @@ function stage(on: On) {
   return { registered, bands };
 }
 
-const ARGV_TAIL = (action: string) => ['--cli', 'autonomy', action];
+const ARGV_TAIL = (action: string) => ['--cli', '--repo', '/work/proj', 'autonomy', action];
 const isAutonomy = (argv: readonly string[]) => argv.includes('autonomy');
 const autonomyRuns = (r: Rig) => r.runs.filter((run) => isAutonomy(run.argv));
 const action = (argv: readonly string[]) => argv[argv.length - 1];
 
 const ACTIVE = { active: true, parked: [], last_stop_reason: null, passes: 2, max_passes: 5, stalls: 0, max_stalls: 2, deadline: '2026-10-05T07:30:00+00:00' };
-const STOPPED = { ...ACTIVE, active: false, passes: 5, last_stop_reason: 'cap-passes' };
+const STOPPED = { ...ACTIVE, active: false, passes: 5, last_stop_reason: 'deadline' };
 
 function answers(r: Rig, table: Record<string, { exitCode: number; stdout: string; stderr?: string }>) {
   r.runAnswer = (argv) => {
@@ -52,13 +52,13 @@ test('autonomy: on, off and status call the CLI with the right argv and render i
   stage(on);
   answers(r, {
     arm: { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/state/autonomy.md', preconditions: { permission_mode: 'bypassPermissions (user settings)', keep_awake: 'User step: enable keep-awake' } }) },
-    disarm: { exitCode: 0, stdout: JSON.stringify({ was_active: true, reason: 'disarmed', text: '## Autonomy report' }) },
+    disarm: { exitCode: 0, stdout: JSON.stringify({ was_active: true, reason: 'disarmed', text: '## Run brief' }) },
     status: { exitCode: 0, stdout: JSON.stringify(ACTIVE) },
   });
   await $.session.start(start);
   const on1 = await run($ as never, 'on');
   expect(action(autonomyRuns(r).at(-1)!.argv)).toBe('arm');
-  expect(autonomyRuns(r).at(-1)!.argv.slice(-3)).toEqual(ARGV_TAIL('arm'));
+  expect(autonomyRuns(r).at(-1)!.argv.slice(-5)).toEqual(ARGV_TAIL('arm'));
   expect(autonomyRuns(r).at(-1)!.argv[1]).toContain('scripts/run-hook.sh');
   expect(autonomyRuns(r).at(-1)!.init!.cwd).toBe('/work/proj');
   expect(on1.text).toContain('armed');
@@ -67,7 +67,7 @@ test('autonomy: on, off and status call the CLI with the right argv and render i
   expect(on1.text).toContain('keep-awake');
   const st = await run($ as never, 'status');
   expect(action(autonomyRuns(r).at(-1)!.argv)).toBe('status');
-  expect(st.text).toContain('pass 2/5');
+  expect(st.text).toContain('pass 2');
   const off = await run($ as never, 'off');
   expect(action(autonomyRuns(r).at(-1)!.argv)).toBe('disarm');
   expect(off.text).toContain('disarmed');
@@ -138,8 +138,8 @@ test('autonomy: the tick reads status at most every 30 s, only while active, and
   table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
   await r.clock.advance(30000);
   expect(r.toasts.length).toBe(1);
-  expect(r.toasts[0]).toContain('cap-passes');
-  expect(r.toasts[0]).toContain('5/5');
+  expect(r.toasts[0]).toContain('deadline');
+  expect(r.toasts[0]).toContain('pass 5');
   const reads = autonomyRuns(r).filter((x) => action(x.argv) === 'status').length;
   await r.clock.advance(120000);
   expect(autonomyRuns(r).filter((x) => action(x.argv) === 'status').length).toBe(reads);
@@ -175,7 +175,7 @@ test('autonomy: the status band shows pass N/M and deadline while active and cle
   await $.session.start(start);
   await run($ as never, 'on');
   await run($ as never, 'status');
-  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2/5, deadline 07:30');
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2, deadline 07:30');
   table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
   await r.clock.advance(35000);
   expect(s.bands.at(-1)).toBeUndefined();
@@ -183,9 +183,24 @@ test('autonomy: the status band shows pass N/M and deadline while active and cle
   table['status'] = { exitCode: 0, stdout: JSON.stringify(ACTIVE) };
   await run($ as never, 'on');
   await run($ as never, 'status');
-  expect(s.bands.at(-1)).toContain('pass 2/5');
+  expect(s.bands.at(-1)).toContain('pass 2');
   await run($ as never, 'off');
   expect(s.bands.at(-1)).toBeUndefined();
+});
+
+test('autonomy: band renders pass count without maximum', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const { max_passes: _passes, max_stalls: _stalls, ...uncapped } = ACTIVE;
+  answers(r, {
+    arm: { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/l', preconditions: {} }) },
+    status: { exitCode: 0, stdout: JSON.stringify(uncapped) },
+  });
+  await $.session.start(start);
+  await run($ as never, 'on');
+  await run($ as never, 'status');
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2, deadline 07:30');
+  expect(s.bands.at(-1)).not.toContain('/');
 });
 
 test('autonomy: session.end clears a shown band and stops reading', async ($, on) => {
@@ -198,7 +213,7 @@ test('autonomy: session.end clears a shown band and stops reading', async ($, on
   await $.session.start(start);
   await run($ as never, 'on');
   await run($ as never, 'status');
-  expect(s.bands.at(-1)).toContain('pass 2/5');
+  expect(s.bands.at(-1)).toContain('pass 2');
   await $.session.end({ reason: 'other', sessionId: 'sid-1' } as never);
   expect(s.bands.at(-1)).toBeUndefined();
   const reads = autonomyRuns(r).length;
@@ -216,12 +231,12 @@ test('autonomy: a run armed through the CLI before session.start gets the band a
   await $.session.start(start);
   await r.clock.advance(5000);
   expect(statusReads(r)).toBe(1);
-  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2/5, deadline 07:30');
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2, deadline 07:30');
   expect(r.toasts.length).toBe(0);
   table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
   await r.clock.advance(30000);
   expect(r.toasts.length).toBe(1);
-  expect(r.toasts[0]).toContain('cap-passes');
+  expect(r.toasts[0]).toContain('deadline');
   expect(s.bands.at(-1)).toBeUndefined();
   const reads = statusReads(r);
   await r.clock.advance(120000);
@@ -268,7 +283,7 @@ test('autonomy: a Bash orchestra.py autonomy arm makes the next tick read status
   await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'python3 ~/plugin/scripts/orchestra.py autonomy arm' });
   await r.clock.advance(5000);
   expect(statusReads(r)).toBe(2);
-  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2/5, deadline 07:30');
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2, deadline 07:30');
   table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
   await r.clock.advance(30000);
   expect(r.toasts.length).toBe(1);
@@ -286,10 +301,10 @@ test('autonomy: clear and resume session.end keep polling alive', async ($, on) 
   answers(r, table);
   await $.session.start(start);
   await r.clock.advance(5000);
-  expect(s.bands.at(-1)).toContain('pass 2/5');
+  expect(s.bands.at(-1)).toContain('pass 2');
   for (const reason of ['clear', 'resume']) {
     await $.session.end({ reason, sessionId: 'sid-1' } as never);
-    expect(s.bands.at(-1)).toContain('pass 2/5');
+    expect(s.bands.at(-1)).toContain('pass 2');
     const before = statusReads(r);
     await r.clock.advance(35000);
     expect(statusReads(r)).toBeGreaterThan(before);

@@ -68,6 +68,10 @@
         "final": {
           "model": "claude-opus-5-5",
           "effort": "high"
+        },
+        "standards": {
+          "model": "claude-sonnet-5-5",
+          "effort": "medium"
         }
       }
     },

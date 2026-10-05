@@ -28,13 +28,22 @@ class NativeTests(unittest.TestCase):
     def test_role_matrix_files_and_read_only_enforcement(self):
         claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
         self.assertEqual(claude, {f'{n}.md' for n in [
-            'builder', 'code-reviewer', 'code-reviewer-checkpoint', 'critic', 'designer-planner',
+            'builder', 'code-reviewer', 'code-reviewer-checkpoint', 'code-reviewer-standards', 'critic', 'designer-planner',
             'investigator', 'investigator-code', 'operator', 'orchestrator']})
         read_only = ('investigator', 'critic', 'code-reviewer')
         for name in claude - {'orchestrator.md'}:
             front = (PLUGIN / 'agents' / name).read_text().split('---')[1]
             want = 'Agent, Edit, Write, NotebookEdit' if name.startswith(read_only) else 'Agent'
             self.assertIn(f'disallowedTools: {want}\n', front, name)
+
+    def test_standards_preset_is_sonnet_medium_variant_file(self):
+        path = PLUGIN / 'agents/code-reviewer-standards.md'
+        self.assertTrue(path.exists())
+        front = path.read_text().split('---')[1]
+        self.assertIn('model: claude-sonnet-5-5\n', front)
+        self.assertIn('effort: medium\n', front)
+        desc = [l for l in front.splitlines() if l.startswith('description:')][0]
+        self.assertIn('Lens: standards', desc)
 
     def test_claude_repair_preset_is_override_dispatch_with_no_variant_file(self):
         matrix = json.loads((PLUGIN / 'config/models.json').read_text())['claude']
@@ -94,7 +103,12 @@ class NativeTests(unittest.TestCase):
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
         versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
         self.assertEqual(len(set(versions.values())), 1, versions)
-        self.assertEqual(set(versions.values()), {'2.1.0'})
+        self.assertEqual(set(versions.values()), {'2.2.0'})
+
+    def test_changelog_first_heading_matches_version(self):
+        version = json.loads((PLUGIN / 'plugin.json').read_text())['version']
+        heading = next(line for line in (ROOT / 'CHANGELOG.md').read_text().splitlines() if line.startswith('## '))
+        self.assertTrue(heading[3:].startswith(version), heading)
 
     def test_mod_files_exist(self):
         claude = json.loads((PLUGIN / '.claude-plugin/plugin.json').read_text())
@@ -104,6 +118,14 @@ class NativeTests(unittest.TestCase):
         for name in ['hooks/mod/orchestra.ts', 'hooks/mod/marker.ts', 'types/index.d.ts']:
             self.assertTrue((PLUGIN / name).is_file(), name)
 
+    def test_relaunch_prompt_ships_and_forbids_background_work(self):
+        text = (PLUGIN / 'config/relaunch-prompt.md').read_text()
+        for phrase in ['orchestra` skill', 'start --harness-session', 'progress.md', 'orchestra.py status', 'Park a card',
+                       'Never end your turn to wait', 'context nears its ceiling', 'foreground (blocking) Agent calls only',
+                       'Never run background Bash', 'Workflow is allowed in the foreground']:
+            self.assertIn(phrase, text)
+        self.assertNotIn('Do not use the Workflow tool', text)
+        self.assertNotRegex(text, r'/Users/')
 
 
 if __name__ == '__main__':

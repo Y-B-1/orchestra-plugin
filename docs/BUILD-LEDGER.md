@@ -80,3 +80,65 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | FX5 | builder | $SCRATCH/wt/FX5 | 55e3394 (26c13fb) | final wave r2 minors: dead `held` removed, SessionEnd silent for an ended run, changed-policy message depends on active state, shared raw-state helper, codex.orchestrator removed, docs counts and O35 wording; red then green; full suite 338 OK | ACCEPTED; final wave r3 (12d2b9b) closed the r2 findings; r3 remainders repaired by FX6 |
 | FX6 | builder-repair | $SCRATCH/wt/FX6 | ac5b084 (3837e2d) | final wave r3 rf_security major (extra readings whose unwrap fails denied ordinary commands, since B2-r11) plus minors: failing extra readings dropped; 1024 extra-reading budget per call (crafted 97 KB input 0.38 s Python, 0.05 s TS, was up to 437 s); SessionEnd build_error silent for an ended run; `start --new-run` recovery message for an active run under a changed policy; Stop from another bound session consumes no pass (SPEC O37); O35 wording; corpus guard-fx6-1..22; red then green; 37,175-command differential: 0 Python/TS mismatches, 26 deny-to-allow (all allowed by 1.0.1), 0 new denies; full suite 345 OK; plugin test 76/76 | ACCEPTED; checkpoint FX6-R on 0755b81 CLEAN (35,281 probes: 0 Python/TS mismatches, 0 new allows of 1.0.1 denies; one minor, `start --new-run --policy` message, recorded as a known limit); gates G2 CLEAN (345 OK, plugin test 76/76, validate, build_release, manifests 2.0.0) |
 | B5-r2 | builder-repair | $SCRATCH/wt/B5-r2 | 2db0fa5 (6c0e433) | O24 Python delegation; 6 red then green + 1 regression guard; plugin test 59/59; R5c CLEAN (payload contract checked against hooks.py with a real-hook probe) | ACCEPTED |
+
+## 2.2 build (design/2.2)
+
+| Card | Role | Commit | Evidence | Status |
+|---|---|---|---|---|
+| C8, C9 | critic | dd9b9d2, d9e6767 | plan feasibility (P-1 personal path, P-2 park cascade) and re-check (H-1 held reservation) blocking; both fixed by coordinator plan amendments | ACCEPTED |
+| X1 | builder (spike) | none | L0 under `claude -p` (claude 2.1.289): Workflow = yes (a.txt/b.txt written, WORKFLOW-DONE with both results, no denial); env inheritance = yes (`probe-123`) | ACCEPTED (R2 CLEAN); spike, no code |
+| E1 | builder | 3a7248a | materiality `issues`, `rev` stamp, keep/remove at add, read-only review overlap; 14 tests red then green | ACCEPTED (R1 CLEAN) |
+| G1 | builder | 1d8750c | long-option prefix reading, `commit --amend` deny, chain regression corpus; corpus 30 OK, plugin test 79/79 | ACCEPTED (R1 CLEAN) |
+| M1, M1f | builder, coordinator | bb2253b, ca80ac2 | mod delegate spawns from plugin root, `--repo` on CLI reads, failure class reasons; H1 reproduced at the seam, H2 inconclusive; M1f flips autonomy.test.ts argv tail | ACCEPTED (R1 CLEAN) |
+| K1, K2, P1x | builder | 574135c, ff04220, b8b251a | coordinator references, role skills, standards reviewer variant. K2 budget: test_skills.py review SKILL.md cap 4096 → 4480 (+9.4%), file measures 4463 after compression | ACCEPTED (R1 CLEAN) |
+| W1 gate | coordinator | acca191 | 363 Python tests OK, generate/sync 0, plugin test 84/84 | CLEAN |
+| R1 | code-reviewer checkpoint | acca191 | wave 1, every hunk; G1 probes against git 2.50.1 options; 5 notes (M1 reader text, timeout match guess, `--amend=x` consistency, ledger entry, red-run exit codes) | CLEAN |
+| E2 | builder | cc1eccf | findings ledger, out-of-scope triage, gate receipts, gate repeat refusal, boundary gate argv; 15 tests red then green | ACCEPTED (R2 CLEAN) |
+| G2 | builder | 84feeea | merged-branch deletion in both guards, hooks.py merge check, `decision_category` corpus key | HELD (R2 BLOCKED, R2r BLOCKED) |
+| W2 gate | coordinator | e8bd9ab | engine 162, hooks 141, integration 20, corpus 34 OK; plugin test 87/87; sync, generate 0 | CLEAN |
+| R2 | code-reviewer checkpoint | e8bd9ab | E2, X1 CLEAN; G2 two security findings: global git options (`-c`, `--config-env`) redirect a remote delete past the tip check; short-name default refs can be shadowed by a local branch or tag | BLOCKED (G2) |
+| G2r | builder repair (Opus) | 1aaa03e | any global option before the verb denies a merged delete; full refnames for the default ref; 3 tests red then green | HELD |
+| R2r | code-reviewer checkpoint | 1aaa03e | R2-1 fixed; R2-2 partial: `rev-parse` DWIM still lets a decoy ref named `refs/remotes/origin/main` stand in for a missing default ref (hooks.py:353). Held for the final repair wave | BLOCKED |
+| E3 | builder | ed533ec | wave label, per-task findings, repair-diff tip rule, `repair_check`, accept-before-repair, `supersede`, `status` waves; 18 tests red then green | ACCEPTED (R3 CLEAN) |
+| W3 gate | coordinator | 986fe93 | engine 181, hooks 143, integration 21, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R3 | code-reviewer checkpoint | ed533ec | independent red run; tip rule fails closed; notes: `seq` field missing from spec section 6, migrated-card order in `supersede` | CLEAN |
+| E4 | builder | 5551c24 | `held` state and `hold`, repair ladder refusals, held dependencies satisfied, held-tip gate attribution, single-append progress writes; 17 tests red then green | ACCEPTED (R4 CLEAN) |
+| W4 gate | coordinator | 9fd008a | engine 198, hooks 143, integration 21, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R4 | code-reviewer checkpoint | 5551c24 | no acceptance fail-open through hold; notes: repair-check refusal should require mode implementation (engine.py:691), final-receipt exception untested, progress append before state save | CLEAN |
+| E5 | builder | 7e4ed32 | final receipts attribute to chain tips, address every held tip (finding or `cleared`), final repair `final_round`/`final_findings`; 5 tests red then green, 4 regression guards | ACCEPTED (R5 CLEAN) |
+| W5 gate | coordinator | 018d580 | engine 207, hooks 143, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R5 | code-reviewer checkpoint | 7e4ed32 | no approval or release fail-open; notes: checkpoint after final hides final blame (fails closed), non-builder final key stalls, falsy `cleared` stored silently | CLEAN |
+| E6 | builder | 25e452f | run brief on every end path (`## Run brief`), hook `lock_wait=2.0`, BUSY and MISSING_CWD denies, `brief` CLI | ACCEPTED (after E6r) |
+| W6 gate | coordinator | 22b3dd1 | engine 225, hooks 153, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R6 | code-reviewer checkpoint | 25e452f | two confirmed findings: eager `os.getcwd()` crashes the hook from a deleted cwd (fails open); busy lock drops Interrupt and SessionEnd records | BLOCKED (superseded by R6r) |
+| E6r | builder repair (Opus) | d637e4a | guarded cwd, unavailable cwd treated as missing; Interrupt and SessionEnd block on the lock; 4 tests red then green | ACCEPTED (R6r CLEAN) |
+| R6r | code-reviewer checkpoint | d637e4a | both R6 findings fixed; notes: empty-string cwd resolves to `/`, `mark_harness_rebind` still gives up after 2 s | CLEAN |
+| W6r gate | coordinator | b30d1cc | engine 226, hooks 156, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| E7 | builder | 4311e20 | autonomy without caps (2.1 caps recorded, not enforced), signature stalls, `_complete` all-accepted first, held work live, band "pass N"; 15 tests red then green | ACCEPTED (R7 CLEAN) |
+| W7 gate | coordinator | 7fcfa85 | engine 239, hooks 156, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R7 | code-reviewer checkpoint | 4311e20 | mutation probes kill each completion guard; real 2.1 state loads; notes: ts test name missing, 2.1 fixture not an inline dict, open final finding idles `no-ready-card` | CLEAN |
+| E8 | builder | 4316cb3 | ledger `Release:` pre-authorization (exact pair), relaunch autonomy surviving session ends, `settle`, `end_pass_session`, pass nonce from env or marker; 29 tests red then green | ACCEPTED (after E8r) |
+| W8 gate | coordinator | 2162ef0 | engine 264, hooks 161, integration 25 OK; corpus FAILED (2 inline commands without corpus cases); plugin test 88/88; sync, generate 0 | FAILED |
+| R8 | code-reviewer checkpoint | 4316cb3 | no pre-authorization widening or relaunch escape; R8-1 failed gate (guard corpus) | BLOCKED (superseded by R8r) |
+| E8r | builder repair (Opus) | 91f886b | two guard-corpus cases from `classify_command`, fixtures resynced; env pass nonce held to the marker pattern | ACCEPTED (R8r CLEAN) |
+| DOC1 (plan D1) | builder | 1104b71 | docs for 2.2 CLI, hooks and the 2.1 upgrade; merged at 959ea36 | reported (W9 review) |
+| W8r gate | coordinator | 959ea36 | engine 265, hooks 161, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R8r | code-reviewer checkpoint | 91f886b | R8-1 fixed; no-fallback on malformed env nonce is fail-safe | CLEAN |
+| H1 | builder | 94a30b6 | `orchestra.py relaunch` harness (settle, pass session nonce, stall back-off, signal disarm), shipped pass prompt; 10 tests red then green (implementation written before tests, disclosed) | ACCEPTED |
+| W9 gate | coordinator | 5751694 | full suite 534 OK; plugin test 88/88; sync, generate, build_release 0; tarball ships relaunch-prompt.md | CLEAN |
+| R9 | code-reviewer checkpoint | 5751694 | H1 and DOC1 meet their tickets; notes (signal handler lock, orphan test partial, docs exit codes and `--launcher` wording) carried to the final repair wave | CLEAN |
+| FC / FS / FT | final review, three lenses | 25fa55c | correctness CLEAN, standards CLEAN (notes); security BLOCKED: merged remote delete checked the fetch URL, not the push URL (G2) | round 1 of the final loop |
+| G2f (card G2r) | builder repair (Opus) | a066549 | push URL must equal fetch URL for a merged remote delete; exact default refs (no short-name decoys); empty cwd is missing; raw `update-ref` deletion denied (Python and TS, corpus rows) | ACCEPTED (R10 CLEAN) |
+| FE | builder | d0d66e3 | hold any non-repair builder; migrated cards ordered first; open final finding keeps autonomy live; unarmed settle read-only; SPEC `seq` row; receipt tests | ACCEPTED (R10 CLEAN) |
+| FH | builder | 0d63c1a | relaunch signal handler never takes the state lock; orphan unbound session and CLI tests | ACCEPTED (R10 CLEAN) |
+| FD | builder | 5edad53 | relaunch exit codes and launcher notes in both cli.md files; stale VALIDATION, SKILL-SOURCES and checkpoint-agent text | ACCEPTED (R10 CLEAN) |
+| FC2 / FS2 / FT2 | final review, three lenses | 957bd7e | correctness CLEAN, standards CLEAN (notes); security BLOCKED: a case-variant name (`Main`) passed the default and checked-out denies on a case-insensitive filesystem (G2 chain) | round 2 of the final loop |
+| R10 | code-reviewer checkpoint | 957bd7e | G2f, FE, FH, FD meet their items; notes only (fail-closed false denies) | CLEAN |
+| G2x (worktree G2c) | builder (Sonnet) | 42cd7ed | exact `for-each-ref` match of the deleted ref; case-folded default and checked-out compares under `core.ignorecase`; docs/hooks.md delete, push-URL and update-ref text. Card G2x carries no file reservation: the 2.1 engine keeps G2's files with reported G2 and cannot repair an accepted chain tip | ACCEPTED (R11 CLEAN) |
+| REL | coordinator | c98c444, 7b53a2d | version 2.2.0 in both manifests and plugin.json; CHANGELOG 2.2.0 | reported (final round 3) |
+| FC3 / FS3 / FT3 | final review, three lenses | 4eaf3b9 | security CLEAN, standards CLEAN (notes); correctness BLOCKED: with a packed branch and a loose case twin, `rev-parse` read the twin's tip, so the merged check ran on the wrong commit (G2 chain) | round 3 of the final loop |
+| R11 | code-reviewer checkpoint | 42cd7ed | G2x fixes FS2-1; notes on test isolation | CLEAN |
+| G2y | builder (Opus) | 89d2877 | namespace listing with exact row; case-variant twin always denied; tip from the exact row; tests isolate each deny; CHANGELOG heading test; 2.2 repair ladder in docs/models.md and SKILL-SOURCES | ACCEPTED (R12 CLEAN) |
+| FC4 / FS4 / FT4 | final review, three lenses | 5b46ba6 | all CLEAN; notes for the next phase: the default-ref read can still pick a loose case twin of a packed default (no data loss), the SKILL-SOURCES E1 row title and closing cells still name the 2.0 round cap, and a comment cites the review tag FC3 | round 4 of the final loop: PASS |
+| R12 | code-reviewer checkpoint | 89d2877 | G2y fixes the case-twin finding; merged exact-name deletes still allowed; tests fail without the fix | CLEAN |
+| Gate | coordinator | 5b46ba6 | unittest 557 OK, fixture sync 0, plugin test 89 pass, generate --check 0, build_release 0 | PASS |

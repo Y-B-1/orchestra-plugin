@@ -32,6 +32,6 @@ Test a concrete counterexample when it is safe to run.
 - Evidence still matches the artifact. A check run before the last edit is stale.
 - A report claim such as "all callers updated" is checked by search.
 
-## Standards
+## Architecture
 
-Check the repository's own rules, naming and scope against the diff. Report violations you can quote. Leave deep conformance questions to the separate critic, but do not skip an obvious violation.
+Judge the structure the diff adds: seams, module depth, coupling and dependency direction. Read it with the architecture checklist that the lens table in the final mode file names. A structure that is merely not what you would have chosen is a note.

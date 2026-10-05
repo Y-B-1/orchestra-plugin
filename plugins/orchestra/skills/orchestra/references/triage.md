@@ -18,6 +18,16 @@ Use this for a bug report, a finding or a feature request before it becomes a ca
 
 Done when every report in hand carries a verdict, a severity and a route, and each verdict rests on a command or a file you read.
 
+## Out-of-scope findings
+
+Only the final review raises them, in `out_of_scope`. Triage each into one of three and record it with `orchestra.py finding add --review <id> --kind out_of_scope --index N --disposition inline|card|brief --reason TEXT [--card ID]`:
+
+- `inline`: a small reversible fix you make yourself, reserved with `inline TASK`.
+- `card`: a new builder card, batch or plan, for work that needs its own review.
+- `brief`: left for the user, listed under Needs you in the run brief.
+
+An entry follows the item's fingerprint, so an unchanged item is not triaged twice. A defect a non-builder card introduced (operator, designer-planner, an inline edit) has no chain tip to repair: a non-builder cause goes to inline or card, never brief alone.
+
 ## Rejected requests
 
 Record a rejected enhancement as out of scope: the request, the reason and the rule it touches, in the project's own out-of-scope file when it has one. Later duplicates match against it.

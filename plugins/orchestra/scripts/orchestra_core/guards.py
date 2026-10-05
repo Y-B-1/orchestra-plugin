@@ -19,6 +19,22 @@ _SHELLS = frozenset(RULES['shells'])
 _SHELL_VALUE_FLAGS = frozenset(RULES['shell_value_flags'])
 _WRAPPER_VALUES = {name: set(values) for name, values in RULES['wrappers'].items()}
 _GIT = {key: (set(value) if isinstance(value, list) else value) for key, value in RULES['git'].items()}
+# SPEC 5.15: per verb, the guarded long options, most restrictive first. A strict prefix of one reads as that
+# option; an exemption (clean --dry-run, restore --staged) is deliberately absent and counts only in full.
+_LONG_GUARDED = {
+    'add': tuple(RULES['git']['wholesale_add_flags']),
+    'reset': ('--hard',),
+    'clean': ('--force',),
+    'branch': ('--delete', '--force'),
+    'checkout': ('--force',),
+    'switch': tuple(RULES['git']['switch_force_flags']),
+    'restore': ('--force', '--worktree'),  # --worktree negates the --staged exemption
+    'push': ('--force', '--force-with-lease', '--force-if-includes', '--mirror') + tuple(RULES['git']['push_multi_flags']),
+    'commit': ('--all',) + tuple(RULES['git']['commit_guarded_flags']),
+    'tag': ('--delete',),
+}
+_LONG_VALUE = {'clean': _GIT['clean_value_options'], 'push': _GIT['push_value_options'],
+               'commit': _GIT['commit_value_options']}
 _RELEASE = RULES['release']
 _BOUNDARY = RULES['boundary']
 _RUNNERS = RULES['runners']
@@ -53,6 +69,8 @@ class Decision:
     argv: tuple[str, ...] = ()
     source: str | None = None
     boundary: str | None = None  # 'delete' or 'merge' for class boundary; action stays allow.
+    kind: str | None = None  # category merged-delete only: 'local' or 'remote' (SPEC 5.14).
+    branch: str | None = None  # category merged-delete only: the one branch the command deletes.
 
     @property
     def klass(self):
@@ -415,9 +433,102 @@ def _boundary(kind, reason):
     return Decision('allow', reason, 'boundary', boundary=kind)
 
 
+_MERGED = 'merged-delete'
+_BRANCH_NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._/+-]*')
+_REMOTE_NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._-]*')
+_PLAIN_REASON = 'Branch deletion must run plainly in the session repository'
+_SEPARATE_REASON = 'Execute branch deletions separately'
+
+
+def _merged_delete(verb, options, flags, short, words, redirected, raw):
+    """SPEC 5.14 item 1: the exact merged-delete shapes, else None. `options` is what precedes `--`
+    with abbreviated long options spelled in full (5.15). A shape has one branch positional and no other option."""
+    if len(raw) != len(options):
+        return None  # A value option and its value were read away: not a bare delete.
+    positional = [x for x in options if not x.startswith('-')]
+    shorts = set(short)
+    flags = {x for x in flags if x.startswith('--')}
+    if verb == 'branch':
+        if not (flags <= {'--delete', '--force'} and shorts <= {'D', 'd', 'f'} and len(positional) == 1):
+            return None
+        if not (('D' in shorts or 'd' in shorts or '--delete' in flags) and
+                ('D' in shorts or 'f' in shorts or '--force' in flags)):
+            return None
+        remote, branch, kind = None, positional[0], 'local'
+    elif verb == 'push':
+        if not (flags == {'--delete'} or (not flags and shorts == {'d'})) or shorts - {'d'} or len(positional) != 2:
+            return None
+        remote, branch, kind = positional[0], positional[1], 'remote'
+        if not _REMOTE_NAME.fullmatch(remote):
+            return None
+    else:
+        return None
+    if not _BRANCH_NAME.fullmatch(branch):
+        return None
+    if redirected:  # A git global option precedes the verb.
+        return _deny(_PLAIN_REASON)
+    return Decision('allow', 'Deletion is a boundary action', _MERGED, remote, None, tuple(words),
+                    boundary='delete', kind=kind, branch=branch)
+
+
+def _long_prefix(verb, token, guarded):
+    """The guarded long option of `verb` that `token` abbreviates (its part before `=` is a non-empty strict
+    prefix of it; the first match wins, so list guarded options most restrictive first), else None."""
+    name = token.split('=', 1)[0]
+    if verb not in _LONG_GUARDED or len(name) < 3 or not name.startswith('--'):
+        return None
+    return next((option for option in guarded if len(name) < len(option) and option.startswith(name)), None)
+
+
+def _value_width(token, value_options):
+    """Words a value option takes: 2 for a detached value, 1 for an abbreviated long option with its value attached."""
+    if token in value_options:
+        return 2
+    name = token.split('=', 1)[0]
+    if len(name) > 2 and name.startswith('--') and any(len(name) < len(x) and x.startswith(name) for x in value_options):
+        return 1 if '=' in token else 2
+    return 0
+
+
+def _read_long_options(verb, options):
+    """The options of a guarded verb with value options and their values dropped and abbreviated guarded options spelled in full."""
+    read, i = [], 0
+    value_options = _LONG_VALUE.get(verb, ())
+    while i < len(options):
+        full = _long_prefix(verb, options[i], _LONG_GUARDED[verb])
+        width = 0 if full else _value_width(options[i], value_options)
+        if width:
+            i += width
+            continue
+        read.append(full or options[i])
+        i += 1
+    return read
+
+
+def _raw_ref_delete(args):
+    """`git update-ref` that can delete: -d (alone or in a cluster), a long option that abbreviates --delete or
+    --stdin (its input can delete), or an all-zero new value. The value of -m is a message. Doubt reads as a delete."""
+    i = 0
+    while i < len(args):
+        x = args[i]
+        i += 1
+        if x == '-m':
+            i += 1
+        elif x.startswith('--'):
+            name = x.split('=', 1)[0]
+            if len(name) > 2 and ('--delete'.startswith(name) or '--stdin'.startswith(name)):
+                return True
+        elif x.startswith('-') and not x.startswith('-m') and 'd' in x[1:]:
+            return True
+        elif re.fullmatch(r'0{40}|0{64}', x):
+            return True
+    return False
+
+
 def _git(words):
     args = words[1:]
     changed_repo = False
+    plain = not (args and args[0].startswith('-'))  # Any global option can redirect a merged-delete (R2): fail closed.
     while args and args[0].startswith('-'):
         opt = args.pop(0)
         if opt in _GIT['global_value_options']:
@@ -430,25 +541,22 @@ def _git(words):
         return Decision()
     verb, args = args[0], args[1:]
     options = args[:args.index('--')] if '--' in args else args
-    if verb in {'clean', 'push'}:
-        value_options = _GIT['clean_value_options'] if verb == 'clean' else _GIT['push_value_options']
-        filtered, i = [], 0
-        while i < len(options):
-            if options[i] in value_options:
-                i += 2
-            else:
-                filtered.append(options[i])
-                i += 1
-        options = filtered
+    if verb in _LONG_GUARDED:
+        options = _read_long_options(verb, options)
     flags = [x for x in options if x.startswith('-')]
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
         return _deny('Git stash shares state across worktrees', 'stash')
+    if verb == 'update-ref' and _raw_ref_delete(args):
+        return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):
         return _deny('Hard reset discards work')
     if verb == 'clean' and ('f' in short or '--force' in flags) and not ('n' in short or '--dry-run' in flags):
         return _deny('Forced clean discards files')
     if verb == 'branch' and ('D' in short or (('d' in short or '--delete' in flags) and ('f' in short or '--force' in flags))):
+        merged = '--' not in args and _merged_delete(verb, options, flags, short, words, not plain, args)
+        if merged:
+            return merged
         return _deny('Forced branch deletion discards refs')
     wholesale = '.' in args or ':/' in args
     if verb == 'checkout' and (wholesale or '--force' in flags or 'f' in short):
@@ -464,25 +572,19 @@ def _git(words):
         return _deny('Stage explicit paths only', 'wholesaleStage')
     if verb == 'commit':
         # A message beginning with a dash is still a message.
-        opts = []
-        i = 0
-        while i < len(options):
-            token = options[i]
-            if token in _GIT['commit_value_options']:
-                i += 2
-                continue
-            if token.startswith(('--message=', '--file=')) or token.startswith('-m'):
-                i += 1
-                continue
-            opts.append(token)
-            i += 1
+        opts = [x for x in options if not (x.startswith(('--message=', '--file=')) or x.startswith('-m'))]
         if '--all' in opts or any(x.startswith('-') and not x.startswith('--') and 'a' in x[1:] for x in opts):
             return _deny('Commit explicit staged paths only', 'wholesaleStage')
+        if any(x in _GIT['commit_guarded_flags'] for x in opts):
+            return _deny('Amend rewrites history')
     if verb == 'push':
         if any(x.startswith('--force') or x == '--mirror' for x in flags) or 'f' in short or any(x.startswith('+') for x in args):
             return _deny('Force push rewrites remote history')
         dry_run = '--dry-run' in flags or 'n' in short
         positional = [x for x in options if not x.startswith('-')]
+        if (('--delete' in flags or 'd' in short) and not dry_run and '--' not in args and
+                (merged := _merged_delete(verb, options, flags, short, words, not plain, args))):
+            return merged
         if len(positional) > 2 or any(x in flags for x in _GIT['push_multi_flags']) or 'd' in short:
             return _deny('Push needs one explicit remote and refspec', 'release')
         remote, target = (positional + [None, None])[:2]
@@ -1803,6 +1905,16 @@ def _classify_command(command, _depth):
     if releases:
         # A prior cd/env or nested shell must not inherit a plain Git permit.
         return replace(releases[0][0], argv=tuple(releases[0][1]))
+    merged = [o for d, o, _ in items if d.category == _MERGED]
+    if merged:
+        # SPEC 5.14 item 2: a merged-delete stands alone and runs plainly, or the whole command denies.
+        words = list(merged[0])
+        plain = words[:1] == ['git'] and not any('$(' in word or '`' in word for word in words)
+        if len(items) > 1:
+            substituted = any('$(' in word or '`' in word for _, o, _ in items for word in o)
+            return _deny(_PLAIN_REASON if substituted else _SEPARATE_REASON)
+        if not plain:
+            return _deny(_PLAIN_REASON)
     for kind in ('delete', 'merge'):
         for decision, _, _ in items:
             if decision.boundary == kind:
