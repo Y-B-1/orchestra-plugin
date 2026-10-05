@@ -8,7 +8,6 @@
     "Sentinel: orchestra-review/references/security.md",
     "Sentinel: orchestra-review/references/cleanliness.md",
     "Sentinel: orchestra-review/references/specialists.md",
-    "requirements, correctness, tests, standards",
     "A green test that mocks the boundary cannot prove the real boundary.",
     "A final brief with no `Lens:` line is a blocker.",
     "Review as the specialist the brief names.",
@@ -18,6 +17,11 @@
     "delete, stdlib, native, speculative, shrink",
     "`specialist:<name>`",
     "## frontend",
-    "## visual"
+    "## visual",
+    "Sentinel: orchestra-review/references/standards.md",
+    "a finding blocks only when it has a real, material impact",
+    "do not raise a known finding unless the code at its location changed",
+    "repair_check: true",
+    "requirements, correctness, tests, architecture"
   ]
 }
