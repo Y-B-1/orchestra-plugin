@@ -57,7 +57,7 @@ class WorkflowIntegration(unittest.TestCase):
     def review(self,ids,final=False,summary='Inspected fixture source and concrete failure checks.'):
         artifact=self.cli('artifact')[1] if final or not ids else self.cli('artifact','--tasks',','.join(ids))[1]
         p=self.write('final.json' if final else 'checkpoint.json',
-                     dict(reviewer='independent-reviewer',categories=CATEGORIES,tasks=ids,findings=[],
+                     dict(reviewer='independent-reviewer',categories=CATEGORIES,tasks=ids,findings=[],issues=[],
                           verdict='CLEAN',final=final,summary=summary,artifact=artifact))
         self.cli('review',str(p),lease=True)
 
@@ -166,7 +166,7 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertNotIn('scope',self.cli('artifact')[1])
         (self.repo/'sibling.txt').write_text('sibling uncommitted edit\n')
         p=self.write('scoped.json',dict(reviewer='independent-reviewer',categories=['correctness'],tasks=['T'],
-                     findings=[],verdict='CLEAN',final=False,summary='Inspected fixture source.',artifact=artifact))
+                     findings=[],issues=[],verdict='CLEAN',final=False,summary='Inspected fixture source.',artifact=artifact))
         self.cli('review',str(p),lease=True)
         self.cli('accept','T',lease=True)
         self.cli('artifact','--tasks','NOPE',expected=2)
