@@ -333,11 +333,12 @@ class Engine:
         return _digest(entries)
 
     @contextlib.contextmanager
-    def _state(self, write=True):
+    def _state(self, write=True, block=False):
+        """`block` makes a read wait for the lock even when `lock_wait` is set (records that must not be dropped)."""
         if _contracts()[1] != self.contract_hash:
             raise EngineError('Role or method instructions changed; start a new run')
         with (self.state_dir / 'state.lock').open('a+') as lock:
-            if write or self.lock_wait is None:
+            if write or block or self.lock_wait is None:
                 fcntl.flock(lock, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
             else:
                 end = time.monotonic() + self.lock_wait
@@ -570,7 +571,7 @@ class Engine:
 
     def interrupt_active(self):
         """Interrupt the active session without a caller-supplied lease. Python only, for the Interrupt hook."""
-        with self._state(False) as state:
+        with self._state(False, block=True) as state:
             if not (state['session'] and state['session']['active']):
                 return False  # Read-only unless there is a session to interrupt
         with self._state() as state:
@@ -595,7 +596,7 @@ class Engine:
 
     def end_harness_session(self, session_id):
         """The bound harness session ended: what interrupt does, with outcome 'ended'. Idempotent."""
-        with self._state(False) as state:
+        with self._state(False, block=True) as state:
             if not self._bound_to(state, session_id):
                 return False  # A no-op never rewrites state.json
         with self._state() as state:

@@ -1814,6 +1814,79 @@ class RunBriefHookTest(unittest.TestCase):
         self.assertEqual(output['decision'], 'block')
         self.assertEqual(json.loads((self.state / 'state.json').read_text())['autonomy']['passes'], 1)
 
+    def run_hook_from_deleted_cwd(self, payload):
+        """Run the hook process with a cwd that is removed before Python starts (the H1 removed-worktree case)."""
+        gone = self.root / 'removed-worktree'
+        gone.mkdir()
+        script = PLUGIN / 'scripts/orchestra_hook.py'
+        shell = 'cd "$1" && rmdir "$1" && exec "$2" "$3" PreToolUse --harness claude'
+        return subprocess.run(['/bin/sh', '-c', shell, 'sh', str(gone), sys.executable, str(script)],
+                              input=json.dumps(payload(gone)), text=True, capture_output=True, timeout=60)
+
+    def test_pretooluse_deleted_process_cwd_denies_delegated(self):
+        payloads = {'payload cwd removed': lambda gone, c: {'cwd': str(gone), 'tool_name': 'Bash', 'tool_input': {'command': c}},
+                    'no payload cwd': lambda gone, c: {'tool_name': 'Bash', 'tool_input': {'command': c}}}
+        for label, make in payloads.items():
+            for command in ['git push origin side', 'rm -rf build']:
+                with self.subTest(label=label, command=command):
+                    result = self.run_hook_from_deleted_cwd(lambda gone: make(gone, command))
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    decision = json.loads(result.stdout)['hookSpecificOutput']
+                    self.assertEqual(decision['permissionDecision'], 'deny')
+                    self.assertEqual(decision['permissionDecisionReason'],
+                                     'Session directory no longer exists: cd to an existing directory, then retry')
+            with self.subTest(label=label, command='git status'):
+                result = self.run_hook_from_deleted_cwd(lambda gone: make(gone, 'git status'))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), {})
+
+    def hold_lock_in_process(self, seconds):
+        """Hold the state lock exclusively from another process for `seconds`."""
+        self.engine.status()
+        code = ('import fcntl, sys, time\nf = open(sys.argv[1], "a+")\nfcntl.flock(f, fcntl.LOCK_EX)\n'
+                'print("held", flush=True)\ntime.sleep(float(sys.argv[2]))\n')
+        proc = subprocess.Popen([sys.executable, '-c', code, str(self.state / 'state.lock'), str(seconds)],
+                                stdout=subprocess.PIPE, text=True)
+        self.addCleanup(proc.stdout.close)
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        self.assertEqual(proc.stdout.readline().strip(), 'held')
+        return proc
+
+    def add_permit(self):
+        data = json.loads((self.state / 'state.json').read_text())
+        data['permits'] = [dict(id='p', action='release', remote='r', target='t', argv=[], artifact={}, lease=self.lease)]
+        (self.state / 'state.json').write_text(json.dumps(data))
+
+    def hook_event(self, event, payload):
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            code = main([event, '--harness', 'claude'])
+        return code, json.loads(out.getvalue())
+
+    def test_interrupt_recorded_when_lock_busy_past_hook_wait(self):
+        self.add_permit()
+        self.hold_lock_in_process(5.0)
+        code, output = self.hook_event('Interrupt', {'cwd': str(self.repo), 'session_id': 's-9'})
+        self.assertEqual((code, output), (0, {}))
+        data = json.loads((self.state / 'state.json').read_text())
+        self.assertIs(data['session']['active'], False)
+        self.assertEqual(data['permits'], [])
+        self.assertEqual(data['last_brief']['reason'], 'interrupted')
+
+    def test_session_end_recorded_when_lock_busy_past_hook_wait(self):
+        self.engine.interrupt('main', self.lease)
+        self.lease = self.engine.open_session('main', harness_session='S')
+        self.add_permit()
+        self.hold_lock_in_process(5.0)
+        code, output = self.hook_event('SessionEnd', {'cwd': str(self.repo), 'session_id': 'S', 'reason': 'other'})
+        self.assertEqual((code, output), (0, {}))
+        data = json.loads((self.state / 'state.json').read_text())
+        self.assertIs(data['session']['active'], False)
+        self.assertEqual(data['session']['outcome'], 'ended')
+        self.assertEqual(data['permits'], [])
+        self.assertEqual(data['last_brief']['reason'], 'ended')
+
 
 if __name__ == '__main__':
     unittest.main()
