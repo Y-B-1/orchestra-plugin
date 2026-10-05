@@ -5,6 +5,8 @@ https://code.claude.com/docs/en/hooks (checked 2026-09-30).
 """
 import argparse
 from dataclasses import dataclass
+from datetime import datetime, timezone
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -21,6 +23,10 @@ _MOD_TOOLS = {'Bash', 'Edit', 'Write', 'MultiEdit'}  # The mod guards only these
 _EDIT_TOOLS = set(RULES['tools']['edit'])
 _SHELL_TOOLS = set(RULES['tools']['shell'])
 _REBIND_SOURCES = ('clear', 'resume', 'fork')
+STOP_LOCK_BUDGET = 8.0  # SPEC 5.16 item 4: seconds from hook start that a busy-state Stop waits for the lock
+LOCK_WAIT = 2.0  # SPEC 5.16 item 3: seconds a hook read waits for the state lock
+MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry'
+BUSY = 'Orchestra state is busy; retry'
 
 
 CONTEXT = (
@@ -88,12 +94,15 @@ def _patch_paths(command):
     return paths
 
 
-def handle_event(event, payload, *, harness='claude', state_dir=None, engine=None, armed=False, autonomy=False):
+def handle_event(event, payload, *, harness='claude', state_dir=None, engine=None, armed=False, autonomy=False,
+                 busy=False, missing_cwd=False, started=None):
     """Decide output; optional engine adapter owns locked state operations.
 
     `armed` marks a run whose state could not be loaded: release classes deny (fail closed).
     `autonomy` marks such a state whose raw autonomy flag is true or unreadable (O29): the
     autonomy-active column applies to every class. A loaded engine implies an armed run; neither means unarmed.
+    `busy` marks a state lock held past the read wait, `missing_cwd` a payload cwd that no longer exists: the
+    delegated classes (release, release-multi, boundary) deny; the other classes keep their ordinary path.
     """
     if harness != 'claude':
         raise ValueError('Unsupported harness')
@@ -147,6 +156,16 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     if event == 'Stop':
         if engine is None:
             return HookResult({})
+        if busy:
+            if not _raw_autonomy_active(engine.state_path):
+                return HookResult({})  # Unarmed and busy: nothing to stop, nothing to write
+            if not _wait_for_lock(engine.state_dir / 'state.lock', started):
+                from .engine import write_busy_brief  # Lazy: tests replace the engine module
+                try:
+                    write_busy_brief(engine.state_dir, datetime.now(timezone.utc).isoformat(timespec='seconds'))
+                except OSError:
+                    pass
+                return HookResult({})  # Allow the stop; autonomy.active stays true
         if _other_session(engine, payload.get('session_id')):
             return HookResult({})  # O37: a Stop from another harness session neither continues nor spends a pass
         try:
@@ -189,6 +208,11 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     klass = decision.klass
     if klass == 'deny':
         return _deny(decision.reason, decision.category == 'malformed')
+    if klass in {'release', 'release-multi', 'boundary'}:
+        if missing_cwd:
+            return _deny(MISSING_CWD)
+        if busy:
+            return _deny(BUSY)
     active = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
     if decision.category == 'merged-delete':
         # SPEC 5.14 item 4: before the autonomy-off allow, and with or without an engine.
@@ -218,6 +242,20 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
 
 
 _PARK_HINT = 'park this card with `orchestra.py park TASK --reason ...` and continue with other cards.'
+
+
+def _wait_for_lock(lock_path, started):
+    """Poll for the exclusive state lock until STOP_LOCK_BUDGET seconds after `started`; True when it freed (and is released)."""
+    end = (started if started is not None else time.monotonic()) + STOP_LOCK_BUDGET
+    with open(lock_path, 'a+') as lock:
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True  # Closing the file releases it
+            except OSError:
+                if time.monotonic() >= end:
+                    return False
+                time.sleep(0.05)
 
 
 def _autonomy_active(engine):
@@ -266,6 +304,10 @@ def _raw_session_active(state_file):
 
 def _report_context(engine):
     try:
+        brief = engine.status().get('last_brief')
+        if isinstance(brief, dict) and isinstance(brief.get('text'), str):
+            return ' Run brief (' + str(brief.get('reason')) + '): ' + brief['text'][:2000] \
+                + ' Full report: ' + str(brief.get('path')) + '.'
         report = engine.autonomy_report()
     except Exception:
         return ''
@@ -431,6 +473,7 @@ def _mod_is_live(payload):
 
 
 def main(argv=None):
+    started = time.monotonic()
     parser = argparse.ArgumentParser()
     parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd'])
     parser.add_argument('--harness', choices=['claude'], default='claude')
@@ -448,8 +491,11 @@ def main(argv=None):
     engine = None
     armed = False
     autonomy = False
+    busy = False
+    missing_cwd = False
     build_error = None
     if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
+        missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
             from .paths import load_policy
             repo, state_dir = _run_location(payload['cwd'])
@@ -458,14 +504,16 @@ def main(argv=None):
                 armed = True  # A state file that cannot be loaded fails closed: armed, no permit.
                 try:
                     from .engine import Engine
-                    engine = Engine(state_dir, repo, policy=load_policy(state_dir))
+                    engine = Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT)
                     try:
                         session = engine.status()['session']
                         armed = bool(session and session.get('active'))
                     except (TypeError, KeyError, AttributeError):
                         pass  # Opaque engine adapters stay armed.
-                except Exception:
-                    engine = None
+                except Exception as exc:
+                    busy = type(exc).__name__ == 'StateBusy'  # By name: the engine module may be replaced in tests
+                    if not (busy and args.event != 'PreToolUse'):
+                        engine = None  # A busy Stop or Interrupt keeps its engine: it waits for the lock itself
                     armed = _raw_session_active(state_dir / 'state.json')  # O35
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
                 if args.event == 'PreToolUse' and not armed:
@@ -479,14 +527,14 @@ def main(argv=None):
             from .engine import Engine
             repo, state_dir = _run_location(payload['cwd'])
             if (state_dir / 'state.json').is_file():
-                engine = Engine(state_dir, repo, policy=load_policy(state_dir))
+                engine = Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT)
         except Exception as exc:
             engine = None  # Unloadable state: SessionStart still returns context; a lost lease is recovered by hand
             if (args.event == 'SessionEnd' and state_dir is not None and (Path(state_dir) / 'state.json').is_file()
                     and _raw_session_active(Path(state_dir) / 'state.json')):  # O35: an ended run has nothing to record
                 build_error = exc
     result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed,
-                          autonomy=autonomy)
+                          autonomy=autonomy, busy=busy, missing_cwd=missing_cwd, started=started)
     if build_error is not None and not result.output:
         result = HookResult({'systemMessage': 'Orchestra session end could not be recorded: ' + str(build_error)
                              + '. A run that holds a lost lease is recovered by hand with '

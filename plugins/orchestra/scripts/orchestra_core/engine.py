@@ -31,6 +31,10 @@ class EngineError(ValueError):
     pass
 
 
+
+class StateBusy(EngineError):
+    """The state lock stayed held past `lock_wait` (SPEC 5.16 item 3)."""
+
 REVIEW_ROLES = ('code-reviewer', 'critic')
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
 REBIND_WINDOW_SECONDS = 60
@@ -97,6 +101,15 @@ def _append_progress(state_dir, text):
         os.write(fd, entry)
     finally:
         os.close(fd)
+
+
+def write_busy_brief(state_dir, at):
+    """SPEC 5.16 item 5: a `state busy` brief appended to progress.md without touching state.json."""
+    if not isinstance(at, str):
+        at = datetime.fromtimestamp(at, timezone.utc).isoformat(timespec='seconds')
+    _append_progress(state_dir, '\n'.join([
+        '## Run brief ' + at, '', '- stop reason: state busy',
+        '- Orchestra state stayed locked past the Stop hook budget; the run was left as it was. Retry or run `brief`.']))
 
 
 def _fingerprint(text):
@@ -198,8 +211,9 @@ def _digest(value):
 
 
 class Engine:
-    def __init__(self, state_dir, repo, policy=None, clock=time.time):
+    def __init__(self, state_dir, repo, policy=None, clock=time.time, lock_wait=None):
         self._clock = clock
+        self.lock_wait = lock_wait
         self.repo = Path(repo).resolve()
         self.state_dir = Path(state_dir).resolve()
         for protected in (self.repo, PACKAGE_ROOT.resolve()):
@@ -323,7 +337,18 @@ class Engine:
         if _contracts()[1] != self.contract_hash:
             raise EngineError('Role or method instructions changed; start a new run')
         with (self.state_dir / 'state.lock').open('a+') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+            if write or self.lock_wait is None:
+                fcntl.flock(lock, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+            else:
+                end = time.monotonic() + self.lock_wait
+                while True:
+                    try:
+                        fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                        break
+                    except OSError:
+                        if time.monotonic() >= end:
+                            raise StateBusy('Orchestra state is busy; retry') from None
+                        time.sleep(0.05)
             if self.state_path.exists():
                 try:
                     state = json.loads(self.state_path.read_text())
@@ -367,6 +392,10 @@ class Engine:
                           ('reviews', list), ('gates', list), ('permits', list)]:
             if not isinstance(state.get(key), kind):
                 raise EngineError('Invalid run state ' + key)
+        brief = state.get('last_brief')
+        if brief is not None and (not isinstance(brief, dict)
+                                  or any(not isinstance(brief.get(k), str) for k in ('reason', 'at', 'text', 'path'))):
+            raise EngineError('Invalid last_brief')
         for key in ('session', 'autonomy'):
             if key not in state or (state[key] is not None and not isinstance(state[key], dict)):
                 raise EngineError('Invalid run state ' + key)
@@ -536,6 +565,7 @@ class Engine:
             self._lease(state, actor, lease)
             state['session']['active'] = False
             state['permits'] = []
+            self._write_brief(state, 'interrupted')
             state['autonomy'] = self._kept_autonomy(state)
 
     def interrupt_active(self):
@@ -548,6 +578,7 @@ class Engine:
                 return False
             state['session']['active'] = False
             state['permits'] = []
+            self._write_brief(state, 'interrupted')
             state['autonomy'] = self._kept_autonomy(state)
             return True
 
@@ -573,6 +604,7 @@ class Engine:
             state['session'].update(active=False, outcome='ended')
             state['session'].pop('pending_rebind', None)  # harness_session stays as a record
             state['permits'] = []
+            self._write_brief(state, 'ended')
             state['autonomy'] = self._kept_autonomy(state)
             return True
 
@@ -1367,6 +1399,7 @@ class Engine:
             artifact = self._completion_evidence(state)
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []
+            self._write_brief(state, 'closed')
             state['autonomy'] = self._kept_autonomy(state)
             return artifact
 
@@ -1459,34 +1492,146 @@ class Engine:
     def _accepted(state):
         return sorted(t['id'] for t in state['tasks'].values() if t['state'] == 'accepted')
 
+    def _write_brief(self, state, reason, stops=False):
+        """SPEC 5.9: append the run brief to progress.md and remember it as `last_brief`. A stopped run's brief stays
+        the remembered one when an end path that does not stop autonomy follows it (the progress entry still lands)."""
+        at = datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')
+        text = self._brief_text(state, reason, at)
+        _append_progress(self.state_dir, text)
+        brief = dict(reason=reason, at=at, text=text, path=str(self.state_dir / 'progress.md'))
+        if stops or self._kept_autonomy(state) is None:
+            state['last_brief'] = brief
+        return brief
+
+    def brief(self):
+        """The newest run brief's text, or None. Lease-free and read-only."""
+        with self._state(False) as state:
+            return (state.get('last_brief') or {}).get('text')
+
     def _stop_autonomy(self, state, reason):
         auto = state['autonomy']
         auto.update(active=False, last_stop_reason=reason)
-        at = datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')
-        text = self._report_text(state, auto, reason, at)
-        progress = self.state_dir / 'progress.md'
-        old = progress.read_text() if progress.exists() else ''
-        gap = '' if not old.strip() else ('' if old.endswith('\n') else '\n') + '\n'
-        progress.write_text(old + gap + text + '\n')
-        auto['report'] = dict(reason=reason, at=at, text=text, path=str(progress))
-        return text
+        brief = self._write_brief(state, reason, stops=True)
+        auto['report'] = dict(brief)
+        return brief['text']
 
-    @staticmethod
-    def _report_text(state, auto, reason, at):
+    def _brief_text(self, state, reason, at):
+        """The run brief of SPEC 5.9: what needs the owner first, the 2.1 report lines last."""
         def listing(items):
             return ['  - ' + i for i in items] or ['  - none']
-        tasks = state['tasks'].values()
-        accepted = ['%s (%s/%s)' % (t['id'], t['role'], t['mode']) for t in tasks if t['state'] == 'accepted']
-        parked = ['%s: %s' % (t['id'], t.get('parked_reason', '')) for t in tasks if t['state'] == 'parked']
-        failures = ['gate %s: exit %d' % (g['name'], g['exit_code'])
-                    for g in state['gates'][auto['armed_gates']:] if not g['passed']]
+
+        def section(title, items):
+            return ['### ' + title, *listing(items)]
+
+        auto = state['autonomy']
+        tasks = state['tasks']
+        findings = state.get('findings', [])
+        chain_of = lambda tip: self._brief_chain(tasks, tip)
+        header = ['## Run brief ' + at, '', '- stop reason: ' + reason]
+        if auto:
+            header += ['- deadline: ' + str(auto.get('deadline')),
+                       '- passes: %d of %d' % (auto['passes'], auto['max_passes']),
+                       '- stalls: %d of %d' % (auto['stalls'], auto['max_stalls'])]
+        else:
+            header += ['- autonomy: not armed']
+        parked = ['%s: %s' % (t['id'], t.get('parked_reason', '')) for t in tasks.values() if t['state'] == 'parked']
+        needs = list(parked)
+        needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
+        needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
+        if (reason in ('closed', 'complete') and not any(self._is_release(t) for t in tasks.values())
+                and not (auto or {}).get('release')):
+            needs.append('ready to release')
+        cleared_by = {}
+        for review in state['reviews']:
+            if review.get('final'):
+                cleared_by.update(review.get('cleared') or {})
+        held_tips = [t for t in tasks.values() if t.get('held_finding')]
+        failing = []
+        cache = {}
+        for task in tasks.values():
+            if task['role'] != 'builder' or task.get('repaired_by') or task['state'] == 'held':
+                continue
+            try:
+                verdicts = self._review_verdicts(state, cache, task_id=task['id'])
+            except EngineError:
+                continue
+            blocking = list(dict.fromkeys(f for r in verdicts.values() for f in self._task_findings(r, task['id'])))
+            if blocking:
+                failing.append('%s (chain %s): %s' % (task['id'], ', '.join(chain_of(task['id'])), '; '.join(blocking)))
+        for tip in held_tips:
+            if tip['id'] in cleared_by or tip.get('repaired_by'):
+                continue
+            rounds = [t['final_round'] for t in tasks.values() if t.get('final_round') and t.get('repair_of') in chain_of(tip['id'])]
+            failing.append('%s (chain %s): %s; final round: %s' % (
+                tip['id'], ', '.join(chain_of(tip['id'])), tip['held_finding'], max(rounds) if rounds else 'none'))
+        held_log = []
+        for tip in held_tips:
+            if tip.get('repaired_by'):
+                fix = tasks[tip['repaired_by']]
+                status = ('fixed in final round %s by %s' % (fix['final_round'], fix['id']) if fix.get('final_round')
+                          else 'repaired by ' + fix['id'])
+            elif tip['id'] in cleared_by:
+                status = 'cleared by a lens: ' + cleared_by[tip['id']]
+            else:
+                status = 'still ' + tip['state']
+            held_log.append('%s (chain %s): %s -- %s' % (tip['id'], ', '.join(chain_of(tip['id'])), tip['held_finding'], status))
+        gates = {g['id']: g for g in state['gates']}
+        for review in state['reviews']:
+            blamed = [k for k, found in (review.get('task_findings') or {}).items()
+                      if found and k not in review['tasks'] and k in tasks]
+            failed = [gates[i] for i in review.get('gate_receipts', []) if i in gates and not gates[i]['passed']]
+            for key in blamed:
+                for gate in failed:
+                    held_log.append('gate %s attributed to held %s: %s' % (gate['id'], key, '; '.join(review['task_findings'][key])))
+        rounds = {}
+        for task in tasks.values():
+            if task.get('final_round'):
+                rounds.setdefault(task['final_round'], []).append(task)
+        final_rounds = []
+        for number in sorted(rounds):
+            cards = sorted(rounds[number], key=lambda t: t.get('seq', 0))
+            open_ = [t for t in cards if t['state'] != 'accepted']
+            names = ', '.join('%s (chain %s)' % (t['id'], ', '.join(self._brief_chain(tasks, t['id'], full=True))) for t in cards)
+            cleared = list(dict.fromkeys(f for t in cards for f in t.get('final_findings', [])))
+            final_rounds.append('round %d: %s %s: %s' % (number, names, 'open' if open_ else 'cleared', '; '.join(cleared) or 'none'))
+        notes = [str(n) for r in state['reviews'] for n in r.get('notes', [])]
+        deferred = ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
+        accepted = []
+        for t in tasks.values():
+            if t['state'] != 'accepted':
+                continue
+            line = '%s (%s/%s)' % (t['id'], t['role'], t['mode'])
+            if t.get('superseded_by'):
+                by = t['superseded_by']
+                line += ' superseded by ' + ', '.join(by if isinstance(by, list) else [by])
+            elif t.get('repair_of') or t.get('repaired_by'):
+                line += ' repaired (%s)' % ', '.join(self._brief_chain(tasks, t['id'], full=True))
+            accepted.append(line)
+        start_gates = auto['armed_gates'] if auto else 0
+        start_reviews = auto['armed_reviews'] if auto else 0
+        failures = ['gate %s: exit %d' % (g['name'], g['exit_code']) for g in state['gates'][start_gates:] if not g['passed']]
         failures += ['review %s: BLOCKED (%s)' % (r['reviewer'], '; '.join(map(str, r['findings'])))
-                     for r in state['reviews'][auto['armed_reviews']:] if r['findings']]
-        lines = ['## Autonomy report ' + at, '', '- stop reason: ' + reason,
-                 '- passes: %d of %d' % (auto['passes'], auto['max_passes']),
-                 '- stalls: %d of %d' % (auto['stalls'], auto['max_stalls']),
-                 '- accepted:', *listing(accepted), '- parked:', *listing(parked), '- failures:', *listing(failures)]
+                     for r in state['reviews'][start_reviews:] if r['findings']]
+        lines = header + ['']
+        for part in (section('Needs you', needs), section('Still failing / next phase', failing),
+                     section('Held log', held_log), section('Final rounds', final_rounds), section('Notes', notes),
+                     section('Deferred findings', deferred), section('Parked', parked), section('Accepted', accepted),
+                     section('Failures', failures)):
+            lines += part
         return '\n'.join(lines)
+
+    @staticmethod
+    def _brief_chain(tasks, tip, full=False):
+        """Card ids of a repair chain: tip first (as `hold` logs it), or oldest first from the whole chain of `tip`."""
+        chain = [tip]
+        while tasks[chain[-1]].get('repair_of'):
+            chain.append(tasks[chain[-1]]['repair_of'])
+        if not full:
+            return chain
+        chain.reverse()
+        while tasks[chain[-1]].get('repaired_by'):
+            chain.append(tasks[chain[-1]]['repaired_by'])
+        return chain
 
     def _complete(self, state, auto):
         matches = []
