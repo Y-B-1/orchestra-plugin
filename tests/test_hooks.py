@@ -820,6 +820,22 @@ class MergedDeleteHookTest(unittest.TestCase):
         self.assertDenied('git branch -D main', 'Branch main is the default branch')
         self.assertDenied('git push --delete origin main', 'Branch main is the default branch')
 
+    def test_merged_delete_case_variant_of_default_denied(self):
+        # FS2-1: on a case-insensitive filesystem refs/heads/Main resolves to refs/heads/main.
+        git(self.repo, 'config', 'core.ignorecase', 'true')
+        git(self.repo, 'remote', 'remove', 'origin')  # the default is the local refs/heads/main
+        git(self.repo, 'checkout', '-q', '-b', 'y')
+        self.assertDenied('git branch -D Main', 'default branch')
+        self.assertEqual(git(self.repo, 'rev-parse', '--verify', 'refs/heads/main'), git(self.repo, 'rev-parse', 'main'))
+
+    def test_merged_delete_case_variant_of_checked_out_denied(self):
+        git(self.repo, 'config', 'core.ignorecase', 'true')  # main is checked out
+        result = self.run_hook('git branch -D Main')
+        self.assertEqual(decision_of(result), 'deny')
+        self.assertEqual(git(self.repo, 'symbolic-ref', '--short', 'HEAD'), 'main')
+        self.assertTrue(self.is_ancestor('main', 'main'))
+        self.assertEqual(git(self.repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/main'), 'refs/heads/main')
+
     def test_merged_delete_unresolvable_default_denies(self):
         self.side('x', 'x.txt', 'x\n')
         git(self.repo, 'merge', '-q', '--ff-only', 'x')
