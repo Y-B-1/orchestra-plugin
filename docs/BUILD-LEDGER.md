@@ -86,10 +86,19 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | Card | Role | Commit | Evidence | Status |
 |---|---|---|---|---|
 | C8, C9 | critic | dd9b9d2, d9e6767 | plan feasibility (P-1 personal path, P-2 park cascade) and re-check (H-1 held reservation) blocking; both fixed by coordinator plan amendments | ACCEPTED |
-| X1 | builder (spike) | none | L0 under `claude -p` (claude 2.1.289): Workflow = yes (a.txt/b.txt written, WORKFLOW-DONE with both results, no denial); env inheritance = yes (`probe-123`) | REPORTED; spike, no code |
+| X1 | builder (spike) | none | L0 under `claude -p` (claude 2.1.289): Workflow = yes (a.txt/b.txt written, WORKFLOW-DONE with both results, no denial); env inheritance = yes (`probe-123`) | ACCEPTED (R2 CLEAN); spike, no code |
 | E1 | builder | 3a7248a | materiality `issues`, `rev` stamp, keep/remove at add, read-only review overlap; 14 tests red then green | ACCEPTED (R1 CLEAN) |
 | G1 | builder | 1d8750c | long-option prefix reading, `commit --amend` deny, chain regression corpus; corpus 30 OK, plugin test 79/79 | ACCEPTED (R1 CLEAN) |
 | M1, M1f | builder, coordinator | bb2253b, ca80ac2 | mod delegate spawns from plugin root, `--repo` on CLI reads, failure class reasons; H1 reproduced at the seam, H2 inconclusive; M1f flips autonomy.test.ts argv tail | ACCEPTED (R1 CLEAN) |
 | K1, K2, P1x | builder | 574135c, ff04220, b8b251a | coordinator references, role skills, standards reviewer variant. K2 budget: test_skills.py review SKILL.md cap 4096 → 4480 (+9.4%), file measures 4463 after compression | ACCEPTED (R1 CLEAN) |
 | W1 gate | coordinator | acca191 | 363 Python tests OK, generate/sync 0, plugin test 84/84 | CLEAN |
 | R1 | code-reviewer checkpoint | acca191 | wave 1, every hunk; G1 probes against git 2.50.1 options; 5 notes (M1 reader text, timeout match guess, `--amend=x` consistency, ledger entry, red-run exit codes) | CLEAN |
+| E2 | builder | cc1eccf | findings ledger, out-of-scope triage, gate receipts, gate repeat refusal, boundary gate argv; 15 tests red then green | ACCEPTED (R2 CLEAN) |
+| G2 | builder | 84feeea | merged-branch deletion in both guards, hooks.py merge check, `decision_category` corpus key | HELD (R2 BLOCKED, R2r BLOCKED) |
+| W2 gate | coordinator | e8bd9ab | engine 162, hooks 141, integration 20, corpus 34 OK; plugin test 87/87; sync, generate 0 | CLEAN |
+| R2 | code-reviewer checkpoint | e8bd9ab | E2, X1 CLEAN; G2 two security findings: global git options (`-c`, `--config-env`) redirect a remote delete past the tip check; short-name default refs can be shadowed by a local branch or tag | BLOCKED (G2) |
+| G2r | builder repair (Opus) | 1aaa03e | any global option before the verb denies a merged delete; full refnames for the default ref; 3 tests red then green | HELD |
+| R2r | code-reviewer checkpoint | 1aaa03e | R2-1 fixed; R2-2 partial: `rev-parse` DWIM still lets a decoy ref named `refs/remotes/origin/main` stand in for a missing default ref (hooks.py:353). Held for the final repair wave | BLOCKED |
+| E3 | builder | ed533ec | wave label, per-task findings, repair-diff tip rule, `repair_check`, accept-before-repair, `supersede`, `status` waves; 18 tests red then green | ACCEPTED (R3 CLEAN) |
+| W3 gate | coordinator | 986fe93 | engine 181, hooks 143, integration 21, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R3 | code-reviewer checkpoint | ed533ec | independent red run; tip rule fails closed; notes: `seq` field missing from spec section 6, migrated-card order in `supersede` | CLEAN |
