@@ -796,6 +796,7 @@ State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17
 |---|---|---|---|---|
 | `tasks[*]` | `wave` | non-empty str, builder implementation only | absent | 5.1 |
 | `tasks[*]` | `held_finding` | non-empty str, on the held tip | absent | 5.2 |
+| `tasks[*]` | `seq` | int, the add-order counter stamped by `add_task` at `add` | absent (migrated 2.1 card, sorted first) | 5.4 |
 | `tasks[*]` | `rev` | `"2.2"`, stamped by `add_task` | absent (2.1 card) | 5.6 |
 | `tasks[*]` | `superseded_by` | list of ids | absent | 5.1 |
 | `tasks[*]` | `final_round`, `final_findings` | int; list of str, on final repair cards | absent | 5.5 |
