@@ -596,6 +596,30 @@ class AutonomyIntegration(unittest.TestCase):
         self.cli('autonomy','disarm')
         self.assertEqual(self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'rm -rf build'}),{})
 
+    def test_cli_autonomy_arm_relaunch_and_settle(self):
+        self.card('c1')
+        self.ledger()
+        armed=self.cli('autonomy','arm','--relaunch')
+        self.assertTrue(armed['active'])
+        self.assertTrue(self.cli('autonomy','status')['active'])
+        settled=self.cli('autonomy','settle')
+        self.assertEqual((settled['armed'],settled['stopped'],settled['reason']),(True,False,None))
+        self.assertEqual(settled['passes'],0)
+        self.assertEqual(len(settled['signature']),64)
+        self.assertEqual(set(settled),{'armed','stopped','reason','signature','passes','stalls'})
+
+    def test_cli_gate_again_reruns(self):
+        first=self.cli('--lease',self.lease,'gate','ok','--',sys.executable,'-c','pass')
+        self.assertTrue(first['passed'])
+        refused=self.cli('--lease',self.lease,'gate','ok','--',sys.executable,'-c','pass',expected=2)
+        self.assertIn('pass --again to rerun',refused)
+        again=self.cli('--lease',self.lease,'gate','--again','ok','--',sys.executable,'-c','pass')
+        self.assertTrue(again['passed'])
+        self.assertNotEqual(again['id'],first['id'])
+        trailing=self.cli('--lease',self.lease,'gate','ok','--again','--',sys.executable,'-c','pass')
+        self.assertTrue(trailing['passed'])
+        self.assertNotIn(trailing['id'],(first['id'],again['id']))
+
 
 FAKE_PASS = r"""
 import json, os, signal, subprocess, sys, time
@@ -634,6 +658,11 @@ def start(env=None):
 for step in steps:
     if step == 'start':
         start()
+    elif step == 'start_unbound':
+        done = subprocess.run([sys.executable, cli, '--repo', repo, 'start'], capture_output=True, text=True)
+        if done.returncode:
+            sys.exit('fake pass: unbound start failed: ' + done.stderr)
+        (root / 'lease.txt').write_text(json.loads(done.stdout)['lease'])
     elif step == 'start_noenv':
         names = sorted(p.name for p in (state / 'relaunch').glob('pass-*.marker'))
         (root / 'markers.json').write_text(json.dumps(names))
@@ -663,6 +692,28 @@ for step in steps:
         signal.signal(signal.SIGTERM, on_signal)
         (root / 'ready.txt').write_text('ready')
         time.sleep(60)
+"""
+
+
+DEADLOCK_DRIVER = r"""
+import os, signal, sys, time
+sys.path.insert(0, sys.argv[1])
+from pathlib import Path
+from orchestra_core import relaunch
+repo, state = Path(sys.argv[2]), Path(sys.argv[3])
+sent = []
+
+class Holder(relaunch.Engine):
+    def settle(self):
+        if not sent:
+            sent.append(1)
+            with self._state():  # the main thread holds the state lock while the signal lands
+                os.kill(os.getpid(), signal.SIGINT)
+                time.sleep(0.3)
+        return super().settle()
+
+relaunch.Engine = Holder
+sys.exit(relaunch.run(repo, state, 'default', launcher=[sys.argv[4], '-c', 'pass']))
 """
 
 
@@ -762,6 +813,30 @@ class RelaunchIntegration(unittest.TestCase):
         session=self.session()
         self.assertEqual((session['active'],session['outcome']),(False,'pass-exited'))
         self.assertIn('stop reason: ended',self.brief())
+
+    def test_relaunch_ends_orphaned_unbound_pass_session(self):
+        clock,sleep,sleeps=self.fake_time()
+        code=self.harness([['start_unbound'],['disarm']],clock,sleep)
+        self.assertEqual(code,5)
+        session=self.session()
+        self.assertNotIn('harness_session',session)
+        self.assertEqual((session['active'],session['outcome']),(False,'pass-exited'))
+        self.assertTrue(self.cli('start')['lease'])  # a following start succeeds
+
+    def test_relaunch_signal_during_engine_call_disarms_without_deadlock(self):
+        driver=self.root/'driver.py'
+        driver.write_text(DEADLOCK_DRIVER)
+        process=subprocess.Popen([sys.executable,str(driver),str(PLUGIN/'scripts'),str(self.repo),str(self.state),
+                                  sys.executable],env=self.env,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        self.addCleanup(process.kill)
+        try:
+            out,err=process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.communicate()
+            self.fail('the harness deadlocked on the state lock')
+        self.assertEqual(process.returncode,130,err)
+        self.assertFalse(self.cli('autonomy','status')['active'])
 
     def test_relaunch_leaves_foreign_session_and_exits_2(self):
         self.assertEqual(self.harness([['start_foreign']]),2)
