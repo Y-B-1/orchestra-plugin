@@ -15,7 +15,9 @@ import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, 
 const DELEGATED = ['release', 'release-multi', 'boundary'];
 // SPEC 10.3: the tools the mod guards; known without loaded rules, so a not-ready guard still delegates them (O24).
 const GUARDED = ['Bash', 'Edit', 'Write', 'MultiEdit'];
+// Fallback for an unexpected error whose class is not known; `delegate` names its class with `failClosed`.
 const FAIL_CLOSED = 'Orchestra guard error; failing closed';
+const MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry';
 const STATE_DENY = 'Use the structured coordinator API for state; protect installed runtime configuration';
 const VERDICT_SUBS = ['review', 'gate', 'accept'];
 const BOARD = 'orchestra-board';
@@ -72,38 +74,81 @@ function toastText(sub: string, out: string): string | null {
 type Dollar = Parameters<Hook<'tool.call'>>[0];
 type Where = { repo: string; state: string; standingOrders: boolean };
 
-async function runHook($: Dollar, args: string[], stdin: string | undefined, cwd: string | undefined) {
-  return $.process.run(['/bin/sh', `${$.plugin.root}/scripts/run-hook.sh`, ...args], { stdin, cwd, timeoutMs: 8000 });
+type Run = Awaited<ReturnType<Dollar['process']['run']>>;
+
+/** SPEC 5.16 item 4: the reason names the one failure class. `detail` is the spawn code or the exit status. */
+export function failClosed(kind: 'spawn' | 'exit' | 'timeout' | 'bad output', detail: string): string {
+  const named = kind === 'spawn' ? `spawn: ${detail}` : kind === 'exit' ? `exit ${detail}` : kind;
+  return `Orchestra guard error (${named}); failing closed`;
+}
+
+/** Names the class of an error `process.run` threw: a timeout, or a spawn failure with its code. */
+export function thrownReason(error: unknown): string {
+  const e = Object(error) as { code?: unknown; message?: unknown };
+  const message = typeof e.message === 'string' ? e.message : String(error);
+  if (/time(d)?[ -]?out|ETIMEDOUT/i.test(message) || e.code === 'ETIMEDOUT') return failClosed('timeout', '');
+  const code = typeof e.code === 'string' && e.code !== '' ? e.code : (/\bE[A-Z0-9]{3,}\b/.exec(message)?.[0] ?? 'UNKNOWN');
+  return failClosed('spawn', code);
+}
+
+/** SPEC 5.16 item 2: the cwd is explicit; `delegate` passes the plugin root, the CLI reads the session cwd. */
+async function runHook($: Dollar, args: string[], stdin: string | undefined, opts: { cwd: string }): Promise<Run> {
+  return $.process.run(['/bin/sh', `${$.plugin.root}/scripts/run-hook.sh`, ...args], { stdin, cwd: opts.cwd, timeoutMs: 8000 });
 }
 
 async function delegate($: Dollar, tool: string, toolInput: Json, sessionId: string): Promise<string | null> {
-  const cwd = await $.session.cwd();
-  const payload = JSON.stringify({ tool_name: tool, tool_input: toolInput, cwd, session_id: sessionId });
-  const run = await runHook($, ['PreToolUse', '--harness', 'claude', '--from-mod'], payload, cwd);
-  if (run.exitCode !== 0) return FAIL_CLOSED;
+  let run: Run;
+  try {
+    // The hook starts from the plugin root, which always exists; the session cwd travels in the payload.
+    const cwd = await $.session.cwd();
+    const payload = JSON.stringify({ tool_name: tool, tool_input: toolInput, cwd, session_id: sessionId });
+    run = await runHook($, ['PreToolUse', '--harness', 'claude', '--from-mod'], payload, { cwd: $.plugin.root });
+  } catch (error) {
+    return thrownReason(error);
+  }
   const out = asJson(run.stdout);
-  if (out === null) return FAIL_CLOSED;
+  // Exit 2 is the hook's own deny (a malformed command): surface its reason when one is present (H4).
+  if (run.exitCode !== 0 && !(run.exitCode === 2 && out !== null)) return failClosed('exit', String(run.exitCode));
+  if (out === null) return failClosed('bad output', '');
   const hso = out['hookSpecificOutput'];
-  if (hso === undefined) return null;
+  if (hso === undefined) return run.exitCode === 0 ? null : failClosed('exit', String(run.exitCode));
   const spec = asJson(JSON.stringify(hso));
-  if (spec === null) return FAIL_CLOSED;
-  if (spec['permissionDecision'] === 'deny') return String(spec['permissionDecisionReason'] ?? FAIL_CLOSED);
-  return null;
+  if (spec === null) return failClosed('bad output', '');
+  if (spec['permissionDecision'] === 'deny') return String(spec['permissionDecisionReason'] ?? failClosed('bad output', ''));
+  return run.exitCode === 0 ? null : failClosed('exit', String(run.exitCode));
+}
+
+/** A CLI read from the session cwd with `--repo <cwd>`; `gone` when that directory no longer exists. */
+async function cliRun($: Dollar, args: string[]): Promise<{ run: Run } | { gone: true }> {
+  const cwd = await $.session.cwd();
+  try {
+    return { run: await runHook($, ['--cli', '--repo', cwd, ...args], undefined, { cwd }) };
+  } catch (error) {
+    let exists = true;
+    try {
+      const probe = await $.process.run(['/bin/sh', '-c', 'test -d "$1"', 'sh', cwd], { cwd: $.plugin.root, timeoutMs: 8000 });
+      exists = probe.exitCode === 0;
+    } catch {
+      // The probe could not run: report the original failure.
+    }
+    if (!exists) return { gone: true };
+    throw error;
+  }
 }
 
 async function readWhere($: Dollar): Promise<Where | null> {
-  const cwd = await $.session.cwd();
-  const run = await runHook($, ['--cli', 'where'], undefined, cwd);
-  const body = run.exitCode === 0 ? asJson(run.stdout) : null;
+  const res = await cliRun($, ['where']);
+  if ('gone' in res) return null;
+  const body = res.run.exitCode === 0 ? asJson(res.run.stdout) : null;
   if (body === null) return null;
   return { repo: String(body['repo'] ?? ''), state: String(body['state'] ?? ''), standingOrders: body['standing_orders'] === true };
 }
 
 async function autonomyCli($: Dollar, sub: Sub): Promise<Cli> {
   try {
-    const cwd = await $.session.cwd();
-    const run = await runHook($, ['--cli', 'autonomy', sub], undefined, cwd);
-    return cliResult(run.exitCode, run.stdout, run.stderr);
+    const res = await cliRun($, ['autonomy', sub]);
+    if ('gone' in res) return { ok: false, body: null, error: MISSING_CWD };
+    return cliResult(res.run.exitCode, res.run.stdout, res.run.stderr);
   } catch (error) {
     return cliThrown(error);
   }
@@ -433,9 +478,8 @@ export const register: Register = (on: On) => {
     try {
       await $.ui.open({ id: BOARD, title: 'Orchestra board', focus: true });
       const refresh = async (): Promise<void> => {
-        const cwd = await $.session.cwd();
-        const run = await runHook($, ['--cli', 'status'], undefined, cwd);
-        boardStatus = run.exitCode === 0 ? asJson(run.stdout) : null;
+        const res = await cliRun($, ['status']);
+        boardStatus = 'gone' in res || res.run.exitCode !== 0 ? null : asJson(res.run.stdout);
         $.ui.invalidate('ui.render');
       };
       await refresh();
