@@ -19,6 +19,8 @@ export type Decision = {
   argv: string[];
   source: string | null;
   boundary: string | null;
+  kind: string | null; // category merged-delete only: 'local' or 'remote' (SPEC 5.14).
+  branch: string | null; // category merged-delete only: the one branch the command deletes.
 };
 
 type Rules = {
@@ -246,7 +248,7 @@ export function shlexSplit(s: string, comments: boolean): string[] {
 // ---------------------------------------------------------------------------------------------
 
 function dec(action = 'allow', reason = '', category = '', extra: Partial<Decision> = {}): Decision {
-  return { action, reason, category, remote: null, target: null, argv: [], source: null, boundary: null, ...extra };
+  return { action, reason, category, remote: null, target: null, argv: [], source: null, boundary: null, kind: null, branch: null, ...extra };
 }
 
 function denyOf(reason: string, category = 'destructiveGit'): Decision {
@@ -630,6 +632,42 @@ function readLongOptions(verb: string, options: string[]): string[] {
   return read;
 }
 
+const MERGED = 'merged-delete';
+const BRANCH_NAME = /^[A-Za-z0-9_][A-Za-z0-9._/+-]*$/;
+const REMOTE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
+const PLAIN_REASON = 'Branch deletion must run plainly in the session repository';
+const SEPARATE_REASON = 'Execute branch deletions separately';
+
+/** SPEC 5.14 item 1: the exact merged-delete shapes, else null. `options` is what precedes `--` with abbreviated
+ * long options spelled in full (5.15). A shape has one branch positional and no other option. */
+function mergedDelete(verb: string, options: string[], allFlags: string[], short: string, words: string[], changedRepo: boolean, raw: string[]): Decision | null {
+  if (raw.length !== options.length) return null; // A value option and its value were read away: not a bare delete.
+  const positional = options.filter((x) => !x.startsWith('-'));
+  const shorts = new Set(short);
+  const flags = new Set(allFlags.filter((x) => x.startsWith('--')));
+  let remote: string | null;
+  let branch: string;
+  let kind: string;
+  if (verb === 'branch') {
+    if (![...flags].every((x) => x === '--delete' || x === '--force') || ![...shorts].every((x) => 'Ddf'.includes(x)) || positional.length !== 1) return null;
+    if (!((shorts.has('D') || shorts.has('d') || flags.has('--delete')) && (shorts.has('D') || shorts.has('f') || flags.has('--force')))) return null;
+    remote = null;
+    branch = positional[0]!;
+    kind = 'local';
+  } else if (verb === 'push') {
+    const longOnly = flags.size === 1 && flags.has('--delete');
+    const shortOnly = flags.size === 0 && shorts.size === 1 && shorts.has('d');
+    if (!(longOnly || shortOnly) || [...shorts].some((x) => x !== 'd') || positional.length !== 2) return null;
+    remote = positional[0]!;
+    branch = positional[1]!;
+    kind = 'remote';
+    if (!REMOTE_NAME.test(remote)) return null;
+  } else return null;
+  if (!BRANCH_NAME.test(branch)) return null;
+  if (changedRepo) return denyOf(PLAIN_REASON);
+  return dec('allow', 'Deletion is a boundary action', MERGED, { remote, argv: words.slice(), boundary: 'delete', kind, branch });
+}
+
 function git(words: string[]): Decision {
   let args = words.slice(1);
   let changedRepo = false;
@@ -654,7 +692,10 @@ function git(words: string[]): Decision {
   }
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
   if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');
-  if (verb === 'branch' && (short.includes('D') || ((short.includes('d') || hasFlag('--delete')) && (short.includes('f') || hasFlag('--force'))))) return denyOf('Forced branch deletion discards refs');
+  if (verb === 'branch' && (short.includes('D') || ((short.includes('d') || hasFlag('--delete')) && (short.includes('f') || hasFlag('--force'))))) {
+    const merged = !args.includes('--') ? mergedDelete(verb, options, flags, short, words, changedRepo, args) : null;
+    return merged ?? denyOf('Forced branch deletion discards refs');
+  }
   const wholesale = args.includes('.') || args.includes(':/');
   if (verb === 'checkout' && (wholesale || hasFlag('--force') || short.includes('f'))) return denyOf('Wholesale restore discards work');
   if (verb === 'switch' && (short.includes('f') || [...GIT.switch_force_flags!].some((x) => hasFlag(x)))) return denyOf('Wholesale restore discards work');
@@ -677,6 +718,10 @@ function git(words: string[]): Decision {
     if (flags.some((x) => x.startsWith('--force') || x === '--mirror') || short.includes('f') || args.some((x) => x.startsWith('+'))) return denyOf('Force push rewrites remote history');
     const dryRun = hasFlag('--dry-run') || short.includes('n');
     const positional = options.filter((x) => !x.startsWith('-'));
+    if ((hasFlag('--delete') || short.includes('d')) && !dryRun && !args.includes('--')) {
+      const merged = mergedDelete(verb, options, flags, short, words, changedRepo, args);
+      if (merged) return merged;
+    }
     if (positional.length > 2 || [...GIT.push_multi_flags!].some((x) => hasFlag(x)) || short.includes('d')) return denyOf('Push needs one explicit remote and refspec', 'release');
     let remote: string | null = positional[0] ?? null;
     let target: string | null = positional[1] ?? null;
@@ -2070,6 +2115,14 @@ function classifyInner(command: string, depth: number): Decision {
   const releases = items.filter((item) => item[0].action === 'release');
   if (items.some((item) => item[0].category === MULTI) || releases.length > 1 || (releases.length && total > 1)) return denyOf('Execute release actions separately', MULTI);
   if (releases.length) return { ...releases[0]![0], argv: releases[0]![1].slice() };
+  const merged = items.find((item) => item[0].category === MERGED);
+  if (merged) {
+    // SPEC 5.14 item 2: a merged-delete stands alone and runs plainly, or the whole command denies.
+    const subst = (word: string) => word.includes('$(') || word.includes('`');
+    const words = merged[1];
+    if (items.length > 1) return denyOf(items.some((item) => item[1].some(subst)) ? PLAIN_REASON : SEPARATE_REASON);
+    if (!(words[0] === 'git' && !words.some(subst))) return denyOf(PLAIN_REASON);
+  }
   for (const kind of ['delete', 'merge']) for (const [decision] of items) if (decision.boundary === kind) return decision;
   let result = dec();
   for (const [decision, original] of items) if (decision.category) result = { ...decision, argv: original.slice() };
