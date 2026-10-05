@@ -823,8 +823,8 @@ class MergedDeleteHookTest(unittest.TestCase):
         git(other, 'push', '-q', 'origin', 'x')
         self.assertDenied('git push origin --delete x', 'does not report x at the tracking tip')
         git(self.repo, 'fetch', '-q', 'origin')
-        self.assertAllowed('git push origin --delete x')  # tracking tip is current again, and still merged evidence? no: late commit
-        # (the fetched tip carries the late commit, so it is unmerged)
+        # The fetched tip carries the late commit: the ls-remote check passes and the merge evidence now fails.
+        self.assertDenied('git push origin --delete x', 'Branch x is not merged into origin/main')
 
     def test_remote_delete_unreachable_remote_denied(self):
         self.remote_branch()
