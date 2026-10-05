@@ -1915,3 +1915,180 @@ class AutonomyPreconditionsTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FindingsLedgerTests(EngineFixture):
+    """SPEC 5.12, 5.7 items 2 to 4, 5.11 items 1 and 2, 5.4 item 3, 5.14 item 5."""
+
+    GATE = [sys.executable, '-c', 'print("ok")']
+
+    def reported(self, name='a'):
+        self.task(name)
+        token = self.engine.dispatch('main', self.lease, name, 'worker-' + name)
+        self.engine.report('worker-' + name, token, 'done')
+
+    def record(self, name, tasks, final=False, findings=None, categories=None, **extra):
+        from orchestra_core.engine import CATEGORIES
+        categories = categories or (CATEGORIES if final else ['correctness'])
+        path = self.root / (name + '.json')
+        self.review(path, reviewer=name, tasks=tasks, categories=categories, findings=findings, final=final)
+        body = json.loads(path.read_text())
+        body.update(extra)
+        path.write_text(json.dumps(body))
+        return self.engine.record_review('main', self.lease, name, path, categories, tasks,
+                                         final=final, findings=findings)
+
+    def final_with_items(self, items, name='final'):
+        self.reported()
+        return self.record(name, ['a'], final=True, out_of_scope=items)
+
+    def test_finding_add_requires_lease_and_known_review(self):
+        self.reported()
+        receipt = self.record('r', ['a'], findings=['Empty input crashes'])
+        with self.assertRaises(EngineError):
+            self.engine.add_finding('main', 'wrong-lease', receipt['id'], 'finding', 0, 'rejected', 'not a bug')
+        with self.assertRaises(EngineError):
+            self.engine.add_finding('main', self.lease, 'missing', 'finding', 0, 'rejected', 'not a bug')
+        entry = self.engine.add_finding('main', self.lease, receipt['id'], 'finding', 0, 'rejected', 'not a bug')
+        self.assertEqual('Empty input crashes', entry['text'])
+        self.assertEqual({'review': receipt['id'], 'kind': 'finding', 'index': 0}, entry['source'])
+        self.assertEqual([entry], self.engine.list_findings())
+
+    def test_finding_list_for_brief_renders_known_findings(self):
+        self.reported()
+        receipt = self.record('r', ['a'], findings=['Empty input crashes'])
+        entry = self.engine.add_finding('main', self.lease, receipt['id'], 'finding', 0, 'deferred', 'wait for the schema')
+        block = self.engine.list_findings(for_brief=True)
+        for part in ('Known findings', entry['id'], 'Empty input crashes', 'deferred', 'wait for the schema'):
+            self.assertIn(part, block)
+
+    def test_rejected_finding_does_not_allow_accept(self):
+        self.reported()
+        receipt = self.record('r', ['a'], findings=['Empty input crashes'])
+        self.engine.add_finding('main', self.lease, receipt['id'], 'finding', 0, 'rejected', 'not a bug')
+        with self.assertRaisesRegex(EngineError, 'current review findings'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_2_1_state_without_findings_loads(self):
+        self.reported()
+        state = json.loads(self.engine.state_path.read_text())
+        self.assertNotIn('findings', state)
+        self.assertEqual([], self.engine.list_findings())
+        self.assertIn('Known findings', self.engine.list_findings(for_brief=True))
+        state['findings'] = []
+        self.engine.state_path.write_text(json.dumps(state))
+        self.assertEqual([], self.engine.list_findings())
+
+    def test_finding_add_rejects_bad_disposition_and_index(self):
+        self.reported()
+        receipt = self.record('r', ['a'], findings=['Empty input crashes'])
+        for kind, index, disposition in [('finding', 0, 'inline-fixed'), ('finding', 0, 'brief-later'),
+                                         ('finding', 1, 'rejected'), ('finding', -1, 'rejected'),
+                                         ('finding', True, 'rejected'), ('finding', '0', 'rejected'),
+                                         ('out_of_scope', 0, 'inline'), ('nonsense', 0, 'rejected')]:
+            with self.assertRaises(EngineError, msg=(kind, index, disposition)):
+                self.engine.add_finding('main', self.lease, receipt['id'], kind, index, disposition, 'why')
+        with self.assertRaises(EngineError):
+            self.engine.add_finding('main', self.lease, receipt['id'], 'finding', 0, 'rejected', '  ')
+        self.reported('b')
+        final = self.record('f', ['a', 'b'], final=True, out_of_scope=['Dead code in util'])
+        for disposition in ('rejected', 'deferred'):
+            with self.assertRaises(EngineError, msg=disposition):
+                self.engine.add_finding('main', self.lease, final['id'], 'out_of_scope', 0, disposition, 'why')
+        self.assertEqual([], self.engine.list_findings())
+        self.engine.add_finding('main', self.lease, final['id'], 'out_of_scope', 0, 'card', 'later', card='X1')
+
+    def test_checkpoint_review_with_out_of_scope_is_refused(self):
+        self.reported()
+        with self.assertRaisesRegex(EngineError, 'raised only at the final review'):
+            self.record('r', ['a'], out_of_scope=['Dead code in util'])
+        self.assertEqual([], self.engine.status()['reviews'])
+
+    def test_final_out_of_scope_does_not_block_verdict(self):
+        receipt = self.final_with_items(['Dead code in util', 'Stale doc'])
+        self.assertEqual([], receipt['findings'])
+        self.assertEqual(['Dead code in util', 'Stale doc'], receipt['out_of_scope'])
+        with self.assertRaises(EngineError):
+            self.record('bad', ['a'], final=True, out_of_scope=['ok', ''])
+
+    def test_completion_requires_triage_of_out_of_scope(self):
+        receipt = self.final_with_items(['Dead code in util', 'Stale doc'])
+        self.engine.accept('main', self.lease, 'a')
+        with self.assertRaisesRegex(EngineError, 'triage'):
+            self.engine.check_completion('main', self.lease)
+        self.engine.add_finding('main', self.lease, receipt['id'], 'out_of_scope', 0, 'inline', 'fixed in place')
+        with self.assertRaisesRegex(EngineError, 'triage'):
+            self.engine.check_completion('main', self.lease)
+        self.engine.add_finding('main', self.lease, receipt['id'], 'out_of_scope', 1, 'brief', 'for the user')
+        self.engine.check_completion('main', self.lease)
+
+    def test_triage_carries_forward_by_fingerprint(self):
+        first = self.final_with_items(['Dead code in util'])
+        self.engine.add_finding('main', self.lease, first['id'], 'out_of_scope', 0, 'brief', 'for the user')
+        self.engine.accept('main', self.lease, 'a')
+        second = self.record('final2', ['a'], final=True, out_of_scope=['Dead   code in\nutil'])
+        self.assertNotEqual(first['id'], second['id'])
+        self.engine.check_completion('main', self.lease)
+        third = self.record('final3', ['a'], final=True, out_of_scope=['Dead code in util', 'A new item'])
+        with self.assertRaisesRegex(EngineError, 'triage'):
+            self.engine.check_completion('main', self.lease)
+        self.assertNotEqual(first['id'], third['id'])
+
+    def test_fingerprint_collapses_whitespace(self):
+        import hashlib
+        from orchestra_core.engine import _fingerprint
+        self.assertEqual(hashlib.sha256(b'a b c').hexdigest(), _fingerprint('  a \n b\tc '))
+
+    def test_gate_repeat_on_same_artifact_refused_without_again(self):
+        first = self.engine.run_gate('main', self.lease, 'unit', self.GATE)
+        self.assertTrue(first['passed'])
+        with self.assertRaisesRegex(EngineError, 'Gate unit already passed on this artifact \\(receipt %s\\); pass --again to rerun' % first['id']):
+            self.engine.run_gate('main', self.lease, 'unit', self.GATE)
+        again = self.engine.run_gate('main', self.lease, 'unit', self.GATE, again=True)
+        self.assertNotEqual(first['id'], again['id'])
+        self.engine.run_gate('main', self.lease, 'other', self.GATE)
+        (self.repo / 'a').write_text('changed')
+        self.engine.run_gate('main', self.lease, 'unit', self.GATE)
+
+    def test_failed_gate_rerun_allowed(self):
+        bad = [sys.executable, '-c', 'raise SystemExit(3)']
+        one = self.engine.run_gate('main', self.lease, 'bad', bad)
+        two = self.engine.run_gate('main', self.lease, 'bad', bad)
+        self.assertFalse(one['passed'] or two['passed'])
+        self.assertNotEqual(one['id'], two['id'])
+
+    def test_review_cites_stale_gate_refused(self):
+        self.reported()
+        gate = self.engine.run_gate('main', self.lease, 'unit', self.GATE)
+        (self.repo / 'a').write_text('changed')
+        with self.assertRaisesRegex(EngineError, 'stale gate receipt'):
+            self.record('r', ['a'], gate_receipts=[gate['id']])
+
+    def test_review_cites_current_passed_gate_accepted(self):
+        self.reported()
+        gate = self.engine.run_gate('main', self.lease, 'unit', self.GATE)
+        receipt = self.record('r', ['a'], gate_receipts=[gate['id']])
+        self.assertEqual([gate['id']], receipt['gate_receipts'])
+        for cited in (['missing'], 'not-a-list', [3]):
+            with self.assertRaises(EngineError, msg=cited):
+                self.record('bad', ['a'], gate_receipts=cited)
+        pathlib.Path(gate['path']).write_text('altered')
+        with self.assertRaisesRegex(EngineError, 'altered gate receipt'):
+            self.record('bad2', ['a'], gate_receipts=[gate['id']])
+
+    def test_clean_review_citing_failed_gate_refused(self):
+        self.reported()
+        gate = self.engine.run_gate('main', self.lease, 'unit', [sys.executable, '-c', 'raise SystemExit(1)'])
+        with self.assertRaisesRegex(EngineError, 'A failed gate receipt needs a blocking finding'):
+            self.record('r', ['a'], gate_receipts=[gate['id']])
+        receipt = self.record('r2', ['a'], findings=['unit gate fails'], gate_receipts=[gate['id']])
+        self.assertEqual(['unit gate fails'], receipt['findings'])
+
+    def test_gate_refuses_merged_delete_and_boundary_argv(self):
+        for argv in (['git', 'branch', '-d', 'x'], ['git', 'worktree', 'remove', 'x'], ['git', 'branch', '-D', 'x']):
+            before = len(self.engine.status()['gates'])
+            with self.assertRaises(EngineError, msg=argv):
+                self.engine.run_gate('main', self.lease, 'unsafe', argv)
+            self.assertEqual(before, len(self.engine.status()['gates']))
+        with self.assertRaisesRegex(EngineError, 'boundary actions run only through the guarded hook'):
+            self.engine.run_gate('main', self.lease, 'unsafe', ['git', 'branch', '-d', 'x'])

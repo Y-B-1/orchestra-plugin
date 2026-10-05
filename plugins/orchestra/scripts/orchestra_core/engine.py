@@ -78,7 +78,14 @@ AUTONOMY_FIXED = (
 AUTONOMY_KEEP_AWAKE = 'User step: enable keep-awake in Claude Desktop (or keep the machine awake) for an overnight run.'
 CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
 PARKABLE = ('queued', 'running', 'reported')
+DISPOSITIONS = dict(finding=('rejected', 'deferred', 'inline', 'card', 'brief'),
+                    out_of_scope=('inline', 'card', 'brief'))  # SPEC 5.12 item 1
 TASK_STATES = ('queued', 'running', 'reported', 'repairing', 'accepted', 'parked')
+
+
+def _fingerprint(text):
+    """SHA-256 of the text with whitespace collapsed (N5), so a reworded layout keeps its triage."""
+    return hashlib.sha256(' '.join(text.split()).encode()).hexdigest()
 
 
 def _section(text, title):
@@ -379,6 +386,16 @@ class Engine:
                     raise EngineError('Invalid task ' + key)
             if any(dep not in state['tasks'] for dep in task['dependencies']):
                 raise EngineError('Invalid stored dependency')
+        findings = state.get('findings', [])
+        if not isinstance(findings, list) or any(
+                not isinstance(f, dict) or any(not isinstance(f.get(k), str) for k in ('id', 'fingerprint', 'text', 'reason', 'at'))
+                or f.get('disposition') not in DISPOSITIONS['finding'] or not isinstance(f.get('source'), dict)
+                for f in findings):
+            raise EngineError('Invalid findings state')
+        for review in state['reviews']:
+            for key in ('out_of_scope', 'gate_receipts'):
+                if key in review and (not isinstance(review[key], list) or any(not isinstance(v, str) for v in review[key])):
+                    raise EngineError('Invalid reviews state')
         fields = {
             'reviews': {'id': str, 'reviewer': str, 'categories': list, 'tasks': list, 'final': bool,
                         'findings': list, 'artifact': dict, 'action': str, 'path': str, 'source': str, 'sha256': str},
@@ -781,12 +798,45 @@ class Engine:
             if not isinstance(body.get('summary'), str) or not body['summary'].strip():
                 raise EngineError('Review needs a nonempty semantic summary')
             notes = self._check_issues(body, findings, covered)
+            out_of_scope = self._check_out_of_scope(body, final)
+            gate_receipts = self._check_gate_receipts(state, body, findings)
             evidence = self._snapshot(report_path, 'review')
             receipt = dict(id=uuid.uuid4().hex, reviewer=reviewer, categories=categories,
                            tasks=ids, final=bool(final), findings=findings, notes=notes, artifact=artifact,
+                           out_of_scope=out_of_scope, gate_receipts=gate_receipts,
                            scope=scope, action='review', **evidence)
             state['reviews'].append(receipt)
             return copy.deepcopy(receipt)
+
+    @staticmethod
+    def _check_out_of_scope(body, final):
+        """Out-of-scope items never change the verdict and exist only on final receipts (SPEC 5.7 item 2)."""
+        items = body.get('out_of_scope', [])
+        if not final and items:
+            raise EngineError('Out-of-scope findings are raised only at the final review')
+        if not isinstance(items, list) or any(not isinstance(i, str) or not i.strip() for i in items):
+            raise EngineError('Invalid out-of-scope findings')
+        return items
+
+    def _check_gate_receipts(self, state, body, findings):
+        """A cited gate receipt must exist, be intact and match the current whole-repository artifact (SPEC 5.11 item 1)."""
+        cited = body.get('gate_receipts', [])
+        if not isinstance(cited, list) or any(not isinstance(c, str) or not c for c in cited):
+            raise EngineError('Invalid gate receipts')
+        current = self.artifact() if cited else None
+        failed = False
+        for ident in cited:
+            gate = next((g for g in state['gates'] if g['id'] == ident), None)
+            if gate is None:
+                raise EngineError('Review cites an unknown gate receipt: ' + ident)
+            if not self._intact(gate):
+                raise EngineError('Review cites an altered gate receipt: ' + ident)
+            if gate['artifact'] != current:
+                raise EngineError('Review cites a stale gate receipt: ' + ident)
+            failed = failed or not gate['passed']
+        if failed and not findings:
+            raise EngineError('A failed gate receipt needs a blocking finding')
+        return cited
 
     @staticmethod
     def _check_issues(body, findings, covered):
@@ -847,10 +897,46 @@ class Engine:
                 raise EngineError('Reported artifact is stale')
             task['state'] = 'accepted'
 
+    def add_finding(self, actor, lease, review_id, kind, index, disposition, reason, card=None):
+        """Record the coordinator's disposition of one receipt item (SPEC 5.12). A rejection accepts no card."""
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            review = next((r for r in state['reviews'] if r['id'] == review_id), None)
+            if review is None:
+                raise EngineError('Unknown review: ' + str(review_id))
+            if kind not in DISPOSITIONS:
+                raise EngineError('Finding kind must be finding or out_of_scope')
+            if disposition not in DISPOSITIONS[kind]:
+                raise EngineError('Disposition for %s must be one of %s' % (kind, ', '.join(DISPOSITIONS[kind])))
+            items = review['findings'] if kind == 'finding' else review.get('out_of_scope', [])
+            if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(items):
+                raise EngineError('Finding index does not name an item of that receipt')
+            if not isinstance(reason, str) or not reason.strip():
+                raise EngineError('Finding needs a reason')
+            if card is not None and (not isinstance(card, str) or not card.strip()):
+                raise EngineError('Finding card must be a nonempty id')
+            entry = dict(id=uuid.uuid4().hex, fingerprint=_fingerprint(items[index]), text=items[index],
+                         source=dict(review=review_id, kind=kind, index=index), disposition=disposition,
+                         reason=reason, at=datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds'))
+            if card is not None:
+                entry['card'] = card
+            state.setdefault('findings', []).append(entry)
+            return copy.deepcopy(entry)
+
+    def list_findings(self, for_brief=False):
+        """Lease-free read of the ledger; for_brief renders the block reviewer briefs carry."""
+        with self._state(False) as state:
+            entries = copy.deepcopy(state.get('findings', []))
+        if not for_brief:
+            return entries
+        lines = ['Known findings']
+        lines += ['- %s [%s] %s -- %s' % (e['id'], e['disposition'], e['text'], e['reason']) for e in entries]
+        return '\n'.join(lines if entries else lines + ['- none'])
+
     def run_secret_scan(self, actor, lease):
         return self.run_gate(actor, lease, 'secret-scan', self.policy['secret_scan'].get('argv', []))
 
-    def run_gate(self, actor, lease, name, argv):
+    def run_gate(self, actor, lease, name, argv, again=False):
         unavailable = name == 'secret-scan' and argv == [] and not self.policy['secret_scan'].get('argv')
         if unavailable and self.policy['secret_scan'].get('required'):
             raise EngineError('Required secret scanner is unavailable')
@@ -861,9 +947,18 @@ class Engine:
         decision = classify_command(shlex.join(argv)) if not unavailable else None
         if decision is not None and decision.action != 'allow':
             raise EngineError('Gate command forbidden: ' + decision.reason)
+        if decision is not None and (decision.boundary or decision.category in ('boundary', 'merged-delete')):
+            raise EngineError('Gate command forbidden: boundary actions run only through the guarded hook')  # SPEC 5.14 item 5
         with self._state(False) as state:
             self._lease(state, actor, lease)
+            gates = list(state['gates'])
         before = self.artifact()
+        if not again:  # SPEC 5.11 item 2: a failed gate always reruns
+            for gate in gates:
+                if (gate['name'] == name and gate['argv'] == argv and gate['passed']
+                        and gate['artifact'] == before and self._intact(gate)):
+                    raise EngineError('Gate %s already passed on this artifact (receipt %s); pass --again to rerun'
+                                      % (name, gate['id']))
         log = self.state_dir / ('gate-' + uuid.uuid4().hex + '.log')
         with log.open('xb') as out:
             try:
@@ -954,6 +1049,11 @@ class Engine:
         required_categories = set(self.policy['required_review_categories'])
         if (require_review or state['tasks']) and not required_categories <= categories:
             raise EngineError('Current final review coverage is incomplete')
+        triaged = {f['fingerprint'] for f in state.get('findings', []) if f['source'].get('kind') == 'out_of_scope'}
+        for review in {r['id']: r for r in verdicts.values()}.values():  # SPEC 5.7 item 4
+            for item in review.get('out_of_scope', []):
+                if _fingerprint(item) not in triaged:
+                    raise EngineError('Out-of-scope finding needs triage: ' + item)
         checks = list(self.policy['required_checks'])
         scanner = self.policy['secret_scan']
         if scanner.get('required'):
