@@ -402,6 +402,11 @@ class Engine:
                     raise EngineError('Invalid task ' + key)
             if any(dep not in state['tasks'] for dep in task['dependencies']):
                 raise EngineError('Invalid stored dependency')
+            if 'final_round' in task and (type(task['final_round']) is not int or task['final_round'] < 1):
+                raise EngineError('Invalid task final_round')
+            if 'final_findings' in task and (not isinstance(task['final_findings'], list)
+                                             or any(not isinstance(f, str) or not f.strip() for f in task['final_findings'])):
+                raise EngineError('Invalid task final_findings')
             if 'held_finding' in task and (not isinstance(task['held_finding'], str) or not task['held_finding'].strip()):
                 raise EngineError('Invalid task held_finding')
         findings = state.get('findings', [])
@@ -665,6 +670,10 @@ class Engine:
                 if not any(self._task_findings(r, repair_of) for r in verdicts.values()):
                     raise EngineError('Repair needs earlier checked coding findings')
                 self._check_repair_ladder(state, original)
+                final_findings = self._final_findings(state, repair_of)
+                if final_findings:
+                    task['final_round'] = self._next_final_round(state)
+                    task['final_findings'] = final_findings
                 # Suspend the whole chain atomically. Reports and workers remain as history,
                 # but none of those old assignments reserve capacity or writable files.
                 original['repaired_by'] = task['id']
@@ -691,10 +700,28 @@ class Engine:
         if self._blocked_by_repair_check(state, original['id']):
             raise EngineError('Repair-diff check blocked %s; hold the chain' % original['id'])
 
+    def _final_receipts(self, state, task_id):
+        """The current final receipts for the card. Coverage of cards added since is not required, so a round's
+        repairs, added together, each still see the receipts that blame their chains (SPEC 5.5 item 4)."""
+        verdicts = self._review_verdicts(state, {}, task_id=task_id)
+        return [r for r in {r['id']: r for r in verdicts.values()}.values() if r['final']]
+
     def _final_blocks(self, state, task_id):
         """A current final receipt with blocking findings attributed to the card."""
-        verdicts = self._review_verdicts(state, {}, task_id=task_id, final=True)
-        return any(self._task_findings(r, task_id) for r in verdicts.values())
+        return any(self._task_findings(r, task_id) for r in self._final_receipts(state, task_id))
+
+    def _final_findings(self, state, task_id):
+        """The blocking findings current final receipts attribute to the card, in order and without repeats."""
+        return list(dict.fromkeys(f for r in self._final_receipts(state, task_id) for f in self._task_findings(r, task_id)))
+
+    @staticmethod
+    def _next_final_round(state):
+        """SPEC 5.5 item 4: 1 plus the highest `final_round` once a card of that round has reported, else that round; first is 1."""
+        rounds = [t['final_round'] for t in state['tasks'].values() if 'final_round' in t]
+        if not rounds:
+            return 1
+        top = max(rounds)
+        return top + 1 if any('report' in t for t in state['tasks'].values() if t.get('final_round') == top) else top
 
     def _blocked_by_repair_check(self, state, task_id):
         """The card's current blocking verdict comes from a repair-diff check (`repair_check: true`, SPEC 5.2 item 2b)."""
@@ -949,13 +976,16 @@ class Engine:
             repair_check = self._check_repair_marker(body, final)
             if not final and findings and (repair_check or any(t.get('repaired_by') for t in covered)):
                 self._check_chain_tips(state, covered, task_findings)
+            if final and findings and covered:
+                self._check_chain_tips(state, covered, task_findings, 'final')
+            cleared = self._check_cleared(state, body, final, task_findings)
             notes = self._check_issues(body, findings, covered)
             out_of_scope = self._check_out_of_scope(body, final)
             gate_receipts = self._check_gate_receipts(state, body, findings)
             evidence = self._snapshot(report_path, 'review')
             receipt = dict(id=uuid.uuid4().hex, reviewer=reviewer, categories=categories,
                            tasks=ids, final=bool(final), findings=findings, notes=notes, artifact=artifact,
-                           out_of_scope=out_of_scope, gate_receipts=gate_receipts,
+                           out_of_scope=out_of_scope, gate_receipts=gate_receipts, cleared=cleared,
                            scope=scope, action='review', **evidence)
             if task_findings is not None:
                 receipt['task_findings'] = task_findings
@@ -1006,13 +1036,29 @@ class Engine:
             raise EngineError('repair_check must be true on a checkpoint receipt')
         return True
 
-    def _check_chain_tips(self, state, covered, task_findings):
-        """Tip rule (SPEC 5.1 item 6): a blocked repair-diff check names chain tips, never an ancestor."""
+    def _check_chain_tips(self, state, covered, task_findings, kind='repair-diff'):
+        """Tip rule (SPEC 5.1 item 6, 5.5 item 3): a blocked repair-diff check or final receipt names chain tips, never an ancestor."""
         if task_findings is None:
-            raise EngineError('Attribute repair-diff findings to the chain tip ' + self._open_repair(state, covered[0])['id'])
+            raise EngineError('Attribute %s findings to the chain tip %s' % (kind, self._open_repair(state, covered[0])['id']))
         for key, found in task_findings.items():
             if found and state['tasks'][key].get('repaired_by'):
-                raise EngineError('Attribute repair-diff findings to the chain tip ' + self._open_repair(state, state['tasks'][key])['id'])
+                raise EngineError('Attribute %s findings to the chain tip %s' % (kind, self._open_repair(state, state['tasks'][key])['id']))
+
+    def _check_cleared(self, state, body, final, task_findings):
+        """SPEC 5.5 item 3: `cleared` maps a held tip to a reason, on final receipts only; a final receipt addresses every held tip."""
+        cleared = body.get('cleared', {})
+        if not final:
+            if cleared:
+                raise EngineError('Cleared entries are allowed only on final receipts')
+            return {}
+        held = [t['id'] for t in state['tasks'].values() if t['state'] == 'held' and not t.get('repaired_by')]
+        if (not isinstance(cleared, dict)
+                or any(key not in held or not isinstance(reason, str) or not reason.strip() for key, reason in cleared.items())):
+            raise EngineError('Invalid cleared entries: each names a held tip with a non-empty reason')
+        for tip in held:
+            if tip not in cleared and not (task_findings or {}).get(tip):
+                raise EngineError('Final receipt must address held tip ' + tip)
+        return cleared
 
     @staticmethod
     def _check_out_of_scope(body, final):

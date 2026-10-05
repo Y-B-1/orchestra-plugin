@@ -223,6 +223,127 @@ class WorkflowIntegration(unittest.TestCase):
         self.cli('permit','fixture-remote','main',lease=True,expected=2)
         self.cli('finish',lease=True,expected=2)
 
+    LENSES=(['requirements','correctness','tests','architecture'],['security'],['standards','cleanup'])
+
+    def card(self,ident,**kw):
+        task=dict(id=ident,role='builder',mode='implementation',inputs=['fixture outcome'],acceptance=['fixture check'],
+                  files=[ident+'.txt'],resources=[],dependencies=[])
+        task.update(kw)
+        self.cli('add',str(self.write(ident+'.json',task)),lease=True)
+
+    def run_card(self,ident):
+        worker='worker-'+ident
+        token=self.cli('dispatch',ident,worker,lease=True)[1]['assignment']
+        self.cli('report',worker,token,str(self.write(ident+'.txt','Inspected fixture; nothing to change.')))
+
+    def built(self,ident,**kw):
+        self.card(ident,**kw)
+        self.run_card(ident)
+
+    def receipt(self,name,ids,categories,final=False,findings=(),**extra):
+        artifact=self.cli('artifact')[1] if final else self.cli('artifact','--tasks',','.join(ids))[1]
+        body=dict(reviewer='reviewer-'+name,categories=categories,tasks=ids,findings=list(findings),
+                  issues=[dict(text=f,severity='blocking',impact='Fixture impact: a requirement is unmet.') for f in findings],
+                  verdict='BLOCKED' if findings else 'CLEAN',final=final,artifact=artifact,
+                  summary='Inspected fixture source and concrete failure checks.')
+        body.update(extra)
+        return self.cli('review',str(self.write('receipt-'+name+'.json',body)),lease=True)[1]
+
+    def lens_round(self,tag,specs):
+        """SPEC 5.5 item 9: add every card of the round, report them all, then record the receipts."""
+        existing=list(self.cli('status')[1]['tasks'])
+        names=['%s%d'%(tag,n) for n in range(len(specs))]
+        for name in names:
+            self.card(name,role='code-reviewer',mode='final',files=[],review_of=existing)
+        for name in names:
+            self.run_card(name)
+        everything=list(self.cli('status')[1]['tasks'])
+        for name,(categories,extra) in zip(names,specs):
+            extra=dict(extra)
+            self.receipt(name,everything,categories,final=True,findings=extra.pop('findings',()),**extra)
+        return names
+
+    def accept_all(self,*ids):
+        for ident in ids:
+            self.cli('accept',ident,lease=True)
+
+    def status_task(self,ident):
+        return self.cli('status')[1]['tasks'][ident]
+
+    def test_final_lens_then_repair_then_completion(self):
+        self.built('B1')
+        self.built('B2')
+        self.receipt('wave',['B1','B2'],CATEGORIES)
+        self.accept_all('B1','B2')
+        self.cli('gate','fixture','--',*self.check,lease=True)
+        lens=self.lens_round('L',[(self.LENSES[0],dict(findings=['f'],task_findings={'B2':['f']})),(self.LENSES[1],{}),(self.LENSES[2],{})])
+        self.card('R1',mode='repair',repair_of='B2',files=['B2.txt'])
+        self.assertEqual((1,['f']),(self.status_task('R1')['final_round'],self.status_task('R1')['final_findings']))
+        self.cli('dispatch','R1','worker-R1',lease=True,expected=2)  # the lens cards are acceptable and still reported
+        self.accept_all(*lens)
+        self.run_card('R1')
+        again=self.lens_round('M',[(self.LENSES[0],{}),(self.LENSES[1],{}),(self.LENSES[2],{})])
+        self.accept_all('R1','B2',*again)
+        self.cli('finish',lease=True)
+
+    def test_final_round_repairs_held_and_lens_chains_then_completes(self):
+        self.built('B1')
+        self.receipt('wave',['B1'],CATEGORIES,findings=['f'])
+        self.card('R1',mode='repair',repair_of='B1',files=['B1.txt'])
+        self.run_card('R1')
+        self.receipt('check',['R1','B1'],['correctness'],findings=['g'],task_findings={'R1':['g'],'B1':[]},repair_check=True)
+        self.cli('hold','R1','--finding','g',lease=True)
+        self.built('B2')
+        self.receipt('b2',['B2'],CATEGORIES)
+        self.accept_all('B2')
+        self.cli('gate','fixture','--',*self.check,lease=True)
+        lens=self.lens_round('L',[
+            (self.LENSES[0],dict(findings=['g persists'],task_findings={'R1':['g persists']})),
+            (self.LENSES[1],dict(findings=['leak in B2'],task_findings={'B2':['leak in B2']},cleared={'R1':'no security defect'})),
+            (self.LENSES[2],dict(cleared={'R1':'no standards defect'}))])
+        self.accept_all(*lens)
+        self.card('R2',mode='repair',repair_of='R1',files=['B1.txt'])
+        self.card('R3',mode='repair',repair_of='B2',files=['B2.txt'])
+        self.assertEqual([(1,['g persists']),(1,['leak in B2'])],
+                         [(self.status_task(i)['final_round'],self.status_task(i)['final_findings']) for i in ('R2','R3')])
+        self.run_card('R2')
+        self.run_card('R3')
+        again=self.lens_round('M',[(self.LENSES[0],{}),(self.LENSES[1],{}),(self.LENSES[2],{})])
+        self.accept_all('R2','R1','B1','R3','B2',*again)
+        self.cli('finish',lease=True)
+
+    def test_final_rounds_repeat_until_clean_with_no_cap(self):
+        self.built('B1')
+        self.receipt('wave',['B1'],CATEGORIES)
+        self.accept_all('B1')
+        self.cli('gate','fixture','--',*self.check,lease=True)
+        tip,repairs=['B1'],[]
+        for k in range(1,6):
+            lens=self.lens_round('L%d-'%k,[(CATEGORIES,dict(findings=['defect %d'%k],task_findings={tip[0]:['defect %d'%k]}))])
+            self.accept_all(*lens)
+            repair='R%d'%k
+            self.card(repair,mode='repair',repair_of=tip[0],files=['B1.txt'])
+            self.run_card(repair)
+            tip,repairs=[repair],repairs+[repair]
+        self.assertEqual([1,2,3,4,5],[self.status_task(r)['final_round'] for r in repairs])
+        clean=self.lens_round('Z',[(CATEGORIES,{})])
+        self.accept_all(*reversed(repairs),'B1',*clean)
+        self.cli('finish',lease=True)
+
+    def test_final_receipt_stale_when_card_added_after_it(self):
+        self.built('B1')
+        self.receipt('wave',['B1'],CATEGORIES)
+        self.accept_all('B1')
+        self.cli('gate','fixture','--',*self.check,lease=True)
+        first=self.lens_round('L',[(CATEGORIES,{})])
+        self.accept_all(*first)
+        self.card('L9',role='code-reviewer',mode='final',files=[],review_of=['B1'])
+        self.run_card('L9')
+        self.accept_all('L9')
+        self.cli('finish',lease=True,expected=2)  # every card is accepted, but the receipt predates L9
+        self.receipt('late',list(self.cli('status')[1]['tasks']),CATEGORIES,final=True)
+        self.cli('finish',lease=True)
+
 
 class LinkedWorktreeHook(unittest.TestCase):
     """A15 through the real hook script: a linked worktree follows the main worktree's run."""
