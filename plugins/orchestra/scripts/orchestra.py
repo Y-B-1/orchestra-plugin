@@ -81,6 +81,9 @@ def parser():
     park.add_argument('--reason', required=True)
     unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
     unpark.add_argument('task_id')
+    hold = sub.add_parser('hold', help='End the repair ladder: move a blocked repair chain to held and log the finding')
+    hold.add_argument('task_id')
+    hold.add_argument('--finding', required=True)
     supersede = sub.add_parser('supersede', help='Accept an unstarted review that newer accepted reviews cover in full')
     supersede.add_argument('task_id')
     route = sub.add_parser('classify')
@@ -228,6 +231,8 @@ def execute(args):
     if args.command=='unpark':
         engine.unpark(args.actor,args.lease,args.task_id)
         return {'unparked':args.task_id},0
+    if args.command=='hold':
+        return engine.hold(args.actor,args.lease,args.task_id,args.finding),0
     if args.command=='supersede':
         engine.supersede(args.actor,args.lease,args.task_id)
         return {'superseded':args.task_id},0
