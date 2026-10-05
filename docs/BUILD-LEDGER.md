@@ -127,3 +127,8 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | H1 | builder | 94a30b6 | `orchestra.py relaunch` harness (settle, pass session nonce, stall back-off, signal disarm), shipped pass prompt; 10 tests red then green (implementation written before tests, disclosed) | ACCEPTED |
 | W9 gate | coordinator | 5751694 | full suite 534 OK; plugin test 88/88; sync, generate, build_release 0; tarball ships relaunch-prompt.md | CLEAN |
 | R9 | code-reviewer checkpoint | 5751694 | H1 and DOC1 meet their tickets; notes (signal handler lock, orphan test partial, docs exit codes and `--launcher` wording) carried to the final repair wave | CLEAN |
+| FC / FS / FT | final review, three lenses | 25fa55c | correctness CLEAN, standards CLEAN (notes); security BLOCKED: merged remote delete checked the fetch URL, not the push URL (G2) | round 1 of the final loop |
+| G2f (card G2r) | builder repair (Opus) | a066549 | push URL must equal fetch URL for a merged remote delete; exact default refs (no short-name decoys); empty cwd is missing; raw `update-ref` deletion denied (Python and TS, corpus rows) | reported (final round 2) |
+| FE | builder | d0d66e3 | hold any non-repair builder; migrated cards ordered first; open final finding keeps autonomy live; unarmed settle read-only; SPEC `seq` row; receipt tests | reported (final round 2) |
+| FH | builder | 0d63c1a | relaunch signal handler never takes the state lock; orphan unbound session and CLI tests | reported (final round 2) |
+| FD | builder | 5edad53 | relaunch exit codes and launcher notes in both cli.md files; stale VALIDATION, SKILL-SOURCES and checkpoint-agent text | reported (final round 2) |
