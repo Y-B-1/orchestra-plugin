@@ -15,6 +15,7 @@ Source of truth: `plugins/orchestra/config/models.json`. This page describes it.
 | builder repair | claude-opus-5-5 | medium | none; round 4 only, by dispatch-time model override (`"dispatch": "override"`); rounds 1 to 3 use the builder default (Sonnet medium) |
 | code-reviewer final | claude-opus-5-5 | high | `code-reviewer.md` |
 | code-reviewer checkpoint | claude-opus-5-5 | medium | `code-reviewer-checkpoint.md` |
+| code-reviewer standards lens | claude-sonnet-5-5 | medium | `code-reviewer-standards.md` |
 | operator (gate, cleanup, release) | claude-sonnet-5-5 | medium | `operator.md` |
 
 The orchestrator row is the user's selection: the model and effort picked in the client, never pinned by the plugin (`"selection": "user"`). Builder `cleanup` equals the builder default, so it adds no file. Builder `repair` has no variant file; the coordinator passes `claude-opus-5-5` at dispatch, and only after an independent review returned checked coding findings.

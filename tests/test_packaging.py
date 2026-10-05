@@ -28,13 +28,22 @@ class NativeTests(unittest.TestCase):
     def test_role_matrix_files_and_read_only_enforcement(self):
         claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
         self.assertEqual(claude, {f'{n}.md' for n in [
-            'builder', 'code-reviewer', 'code-reviewer-checkpoint', 'critic', 'designer-planner',
+            'builder', 'code-reviewer', 'code-reviewer-checkpoint', 'code-reviewer-standards', 'critic', 'designer-planner',
             'investigator', 'investigator-code', 'operator', 'orchestrator']})
         read_only = ('investigator', 'critic', 'code-reviewer')
         for name in claude - {'orchestrator.md'}:
             front = (PLUGIN / 'agents' / name).read_text().split('---')[1]
             want = 'Agent, Edit, Write, NotebookEdit' if name.startswith(read_only) else 'Agent'
             self.assertIn(f'disallowedTools: {want}\n', front, name)
+
+    def test_standards_preset_is_sonnet_medium_variant_file(self):
+        path = PLUGIN / 'agents/code-reviewer-standards.md'
+        self.assertTrue(path.exists())
+        front = path.read_text().split('---')[1]
+        self.assertIn('model: claude-sonnet-5-5\n', front)
+        self.assertIn('effort: medium\n', front)
+        desc = [l for l in front.splitlines() if l.startswith('description:')][0]
+        self.assertIn('Lens: standards', desc)
 
     def test_claude_repair_preset_is_override_dispatch_with_no_variant_file(self):
         matrix = json.loads((PLUGIN / 'config/models.json').read_text())['claude']
