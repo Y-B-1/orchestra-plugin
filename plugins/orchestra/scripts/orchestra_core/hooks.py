@@ -345,18 +345,25 @@ def _merged_delete_check(decision, cwd, autonomy):
         return _deny('Branch deletion must run plainly in the session repository').output
     if remote and _git_out(cwd, 'config', '--get', 'remote.%s.url' % remote)[1] == '':
         return _deny('Remote %s is not configured' % remote).output
-    default = None
-    heads = ['refs/remotes/%s/HEAD' % remote, '%s/main' % remote] if remote else ['refs/remotes/origin/HEAD', 'origin/main', 'main']
+    # Full refnames only (R2): a local branch or tag named origin/main must not shadow the default.
+    tracked = 'refs/remotes/%s/' % (remote or 'origin')
+    heads = [tracked + 'HEAD', tracked + 'main'] + ([] if remote else ['refs/heads/main'])
+    default = sha = None
     for ref in heads:
         code, target = _git_out(cwd, 'rev-parse', '--verify', '--quiet', ref + '^{commit}')
         if code == 0 and target:
-            name = _git_out(cwd, 'symbolic-ref', '--short', ref)[1] if ref.endswith('/HEAD') else ref
-            default = name or ref
+            default = _git_out(cwd, 'symbolic-ref', '-q', ref)[1] if ref.endswith('/HEAD') else ref
+            default, sha = default or ref, target
             break
-    if default is None:
+    if sha is None:
         return _deny('The default branch cannot be resolved; refusing to delete %s' % branch).output
-    prefix = (remote or 'origin') + '/'
-    if branch == (default[len(prefix):] if default.startswith(prefix) else default):
+    if default.startswith(tracked):
+        name, label = default[len(tracked):], default[len('refs/remotes/'):]
+    elif default.startswith('refs/heads/'):
+        name = label = default[len('refs/heads/'):]
+    else:
+        return _deny('The default branch cannot be resolved; refusing to delete %s' % branch).output
+    if branch == name:
         return _deny('Branch %s is the default branch' % branch).output
     code, current = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'HEAD')
     if code == 0 and current == branch:
@@ -367,8 +374,8 @@ def _merged_delete_check(decision, cwd, autonomy):
         return _deny('Branch %s does not exist' % branch).output
     if remote and not _remote_tip_matches(cwd, remote, branch):
         return _deny('Remote %s does not report %s at the tracking tip' % (remote, branch)).output
-    if not _branch_merged(cwd, tip, default):
-        return _deny('Branch %s is not merged into %s (no ancestor, tree or covering-branch evidence)' % (branch, default)).output
+    if not _branch_merged(cwd, tip, sha):
+        return _deny('Branch %s is not merged into %s (no ancestor, tree or covering-branch evidence)' % (branch, label)).output
     return None
 
 

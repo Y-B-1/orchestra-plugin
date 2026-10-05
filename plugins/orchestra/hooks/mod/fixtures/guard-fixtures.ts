@@ -10304,6 +10304,41 @@ export const CORPUS: CorpusCase[] = [
   "class": "deny"
  },
  {
+  "id": "merged-delete-deny-11",
+  "input": {
+   "command": "git -c remote.origin.pushurl=/tmp/x push origin --delete x2"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "merged-delete-deny-12",
+  "input": {
+   "command": "git -c remote.origin.url=https://h/r.git push origin --delete x2"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "merged-delete-deny-13",
+  "input": {
+   "command": "git --config-env=remote.origin.pushurl=E push origin --delete x2"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "merged-delete-deny-14",
+  "input": {
+   "command": "git -c x=y branch -D b"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "merged-delete-deny-15",
+  "input": {
+   "command": "git --config-env=x=E branch -D b"
+  },
+  "class": "deny"
+ },
+ {
   "id": "merged-delete-boundary-1",
   "input": {
    "command": "git branch -d -r origin/x"

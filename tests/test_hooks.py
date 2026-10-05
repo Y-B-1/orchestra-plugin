@@ -766,6 +766,28 @@ class MergedDeleteHookTest(unittest.TestCase):
         self.assertDenied('git branch -D main', 'default branch')
         self.assertDenied('git push --delete origin main', 'default branch')
 
+    def test_merged_delete_shadowed_default_ref_denies_unmerged(self):
+        # R2: a local branch or tag named origin/main must not stand in for the remote-tracking default.
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'remote', 'set-head', 'origin', '-d')
+        for kinds in (('branch',), ('tag',), ('branch', 'tag')):
+            with self.subTest(shadow=kinds):
+                for kind in kinds:
+                    git(self.repo, kind, 'origin/main', 'x')
+                try:
+                    self.assertDenied('git branch -D x', 'Branch x is not merged into origin/main')
+                finally:
+                    for kind in kinds:
+                        git(self.repo, kind, '-D' if kind == 'branch' else '-d', 'origin/main')
+
+    def test_merged_delete_default_branch_denied_with_ambiguous_short_name(self):
+        # R2: with a local branch origin/main, `symbolic-ref --short` reads remotes/origin/main; the name comes from the full ref.
+        self.remote_branch()
+        git(self.repo, 'branch', 'origin/main', 'main')
+        git(self.repo, 'checkout', '-q', '-b', 'y')
+        self.assertDenied('git branch -D main', 'Branch main is the default branch')
+        self.assertDenied('git push --delete origin main', 'Branch main is the default branch')
+
     def test_merged_delete_unresolvable_default_denies(self):
         self.side('x', 'x.txt', 'x\n')
         git(self.repo, 'merge', '-q', '--ff-only', 'x')
