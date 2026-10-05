@@ -124,3 +124,6 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | DOC1 (plan D1) | builder | 1104b71 | docs for 2.2 CLI, hooks and the 2.1 upgrade; merged at 959ea36 | reported (W9 review) |
 | W8r gate | coordinator | 959ea36 | engine 265, hooks 161, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
 | R8r | code-reviewer checkpoint | 91f886b | R8-1 fixed; no-fallback on malformed env nonce is fail-safe | CLEAN |
+| H1 | builder | 94a30b6 | `orchestra.py relaunch` harness (settle, pass session nonce, stall back-off, signal disarm), shipped pass prompt; 10 tests red then green (implementation written before tests, disclosed) | ACCEPTED |
+| W9 gate | coordinator | 5751694 | full suite 534 OK; plugin test 88/88; sync, generate, build_release 0; tarball ships relaunch-prompt.md | CLEAN |
+| R9 | code-reviewer checkpoint | 5751694 | H1 and DOC1 meet their tickets; notes (signal handler lock, orphan test partial, docs exit codes and `--launcher` wording) carried to the final repair wave | CLEAN |
