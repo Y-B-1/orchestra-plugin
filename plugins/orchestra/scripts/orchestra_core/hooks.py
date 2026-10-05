@@ -157,8 +157,8 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         if engine is None:
             return HookResult({})
         if busy:
-            if not _raw_autonomy_active(engine.state_path):
-                return HookResult({})  # Unarmed and busy: nothing to stop, nothing to write
+            if not (_raw_autonomy_active(engine.state_path) and _raw_session_active(engine.state_path)):
+                return HookResult({})  # Unarmed and busy, or between relaunch passes: nothing to stop, nothing to write
             if not _wait_for_lock(engine.state_dir / 'state.lock', started):
                 from .engine import write_busy_brief  # Lazy: tests replace the engine module
                 try:
@@ -229,7 +229,7 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             return HookResult(denied)
     if active:
         # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
-        if klass in {'release', 'release-multi'}:
+        if klass in {'release', 'release-multi'} and not (klass == 'release' and _preauthorized(engine, decision)):
             return _deny('Autonomy is active: ' + _PARK_HINT)
         if decision.boundary == 'delete':
             return _deny('Approval boundary under autonomy: ' + _PARK_HINT)
@@ -271,6 +271,24 @@ def _autonomy_active(engine):
         return engine.autonomy_active() is True  # Strict: an opaque adapter never reads as active.
     except Exception:
         return True  # O29: an error while reading autonomy status counts as active.
+
+
+def _preauthorized(engine, decision):
+    """SPEC 5.8 item 8.3: the ledger pre-authorized exactly this remote and target. Any doubt reads as no (fail closed);
+    the normal permit check still runs after it."""
+    try:
+        release = engine.status()['autonomy']['release']
+        return (isinstance(decision.remote, str) and bool(decision.remote) and isinstance(decision.target, str)
+                and bool(decision.target) and release['remote'] == decision.remote and release['target'] == decision.target)
+    except Exception:
+        return False
+
+
+def _raw_relaunch_active(state_file):
+    """SPEC 5.10 item 3: armed `relaunch` autonomy in a state file the engine cannot load counts as armed."""
+    data = _raw_state(state_file)
+    auto = data.get('autonomy') if isinstance(data, dict) else None
+    return isinstance(auto, dict) and auto.get('active') is True and auto.get('relaunch') is True
 
 
 def _raw_state(state_file):
@@ -516,13 +534,16 @@ def main(argv=None):
                     try:
                         session = engine.status()['session']
                         armed = bool(session and session.get('active'))
+                        if not armed and engine.autonomy_active() is True:
+                            armed = True  # SPEC 5.10 item 3: armed relaunch autonomy applies between passes
                     except (TypeError, KeyError, AttributeError):
                         pass  # Opaque engine adapters stay armed.
                 except Exception as exc:
                     busy = type(exc).__name__ == 'StateBusy'  # By name: the engine module may be replaced in tests
                     if not (busy and args.event != 'PreToolUse'):
                         engine = None  # A busy Stop or Interrupt keeps its engine: Stop polls the lock, Interrupt blocks on it
-                    armed = _raw_session_active(state_dir / 'state.json')  # O35
+                    armed = (_raw_session_active(state_dir / 'state.json')  # O35
+                             or _raw_relaunch_active(state_dir / 'state.json'))
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
                 if args.event == 'PreToolUse' and not armed:
                     engine = None  # An inactive session is an unarmed run.

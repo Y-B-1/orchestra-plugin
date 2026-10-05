@@ -76,7 +76,8 @@ def parser():
         action.add_argument('remote')
         action.add_argument('target')
     autonomy = sub.add_parser('autonomy', help='Arm, disarm or inspect the autonomous loop; takes no lease')
-    autonomy.add_argument('action', choices=['arm','disarm','status'])
+    autonomy.add_argument('action', choices=['arm','disarm','status','settle'])
+    autonomy.add_argument('--relaunch', action='store_true', help='With arm: keep autonomy armed between sessions for the relaunch harness')
     park = sub.add_parser('park', help='Set a card aside at an approval boundary')
     park.add_argument('task_id')
     park.add_argument('--reason', required=True)
@@ -120,7 +121,7 @@ def execute(args):
     if args.command=='start':
         if args.new_run:
             archive_inactive(state,engine)
-        lease = engine.open_session(args.actor,args.harness_session)
+        lease = engine.open_session(args.actor,args.harness_session,relaunch_pass=os.environ.get('ORCHESTRA_RELAUNCH_PASS') or None)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
@@ -130,7 +131,11 @@ def execute(args):
         text=engine.brief()
         return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
     if args.command=='autonomy':  # O8: no lease, so the ledger is armed from outside the run
-        return {'arm':engine.arm_autonomy,'disarm':engine.disarm_autonomy,'status':engine.autonomy_status}[args.action](),0
+        if args.relaunch and args.action!='arm':
+            raise EngineError('--relaunch is only valid with arm')
+        if args.action=='arm':
+            return engine.arm_autonomy(relaunch=args.relaunch),0
+        return {'disarm':engine.disarm_autonomy,'status':engine.autonomy_status,'settle':engine.settle}[args.action](),0
     if args.command=='artifact':
         ids=[i for i in (args.tasks or '').split(',') if i]
         if args.tasks is not None and not ids:

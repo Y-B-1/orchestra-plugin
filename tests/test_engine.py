@@ -3226,3 +3226,332 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.engine.park('main', lease, 'p', 'needs a push again')
         with self.assertRaisesRegex(EngineError, 'accepted'):
             self.engine.close_session('main', lease)
+
+
+UNIT_ARGV = [sys.executable, '-c', 'print("passed")']
+RELEASE_POLICY = dict(required_checks=[dict(name='unit', argv=UNIT_ARGV)],
+                      release=dict(enabled=True, authorization='user request', remote='devops', target='main',
+                                   argv=['git', 'push', 'devops', 'HEAD:main']))
+PREAUTH = '- Release: pre-authorized devops main'
+
+
+class ReleasePreauthTests(AutonomyFixture, HoldFixture):
+    """SPEC 5.8 item 8: the ledger's Release line, `autonomy.release`, and the exact-pair exemption."""
+
+    def setUp(self):
+        super().setUp()
+        self.fresh(RELEASE_POLICY)
+
+    def boundaries(self, release):
+        return [release if line == AUTONOMY_FIXED[0] else line for line in AUTONOMY_FIXED]
+
+    def release_evidence(self):
+        """A clean final review and a passed required gate on the current artifact: what a release permit needs."""
+        path = self.root / 'release-final.json'
+        self.review(path, reviewer='reviewer', categories=self.ALL, final=True)
+        self.engine.record_review('main', self.lease, 'reviewer', path, self.ALL, final=True)
+        self.engine.run_gate('main', self.lease, 'unit', UNIT_ARGV)
+
+    def arm_with(self, release, relaunch=False):
+        self.ledger(boundaries=self.boundaries(release))
+        return self.engine.arm_autonomy(relaunch=relaunch)
+
+    def test_arm_preauthorized_release_permits_exact_pair(self):
+        self.release_evidence()
+        self.arm_with(PREAUTH)
+        self.assertEqual(self.auto()['release'], dict(remote='devops', target='main'))
+        self.assertTrue(self.engine.autonomy_active())
+        permit = self.engine.release_permit('main', self.lease, 'devops', 'main')
+        self.assertEqual(permit['action'], 'release')
+        self.assertEqual(permit, self.engine.check_release('devops', 'main', argv=['git', 'push', 'devops', 'HEAD:main']))
+        for pair in (('devops', 'other'), ('origin', 'main')):  # any other pair stays an approval boundary
+            with self.subTest(pair=pair):
+                with self.assertRaisesRegex(EngineError, 'autonomy'):
+                    self.engine.release_permit('main', self.lease, *pair)
+                with self.assertRaisesRegex(EngineError, 'autonomy'):
+                    self.engine.check_release(*pair)
+
+    def test_permit_refused_under_autonomy_without_preauthorization(self):
+        self.release_evidence()
+        self.arm_with(AUTONOMY_FIXED[0])
+        self.assertNotIn('release', self.auto())
+        with self.assertRaisesRegex(EngineError, 'autonomy'):
+            self.engine.release_permit('main', self.lease, 'devops', 'main')
+        with self.assertRaisesRegex(EngineError, 'autonomy'):
+            self.engine.check_release('devops', 'main')
+
+    def test_preauthorization_mismatch_refused(self):
+        for line in ('- Release: pre-authorized devops other', '- Release: pre-authorized origin main'):
+            with self.subTest(line=line):
+                self.ledger(boundaries=self.boundaries(line))
+                with self.assertRaisesRegex(EngineError, 'Release pre-authorization must match policy.release'):
+                    self.engine.arm_autonomy()
+                self.assertIsNone(self.auto())
+        disabled = dict(RELEASE_POLICY, release=dict(RELEASE_POLICY['release'], enabled=False))
+        self.fresh(disabled)
+        self.ledger(boundaries=self.boundaries(PREAUTH))
+        with self.assertRaisesRegex(EngineError, 'Release pre-authorization must match policy.release'):
+            self.engine.arm_autonomy()
+        self.fresh(None)  # no release policy at all
+        self.ledger(boundaries=self.boundaries(PREAUTH))
+        with self.assertRaisesRegex(EngineError, 'Release pre-authorization must match policy.release'):
+            self.engine.arm_autonomy()
+
+    def test_arm_refuses_malformed_release_line(self):
+        bad = ['- Release: pre-authorized origin', '- Release: pre-authorized devops main extra', '- Release: allowed',
+               '- Release:', '- Release: no release, permit or deploy', '- Release: pre-authorized  ']
+        for line in bad:
+            with self.subTest(line=line):
+                self.ledger(boundaries=self.boundaries(line))
+                with self.assertRaisesRegex(EngineError, 'Approval boundaries need exactly one Release line'):
+                    self.engine.arm_autonomy()
+        for pair in ([AUTONOMY_FIXED[0], PREAUTH], [PREAUTH, PREAUTH]):
+            with self.subTest(pair=pair):
+                self.ledger(boundaries=[*pair, *AUTONOMY_FIXED[1:]])
+                with self.assertRaisesRegex(EngineError, 'Approval boundaries need exactly one Release line'):
+                    self.engine.arm_autonomy()
+
+    def test_ledger_with_both_release_lines_refused(self):
+        self.ledger(boundaries=[*AUTONOMY_FIXED, PREAUTH])
+        with self.assertRaisesRegex(EngineError, 'Approval boundaries need exactly one Release line'):
+            self.engine.arm_autonomy()
+        self.assertIsNone(self.auto())
+
+    def test_arm_from_shipped_template_accepts_fixed_release_line(self):
+        template = (Path(__file__).resolve().parents[1] / 'plugins/orchestra/config/autonomy-template.md').read_text()
+        filled = (template.replace('<one line goal>', 'ship the fixture')
+                  .replace('<ISO 8601 time with a UTC offset, in the future>', iso(T0 + 3600))
+                  .replace('<NAME: argv...>', 'fixture: ' + shlex.join(PASS_ARGV)))
+        self.assertIn(AUTONOMY_FIXED[0], filled)
+        (self.state / 'autonomy.md').write_text(filled)
+        self.assertTrue(self.engine.arm_autonomy()['active'])
+        self.assertNotIn('release', self.auto())
+        (self.state / 'autonomy.md').write_text(filled.replace(AUTONOMY_FIXED[0], PREAUTH))
+        self.assertTrue(self.engine.arm_autonomy()['active'])
+        self.assertEqual(self.auto()['release'], dict(remote='devops', target='main'))
+
+    def test_preauthorization_keeps_the_other_fixed_lines_required(self):
+        for line in AUTONOMY_FIXED[1:]:
+            with self.subTest(line=line):
+                self.ledger(boundaries=[l for l in self.boundaries(PREAUTH) if l != line])
+                with self.assertRaisesRegex(EngineError, 'Approval boundaries must keep the fixed line'):
+                    self.engine.arm_autonomy()
+
+
+class RelaunchTests(AutonomyFixture, HoldFixture):
+    """SPEC 5.10 items 1 to 4 and 5.4 to 6, 5.8 item 7, 5.9 item 2: autonomy that survives the end of a session."""
+
+    def arm_relaunch(self, **kw):
+        self.ledger(**kw)
+        return self.engine.arm_autonomy(relaunch=True)
+
+    def end_session(self):
+        self.engine.interrupt('main', self.lease)
+
+    def last_brief(self):
+        return self.engine.status()['last_brief']
+
+    def test_relaunch_autonomy_survives_session_end(self):
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main', harness_session='S')
+        self.arm_relaunch()
+        self.assertTrue(self.auto()['relaunch'])
+        self.assertTrue(self.engine.end_harness_session('S'))
+        self.assertFalse(self.engine.status()['session']['active'])
+        self.assertEqual((self.auto()['active'], self.auto()['relaunch']), (True, True))
+        self.assertTrue(self.engine.autonomy_active())  # no session, still armed (SPEC 5.10 item 3)
+        self.assertTrue(self.engine.autonomy_status()['active'])
+
+    def test_relaunch_autonomy_survives_interrupt(self):
+        self.arm_relaunch()
+        self.engine.interrupt('main', self.lease)
+        self.assertEqual((self.auto()['active'], self.engine.status()['session']['active']), (True, False))
+        self.engine.open_session('main')
+        self.assertTrue(self.engine.interrupt_active())
+        self.assertEqual((self.auto()['active'], self.engine.status()['session']['active']), (True, False))
+        self.assertTrue(self.engine.autonomy_active())
+
+    def test_close_session_under_relaunch_stops_complete_with_brief(self):
+        self.arm_relaunch()
+        self.engine.close_session('main', self.lease)
+        self.assertEqual((self.auto()['active'], self.auto()['last_stop_reason']), (False, 'complete'))
+        self.assertEqual(self.last_brief()['reason'], 'complete')
+        self.assertIn('stop reason: complete', (self.state / 'progress.md').read_text())
+        self.assertEqual(self.engine.autonomy_report()['reason'], 'complete')
+        self.assertFalse(self.engine.autonomy_active())
+
+    def test_close_session_brief_reason_by_mode(self):
+        self.fresh(None)
+        self.engine.close_session('main', self.lease)  # unarmed
+        self.assertEqual(self.last_brief()['reason'], 'closed')
+        self.fresh(None)
+        self.ledger()
+        self.engine.arm_autonomy()  # in-session autonomy, as in 2.1
+        self.engine.close_session('main', self.lease)
+        self.assertEqual(self.last_brief()['reason'], 'closed')
+        self.assertIsNone(self.auto())
+        self.fresh(None)
+        self.arm_relaunch()
+        self.engine.close_session('main', self.lease)
+        self.assertEqual(self.last_brief()['reason'], 'complete')
+        self.assertEqual((self.auto()['active'], self.auto()['last_stop_reason']), (False, 'complete'))
+
+    def test_non_relaunch_autonomy_cleared_on_session_end(self):
+        self.ledger()
+        self.engine.arm_autonomy()
+        self.assertNotIn('relaunch', self.auto())
+        self.engine.interrupt('main', self.lease)
+        self.assertIsNone(self.auto())
+        self.engine.open_session('main', harness_session='S')
+        self.ledger()
+        self.engine.arm_autonomy()
+        self.engine.end_harness_session('S')
+        self.assertIsNone(self.auto())
+        self.assertFalse(self.engine.autonomy_active())
+
+    def test_settle_stops_on_deadline_between_passes(self):
+        self.arm_relaunch(deadline=iso(T0 + 60))
+        self.task('x')
+        self.end_session()
+        self.assertEqual(self.engine.settle(), dict(armed=True, stopped=False, reason=None, signature=self.engine.autonomy_status()['signature'],
+                                                    passes=0, stalls=0))
+        self.assertEqual(self.auto()['passes'], 0)  # settle never counts a pass
+        self.now[0] = T0 + 61
+        result = self.engine.settle()
+        self.assertEqual((result['armed'], result['stopped'], result['reason']), (False, True, 'deadline'))
+        self.assertEqual(self.last_brief()['reason'], 'deadline')
+        self.assertIn('stop reason: deadline', (self.state / 'progress.md').read_text())
+        self.assertEqual(self.engine.settle()['reason'], 'deadline')  # a stopped run reports its stop again
+        self.assertEqual(self.engine.settle()['stopped'], True)
+
+    def test_settle_without_autonomy_writes_nothing(self):
+        before = self.engine.state_path.read_bytes()
+        result = self.engine.settle()
+        self.assertEqual((result['armed'], result['stopped'], result['reason'], result['passes']), (False, False, None, None))
+        self.assertRegex(result['signature'], r'^[0-9a-f]{64}$')
+        self.assertEqual(before, self.engine.state_path.read_bytes())
+
+    def test_settle_stops_idle_and_on_a_tampered_ledger(self):
+        self.arm_relaunch()
+        self.end_session()
+        result = self.engine.settle()  # nothing ready, nothing live, nothing parked
+        self.assertEqual((result['stopped'], result['reason']), (True, 'no-ready-card'))
+        self.engine.open_session('main')
+        self.arm_relaunch()
+        (self.state / 'autonomy.md').write_text((self.state / 'autonomy.md').read_text() + '- extra\n')
+        self.assertEqual(self.engine.settle()['reason'], 'ledger-tampered')
+
+    def test_settle_parked_only_when_held_and_parked(self):
+        self.arm_relaunch()
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g')
+        self.task('P')
+        self.engine.park('main', self.lease, 'P', 'needs a push')
+        self.end_session()
+        result = self.engine.settle()
+        self.assertEqual((result['armed'], result['stopped'], result['reason']), (False, True, 'parked-only'))
+        text = self.last_brief()['text']
+        self.assertEqual(self.last_brief()['reason'], 'parked-only')
+        needs = text[text.index('### Needs you'):]
+        self.assertIn('P: needs a push', needs)
+        self.assertIn('R1 (chain R1, B1)', needs)
+
+    def test_settle_held_alone_continues(self):
+        self.arm_relaunch()
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g')
+        self.end_session()
+        result = self.engine.settle()
+        self.assertEqual((result['armed'], result['stopped'], result['passes']), (True, False, 0))
+
+    def test_hook_stop_without_session_under_relaunch_is_noop(self):
+        self.arm_relaunch()
+        self.task('x')
+        self.end_session()
+        before = self.engine.state_path.read_bytes()
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(before, self.engine.state_path.read_bytes())
+        self.assertEqual((self.auto()['passes'], self.auto()['stalls'], self.auto()['active']), (0, 0, True))
+
+    def test_hook_stop_inside_a_relaunch_pass_counts_but_continues_nothing(self):
+        self.arm_relaunch(deadline=iso(T0 + 60))
+        self.task('x')
+        self.assertIsNone(self.engine.hook_stop())  # the harness is the loop
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['passes'], self.auto()['active']), (2, True))
+        self.now[0] = T0 + 61
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['active'], self.auto()['last_stop_reason']), (False, 'deadline'))
+
+    def test_end_pass_session_checks_nonce_and_writes_ended_brief(self):
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main', relaunch_pass='n-1')
+        self.assertEqual(self.engine.status()['session']['relaunch_pass'], 'n-1')
+        self.arm_relaunch()
+        for wrong in ('n-2', '', None):
+            with self.subTest(nonce=wrong):
+                with self.assertRaisesRegex(EngineError, 'nonce'):
+                    self.engine.end_pass_session(wrong)
+                self.assertTrue(self.engine.status()['session']['active'])
+        result = self.engine.end_pass_session('n-1')
+        self.assertEqual(result['reason'], 'ended')
+        session = self.engine.status()['session']
+        self.assertEqual((session['active'], session['outcome']), (False, 'pass-exited'))
+        self.assertTrue(self.auto()['active'])
+        self.assertEqual(self.last_brief()['reason'], 'ended')
+        with self.assertRaises(EngineError):  # nothing left to end
+            self.engine.end_pass_session('n-1')
+
+    def test_end_pass_session_leaves_a_session_without_the_nonce(self):
+        self.arm_relaunch()  # the fixture session carries no relaunch_pass
+        with self.assertRaisesRegex(EngineError, 'nonce'):
+            self.engine.end_pass_session('n-1')
+        self.assertTrue(self.engine.status()['session']['active'])
+
+    def test_end_pass_session_keeps_a_stopped_autonomy_brief(self):
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main', relaunch_pass='n-1')
+        self.arm_relaunch(deadline=iso(T0 + 60))
+        self.now[0] = T0 + 61
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.last_brief()['reason'], 'deadline')
+        self.engine.end_pass_session('n-1')
+        self.assertEqual(self.last_brief()['reason'], 'deadline')  # kept stop brief (SPEC 5.9 item 2)
+        self.assertEqual(self.engine.autonomy_report()['reason'], 'deadline')
+        self.assertIn('stop reason: ended', (self.state / 'progress.md').read_text())
+
+    def test_open_session_takes_pass_nonce_from_marker_without_env(self):
+        marks = self.state / 'relaunch'
+        marks.mkdir()
+        self.arm_relaunch()
+        self.end_session()
+        (marks / 'pass-abc123.marker').write_text('')
+        self.engine.open_session('main')
+        self.assertEqual(self.engine.status()['session']['relaunch_pass'], 'abc123')
+        self.engine.interrupt_active()
+        self.engine.open_session('main', relaunch_pass='from-env')  # the env nonce wins
+        self.assertEqual(self.engine.status()['session']['relaunch_pass'], 'from-env')
+        self.engine.interrupt_active()
+        (marks / 'pass-def456.marker').write_text('')  # two markers: none is stored
+        self.engine.open_session('main')
+        self.assertNotIn('relaunch_pass', self.engine.status()['session'])
+        self.engine.interrupt_active()
+        (marks / 'pass-def456.marker').unlink()
+        (marks / 'pass-abc123.marker').unlink()  # no marker: none is stored
+        self.engine.open_session('main')
+        self.assertNotIn('relaunch_pass', self.engine.status()['session'])
+
+    def test_open_session_ignores_a_marker_when_relaunch_is_not_armed(self):
+        marks = self.state / 'relaunch'
+        marks.mkdir()
+        (marks / 'pass-abc123.marker').write_text('')
+        self.ledger()
+        self.engine.arm_autonomy()  # in-session autonomy, not relaunch
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main')
+        self.assertNotIn('relaunch_pass', self.engine.status()['session'])
+
+    def test_open_session_still_refuses_while_a_session_is_active(self):
+        self.arm_relaunch()
+        with self.assertRaisesRegex(EngineError, 'already active'):
+            self.engine.open_session('main', relaunch_pass='n')
