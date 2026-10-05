@@ -1,6 +1,6 @@
 # Orchestra 2.2 implementation plan
 
-Status: plan for review. Built from `docs/SPEC-v2.2.md` at bca4e98a2b83e1e8c4e5e69eba7a1f4ca6ed9f6d (section 10 has no open decision). If critic C7 amends the spec, the coordinator amends this plan before dispatch. **This is a substantial plan: an independent critic must check it before any build starts.**
+Status: plan for review. Built from `docs/SPEC-v2.2.md` at bca4e98a2b83e1e8c4e5e69eba7a1f4ca6ed9f6d (section 10 has no open decision), and aligned by card D5 with the spec as amended for critic C7 in the same commit (C7/R4-1 to R4-8 and the coordinator decisions after C7, spec section 10). **This is a substantial plan: an independent critic must check it before any build starts.**
 
 Labels: OBSERVED (read or run in this worktree at bca4e98), REASONED (follows from the spec and the code), UNKNOWN (not established).
 
@@ -58,7 +58,7 @@ Each brief carries these verbatim, together with: the `Mode:` line, the plugin r
 
 **Plan rules for every builder:**
 
-1. **Flip rule.** A 2.1 test may break only because the ticket adds a refusal the spec names. Fix it with the smallest fixture step that satisfies the new rule: add `issues`, accept or park first, add `task_findings`, add Keep/Remove headings, or hold before the repair. Never weaken an assertion. List every flipped test and its step in the report. Delete a 2.1 test only where the spec's flip table says it is removed.
+1. **Flip rule.** A 2.1 test may break only because the ticket adds a refusal the spec names. Fix it with the smallest fixture step that satisfies the new rule: add `issues`, accept the overlapping reported card first, add `task_findings`, add Keep/Remove headings, or hold before the repair. Never weaken an assertion. List every flipped test and its step in the report. Delete a 2.1 test only where the spec's flip table says it is removed.
 2. **Edit only your owned paths.** If a needed change falls outside them, stop and report `STATUS: BLOCKED` naming the file.
 3. **Strings are spec literals.** Copy refusal messages, progress lines and headings character for character from the spec section named in the ticket.
 4. **Generated files.** Run the generator or `sync.py` in write mode. Commit only the generated files your ticket owns.
@@ -248,11 +248,12 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
     - `"a non-builder cause goes to inline or card, never brief alone"` (non-builder final finding triage; in both final-review.md and triage.md)
     - `"overrides Push and Engine-gated actions for that remote and target only"` (release override scope)
     - `"ready to release"` (finishing ready to release)
+    - `"an explicit release assignment from the user, before or after the brief, counts"` (finishing release assignment; spec 5.9 item 4, C7/R4-8)
     - `"Held / next phase"` (PR held section)
   - autonomy.md:22 also gains "Held work never blocks a later wave; the final phase must clear it before `finish`".
 - **Constraints** (OBSERVED, test_skills.py):
-  - briefs.md must stay at or under 1800 bytes (it is 1593 now). Fit the Keep/Remove part and the known-findings line by tightening; drop no rule. If it cannot fit, report BLOCKED with the byte count.
-  - orchestrator.md must stay at or under 10500 bytes.
+  - briefs.md must stay at or under 1800 bytes (it is 1593 now), and orchestrator.md at or under 10500 bytes. Fit the Keep/Remove part and the known-findings line by tightening first; drop no rule.
+  - **Budget rule** (coordinator decision 10 after C7): if a rule still cannot fit, K1 reports DONE, not BLOCKED, with the measured size and the minimum new cap (at most 15% above the old one). test_skills.py is K2's file in W1, so the coordinator raises the cap at test_skills.py:206 (briefs.md) or :210 (orchestrator.md) as reserved inline work at the W1 merge, after K2 merges, and records the old cap, the new cap and the reason in docs/BUILD-LEDGER.md. Until then K1's test_skills.py acceptance excepts only that one budget assertion.
   - `exact artifact` stays only in repair-rounds.md, `empty context` only in briefs.md, and `reserve every card` only in parallel.md.
   - Keep repair-rounds.md's Source header.
   - final-review.md keeps `` `Lens: specialist:<name>` `` and `specialists.md`, and never says "The lens never gates".
@@ -290,7 +291,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - tests/test_skills.py
 - **Depends on:** none.
 - **Decisions:**
-  - standards.md carries `Sentinel: orchestra-review/references/standards.md` and no Source header. The test rule allows a header only for a sourced SKILL-SOURCES row (OBSERVED), and the text is Orchestra-only. This overrides the spec's "provenance header" wording; see gap G-2.
+  - standards.md carries `Sentinel: orchestra-review/references/standards.md` and no Source header. The test rule allows a header only for a sourced SKILL-SOURCES row (OBSERVED), and the text is Orchestra-only. Spec 5.5 Files now says Sentinel only (coordinator decision 11 after C7).
   - final.md holds the three-lens table and names which checklist files each lens reads. A lens file never names another lens file (`test_a_lens_file_never_points_into_another_lens_file`), so correctness.md takes the architecture category without naming architecture.md. final.md keeps `specialist:<name>` and documents `cleared` (5.5 item 3).
   - test_skills.py:
     - Add `'references/standards.md'` to TABLE under orchestra-review.
@@ -301,12 +302,13 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
     - `"do not raise a known finding unless the code at its location changed"` in orchestra-review.json (known findings rule).
     - `"Sentinel: orchestra-review/references/standards.md"`.
     - `"## Keep"` in orchestra-build.json.
+    - `"repair_check: true"` in orchestra-review.json (repair check marker; checkpoint.md tells the reviewer of a repair-diff check to put it in the report; spec 5.1 item 6, C7/R4-7).
 - **Constraints:**
   - Each SKILL.md stays at or under 4096 bytes (review is 3752 now).
   - Each reference file stays at or under 6144 bytes.
   - Review SKILL.md no longer contains "critical, major, minor or trivial".
   - `test_specialist_contract_has_both_sides` and `test_worker_contract_phrases_do_not_repeat_in_role_skills` stay green.
-  - If the review SKILL.md budget cannot hold the rule, report BLOCKED with the byte count.
+  - **Budget rule** (coordinator decision 10 after C7): compress first. If the review SKILL.md (test_skills.py:201) or a reference file (:205) still cannot hold a rule, K2 raises that cap in test_skills.py by the minimum needed (at most 15%), records the old cap, the new cap and the reason in its report for docs/BUILD-LEDGER.md, and reports DONE. No budget is a reason for BLOCKED.
 - **Tests first:** `test_final_lens_table_covers_every_category`, the TABLE entry (standards.md is missing until it is written), and the phrase literals.
 - **Acceptance:**
   - `python3.11 -m unittest discover -s tests -p 'test_skills.py'` exits 0.
@@ -341,14 +343,14 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Goal:** answer two questions and report the answers:
   - Do both agents of a two-agent Workflow return before `claude -p` exits (5.10 item 9)?
   - Does a Bash call inside the pass see `ORCHESTRA_RELAUNCH_PASS` (K11, which 5.10 item 5.3 relies on)?
-- **Class / preset:** Spike; builder `implementation`. No repository path; nothing is committed.
+- **Class / preset:** Spike; builder `implementation`. It runs in its own worktree and does L0 in a `mktemp -d` scratch repository; no repository path is edited and nothing is committed (coordinator decision 14 after C7: the I1 spike showed `claude -p` runs from a worker).
 - **Depends on:** none.
-- **Steps:** see L0 in section 7. If the builder cannot run `claude -p` (nested session, or no authentication), it reports `STATUS: BLOCKED`, and the coordinator runs L0 itself.
+- **Steps:** see L0 in section 7.
 - **Done contract:**
   - For Workflow: yes, no or inconclusive, citing `pass.log`, `a.txt`, `b.txt` and `WORKFLOW-DONE`.
   - For env: yes or no, citing `env.txt`.
   - The `claude --version` used.
-  - The result feeds H1: the prompt allows foreground Workflow only on yes. If env is no, H1 is BLOCKED back to the coordinator before dispatch, because 5.10 item 5.3 then needs a spec amendment.
+  - The result feeds H1: the prompt allows foreground Workflow only on yes. The env answer is recorded only: H1 binds the pass through the marker file of spec 5.10 item 5.3 whatever it is, so env = no is not a failure and blocks nothing.
 
 ### W2
 
@@ -444,9 +446,9 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Goal:**
   - Add the `wave` label and `"wave:W"` resolution.
   - Add per-task findings at all five readers, and the per-task O22 void.
-  - Add the tip rule for repair-diff checks, and accept-before-repair at dispatch (park as the alternative).
+  - Add the tip rule for repair-diff checks, the `repair_check` marker, and accept-before-repair at dispatch for overlapping reported cards only (C7/R4-1).
   - Add `supersede`, and a `status` waves list with `next_depends`.
-- **Spec:** 5.1 (all items), 5.4 item 4, section 6 rows `wave`, `superseded_by` and `task_findings`.
+- **Spec:** 5.1 (all items), 5.4 item 4, section 6 rows `wave`, `superseded_by`, `task_findings` and `repair_check`.
 - **Class / preset:** Architectural; builder `implementation`.
 - **Starting artifact:** design/2.2 at the W2 closing tip.
 - **Owns:** engine.py, orchestra.py, test_engine.py, test_integration.py.
@@ -458,7 +460,8 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
     - the repair precondition in `add_task`;
     - `accept`;
     - the per-task loop in `_completion_evidence`.
-  - `_accept_refusal(self, state, cache, task_id) -> str | None` is factored out of `accept`. `_start_assignment` refuses a builder `repair` card with "Accept X first; a repair would make its evidence stale" while any `reported` card has `_accept_refusal(...) is None`.
+  - `_accept_refusal(self, state, cache, task_id) -> str | None` is factored out of `accept`. `_evidence_scopes(self, state, task_id) -> list` returns the scopes the card's acceptance depends on: its own `_scope_of` when it is accepted on its report artifact (engine.py:810-811), otherwise the stored `scope` of each covering receipt (engine.py:769, 786). `_start_assignment` refuses a builder `repair` card with "Accept X first; a repair would make its evidence stale" while a `reported` card has `_accept_refusal(...) is None` and one of its evidence scopes overlaps the repair's `_reservation` files: `None` on either side overlaps, otherwise the `_collides` path rule (equal or parent), resources ignored (spec 5.1 item 10).
+  - `record_review` stores `repair_check: true` from the body on checkpoint receipts and refuses it otherwise: "repair_check must be true on a checkpoint receipt".
   - `supersede(self, actor, lease, task_id) -> dict`.
   - `status()` gains `waves: [{wave, tasks, next_depends}]` in first-add order. `next_depends` is true when a card of the next wave lists a member in `dependencies`, or when its `files` or `inputs` collide with a member's `files` under `_collides` path rules.
   - CLI: `supersede TASK`. The `add` help names `wave` and `review_of: ["wave:W"]`.
@@ -476,13 +479,14 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - `test_absent_task_findings_key_is_clean_at_every_reader`
   - `test_repair_diff_check_finding_on_ancestor_refused`
   - `test_clean_wave_member_accepts_after_sibling_repair`
-  - `test_repair_dispatch_allowed_after_parking_uninspected_investigator`
+  - `test_repair_dispatch_refused_only_by_overlapping_acceptable_cards`
+  - `test_record_review_stores_repair_check_marker`
   - `test_supersede_unstarted_review_when_replacements_cover_it`
   - `test_status_marks_wave_dependency_from_dependencies_and_paths`
   - test_integration.py: `test_parked_member_wave_reaches_completion`
-- **Flips:** test_engine.py:617-639 (`test_second_repair_suspends_entire_same_file_chain`). Add `task_findings: {R1: [bug2]}` to blocked2 and to any other BLOCKED repair-diff fixture the tip rule refuses. Where accept-before-repair refuses an existing fixture, accept or park the reported card first.
+- **Flips:** test_engine.py:617-639 (`test_second_repair_suspends_entire_same_file_chain`). Add `task_findings: {R1: [bug2]}` to blocked2 and to any other BLOCKED repair-diff fixture the tip rule refuses. Where accept-before-repair refuses an existing fixture, accept the overlapping reported card first. test_engine.py:1499 (park) is not flipped.
 - **Acceptance:**
-  - `python3.11 -m unittest discover -s tests -k test_wave_ -k test_adding_card_to_reviewed_wave_is_refused -k test_status_lists_waves_in_first_add_order -k test_task_findings_must_match_findings_union -k test_review_without_task_findings_blocks_all_covered -k test_repair_diff_check_ -k test_replacement_wave_review_after_member_parked -k test_absent_task_findings_key_is_clean_at_every_reader -k test_clean_wave_member_accepts_after_sibling_repair -k test_repair_dispatch_allowed_after_parking_uninspected_investigator -k test_supersede_unstarted_review_when_replacements_cover_it -k test_status_marks_wave_dependency_from_dependencies_and_paths -k test_parked_member_wave_reaches_completion` exits 0.
+  - `python3.11 -m unittest discover -s tests -k test_wave_ -k test_adding_card_to_reviewed_wave_is_refused -k test_status_lists_waves_in_first_add_order -k test_task_findings_must_match_findings_union -k test_review_without_task_findings_blocks_all_covered -k test_repair_diff_check_ -k test_replacement_wave_review_after_member_parked -k test_absent_task_findings_key_is_clean_at_every_reader -k test_clean_wave_member_accepts_after_sibling_repair -k test_repair_dispatch_refused_only_by_overlapping_acceptable_cards -k test_record_review_stores_repair_check_marker -k test_supersede_unstarted_review_when_replacements_cover_it -k test_status_marks_wave_dependency_from_dependencies_and_paths -k test_parked_member_wave_reaches_completion` exits 0.
   - The file runs for test_engine.py and test_integration.py each exit 0.
 - **Keep:**
   - explicit `review_of` ids;
@@ -506,17 +510,20 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Owns:** engine.py, orchestra.py, test_engine.py.
 - **Depends on:** E3.
 - **Signatures:**
-  - `hold(self, actor, lease, task_id, finding) -> dict` appends `- held <id> (chain <ids>): <finding>` and the time to `<state>/progress.md`.
+  - Module function `_append_progress(state_dir, text)`: one `os.open(path, O_WRONLY | O_APPEND | O_CREAT)` and one `os.write` of the whole entry, locked or not; it may read the file only to choose the separator (spec 5.9 item 5, C7/R4-2). E4 adds it for its two writers; E6 moves the brief writers onto it.
+  - `hold(self, actor, lease, task_id, finding) -> dict` appends `- held <id> (chain <ids>): <finding>` and the time to `<state>/progress.md` through `_append_progress`.
+  - "Current blocking verdict comes from a repair-diff check" means the current blocking receipt carries `repair_check: true` (stored by E3; spec 5.2 item 2b, C7/R4-7). Both the `hold` precondition and the "Repair-diff check blocked X" refusal read that key.
   - `_ready`: a `held` dependency counts as satisfied; held cards are not added to `occupied`.
   - `add_task` `repair_of` refusals:
     - "Escalation ends at one repair; hold the chain"
     - "Repair-diff check blocked X; hold the chain"
-  - `record_review` accepts an uncovered key only for a `held` tip when the report cites a failed receipt. It appends `- gate <receipt> attributed to held <tip>: <finding>`. Otherwise "Task findings name an uncovered task".
+  - `record_review` accepts an uncovered key only for a `held` tip when the report cites a failed receipt. It appends `- gate <receipt> attributed to held <tip>: <finding>` through `_append_progress`. Otherwise "Task findings name an uncovered task".
   - CLI: `hold TASK --finding TEXT`.
 - **Tests first:**
   - `test_hold_moves_whole_chain_and_logs`
   - `test_hold_refused_without_current_blocking_findings`
   - `test_hold_rejected_only_card_blocked_by_repair_diff_check`
+  - `test_repair_diff_check_without_repair_card_holds_rejected_only_card`
   - `test_dependency_on_held_card_is_ready`
   - `test_held_card_reserves_no_files`
   - `test_repair_of_repair_refused_during_build`
@@ -531,9 +538,9 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - `test_uncovered_key_refused_unless_held_tip_and_failed_gate`
 - **Flips:** test_engine.py:617-639 adds `hold R1` before the R2 repair (5.2 flip, C6/R3-2).
 - **Acceptance:**
-  - `python3.11 -m unittest discover -s tests -k test_hold_ -k test_dependency_on_held_card_is_ready -k test_held_card_reserves_no_files -k test_repair_of_ -k test_review_may_cover_held_cards -k test_accept_held_card_with_clean_current_verdict -k test_first_repair_of_builder_still_allowed -k test_completion_refuses_while_card_held -k test_failed_gate_from_held_chain_does_not_block_later_wave -k test_uncovered_key_refused_unless_held_tip_and_failed_gate -k test_second_repair_suspends_entire_same_file_chain` exits 0.
+  - `python3.11 -m unittest discover -s tests -k test_hold_ -k test_repair_diff_check_without_repair_card_holds_rejected_only_card -k test_dependency_on_held_card_is_ready -k test_held_card_reserves_no_files -k test_repair_of_ -k test_review_may_cover_held_cards -k test_accept_held_card_with_clean_current_verdict -k test_first_repair_of_builder_still_allowed -k test_completion_refuses_while_card_held -k test_failed_gate_from_held_chain_does_not_block_later_wave -k test_uncovered_key_refused_unless_held_tip_and_failed_gate -k test_second_repair_suspends_entire_same_file_chain` exits 0.
   - `python3.11 -m unittest discover -s tests -p 'test_engine.py'` exits 0.
-- **Keep:** `PARKABLE`; `park` and `unpark` 2.1 behavior; 2.1 chains deeper than one stay valid (the refusal applies to new `add` calls only); the Opus override.
+- **Keep:** `PARKABLE`; `park` and `unpark` 2.1 behavior, for approval boundaries only (C7/R4-1); 2.1 chains deeper than one stay valid (the refusal applies to new `add` calls only); the Opus override.
 - **Remove:** none.
 
 ### W5
@@ -547,13 +554,13 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Starting artifact:** design/2.2 at the W4 closing tip.
 - **Owns:** engine.py, test_engine.py, test_integration.py.
 - **Depends on:** E4.
-- **Decisions** (this plan's, flagged for the critic):
+- **Decisions** (now spec text, 5.5 items 3 and 4 and section 6; coordinator decision 13 after C7):
   - A repair card added with a current final finding stores `final_round: int` and `final_findings: list[str]`, for E6's brief.
   - The round is 1 + the highest existing `final_round` when any card of that round has reported. Otherwise it is the same round. The first round is 1.
   - Refusals:
     - "Attribute final findings to the chain tip X"
     - "Final receipt must address held tip X"
-    - for `cleared` on a non-final receipt: "Cleared entries are allowed only on final receipts" (new literal; the spec names the rule but no message).
+    - for `cleared` on a non-final receipt: "Cleared entries are allowed only on final receipts" (spec 5.5 item 3).
 - **Tests first:**
   - test_engine.py:
     - `test_contract_hash_unchanged_by_lens_change`
@@ -579,26 +586,29 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - One brief writer for every end path, stored as `last_brief`, plus the `brief` command.
   - SessionStart shows the brief whatever the autonomy state, with a 2.1 fallback.
   - PreToolUse denies the delegated classes when the cwd is missing.
-  - Hook state reads poll a non-blocking lock for 2 s. On busy: delegated classes are denied, other classes use the raw fallback, and Stop allows the stop and writes a `state busy` brief.
-- **Spec:** 5.9 items 1 to 3 (and item 4 in the brief content), 5.16 items 3 and 5, section 6 row `last_brief`.
+  - Hook state reads poll a non-blocking lock for 2 s. On busy: delegated classes are denied and other classes use the raw fallback. The Stop busy path lives in the hooks.py Stop branch (C7/R4-3).
+  - Every `progress.md` write is a single append (C7/R4-2); end paths keep a stopped autonomy brief in `last_brief` (C7/R4-5).
+- **Spec:** 5.9 items 1 to 3 and 5 (and item 4 in the brief content), 5.16 items 3 and 5, section 6 row `last_brief`.
 - **Class / preset:** Architectural; builder `implementation`.
 - **Starting artifact:** design/2.2 at the W5 closing tip.
 - **Owns:** engine.py, hooks.py, orchestra.py, test_engine.py, test_hooks.py.
 - **Depends on:** E5 (the brief reads `final_round`), E4 (held log), E2 (ledger), E1 (notes).
 - **Signatures:**
   - `_brief_text(self, state, reason, at) -> str` replaces `_report_text`. It writes `## Run brief <time>` and the eight sections of 5.9 item 1, in order.
-  - `_write_brief(self, state, reason)` appends to `progress.md` and sets `last_brief = {reason, at, text, path}`. It is called by:
+  - `_write_brief(self, state, reason)` appends to `progress.md` through `_append_progress` (E4) and sets `last_brief = {reason, at, text, path}`. It is called by:
     - `close_session` (`closed`);
     - `interrupt` and `interrupt_active` (`interrupted`);
     - `end_harness_session` (`ended`);
-    - `_stop_autonomy` (the stop reason).
+    - `_stop_autonomy` (the stop reason), which no longer reads and rewrites `progress.md` (engine.py:1044-1054).
+  - Kept stop brief (C7/R4-5): while `_kept_autonomy(state)` returns a stopped report (engine.py:478-482), the end paths that do not stop autonomy still append their brief but leave `last_brief` unchanged (E8 applies the same rule in `end_pass_session`).
   - `brief(self) -> str` is lease-free and read-only. CLI: `brief`.
   - `Engine.__init__(..., lock_wait=None)`. With `lock_wait` set, `_state(write=False)` polls `LOCK_SH | LOCK_NB` until the wait ends, then raises `StateBusy(EngineError)`.
-  - Module function `write_busy_brief(state_dir, at)` appends a `state busy` brief to `progress.md` without touching `state.json`.
+  - Module function `write_busy_brief(state_dir, at)` appends a `state busy` brief to `progress.md` through `_append_progress`, without touching `state.json`.
   - hooks.py:
     - `handle_event(..., busy=False, missing_cwd=False)`.
     - `main` builds the engine with `lock_wait=2.0`, sets `missing_cwd` when the payload cwd does not exist, and maps `StateBusy` to `busy=True`.
-    - `_report_context` uses " Run brief (<reason>): " and falls back to `autonomy.report` under " Autonomy report (".
+    - Stop branch (hooks.py:147-156), when `busy` and `_raw_autonomy_active` (hooks.py:232): poll `LOCK_EX | LOCK_NB` on `state.lock` until `STOP_LOCK_BUDGET = 8.0` seconds after the hook started (the 2 s read poll counts); if it frees, release it and run `hook_stop`; otherwise return no continuation and call `write_busy_brief`. Unarmed and busy: return `{}` and write nothing. `autonomy.active` stays true.
+    - `_report_context` reads `last_brief` from `engine.status()`, uses " Run brief (<reason>): " and falls back to `autonomy.report` under " Autonomy report (".
   - Messages: "Session directory no longer exists: cd to an existing directory, then retry" and "Orchestra state is busy; retry".
 - **Tests first:**
   - test_engine.py:
@@ -612,6 +622,8 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
     - `test_unarmed_completed_run_brief_says_ready_to_release`
     - `test_run_brief_marks_repaired_chains`
     - `test_run_brief_lists_notes`
+    - `test_progress_writes_are_single_appends` (C7/R4-2)
+    - `test_end_paths_keep_stopped_autonomy_brief` (C7/R4-5)
   - test_hooks.py:
     - `test_session_start_shows_newest_brief_without_autonomy`
     - `test_session_start_excerpt_contains_needs_you`
@@ -620,12 +632,18 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
     - `test_pretooluse_missing_cwd_allows_nothing_new`
     - `test_hook_state_read_fails_closed_after_lock_wait`
     - `test_hook_busy_lock_keeps_raw_fallback_for_other_classes`
-    - `test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout`
+    - `test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout` (patches `STOP_LOCK_BUDGET`; asserts `autonomy.active` stays true)
+    - `test_hook_stop_busy_unarmed_writes_no_brief` (C7/R4-3)
+    - `test_hook_stop_runs_when_lock_frees_within_budget` (C7/R4-3)
 - **Flips** (heading only; the cap-to-deadline changes are E7's):
   - test_engine.py:1626, 1642, 1661, 1673, 1679 and 1694: `## Autonomy report` becomes `## Run brief`. Where a test asserts the heading next to a cap stop, keep the cap stop as it is.
-  - test_hooks.py:1439, 1448, 1463 and 1471: "Autonomy report" becomes "Run brief".
+  - test_engine.py:1652 and 1663 (spec flip table, C7/R4-4): count `## Run brief` instead of `## Autonomy report`; the cap stop stays until E7.
+  - test_engine.py:1694: `last_brief` still holds the stop brief after `interrupt` (C7/R4-5).
+  - test_hooks.py:1439 and 1448: "Autonomy report" becomes "Run brief".
+  - test_hooks.py:1463 and 1471 (tests at 1460 and 1465): also assert "Run brief" absent.
+  - test_hooks.py:1452 and 1465 (mock engines): stub `engine.status.return_value` with a dict that has no `last_brief` key.
 - **Acceptance:**
-  - `python3.11 -m unittest discover -s tests -k test_run_brief_ -k test_close_session_writes_run_brief -k test_interrupt_and_harness_end_write_run_brief -k test_brief_command_is_read_only -k test_unarmed_completed_run_brief_says_ready_to_release -k test_session_start_ -k test_pretooluse_missing_cwd_ -k test_hook_state_read_fails_closed_after_lock_wait -k test_hook_busy_lock_keeps_raw_fallback_for_other_classes -k test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout` exits 0.
+  - `python3.11 -m unittest discover -s tests -k test_run_brief_ -k test_close_session_writes_run_brief -k test_interrupt_and_harness_end_write_run_brief -k test_brief_command_is_read_only -k test_unarmed_completed_run_brief_says_ready_to_release -k test_session_start_ -k test_pretooluse_missing_cwd_ -k test_hook_state_read_fails_closed_after_lock_wait -k test_hook_busy_lock_keeps_raw_fallback_for_other_classes -k test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout -k test_progress_writes_are_single_appends -k test_end_paths_keep_stopped_autonomy_brief -k test_hook_stop_busy_unarmed_writes_no_brief -k test_hook_stop_runs_when_lock_frees_within_budget` exits 0.
   - The file runs for test_engine.py and test_hooks.py each exit 0.
 - **Keep:** every 2.1 report field; `autonomy.report` readable; the raw-state fallback (hooks.py:357-360) for non-delegated classes; blocking locks for CLI writers (`lock_wait=None`).
 - **Remove:** the `## Autonomy report` heading.
@@ -659,7 +677,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - `test_hook_stop_never_stops_on_stalls`
   - `test_hook_stop_continues_while_held_cards_remain`
   - `test_hook_stop_parked_only_when_held_and_parked`
-  - `test_complete_skips_ledger_checks_until_all_accepted`
+  - `test_complete_skips_ledger_checks_until_all_accepted` (patches `Engine.artifact` and asserts zero calls while a card is queued; C7/R4-6)
   - `test_hook_stop_not_complete_while_held`
   - `test_hook_stop_not_complete_while_final_finding_open`
   - `test_hook_stop_not_complete_while_card_repairing`
@@ -670,17 +688,18 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - `test_2_1_state_fixture_loads_under_2_2`, with the fixture as an inline dict in test_engine.py
   - `test_2_1_parked_card_keeps_park_semantics`
   - autonomy.test.ts: "band renders pass count without maximum"
-- **Flips** (5.8 table, plus two rows the table omits):
+- **Flips** (5.8 table, as amended for C7/R4-4):
   - unchanged: test_engine.py:1278 and 1311;
   - test_engine.py:1335 gains `signature`;
   - test_engine.py:1346 drops the cap fields and asserts the override sentence;
   - test_engine.py:1356;
   - test_engine.py:1370 and 1379 are removed;
-  - test_engine.py:1626 and 1694 stop by the deadline;
+  - test_engine.py:1626 and 1694 stop by the deadline; 1694 asserts `last_brief` still holds the `deadline` brief;
+  - test_engine.py:1652 and 1663 stop by the deadline (1663: `last_stop_reason` `deadline`);
   - test_hooks.py:1421;
   - test_integration.py:412 becomes the `parked-only` path;
   - autonomy.test.ts:30, 55, 141 and 224.
-  - Not in the spec table: test_engine.py:1325 `test_arm_again_resets_counters_and_clears_the_old_report` stops through the deadline instead of `passes='1'`; the autonomy.test.ts band assertions at 70 and 166-292 ("pass 2/5" becomes "pass 2").
+  - test_engine.py:1324 `test_arm_again_resets_counters_and_clears_the_old_report` stops through the deadline instead of `passes='1'`; the autonomy.test.ts band assertions at 70, 178, 186, 201, 219, 271, 289 and 292 ("pass 2/5" becomes "pass 2"). Both are now spec flip rows (coordinator decision 12 after C7).
   - The regressions at 1387 (stall reset, now by signature) and 1611 stay green.
 - **Acceptance:**
   - `python3.11 -m unittest discover -s tests -k test_hook_stop_ -k test_complete_skips_ledger_checks_until_all_accepted -k test_ledger_without_caps_arms -k test_2_1_ -k test_signature_changes_on_report_hold_or_gate -k test_template_carries_the_fields_and_the_fixed_lines -k test_status_has_the_documented_keys_and_never_the_lease` exits 0.
@@ -706,8 +725,8 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - `_refuse_under_autonomy(self, state, action, remote=None, target=None)` exempts `release_permit` and `check_release` for the exact pair.
   - `_kept_autonomy` keeps a `relaunch` autonomy.
   - `_autonomy_on(state)` is true without a session when `relaunch` is armed.
-  - `open_session(self, actor, harness_session=None, relaunch_pass=None)`. The CLI `start` reads `ORCHESTRA_RELAUNCH_PASS`.
-  - `end_pass_session(self, nonce) -> dict` needs no lease and refuses unless the nonce matches. It writes the `ended` brief.
+  - `open_session(self, actor, harness_session=None, relaunch_pass=None)`. The CLI `start` reads `ORCHESTRA_RELAUNCH_PASS`. Without it, while `relaunch` autonomy is armed, `open_session` takes the nonce from the single `<state>/relaunch/pass-<nonce>.marker`; with none or several it stores none (spec 5.10 item 5.3).
+  - `end_pass_session(self, nonce) -> dict` needs no lease and refuses unless the nonce matches. It writes the `ended` brief, keeping a stopped autonomy brief in `last_brief` (spec 5.9 item 2, C7/R4-5).
   - `settle(self) -> dict` returns `{armed, stopped, reason, signature, passes, stalls}` without counting a pass.
   - `close_session` under relaunch stops with `complete`.
   - `hook_stop` is a no-op with no session under relaunch, and returns no continuation inside a relaunch pass.
@@ -728,11 +747,12 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
     - `test_pretooluse_armed_without_session_under_relaunch`
     - `test_settle_stops_on_deadline_between_passes`
     - `test_end_pass_session_checks_nonce_and_writes_ended_brief`
+    - `test_open_session_takes_pass_nonce_from_marker_without_env`
     - `test_settle_parked_only_when_held_and_parked`
     - `test_hook_stop_without_session_under_relaunch_is_noop`
     - `test_close_session_brief_reason_by_mode`
 - **Acceptance:**
-  - `python3.11 -m unittest discover -s tests -k test_arm_preauthorized_release_permits_exact_pair -k test_permit_refused_under_autonomy_without_preauthorization -k test_preauthorization_mismatch_refused -k test_arm_refuses_malformed_release_line -k test_pretooluse_preauthorized_release_reaches_permit_check -k test_relaunch_autonomy_ -k test_close_session_ -k test_non_relaunch_autonomy_cleared_on_session_end -k test_pretooluse_armed_without_session_under_relaunch -k test_settle_ -k test_end_pass_session_checks_nonce_and_writes_ended_brief -k test_hook_stop_without_session_under_relaunch_is_noop` exits 0.
+  - `python3.11 -m unittest discover -s tests -k test_arm_preauthorized_release_permits_exact_pair -k test_permit_refused_under_autonomy_without_preauthorization -k test_preauthorization_mismatch_refused -k test_arm_refuses_malformed_release_line -k test_pretooluse_preauthorized_release_reaches_permit_check -k test_relaunch_autonomy_ -k test_close_session_ -k test_non_relaunch_autonomy_cleared_on_session_end -k test_pretooluse_armed_without_session_under_relaunch -k test_settle_ -k test_end_pass_session_checks_nonce_and_writes_ended_brief -k test_open_session_takes_pass_nonce_from_marker_without_env -k test_hook_stop_without_session_under_relaunch_is_noop` exits 0.
   - The file runs for test_engine.py and test_hooks.py each exit 0.
 - **Keep:**
   - in-session autonomy without `--relaunch` as in 2.1 (apart from 5.8);
@@ -754,10 +774,11 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Class / preset:** Architectural; builder `implementation`.
 - **Starting artifact:** design/2.2 at the W8 closing tip, plus the X1 result pasted into the brief.
 - **Owns:** P/scripts/orchestra_core/relaunch.py (new), orchestra.py, P/config/relaunch-prompt.md (new), test_integration.py, test_packaging.py.
-- **Depends on:** E8 and X1.
+- **Depends on:** E8, and X1 for the Workflow sentence only (the pass binding uses the marker file whatever X1's env answer is).
 - **Signatures:**
   - `relaunch.run(repo, state_dir, permission_mode, model=None, launcher=None, clock=time.time, sleep=time.sleep) -> int`. Exit codes per 5.10 item 10: 0, 3, 4, 5, 2, 127 or 130.
   - Pass logs go to `<state>/relaunch/pass-N.log`; state to `<state>/relaunch/harness.json` `{pass, signature, stalled_streak}`.
+  - Before each launch, remove stale `<state>/relaunch/pass-*.marker` files and write `pass-<nonce>.marker`; remove it after step 4 (spec 5.10 item 5.3).
   - Back-off is `min(60 * 2 ** (streak - 1), 900)`.
   - The child starts with `start_new_session=True`.
   - CLI: `relaunch --permission-mode MODE [--model ID] [--launcher ARGV...]`. `--permission-mode` is required.
@@ -779,6 +800,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
     - `test_relaunch_ends_orphaned_pass_session`
     - `test_relaunch_leaves_foreign_session_and_exits_2`
     - `test_relaunch_sigint_disarms_before_forwarding`
+    - `test_relaunch_pass_marker_binds_session_without_env`
   - test_packaging.py: `test_relaunch_prompt_ships_and_forbids_background_work`
 - **Acceptance:**
   - `python3.11 -m unittest discover -s tests -k test_relaunch_` exits 0.
@@ -825,13 +847,14 @@ The graph has no cycle (REASONED: every edge points to an earlier wave):
 | E2 → E4 | `gate_receipts` and the failed-receipt rule | held-tip gate attribution (5.4 item 3) | OK; E4 adds only the uncovered-key exception. |
 | E3 → E4 | `_task_findings`, tip rule, uncovered-key refusal | held states, ladder | Conflict at test_engine.py:617-639: E3 adds `task_findings`, E4 adds `hold R1`. Ruled by the spec (5.1 and 5.2 flips); sequential owners. |
 | E4 → E5 | `held`, `held_finding`, repair_of forms | held-tip addressing, final repair form | OK. |
-| E5 → E6 | `final_round`, `final_findings` | brief "Final rounds" and "Still failing" | Plan-defined field names; E6's brief must read exactly these. |
+| E5 → E6 | `final_round`, `final_findings` | brief "Final rounds" and "Still failing" | Spec field names (5.5 item 4, section 6); E6's brief must read exactly these. |
+| E4 → E6 | `_append_progress` | brief writers, `write_busy_brief` | OK; E6 routes every `progress.md` writer through it. |
 | E6 → E7 | `_write_brief`, `last_brief`, Run brief heading | deadline stops write the brief | OK. E7 changes only stop reasons in tests E6 already re-headed. |
 | E6 → E8 | `_write_brief` reasons `closed`, `interrupted`, `ended` | `end_pass_session`, close under relaunch | OK. |
 | E7 → E8 | `_signature`, held-live `parked-only` rule | `settle` returns signature and reuses the stop conditions | OK. |
 | E7 → E8 | template Release-line comment | `parse_ledger` Release line | The template text is E7's; the parser is E8's. E7 writes the comment from the 5.8 item 5 wording. |
-| E8 → H1 | `settle`, `end_pass_session`, `arm --relaunch`, `start` env read | harness loop | OK. Exit-code mapping from `settle.reason` follows 5.10 item 10. |
-| X1 → H1 | Workflow and env answers | prompt sentence; nonce path | If env is no, H1 is blocked (section 8). |
+| E8 → H1 | `settle`, `end_pass_session`, `arm --relaunch`, `start` env or marker read | harness loop | OK. Exit-code mapping from `settle.reason` follows 5.10 item 10. |
+| X1 → H1 | Workflow and env answers | prompt sentence | If env is no, the marker fallback of spec 5.10 item 5.3 binds the pass; H1 always writes the marker, so nothing blocks. |
 | G1 → G2 | `_long_prefix`, `--del` read as `--delete` (deny) | merged-delete shapes | G2 flips `--del` from deny to merged-delete. The W1 corpus rows for push `--delete` prefixes change class in W2 (named flip). |
 | M1 → G2 | `delegate` from plugin root | "merged-delete is delegated" | OK; G2 adds one `test(...)` only. |
 | K1, K2, P1x ↔ engine tickets | text and packaging | nothing in code | No shared files. The phrase literals are this plan's. |
@@ -885,12 +908,12 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
 
   Out-of-scope findings are raised only here and triaged inline, card or brief (settled decision 6). Run as 2.1 lens cards if the installed engine is still 2.1 (REASONED: the build runs on the installed 2.1.0 engine).
 - **Release:** the coordinator's release card (5.18: version 2.2.0, CHANGELOG with every section, the mixed-version note and the 5.16 gap if M1 did not reproduce it), outside this plan's tickets.
-- **Live check L0** (X1; a human step if the builder cannot run it):
+- **Live check L0** (X1, run by a builder in its own worktree):
   1. `D=$(mktemp -d) && cd "$D" && git init -q && git commit -q --allow-empty -m init`
   2. `ORCHESTRA_RELAUNCH_PASS=probe-123 claude -p "Use the Workflow tool to run two agents in parallel. Agent one writes the word one to a.txt. Agent two writes the word two to b.txt. Wait for both. Then run printenv ORCHESTRA_RELAUNCH_PASS > env.txt with Bash in the foreground. Then print WORKFLOW-DONE followed by both agents' results." --permission-mode acceptEdits --output-format text > pass.log 2>&1; echo "exit $?"`
   3. `cat a.txt b.txt env.txt; grep -c WORKFLOW-DONE pass.log; claude --version`
   4. Record Workflow = yes only if `a.txt` and `b.txt` exist and `pass.log` holds WORKFLOW-DONE with both results; no if the files are missing; inconclusive otherwise. Record env = yes if `env.txt` reads `probe-123`. Write both answers into docs/BUILD-LEDGER.md through the coordinator. The log stays in `$D`.
-- **Live check L1** (coordinator, after the final gate, before release; a human step):
+- **Live check L1** (a coordinator step after the W9 merge and the final gate, before release; coordinator decision 15 after C7):
   1. Install the candidate through the isolated marketplace route that docs/VALIDATION.md row 12 uses.
   2. In a scratch clone with the plugin enabled, run a session that executes `git branch -D <a merged branch>`: expect allow. Then `git branch -D <an unmerged branch>`: expect the "not merged" reason.
   3. `cd` into a directory, remove it from another shell, then ask the session to run `git worktree remove x`: expect "Session directory no longer exists: cd to an existing directory, then retry".
@@ -901,12 +924,13 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
 
 | Event | Route |
 |---|---|
-| Builder `STATUS: BLOCKED` (a file outside ownership, a byte budget, a missing fake) | Coordinator. It amends ownership by moving the file into the ticket in the same wave only when no sibling owns it; otherwise it queues a follow-up ticket in the next wave. |
+| Builder `STATUS: BLOCKED` (a file outside ownership, a missing fake) | Coordinator. It amends ownership by moving the file into the ticket in the same wave only when no sibling owns it; otherwise it queues a follow-up ticket in the next wave. |
 | Wave review blocking finding on a ticket | One builder `repair` card (Opus medium, override) against that ticket's tip, then the repair-diff check. |
 | Repair-diff check still blocks | The chain is held. On the installed 2.1 engine there is no `hold`: the coordinator parks the chain on its own branch and writes it into the brief (REASONED). If the held ticket's code is a dependency of the next wave (any engine ticket, G1→G2, E8→H1), the dependent tickets park too, with the reason named. Independent tickets continue. A cap never stops the run. |
 | Wave gate fails | The reviewer attributes the failure to the responsible ticket as a blocking finding; route as above. |
 | X1 Workflow inconclusive or no | H1's prompt forbids Workflow (5.10 item 9). Not a failure. |
-| X1 env no | H1 is blocked. The coordinator asks for a spec amendment to 5.10 item 5.3; the nonce could travel as a prompt argument instead. |
+| X1 env no | Not a failure. The pass binds through the marker file (spec 5.10 item 5.3), which H1 always writes. |
+| A skill text exceeds its byte budget after compression | Not BLOCKED. The ticket raises that budget test's cap by the minimum needed (at most 15%) and records it; K1's raise is applied by the coordinator at the W1 merge (K1, K2). |
 | M1 reproduces neither hypothesis | Items 2 to 5 ship as hardening; the release card's CHANGELOG records the gap (5.16 item 6). |
 | Final lens blocking finding | A final repair round per spec 5.5 (Opus repair per chain, re-check, closing confirmation). |
 | Final out-of-scope item | Coordinator triage: inline, card or brief. A non-builder cause goes to inline or card, never brief alone. |
@@ -915,9 +939,9 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
 
 | Spec item | Ticket(s) |
 |---|---|
-| 5.1 items 1 to 11 (engine, CLI) | E3 |
+| 5.1 items 1 to 11 (engine, CLI) | E3 (item 10 overlap rule: `test_repair_dispatch_refused_only_by_overlapping_acceptable_cards`; item 6 marker: `test_record_review_stores_repair_check_marker`) |
 | 5.1 (coordination.md, checkpoint.md, cli docs) | K1, K2, D1 |
-| 5.2 items 1 to 8 (engine, CLI) | E4 |
+| 5.2 items 1 to 8 (engine, CLI) | E4 (item 2b marker: `test_repair_diff_check_without_repair_card_holds_rejected_only_card`) |
 | 5.2 (repair-rounds.md, parallel.md:16, build repair.md, cli docs) | K1, K2, D1 |
 | 5.3 | E4 (`test_completion_refuses_while_card_held`), K1 (autonomy.md:22) |
 | 5.4 items 1 and 2 | K1 (coordination.md), K2 (checkpoint.md); applied in section 6 of this plan |
@@ -932,9 +956,12 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
 | 5.7 items 2 to 4 (engine) | E2 |
 | 5.8 items 1 to 7 | E7; K1 (autonomy.md); D1 (docs/hooks.md) |
 | 5.8 item 8 (Release line) | E8 (engine, hooks), E7 (template), K1 (autonomy.md, finishing.md) |
+| 5.9 item 5 (single appends) | E4 (`_append_progress` for hold and gate lines), E6 (brief writers, `test_progress_writes_are_single_appends`) |
+| 5.9 item 2 kept stop brief | E6 (`test_end_paths_keep_stopped_autonomy_brief`), E8 (`end_pass_session`) |
 | 5.9 items 1 to 3 | E6; `end_pass_session` and `settle` briefs in E8; K1 (handoff.md, finishing.md, autonomy.md) |
 | 5.9 item 4 | K1 (finishing.md), E6 (brief Needs you) |
 | 5.10 items 1 to 4, 5.4 and 6 | E8 |
+| 5.10 item 5.3 marker file | E8 (`test_open_session_takes_pass_nonce_from_marker_without_env`), H1 (`test_relaunch_pass_marker_binds_session_without_env`) |
 | 5.10 item 5 (harness), 8, 10 | H1 |
 | 5.10 item 7 | E7 |
 | 5.10 item 9 | X1 → H1 |
@@ -950,23 +977,25 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
 | 5.14 docs/hooks.md | D1 |
 | 5.15 | G1 |
 | 5.16 items 1, 2, 4 and 8 | M1 |
-| 5.16 items 3 and 5 | E6 |
+| 5.16 items 3 and 5 | E6 (Stop branch busy path: `test_hook_stop_busy_unarmed_writes_no_brief`, `test_hook_stop_runs_when_lock_frees_within_budget`) |
 | 5.16 item 6 | Release card (CHANGELOG), fed by M1's diagnosis |
 | 5.16 item 7 | G1 |
 | 5.17 | E1 |
 | 5.18 | Coordinator release card (out of this plan, per the brief) |
 | 5.19 | Coordinator follow-up after 2.2.0 is installed (out of this plan, per the brief) |
-| Section 6 schema rows | E1 (`rev`, `notes`), E2 (`findings`, `out_of_scope`, `gate_receipts`), E3 (`wave`, `superseded_by`, `task_findings`), E4 (`held_finding`, `held`), E5 (`cleared`), E6 (`last_brief`), E7 (caps optional, `signature`), E8 (`relaunch`, `release`, `relaunch_pass`) |
+| Section 6 schema rows | E1 (`rev`, `notes`), E2 (`findings`, `out_of_scope`, `gate_receipts`), E3 (`wave`, `superseded_by`, `task_findings`, `repair_check`), E4 (`held_finding`, `held`), E5 (`cleared`, `final_round`, `final_findings`), E6 (`last_brief`), E7 (caps optional, `signature`), E8 (`relaunch`, `release`, `relaunch_pass`) |
 | Section 7 | P1x |
 | Section 8 | E7 (tests), D1 (README upgrade notes) |
 
 ## 10. Gaps, risks and self-check
 
-- **G-1 Byte budgets.** briefs.md (≤1800, 1593 now) and review SKILL.md (≤4096, 3752 now) must absorb new rules. K1 and K2 report BLOCKED rather than drop a rule. UNKNOWN until written.
-- **G-2 Provenance header.** Spec 5.5 says standards.md gets "a provenance header". The test rule forbids a Source header on Orchestra-only text. The plan writes Sentinel only. The critic should confirm.
+**Open items: none.** The coordinator decisions after C7 (spec section 10) closed every item this plan had left open; the rest below are notes and risks.
+
+- **G-1 Byte budgets (closed, decision 10).** Builders compress first; a rule that still cannot fit raises that budget test's cap by the minimum needed (at most 15%), recorded in docs/BUILD-LEDGER.md (K1, K2, section 8). No ticket reports BLOCKED for a budget.
+- **G-2 Provenance header (closed, decision 11).** standards.md carries a Sentinel line only; spec 5.5 Files now says so.
 - **G-3 Lens cross-references.** correctness.md cannot name architecture.md (OBSERVED test). final.md carries the inclusion instead.
-- **G-4 Spec flip-table omissions.** test_engine.py:1325 and the autonomy.test.ts band assertions at 70 and 166-292 are assigned to E7.
-- **G-5 Plan-defined names.** These are new and flagged for the critic:
+- **G-4 Spec flip-table omissions (closed, decision 12).** test_engine.py:1324 (the brief's ":1325"; the def is at 1324) and the autonomy.test.ts band assertions are spec flip rows and stay in E7.
+- **G-5 Plan-defined names (closed, decision 13).** Accepted. The spec now carries `final_round`, `final_findings`, the `cleared` refusal, `StateBusy`, `lock_wait` and `write_busy_brief`; the rest stay plan-level names:
   - `final_round` and `final_findings` (E5), with their round rule;
   - the `cleared` refusal message;
   - `KEEP_REMOVE`;
@@ -977,7 +1006,8 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
   - the standards VARIANT_NOTES text.
 - **G-6 TypeScript scope.** `claude plugin test` cannot be filtered by name (OBSERVED), so the TypeScript tickets run every mod test.
 - **G-7 Sequential owners.** The template, test_hooks.py and the hooks are edited by several engine tickets in different waves. Each later ticket starts from the merged tip, so there is no concurrent edit.
-- **G-8 X1 may need a human.** If `claude -p` cannot run from a worker, L0 is a coordinator or human step.
+- **G-8 X1 (closed, decision 14).** A builder runs L0 in its own worktree with `claude -p`. The env answer no longer gates H1: the marker file of spec 5.10 item 5.3 is always written.
+- **L1 live check (decided, decision 15).** A coordinator step after the W9 merge and the final gate, before release (section 7); UNKNOWN until performed.
 - **G-9 Stale text found in passing** (raise at the final review, not tickets):
   - the SKILL-SOURCES "Final review lenses" row;
   - the checkpoint VARIANT_NOTES phrase "one reported ticket" (wave reviews now cover many);
