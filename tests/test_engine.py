@@ -1,4 +1,5 @@
 import json
+import os
 import pathlib
 import shlex
 import shutil
@@ -6,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
 from pathlib import Path
@@ -1651,7 +1653,7 @@ class AutonomyReportTests(AutonomyFixture):
         self.assertIsNotNone(self.engine.hook_stop())
         self.assertIsNone(self.engine.hook_stop())
         progress = (self.state / 'progress.md').read_text()
-        self.assertIn('## Autonomy report 2027-01-15T08:00:00', progress)
+        self.assertIn('## Run brief 2027-01-15T08:00:00', progress)
         for fragment in ('cap-passes', 'passes: 1 of 1', 'done (investigator/code)', 'p: needs a push',
                          'unit', 'exit 3', 'BLOCKED', 'rev-1', 'off by one'):
             self.assertIn(fragment, progress)
@@ -1670,7 +1672,7 @@ class AutonomyReportTests(AutonomyFixture):
         self.engine.hook_stop()
         text = (self.state / 'progress.md').read_text()
         self.assertTrue(text.startswith('# Plan X\nearlier line\n'))
-        self.assertEqual(text.count('## Autonomy report'), 1)
+        self.assertEqual(text.count('## Run brief'), 1)
 
     def test_disarm_records_the_reason_writes_the_report_and_clears_the_shown_one(self):
         self.arm(passes='1')
@@ -1682,13 +1684,13 @@ class AutonomyReportTests(AutonomyFixture):
         self.assertFalse(self.engine.disarm_autonomy()['was_active'])
         self.assertIsNone(self.engine.autonomy_report())
         self.assertEqual(self.engine.autonomy_status()['last_stop_reason'], 'cap-passes')
-        self.assertEqual((self.state / 'progress.md').read_text().count('## Autonomy report'), 1)
+        self.assertEqual((self.state / 'progress.md').read_text().count('## Run brief'), 1)
         self.arm()
         result = self.engine.disarm_autonomy()
         self.assertTrue(result['was_active'])
         self.assertIn('disarmed', result['text'])
         self.assertEqual((self.engine.autonomy_status()['active'], self.engine.autonomy_status()['last_stop_reason']), (False, 'disarmed'))
-        self.assertEqual((self.state / 'progress.md').read_text().count('## Autonomy report'), 2)
+        self.assertEqual((self.state / 'progress.md').read_text().count('## Run brief'), 2)
         stored = self.engine.autonomy_report()  # SPEC 12.6: the disarm report is stored like any stop's
         self.assertEqual((stored['reason'], stored['text']), ('disarmed', result['text']))
         self.assertFalse(self.engine.disarm_autonomy()['was_active'])  # a later disarm clears it
@@ -1709,8 +1711,11 @@ class AutonomyReportTests(AutonomyFixture):
         self.accept_card('done')
         self.engine.hook_stop()
         self.engine.hook_stop()
+        stop_brief = self.engine.status()['last_brief']
         self.engine.interrupt('main', self.lease)
         self.assertEqual(self.engine.autonomy_report()['reason'], 'cap-passes')
+        self.assertEqual(self.engine.status()['last_brief'], stop_brief)  # SPEC 5.9 item 2: the kept stop brief stays
+        self.assertEqual(stop_brief['reason'], 'cap-passes')
         self.assertFalse(self.engine.autonomy_active())
         self.assertFalse(self.engine.autonomy_status()['active'])
 
@@ -2698,3 +2703,287 @@ class FinalReceiptTests(HoldFixture):
         self.engine.accept('main', self.lease, 'R1')
         self.engine.accept('main', self.lease, 'B1')
         self.assertEqual(['accepted', 'accepted'], self.states('R1', 'B1'))
+
+
+HEADINGS = ('Needs you', 'Still failing / next phase', 'Held log', 'Final rounds', 'Notes', 'Deferred findings',
+            'Parked', 'Accepted', 'Failures')
+
+
+class RunBriefTests(AutonomyFixture, HoldFixture):
+    """SPEC 5.9 (the run brief on every end path) and 5.16 item 5 (`write_busy_brief`)."""
+
+    def brief_text(self):
+        return self.engine.status()['last_brief']['text']
+
+    @staticmethod
+    def section(text, title):
+        start = text.index('### ' + title + '\n')
+        rest = text[start + len(title) + 5:]
+        end = rest.find('### ')
+        return rest if end < 0 else rest[:end]
+
+    def held_run(self):
+        """B1/R1 held, B2 accepted and blamed by a final receipt that clears R1; R2 is B2's final repair."""
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g stays after one repair')
+        self.built('B2')
+        self.reviewed('clean2', ['B2'])
+        self.engine.accept('main', self.lease, 'B2')
+        self.reviewed('final', ['B1', 'R1', 'B2'], findings=['f'], final=True, task_findings={'B2': ['f']},
+                      cleared={'R1': 'no defect'})
+        self.task('R2', mode='repair', repair_of='B2', files=['B2'])
+
+    def test_run_brief_lists_held_log_and_final_rounds(self):
+        self.held_run()
+        self.engine.interrupt('main', self.lease)
+        text = self.brief_text()
+        held = self.section(text, 'Held log')
+        self.assertIn('R1 (chain R1, B1): g stays after one repair', held)
+        self.assertIn('cleared by a lens: no defect', held)
+        rounds = self.section(text, 'Final rounds')
+        self.assertIn('round 1', rounds)
+        self.assertIn('R2 (chain B2, R2)', rounds)
+        self.assertIn('f', rounds)
+        self.assertNotIn('R1', self.section(text, 'Still failing / next phase'))
+
+    def test_run_brief_lists_still_failing_held_tips_and_gate_attributions(self):
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g stays after one repair')
+        self.built('C1', wave='W2')
+        gate = self.engine.run_gate('main', self.lease, 'w2-gate', [sys.executable, '-c', 'raise SystemExit(1)'])
+        self.reviewed('w2', ['C1'], findings=['f'], task_findings={'R1': ['f'], 'C1': []},
+                      mutate=lambda body: body.update(gate_receipts=[gate['id']]))
+        self.engine.interrupt('main', self.lease)
+        text = self.brief_text()
+        self.assertIn('R1 (chain R1, B1)', self.section(text, 'Still failing / next phase'))
+        self.assertIn('g stays after one repair', self.section(text, 'Still failing / next phase'))
+        self.assertIn('final round: none', self.section(text, 'Still failing / next phase'))
+        self.assertIn('gate %s attributed to held R1: f' % gate['id'], self.section(text, 'Held log'))
+
+    def test_close_session_writes_run_brief(self):
+        (self.state / 'progress.md').write_text('# Plan X\nearlier line\n')
+        self.engine.close_session('main', self.lease)
+        progress = (self.state / 'progress.md').read_text()
+        self.assertTrue(progress.startswith('# Plan X\nearlier line\n'))
+        self.assertEqual(progress.count('## Run brief 2027-01-15T08:00:00'), 1)
+        self.assertIn('- stop reason: closed', progress)
+        stored = self.engine.status()['last_brief']
+        self.assertEqual((stored['reason'], stored['at']), ('closed', '2027-01-15T08:00:00+00:00'))
+        self.assertEqual(stored['path'], str((self.state / 'progress.md').resolve()))
+        self.assertTrue(stored['text'].startswith('## Run brief 2027-01-15T08:00:00'))
+        self.assertIn(stored['text'], progress)
+
+    def test_interrupt_and_harness_end_write_run_brief(self):
+        self.engine.interrupt('main', self.lease)
+        self.assertEqual(self.engine.status()['last_brief']['reason'], 'interrupted')
+        self.assertIn('- stop reason: interrupted', (self.state / 'progress.md').read_text())
+        self.lease = self.engine.open_session('main', harness_session='S')
+        self.now[0] += 60
+        self.assertTrue(self.engine.end_harness_session('S'))
+        stored = self.engine.status()['last_brief']
+        self.assertEqual(stored['reason'], 'ended')
+        self.assertIn('- stop reason: ended', stored['text'])
+        self.lease = self.engine.open_session('main')
+        self.now[0] += 60
+        self.assertTrue(self.engine.interrupt_active())
+        self.assertEqual(self.engine.status()['last_brief']['reason'], 'interrupted')
+        self.assertEqual((self.state / 'progress.md').read_text().count('## Run brief'), 3)
+
+    def test_noop_end_paths_write_no_brief(self):
+        self.engine.interrupt('main', self.lease)
+        before = (self.state / 'progress.md').read_bytes()
+        self.assertFalse(self.engine.interrupt_active())
+        self.assertFalse(self.engine.end_harness_session('nobody'))
+        self.assertEqual(before, (self.state / 'progress.md').read_bytes())
+
+    def test_run_brief_lists_still_failing_on_deadline(self):
+        self.arm()
+        self.built('B2')
+        self.reviewed('b2', ['B2'], findings=['b2 breaks the parser'])
+        self.now[0] += 7200
+        self.assertIsNone(self.engine.hook_stop())
+        stored = self.engine.status()['last_brief']
+        self.assertEqual(stored['reason'], 'deadline')
+        failing = self.section(stored['text'], 'Still failing / next phase')
+        self.assertIn('B2', failing)
+        self.assertIn('b2 breaks the parser', failing)
+        self.assertIn('- deadline: ', stored['text'])
+
+    def test_brief_command_is_read_only(self):
+        self.engine.interrupt('main', self.lease)
+        state_before = self.engine.state_path.read_bytes()
+        progress_before = (self.state / 'progress.md').read_bytes()
+        self.assertEqual(self.engine.brief(), self.brief_text())
+        self.assertEqual(state_before, self.engine.state_path.read_bytes())
+        self.assertEqual(progress_before, (self.state / 'progress.md').read_bytes())
+
+    def test_brief_is_empty_before_any_run_ends(self):
+        self.assertIsNone(self.engine.brief())
+
+    def test_run_brief_needs_you_precedes_accepted(self):
+        self.accept_card('done')
+        self.task('p')
+        self.engine.park('main', self.lease, 'p', 'needs a push')
+        self.engine.interrupt('main', self.lease)
+        text = self.brief_text()
+        positions = [text.index('### ' + title + '\n') for title in HEADINGS]
+        self.assertEqual(positions, sorted(positions))
+        self.assertIn('p: needs a push', self.section(text, 'Needs you'))
+
+    def test_run_brief_keeps_2_1_lines(self):
+        self.engine.run_gate('main', self.lease, 'old-failure', [sys.executable, '-c', 'raise SystemExit(4)'])
+        self.arm(passes='1')
+        self.accept_card('done')
+        self.task('p')
+        self.engine.park('main', self.lease, 'p', 'needs a push')
+        self.task('b')
+        token = self.engine.dispatch('main', self.lease, 'b', 'wb')
+        self.engine.report('wb', token, 'Implemented b.')
+        report = self.root / 'r.json'
+        self.review(report, reviewer='rev-1', tasks=['b'], findings=['off by one'])
+        self.engine.record_review('main', self.lease, 'rev-1', report, ['correctness'], ['b'], findings=['off by one'])
+        self.engine.run_gate('main', self.lease, 'unit', [sys.executable, '-c', 'raise SystemExit(3)'])
+        self.engine.hook_stop()
+        self.engine.hook_stop()
+        text = self.brief_text()
+        self.assertTrue(text.startswith('## Run brief 2027-01-15T08:00:00'))
+        self.assertNotIn('Autonomy report', text)
+        for fragment in ('- stop reason: cap-passes', '- passes: 1 of 1', '- stalls: 1 of 2', 'done (investigator/code)',
+                         'p: needs a push', 'gate unit: exit 3', 'review rev-1: BLOCKED (off by one)'):
+            self.assertIn(fragment, text)
+        self.assertNotIn('old-failure', text)
+        self.assertEqual(self.engine.autonomy_report()['text'], text)
+
+    def test_unarmed_completed_run_brief_says_ready_to_release(self):
+        self.engine.close_session('main', self.lease)
+        self.assertIn('ready to release', self.section(self.brief_text(), 'Needs you'))
+        self.lease = self.engine.open_session('main')
+        self.engine.interrupt('main', self.lease)
+        self.assertNotIn('ready to release', self.brief_text())
+
+    def test_run_brief_marks_repaired_chains(self):
+        self.built('B1', wave='W1')
+        self.reviewed('wave', ['B1'], findings=['f'])
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), 'Repaired')
+        self.reviewed('clean', ['R1', 'B1'], repair_check=True)
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
+        self.engine.interrupt('main', self.lease)
+        accepted = self.section(self.brief_text(), 'Accepted')
+        self.assertIn('repaired (B1, R1)', accepted)
+        self.assertIn('R1 (builder/repair)', accepted)
+
+    def test_run_brief_lists_notes(self):
+        self.built('B1')
+        note = lambda body: body.update(out_of_scope=['docs drift'], issues=body['issues'] + [dict(text='nit: rename x', severity='note')])
+        receipt = self.reviewed('clean', ['B1'], mutate=note, final=True)
+        self.engine.add_finding('main', self.lease, receipt['id'], 'out_of_scope', 0, 'brief', 'owner decides')
+        self.built('B2')
+        wave = self.reviewed('w', ['B2'], findings=['slow path'])
+        self.engine.add_finding('main', self.lease, wave['id'], 'finding', 0, 'deferred', 'next sprint')
+        self.engine.interrupt('main', self.lease)
+        text = self.brief_text()
+        self.assertIn('nit: rename x', self.section(text, 'Notes'))
+        self.assertIn('slow path -- next sprint', self.section(text, 'Deferred findings'))
+        needs = self.section(text, 'Needs you')
+        self.assertIn('docs drift -- owner decides', needs)
+        self.assertIn('slow path -- next sprint', needs)
+
+    def test_progress_writes_are_single_appends(self):
+        real_open, real_write, real_close = os.open, os.write, os.close
+        opened, fds, writes, inject = [], set(), [], []
+
+        def spy_open(path, flags, *args, **kwargs):
+            if str(path).endswith('progress.md') and inject:
+                other = real_open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+                real_write(other, inject.pop().encode())
+                real_close(other)
+            fd = real_open(path, flags, *args, **kwargs)
+            if str(path).endswith('progress.md'):
+                opened.append(flags)
+                fds.add(fd)
+            return fd
+
+        def spy_write(fd, data):
+            if fd in fds:
+                writes.append(data)
+            return real_write(fd, data)
+
+        def spy_close(fd):
+            fds.discard(fd)
+            return real_close(fd)
+
+        def single(label, action):
+            opened.clear()
+            writes.clear()
+            with mock.patch.object(os, 'open', spy_open), mock.patch.object(os, 'write', spy_write), \
+                    mock.patch.object(os, 'close', spy_close):
+                action()
+            self.assertEqual(len(opened), 1, label)
+            self.assertTrue(opened[0] & os.O_APPEND, label)
+            self.assertEqual(len(writes), 1, label)
+
+        self.blocked_chain()
+        single('hold', lambda: self.engine.hold('main', self.lease, 'R1', 'g'))
+        self.built('C1', wave='W2')
+        gate = self.engine.run_gate('main', self.lease, 'w2-gate', [sys.executable, '-c', 'raise SystemExit(1)'])
+        single('gate attribution', lambda: self.reviewed(
+            'w2', ['C1'], findings=['f'], task_findings={'R1': ['f'], 'C1': []},
+            mutate=lambda body: body.update(gate_receipts=[gate['id']])))
+        self.fresh({})
+        inject.append('line from another writer\n')
+        single('close_session', lambda: self.engine.close_session('main', self.lease))
+        text = (self.state / 'progress.md').read_text()
+        self.assertLess(text.index('line from another writer'), text.index('## Run brief'))
+        from orchestra_core.engine import write_busy_brief
+        single('write_busy_brief', lambda: write_busy_brief(self.state, '2027-01-15T08:00:00+00:00'))
+        text = (self.state / 'progress.md').read_text()
+        self.assertIn('stop reason: state busy', text)
+        self.assertIn('line from another writer', text)
+
+    def test_write_busy_brief_leaves_state_json_alone(self):
+        from orchestra_core.engine import write_busy_brief
+        before = self.engine.state_path.read_bytes()
+        write_busy_brief(self.state, '2027-01-15T08:00:00+00:00')
+        self.assertEqual(before, self.engine.state_path.read_bytes())
+        self.assertNotIn('last_brief', json.loads(before))
+
+    def test_end_paths_keep_stopped_autonomy_brief(self):
+        self.arm()
+        self.now[0] += 7200
+        self.assertIsNone(self.engine.hook_stop())
+        stopped = self.engine.status()['last_brief']
+        self.assertEqual(stopped['reason'], 'deadline')
+        self.engine.interrupt('main', self.lease)
+        self.lease = self.engine.open_session('main', harness_session='S2')
+        self.assertTrue(self.engine.end_harness_session('S2'))
+        progress = (self.state / 'progress.md').read_text()
+        self.assertEqual(progress.count('## Run brief'), 3)
+        self.assertIn('- stop reason: interrupted', progress)
+        self.assertIn('- stop reason: ended', progress)
+        self.assertEqual(self.engine.status()['last_brief'], stopped)
+        self.lease = self.engine.open_session('main')
+        self.arm(deadline=iso(self.now[0] + 3600))
+        self.engine.interrupt('main', self.lease)
+        self.assertEqual(self.engine.status()['last_brief']['reason'], 'interrupted')
+        self.assertEqual((self.state / 'progress.md').read_text().count('## Run brief'), 4)
+
+    def test_last_brief_must_be_well_formed(self):
+        state = json.loads(self.engine.state_path.read_text())
+        state['last_brief'] = {'reason': 'closed'}
+        self.engine.state_path.write_text(json.dumps(state))
+        with self.assertRaisesRegex(EngineError, 'Invalid last_brief'):
+            self.engine.status()
+
+    def test_lock_wait_raises_state_busy_and_default_blocks(self):
+        import fcntl
+        from orchestra_core.engine import StateBusy
+        busy = Engine(self.state, self.repo, lock_wait=0.3, clock=lambda: self.now[0])
+        self.engine.status()  # creates state.lock
+        with (self.state / 'state.lock').open('a+') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            with self.assertRaises(StateBusy):
+                busy.status()
+            self.assertTrue(issubclass(StateBusy, EngineError))
+        self.assertIn('session', busy.status())  # free again: the same engine reads

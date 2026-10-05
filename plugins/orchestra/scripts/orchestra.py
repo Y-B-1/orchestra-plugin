@@ -37,6 +37,7 @@ def parser():
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
     for name in ['status','ready','board','interrupt','finish','scan']:
         sub.add_parser(name)
+    sub.add_parser('brief', help='Print the newest run brief; no lease, read-only')
     art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
     art.add_argument('--tasks', help='Comma-separated task IDs')
     add = sub.add_parser('add', help='Add a card from a task JSON file; a builder implementation card may carry "wave": "W", '
@@ -125,6 +126,9 @@ def execute(args):
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
     if args.command=='status':
         return engine.status(),0
+    if args.command=='brief':  # lease-free and read-only, like status
+        text=engine.brief()
+        return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
     if args.command=='autonomy':  # O8: no lease, so the ledger is armed from outside the run
         return {'arm':engine.arm_autonomy,'disarm':engine.disarm_autonomy,'status':engine.autonomy_status}[args.action](),0
     if args.command=='artifact':

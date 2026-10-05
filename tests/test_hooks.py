@@ -614,7 +614,7 @@ class HooksTest(unittest.TestCase):
             with mock.patch.dict(sys.modules, {'orchestra_core.engine': types.SimpleNamespace(Engine=constructor)}), mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), mock.patch('sys.stdout', new_callable=io.StringIO) as output:
                 self.assertEqual(main(['PreToolUse']), 0)
                 self.assertEqual(json.loads(output.getvalue()), {})
-            constructor.assert_called_once_with(state, repo.resolve(), policy=policy)
+            constructor.assert_called_once_with(state, repo.resolve(), policy=policy, lock_wait=2.0)
 
     def test_main_without_run_creates_no_state(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': str(Path(directory) / 'absent')}):
@@ -1660,12 +1660,14 @@ class AutonomyHookTest(unittest.TestCase):
                 mock.patch('sys.stdout', new_callable=io.StringIO) as out:
             main(['SessionStart', '--harness', 'claude'])
         context = json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
-        self.assertIn('Autonomy report', context)
+        self.assertIn('Run brief', context)
+        self.assertNotIn('Autonomy report', context)
         self.assertIn('deadline', context)
         self.assertIn(str(self.state / 'progress.md'), context)
 
     def test_session_start_report_is_capped_at_2000_characters(self):
         engine = mock.Mock()
+        engine.status.return_value = {}
         engine.autonomy_report.return_value = {'reason': 'complete', 'text': 'Q' * 5000, 'path': '/p/progress.md'}
         context = handle_event('SessionStart', {'session_id': 's-1', 'source': 'startup'}, harness='claude',
                                engine=engine).output['hookSpecificOutput']['additionalContext']
@@ -1676,14 +1678,141 @@ class AutonomyHookTest(unittest.TestCase):
         context = handle_event('SessionStart', {'session_id': 's-1', 'source': 'startup'}, harness='claude',
                                engine=self.engine).output['hookSpecificOutput']['additionalContext']
         self.assertNotIn('Autonomy report', context)
+        self.assertNotIn('Run brief', context)
 
     def test_session_start_worker_gets_no_report(self):
         engine = mock.Mock()
+        engine.status.return_value = {}
         engine.autonomy_report.return_value = {'reason': 'complete', 'text': 'T', 'path': '/p'}
         with mock.patch.dict(os.environ, {'ORCHESTRA_ROLE': 'builder'}):
             context = handle_event('SessionStart', {'session_id': 's-1'}, harness='claude',
                                    engine=engine).output['hookSpecificOutput']['additionalContext']
         self.assertNotIn('Autonomy report', context)
+        self.assertNotIn('Run brief', context)
+
+
+class RunBriefHookTest(unittest.TestCase):
+    """SPEC 5.9 and 5.16: the run brief at SessionStart, the missing-cwd and busy-lock behavior of the hooks."""
+
+    setUp = AutonomyHookTest.setUp
+    ledger = AutonomyHookTest.ledger
+    arm = AutonomyHookTest.arm
+    hook = AutonomyHookTest.hook
+    stop_main = AutonomyHookTest.stop_main
+
+    def session_context(self):
+        payload = {'cwd': str(self.repo), 'session_id': 's-9', 'source': 'startup'}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            main(['SessionStart', '--harness', 'claude'])
+        return json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
+
+    def hold_lock(self):
+        import fcntl
+        self.engine.status()
+        handle = open(self.state / 'state.lock', 'a+')
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        self.addCleanup(handle.close)
+        return handle
+
+    def release_lock(self, handle):
+        import fcntl
+        fcntl.flock(handle, fcntl.LOCK_UN)
+
+    def test_session_start_shows_newest_brief_without_autonomy(self):
+        self.engine.interrupt('main', self.lease)
+        context = self.session_context()
+        self.assertIn('Run brief (interrupted): ', context)
+        self.assertIn('## Run brief', context)
+        self.assertIn(str(self.state / 'progress.md'), context)
+
+    def test_session_start_excerpt_contains_needs_you(self):
+        self.engine.add_task('main', self.lease, dict(id='p', role='builder', mode='implementation', inputs=['spec'],
+                             acceptance=['check'], files=['p'], resources=[], dependencies=[]))
+        self.engine.park('main', self.lease, 'p', 'needs a push')
+        self.engine.interrupt('main', self.lease)
+        context = self.session_context()
+        self.assertIn('Needs you', context)
+        self.assertLess(context.index('Needs you'), context.index('p: needs a push') + 1)
+
+    def test_session_start_falls_back_to_2_1_autonomy_report(self):
+        self.arm()
+        self.stop_main(self.repo)
+        data = json.loads((self.state / 'state.json').read_text())
+        self.assertIn('report', data['autonomy'])
+        del data['last_brief']
+        (self.state / 'state.json').write_text(json.dumps(data))
+        context = self.session_context()
+        self.assertIn('Autonomy report (no-ready-card): ## Run brief', context)  # the hook runs on the real clock
+        self.assertNotIn('Run brief (', context)
+
+    def test_pretooluse_missing_cwd_denies_delegated_class_with_reason(self):
+        gone = self.root / 'gone'
+        for command in ['git push origin side', 'rm -rf build']:
+            with self.subTest(command=command):
+                code, output = run_main({'cwd': str(gone), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                self.assertEqual(code, 0)
+                decision = output['hookSpecificOutput']
+                self.assertEqual(decision['permissionDecision'], 'deny')
+                self.assertEqual(decision['permissionDecisionReason'],
+                                 'Session directory no longer exists: cd to an existing directory, then retry')
+
+    def test_pretooluse_missing_cwd_allows_nothing_new(self):
+        gone = self.root / 'gone'
+        self.assertEqual(self.hook(gone, 'git status'), None)  # an allowed class stays allowed
+        self.assertEqual(self.hook(gone, 'git reset --hard'), 'deny')  # a plain deny stays denied
+        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'deny')  # existing cwd: unchanged
+
+    def test_hook_state_read_fails_closed_after_lock_wait(self):
+        self.arm()
+        self.hold_lock()
+        started = time.monotonic()
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
+        self.assertLess(time.monotonic() - started, 6)
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertEqual(output['hookSpecificOutput']['permissionDecisionReason'], 'Orchestra state is busy; retry')
+
+    def test_hook_busy_lock_keeps_raw_fallback_for_other_classes(self):
+        self.arm()
+        self.hold_lock()
+        self.assertIsNone(self.hook(self.repo, 'git status'))
+        self.assertEqual(self.hook(self.repo, 'git reset --hard'), 'deny')
+        self.assertEqual(self.hook(self.repo, 'rm -rf build'), 'deny')  # raw armed state still guards the boundary
+
+    def test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout(self):
+        self.arm()
+        self.hold_lock()
+        progress = self.state / 'progress.md'
+        before = progress.read_text() if progress.exists() else ''
+        with mock.patch.object(hooks_module, 'STOP_LOCK_BUDGET', 3.0):
+            started = time.monotonic()
+            self.assertEqual(self.stop_main(self.repo), {})
+            self.assertLess(time.monotonic() - started, 9)
+        added = progress.read_text()[len(before):]
+        self.assertIn('## Run brief', added)
+        self.assertIn('state busy', added)
+        self.assertTrue(json.loads((self.state / 'state.json').read_text())['autonomy']['active'])
+
+    def test_hook_stop_busy_unarmed_writes_no_brief(self):
+        self.hold_lock()
+        progress = self.state / 'progress.md'
+        before = progress.read_bytes() if progress.exists() else None
+        with mock.patch.object(hooks_module, 'STOP_LOCK_BUDGET', 3.0):
+            self.assertEqual(self.stop_main(self.repo), {})
+        self.assertEqual(before, progress.read_bytes() if progress.exists() else None)
+
+    def test_hook_stop_runs_when_lock_frees_within_budget(self):
+        self.arm()
+        self.engine.add_task('main', self.lease, dict(id='c1', role='builder', mode='implementation', inputs=['spec'],
+                             acceptance=['check'], files=['c1'], resources=[], dependencies=[]))
+        handle = self.hold_lock()
+        timer = threading.Timer(2.5, self.release_lock, [handle])
+        timer.start()
+        self.addCleanup(timer.cancel)
+        with mock.patch.object(hooks_module, 'STOP_LOCK_BUDGET', 8.0):
+            output = self.stop_main(self.repo)
+        self.assertEqual(output['decision'], 'block')
+        self.assertEqual(json.loads((self.state / 'state.json').read_text())['autonomy']['passes'], 1)
 
 
 if __name__ == '__main__':
