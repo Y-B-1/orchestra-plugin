@@ -895,6 +895,24 @@ class HarnessSessionTests(EngineFixture):
         self.assertEqual((state['permits'], state['autonomy']), ([], None))
         self.assertEqual(json.loads(self.engine.state_path.read_text())['permits'], [])
 
+    def test_end_writes_wait_for_a_lock_held_past_lock_wait(self):
+        """Interrupt and SessionEnd records survive a busy lock: they wait instead of raising StateBusy."""
+        import fcntl
+        import threading
+        for method, args, reason in [('interrupt_active', (), 'interrupted'), ('end_harness_session', ('S',), 'ended')]:
+            with self.subTest(method=method):
+                self.rebound()
+                hook_engine = Engine(self.root / 'state', self.repo, clock=lambda: self.now[0], lock_wait=0.2)
+                handle = (self.root / 'state' / 'state.lock').open('a+')
+                self.addCleanup(handle.close)
+                fcntl.flock(handle, fcntl.LOCK_EX)
+                timer = threading.Timer(0.8, fcntl.flock, [handle, fcntl.LOCK_UN])
+                timer.start()
+                self.addCleanup(timer.cancel)
+                self.assertTrue(getattr(hook_engine, method)(*args))
+                self.assertFalse(self.session()['active'])
+                self.assertEqual(self.engine.status()['last_brief']['reason'], reason)
+
     def test_interrupt_active_on_inactive_run_leaves_state_unwritten(self):
         self.engine.interrupt_active()
         before = self.stat()

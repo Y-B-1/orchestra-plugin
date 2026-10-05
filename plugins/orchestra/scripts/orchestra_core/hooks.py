@@ -183,9 +183,15 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         role = 'subagent'  # Claude Code sets agent_id only for calls made inside a subagent.
     if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
         return _deny('Workers do not delegate')
-    cwd = payload.get('cwd', os.getcwd())
-    if not isinstance(cwd, str):
-        return _deny('Malformed cwd', True)
+    if 'cwd' in payload:
+        cwd = payload['cwd']
+        if not isinstance(cwd, str):
+            return _deny('Malformed cwd', True)
+    else:
+        try:
+            cwd = os.getcwd()
+        except OSError:  # The process cwd was removed: a missing cwd, never a crash that lets the call run
+            cwd, missing_cwd = None, True
     if name in _EDIT_TOOLS:
         try:
             if name == 'apply_patch':
@@ -195,7 +201,9 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
                 if not isinstance(path, str) or not path:
                     raise ValueError('Missing file path')
                 paths = [path]
-            if any(_protected(path, cwd, state_dir) for path in paths):
+            if cwd is None and not all(os.path.isabs(path) for path in paths):
+                return _deny(MISSING_CWD)
+            if any(_protected(path, cwd or '/', state_dir) for path in paths):
                 return _deny('Use the structured coordinator API for state; protect installed runtime configuration')
         except (ValueError, OSError) as exc:
             return _deny(str(exc), True)
@@ -513,7 +521,7 @@ def main(argv=None):
                 except Exception as exc:
                     busy = type(exc).__name__ == 'StateBusy'  # By name: the engine module may be replaced in tests
                     if not (busy and args.event != 'PreToolUse'):
-                        engine = None  # A busy Stop or Interrupt keeps its engine: it waits for the lock itself
+                        engine = None  # A busy Stop or Interrupt keeps its engine: Stop polls the lock, Interrupt blocks on it
                     armed = _raw_session_active(state_dir / 'state.json')  # O35
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
                 if args.event == 'PreToolUse' and not armed:
