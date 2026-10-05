@@ -14,7 +14,6 @@
     "Sentinel: orchestra/references/autonomy.md",
     "Mode:",
     "Lens:",
-    "Round 5",
     "standing-orders.md",
     "progress.md",
     "more than 50 changed lines",
@@ -39,6 +38,15 @@
     "autonomy arm",
     "autonomy disarm",
     "autonomy status",
-    "unpark TASK"
+    "unpark TASK",
+    "Sonnet builder, one Opus repair, then hold",
+    "only when the next wave depends on its code",
+    "investigator-code re-diagnoses a repeated finding before the next repair",
+    "add every card of the round, then let all report, then record",
+    "a non-builder cause goes to inline or card, never brief alone",
+    "overrides Push and Engine-gated actions for that remote and target only",
+    "ready to release",
+    "an explicit release assignment from the user, before or after the brief, counts",
+    "Held / next phase"
   ]
 }
