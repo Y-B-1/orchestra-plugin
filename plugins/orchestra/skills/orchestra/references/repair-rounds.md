@@ -1,18 +1,22 @@
 Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md skills/systematic-debugging/SKILL.md (MIT); garrytan/gstack@4015c2870b06 investigate/SKILL.md SKILL.md (MIT); bmad-code-org/BMAD-METHOD@3cae711ea527 skills/bmad-correct-course/checklist.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/references/repair-rounds.md
 
-# Repair rounds
+# Repair ladder
 
-A round is one repair plus one scoped independent re-review of it. Count rounds per ticket, starting at the first independently checked BLOCKED review. Record each round in `<state>/progress.md`, one line per round. The engine does not enforce the cap; you do.
+The ladder has two rungs and then holds: Sonnet builder, one Opus repair, then hold. No round counter, cap or breaker applies, and a hold never stops or blocks a run.
 
-| Round | Action |
+| Rung | Action |
 | --- | --- |
-| 1 to 3 | Builder in repair mode. The builder default model. Resume the same agent when the host allows; otherwise dispatch afresh with the brief and the report file. |
-| 4 | Dispatch override, model `claude-opus-5-5` through the Agent tool. |
-| Round 5 | Breaker. No further repair. Send the ticket to critic `judge` mode, then to design or planning. Tell the user. |
+| 1 | The implementation card, on the builder default model. |
+| 2 | One builder `repair` card, dispatched through the Agent tool with the Opus override (`claude-opus-5-5`), never through a script. It needs checked blocking findings on a `reported` or `accepted` target without `repaired_by`. |
+| Hold | `orchestra.py hold TASK --finding TEXT` when the repair is still blocked by a current verdict, or the repair-diff check blocks a card with no repair. It moves the whole chain to `held`. |
 
-Each repair brief carries the exact artifact, the failing scenario and the scope of the defect.
+Each repair brief carries the exact artifact, the failing scenario and the scope of the defect. A repair of a repair, or of a card the repair-diff check blocked, is refused during the build until the chain is held. Notes never reach the ladder.
 
-## Why the breaker routes back
+## Held work
 
-Repeated failed fixes mean the design is wrong, not the patch. At the breaker, list the change impact before routing: which cards, files, interfaces and accepted work the new direction touches. The critic judges the stuck ticket; you do not rule on your own run.
+The hold appends `- held <id> (chain <ids>): <finding>` to `<state>/progress.md`; that is the held log. Held work blocks nothing in the build: it reserves no files and later waves run past it. The final phase clears it (references/final-review.md): a repair of the held tip, or every final lens clearing it with a reason. Completion refuses while a card is held.
+
+## Why the ladder ends in a hold
+
+A second failed fix usually means the cause is not the patch. Holding keeps the run moving and puts the chain, with its last finding, in front of the final lenses and the user's brief; the deadline is the only outer limit.
