@@ -3,6 +3,7 @@ import type { On } from 'claude-code';
 
 import { RULES_JSON } from './fixtures/guard-fixtures.js';
 import { classifyCommand, klassOf, loadRules } from './guard.js';
+import { failClosed, thrownReason } from './orchestra.js';
 import { deferred, encode, EXPECTED_DIGEST, rig, toBase64 } from './testkit.js';
 import type { Rig } from './testkit.js';
 
@@ -147,7 +148,7 @@ test('agent.offer: the orchestrator is not offered; others are', async ($, on) =
 
 function whereAnswer(r: Rig, standing: boolean) {
   r.runAnswer = (argv) => {
-    if (argv.join(' ').includes('--cli where')) return { exitCode: 0, stdout: JSON.stringify({ repo: '/work/proj', state: '/s/state', standing_orders: standing }) };
+    if (argv.includes('--cli') && argv.at(-1) === 'where') return { exitCode: 0, stdout: JSON.stringify({ repo: '/work/proj', state: '/s/state', standing_orders: standing }) };
     return { exitCode: 0, stdout: '{}' };
   };
 }
@@ -432,7 +433,7 @@ test('R5 F3 and O21: the board renders the session and autonomy flags and the ru
 });
 
 function whereRuns(r: Rig): number {
-  return r.runs.filter((run) => run.argv.join(' ').includes('--cli where')).length;
+  return r.runs.filter((run) => run.argv.includes('--cli') && run.argv.at(-1) === 'where').length;
 }
 
 test('O21: a where result without standing orders is not cached; one with them is, until session.start', async ($, on) => {
@@ -529,4 +530,91 @@ test('O20: the benign shapes and controls still allow', () => {
   loadRules(RULES_JSON);
   const wrong = O20_ALLOW.filter((c) => klassOf(classifyCommand(c)) !== 'allow');
   expect(wrong).toEqual([]);
+});
+
+// SPEC 5.16 items 1, 2, 4 and 8 (M1). The fake `$` models Node: a spawn whose cwd is gone throws ENOENT.
+const enoent = () => Object.assign(new Error('spawn /bin/sh ENOENT'), { code: 'ENOENT' });
+const GONE = '/work/gone';
+const MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry';
+const rootOf = (argv: readonly string[]) => argv[1]!.replace(/\/scripts\/run-hook\.sh$/, '');
+
+/** Answers like a machine where `gone` no longer exists: a spawn there throws, `test -d` fails. */
+function goneAnswer(r: Rig, gone: string) {
+  r.runAnswer = (argv, init) => {
+    if (init?.cwd === gone) throw enoent();
+    if (argv[1] === '-c') return { exitCode: argv.at(-1) === gone ? 1 : 0, stdout: '' };
+    return { exitCode: 0, stdout: '{}' };
+  };
+}
+
+test('delegate spawns the hook from the plugin root when the session cwd is gone', async ($, on) => {
+  const r = rig(on, { cwd: GONE });
+  const b = bottom(on, r);
+  goneAnswer(r, GONE);
+  await $.session.start(start);
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
+  expect('deny' in res).toBe(false);
+  expect(b.calls.length).toBe(1);
+  const run = r.runs.find((x) => x.argv.includes('--from-mod'))!;
+  expect(run.init!.cwd).toBe(rootOf(run.argv));
+  expect(JSON.parse(run.init!.stdin!).cwd).toBe(GONE);
+});
+
+test('cli reads pass --repo and keep their spawn cwd', async ($, on) => {
+  const r = rig(on);
+  bottom(on, r);
+  whereAnswer(r, false);
+  await $.session.start(start);
+  await $.agent.spawn({ prompt: 'p', subagentType: 'orchestra:builder' } as never);
+  await $.command.run({ command: 'orchestra-autonomy', args: 'status' } as never);
+  await $.command.run({ command: 'orchestra-board', args: '' } as never);
+  const cli = r.runs.filter((x) => x.argv.includes('--cli'));
+  const tails = cli.map((x) => x.argv.slice(x.argv.indexOf('--cli')).join(' '));
+  expect(tails).toContain('--cli --repo /work/proj where');
+  expect(tails).toContain('--cli --repo /work/proj autonomy status');
+  expect(tails).toContain('--cli --repo /work/proj status');
+  for (const x of cli) expect(x.init!.cwd).toBe('/work/proj');
+});
+
+test('cli reads name a missing session directory instead of spawning it', async ($, on) => {
+  const r = rig(on, { cwd: GONE });
+  bottom(on, r);
+  goneAnswer(r, GONE);
+  await $.session.start(start);
+  const res = (await $.command.run({ command: 'orchestra-autonomy', args: 'status' } as never)) as { text: string };
+  expect(res.text).toContain(MISSING_CWD);
+  const spawn = await $.agent.spawn({ prompt: 'p', subagentType: 'orchestra:builder' } as never);
+  expect('deny' in spawn).toBe(false);
+});
+
+test('delegate failure reason names the failure class', async ($, on) => {
+  const r = rig(on);
+  bottom(on, r);
+  await $.session.start(start);
+  const reasonFor = async (answer: () => { exitCode: number; stdout: string }) => {
+    r.runAnswer = answer;
+    const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
+    return (res as { deny: string }).deny;
+  };
+  expect(await reasonFor(() => ({ exitCode: 3, stdout: '' }))).toBe('Orchestra guard error (exit 3); failing closed');
+  // The fake `$` turns a thrown run into a HooksError without a code, so the class is the spawn class.
+  expect(await reasonFor(() => { throw enoent(); })).toMatch(/^Orchestra guard error \(spawn: [A-Z]+\); failing closed$/);
+  expect(await reasonFor(() => ({ exitCode: 0, stdout: 'not json' }))).toBe('Orchestra guard error (bad output); failing closed');
+  // The fake cannot carry a thrown error's code or message; these two read them directly.
+  expect(thrownReason(enoent())).toBe('Orchestra guard error (spawn: ENOENT); failing closed');
+  expect(thrownReason(new Error('process timed out after 8000ms'))).toBe('Orchestra guard error (timeout); failing closed');
+  expect(failClosed('timeout', '')).toBe('Orchestra guard error (timeout); failing closed');
+});
+
+test('delegate surfaces the reason of an exit-2 deny', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  await $.session.start(start);
+  r.runAnswer = () => ({ exitCode: 2, stdout: deny('Missing shell command') });
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
+  expect(res).toEqual({ deny: 'Missing shell command' } as never);
+  r.runAnswer = () => ({ exitCode: 2, stdout: '' });
+  const bare = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
+  expect(bare).toEqual({ deny: 'Orchestra guard error (exit 2); failing closed' } as never);
+  expect(b.calls.length).toBe(0);
 });
