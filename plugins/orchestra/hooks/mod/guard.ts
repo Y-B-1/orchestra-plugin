@@ -52,6 +52,8 @@ let SHELLS = new Set<string>();
 let SHELL_VALUE_FLAGS = new Set<string>();
 let WRAPPER_VALUES = new Map<string, Set<string>>();
 let GIT: Record<string, Set<string>> = {};
+let LONG_GUARDED: Record<string, string[]> = {};
+let LONG_VALUE: Record<string, Set<string>> = {};
 let RELEASE: Rules['release'];
 let BOUNDARY: Rules['boundary'];
 let ATTACHED = new Map<string, Set<string>>();
@@ -89,7 +91,20 @@ export function loadRules(json: string): void {
   for (const key of Object.keys(need(runners.attached_value_flags, 'runners.attached'))) attached.set(key, new Set(strings(runners.attached_value_flags[key], 'attached')));
   const gitSets: Record<string, Set<string>> = {};
   for (const key of Object.keys(git)) gitSets[key] = new Set(strings(git[key], 'git.' + key));
-  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs']) need(gitSets[key], 'git.' + key);
+  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags']) need(gitSets[key], 'git.' + key);
+  // SPEC 5.15: per verb, the guarded long options, most restrictive first. An exemption (clean --dry-run, restore --staged) is absent: it counts only in full.
+  const longGuarded: Record<string, string[]> = {
+    add: git.wholesale_add_flags!,
+    reset: ['--hard'],
+    clean: ['--force'],
+    branch: ['--delete', '--force'],
+    checkout: ['--force'],
+    switch: git.switch_force_flags!,
+    restore: ['--force', '--worktree'],
+    push: ['--force', '--force-with-lease', '--force-if-includes', '--mirror', ...git.push_multi_flags!],
+    commit: ['--all', ...git.commit_guarded_flags!],
+    tag: ['--delete'],
+  };
   strings(release.az_requires, 'release.az_requires');
   strings(release.package_tools, 'release.package_tools');
   strings(release.deploy_tools, 'release.deploy_tools');
@@ -110,6 +125,8 @@ export function loadRules(json: string): void {
   WRAPPER_VALUES = wrapperMap;
   ATTACHED = attached;
   GIT = gitSets;
+  LONG_GUARDED = longGuarded;
+  LONG_VALUE = { clean: gitSets.clean_value_options!, push: gitSets.push_value_options!, commit: gitSets.commit_value_options! };
   RELEASE = release;
   BOUNDARY = boundary;
   PROTECTED = prot;
@@ -580,6 +597,39 @@ function boundaryOf(kind: string, reason: string): Decision {
   return dec('allow', reason, 'boundary', { boundary: kind });
 }
 
+/** The guarded long option of `verb` that `token` abbreviates (its part before `=` is a non-empty strict prefix of it; the first match wins), else null. */
+export function longPrefix(verb: string, token: string, guarded: string[]): string | null {
+  const name = token.split('=')[0]!;
+  if (!Object.prototype.hasOwnProperty.call(LONG_GUARDED, verb) || name.length < 3 || !name.startsWith('--')) return null;
+  return guarded.find((option) => name.length < option.length && option.startsWith(name)) ?? null;
+}
+
+/** Words a value option takes: 2 for a detached value, 1 for an abbreviated long option with its value attached, else 0. */
+function valueWidth(token: string, valueOptions: Set<string>): number {
+  if (valueOptions.has(token)) return 2;
+  const name = token.split('=')[0]!;
+  if (name.length > 2 && name.startsWith('--') && [...valueOptions].some((x) => name.length < x.length && x.startsWith(name))) return token.includes('=') ? 1 : 2;
+  return 0;
+}
+
+/** The options of a guarded verb with value options and their values dropped and abbreviated guarded options spelled in full. */
+function readLongOptions(verb: string, options: string[]): string[] {
+  const read: string[] = [];
+  const valueOptions = LONG_VALUE[verb] ?? new Set<string>();
+  let i = 0;
+  while (i < options.length) {
+    const full = longPrefix(verb, options[i]!, LONG_GUARDED[verb]!);
+    const width = full ? 0 : valueWidth(options[i]!, valueOptions);
+    if (width) {
+      i += width;
+      continue;
+    }
+    read.push(full ?? options[i]!);
+    i += 1;
+  }
+  return read;
+}
+
 function git(words: string[]): Decision {
   let args = words.slice(1);
   let changedRepo = false;
@@ -595,19 +645,7 @@ function git(words: string[]): Decision {
   const verb = args[0]!;
   args = args.slice(1);
   let options = args.includes('--') ? args.slice(0, args.indexOf('--')) : args;
-  if (verb === 'clean' || verb === 'push') {
-    const valueOptions = verb === 'clean' ? GIT.clean_value_options! : GIT.push_value_options!;
-    const filtered: string[] = [];
-    let i = 0;
-    while (i < options.length) {
-      if (valueOptions.has(options[i]!)) i += 2;
-      else {
-        filtered.push(options[i]!);
-        i += 1;
-      }
-    }
-    options = filtered;
-  }
+  if (Object.prototype.hasOwnProperty.call(LONG_GUARDED, verb)) options = readLongOptions(verb, options);
   const flags = options.filter((x) => x.startsWith('-'));
   const short = flags.filter((x) => !x.startsWith('--')).map((x) => x.slice(1)).join('');
   const hasFlag = (name: string) => flags.includes(name);
@@ -629,24 +667,11 @@ function git(words: string[]): Decision {
   }
   if (verb === 'commit') {
     // A message beginning with a dash is still a message.
-    const opts: string[] = [];
-    let i = 0;
-    while (i < options.length) {
-      const token = options[i]!;
-      if (GIT.commit_value_options!.has(token)) {
-        i += 2;
-        continue;
-      }
-      if (token.startsWith('--message=') || token.startsWith('--file=') || token.startsWith('-m')) {
-        i += 1;
-        continue;
-      }
-      opts.push(token);
-      i += 1;
-    }
+    const opts = options.filter((x) => !(x.startsWith('--message=') || x.startsWith('--file=') || x.startsWith('-m')));
     if (opts.includes('--all') || opts.some((x) => x.startsWith('-') && !x.startsWith('--') && x.slice(1).includes('a'))) {
       return denyOf('Commit explicit staged paths only', 'wholesaleStage');
     }
+    if (opts.some((x) => GIT.commit_guarded_flags!.has(x))) return denyOf('Amend rewrites history');
   }
   if (verb === 'push') {
     if (flags.some((x) => x.startsWith('--force') || x === '--mirror') || short.includes('f') || args.some((x) => x.startsWith('+'))) return denyOf('Force push rewrites remote history');

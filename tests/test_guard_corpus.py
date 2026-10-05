@@ -23,6 +23,7 @@ CONFIG = Path(__file__).resolve().parents[1] / 'plugins/orchestra/config'
 CLASSES = {'allow', 'deny', 'release', 'release-multi', 'boundary'}
 PLUGIN = Path(__file__).resolve().parents[1] / 'plugins/orchestra'
 CORPUS = json.loads((CONFIG / 'guard-corpus.json').read_text())['cases']
+LONG_OPTIONS = json.loads((Path(__file__).resolve().parent / 'fixtures/git-long-options.json').read_text())
 
 
 def edit_class(case):
@@ -192,6 +193,92 @@ class GuardCorpusTest(unittest.TestCase):
         result = subprocess.run([sys.executable, str(PLUGIN / 'hooks/mod/fixtures/sync.py'), '--check'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+LONG_OPTION_DENY = [
+    'git add --al', 'git add --a', 'git add --upd', 'git add --no-ignore-rem', 'git reset --har', 'git clean --forc',
+    'git clean --f', 'git branch --del --forc x y', 'git checkout --forc', 'git switch --disc', 'git push --mir origin',
+    'git push --ta origin', 'git push --pru origin', 'git push --al origin', 'git commit --am -m x', 'git commit --amend',
+    'git clean -f --dry']
+CHAIN = 'git status && git diff --quiet && git worktree remove X && rmdir Y || true'
+
+
+class LongOptionAbbreviationTest(unittest.TestCase):
+    """SPEC 5.15: a unique long-option prefix counts as the guarded option; exemptions count only in full."""
+
+    def by_command(self):
+        return {case['input'].get('command'): case for case in CORPUS}
+
+    def test_fixture_pins_the_ten_verbs_and_the_git_version(self):
+        self.assertRegex(LONG_OPTIONS['git_version'], r'^\d+\.\d+\.\d+')
+        self.assertEqual(set(LONG_OPTIONS['verbs']),
+                         {'add', 'reset', 'clean', 'branch', 'checkout', 'switch', 'restore', 'push', 'commit', 'tag'})
+        for verb, options in LONG_OPTIONS['verbs'].items():
+            self.assertTrue(options, verb)
+            self.assertTrue(all(x.startswith('--') and len(x) > 2 and not x.endswith('=') for x in options), verb)
+
+    def test_no_harmless_option_is_prefix_of_guarded_option(self):
+        self.assertEqual(set(LONG_OPTIONS['verbs']), set(guards._LONG_GUARDED))
+        for verb, options in LONG_OPTIONS['verbs'].items():
+            guarded = set(guards._LONG_GUARDED[verb])
+            for option in options:
+                if option in guarded:
+                    continue
+                for target in guarded:
+                    with self.subTest(verb=verb, option=option, guarded=target):
+                        self.assertFalse(target.startswith(option), f'{option} is a harmless prefix of {target}')
+
+    def test_long_prefix_reads_a_strict_prefix_as_the_first_guarded_option(self):
+        guarded = ('--all', '--amend')
+        self.assertEqual(guards._long_prefix('commit', '--am', guarded), '--amend')
+        self.assertEqual(guards._long_prefix('commit', '--am=x', guarded), '--amend')
+        self.assertEqual(guards._long_prefix('commit', '--a', guarded), '--all')
+        for token in ('--amend', '--', '-a', '-am', 'am', '--x', '--amendx', ''):
+            with self.subTest(token=token):
+                self.assertIsNone(guards._long_prefix('commit', token, guarded))
+        self.assertIsNone(guards._long_prefix('worktree', '--am', guarded))
+        self.assertIsNone(guards._long_prefix('log', '--am', guarded))
+
+    def test_corpus_has_the_5_15_rows_with_their_classes(self):
+        by_command = self.by_command()
+        for command in LONG_OPTION_DENY:
+            with self.subTest(command=command):
+                self.assertEqual(by_command[command]['class'], 'deny')
+        self.assertEqual(by_command['git push --push-o=x origin main']['class'], 'release')
+        self.assertEqual(by_command['git commit -m x file']['class'], 'allow')
+
+    def test_every_full_spelling_keeps_its_class_apart_from_amend(self):
+        expected = {'git reset --hard': 'deny', 'git clean -f': 'deny', 'git clean -f --dry-run': 'allow',
+                    'git branch -d --force x': 'deny', 'git branch --delete x': 'boundary',
+                    'git push --force origin x': 'deny', 'git push --delete origin x': 'deny',
+                    'git restore --staged .': 'allow', 'git switch --force x': 'deny',
+                    'git commit --all -m x': 'deny', 'git commit -m x': 'allow', 'git tag --delete v1': 'boundary',
+                    'git worktree remove x': 'boundary', 'git worktree rem x': 'allow'}
+        for command, klass in expected.items():
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, klass)
+
+    def test_amend_is_denied_with_its_reason_in_full_and_abbreviated(self):
+        for command in ('git commit --amend', 'git commit --am -m x', 'git commit --amen', 'git commit -m x --amend'):
+            with self.subTest(command=command):
+                decision = classify_command(command)
+                self.assertEqual((decision.action, decision.reason), ('deny', 'Amend rewrites history'))
+        self.assertEqual(classify_command('git commit -m --amend').action, 'allow')
+
+    def test_commit_guarded_flags_come_from_the_rules_table(self):
+        self.assertEqual(RULES['git']['commit_guarded_flags'], ['--amend'])
+
+
+class ChainRegressionTest(unittest.TestCase):
+    """SPEC 5.16 item 7: the literal chain and its 13 variants are boundary/delete (regression)."""
+
+    def test_corpus_has_the_chain_and_13_variants_as_boundary_delete(self):
+        rows = [case for case in CORPUS if case['id'].startswith('chain-regression-')]
+        self.assertEqual(len(rows), 14)
+        self.assertEqual(rows[0]['input']['command'], CHAIN)
+        for case in rows:
+            with self.subTest(case=case['id']):
+                self.assertEqual((case['class'], case['category']), ('boundary', 'delete'))
 
 
 def _nested_shells(levels, width):
