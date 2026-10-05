@@ -114,3 +114,6 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | E6r | builder repair (Opus) | d637e4a | guarded cwd, unavailable cwd treated as missing; Interrupt and SessionEnd block on the lock; 4 tests red then green | ACCEPTED (R6r CLEAN) |
 | R6r | code-reviewer checkpoint | d637e4a | both R6 findings fixed; notes: empty-string cwd resolves to `/`, `mark_harness_rebind` still gives up after 2 s | CLEAN |
 | W6r gate | coordinator | b30d1cc | engine 226, hooks 156, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| E7 | builder | 4311e20 | autonomy without caps (2.1 caps recorded, not enforced), signature stalls, `_complete` all-accepted first, held work live, band "pass N"; 15 tests red then green | ACCEPTED (R7 CLEAN) |
+| W7 gate | coordinator | 7fcfa85 | engine 239, hooks 156, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R7 | code-reviewer checkpoint | 4311e20 | mutation probes kill each completion guard; real 2.1 state loads; notes: ts test name missing, 2.1 fixture not an inline dict, open final finding idles `no-ready-card` | CLEAN |
