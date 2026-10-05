@@ -1235,7 +1235,7 @@ class AutonomyHookTest(unittest.TestCase):
         self.lease = self.engine.open_session('main')
         categories = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
         report = self.root / 'final.json'
-        report.write_text(json.dumps(dict(reviewer='reviewer', categories=categories, tasks=[], findings=[], final=True,
+        report.write_text(json.dumps(dict(reviewer='reviewer', categories=categories, tasks=[], findings=[], issues=[], final=True,
                                           verdict='CLEAN', artifact=self.engine.artifact(),
                                           summary='Behavior checked against acceptance criteria.')))
         self.engine.record_review('main', self.lease, 'reviewer', report, categories, final=True)

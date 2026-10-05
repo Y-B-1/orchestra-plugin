@@ -44,6 +44,8 @@ class EngineFixture(unittest.TestCase):
         artifact = engine.artifact() if final or not tasks else engine.artifact(engine.scope_for(tasks))
         path.write_text(json.dumps(dict(reviewer=reviewer, categories=categories or ['correctness'],
                                        tasks=tasks or [], findings=findings or [], final=final,
+                                       issues=[dict(text=f, severity='blocking', impact='Fixture impact: a named requirement is unmet.')
+                                               for f in findings or []],
                                        verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact,
                                        summary='Behavior checked against acceptance criteria.')))
 
