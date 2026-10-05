@@ -128,7 +128,11 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | W9 gate | coordinator | 5751694 | full suite 534 OK; plugin test 88/88; sync, generate, build_release 0; tarball ships relaunch-prompt.md | CLEAN |
 | R9 | code-reviewer checkpoint | 5751694 | H1 and DOC1 meet their tickets; notes (signal handler lock, orphan test partial, docs exit codes and `--launcher` wording) carried to the final repair wave | CLEAN |
 | FC / FS / FT | final review, three lenses | 25fa55c | correctness CLEAN, standards CLEAN (notes); security BLOCKED: merged remote delete checked the fetch URL, not the push URL (G2) | round 1 of the final loop |
-| G2f (card G2r) | builder repair (Opus) | a066549 | push URL must equal fetch URL for a merged remote delete; exact default refs (no short-name decoys); empty cwd is missing; raw `update-ref` deletion denied (Python and TS, corpus rows) | reported (final round 2) |
-| FE | builder | d0d66e3 | hold any non-repair builder; migrated cards ordered first; open final finding keeps autonomy live; unarmed settle read-only; SPEC `seq` row; receipt tests | reported (final round 2) |
-| FH | builder | 0d63c1a | relaunch signal handler never takes the state lock; orphan unbound session and CLI tests | reported (final round 2) |
-| FD | builder | 5edad53 | relaunch exit codes and launcher notes in both cli.md files; stale VALIDATION, SKILL-SOURCES and checkpoint-agent text | reported (final round 2) |
+| G2f (card G2r) | builder repair (Opus) | a066549 | push URL must equal fetch URL for a merged remote delete; exact default refs (no short-name decoys); empty cwd is missing; raw `update-ref` deletion denied (Python and TS, corpus rows) | ACCEPTED (R10 CLEAN) |
+| FE | builder | d0d66e3 | hold any non-repair builder; migrated cards ordered first; open final finding keeps autonomy live; unarmed settle read-only; SPEC `seq` row; receipt tests | ACCEPTED (R10 CLEAN) |
+| FH | builder | 0d63c1a | relaunch signal handler never takes the state lock; orphan unbound session and CLI tests | ACCEPTED (R10 CLEAN) |
+| FD | builder | 5edad53 | relaunch exit codes and launcher notes in both cli.md files; stale VALIDATION, SKILL-SOURCES and checkpoint-agent text | ACCEPTED (R10 CLEAN) |
+| FC2 / FS2 / FT2 | final review, three lenses | 957bd7e | correctness CLEAN, standards CLEAN (notes); security BLOCKED: a case-variant name (`Main`) passed the default and checked-out denies on a case-insensitive filesystem (G2 chain) | round 2 of the final loop |
+| R10 | code-reviewer checkpoint | 957bd7e | G2f, FE, FH, FD meet their items; notes only (fail-closed false denies) | CLEAN |
+| G2x (worktree G2c) | builder (Sonnet) | 42cd7ed | exact `for-each-ref` match of the deleted ref; case-folded default and checked-out compares under `core.ignorecase`; docs/hooks.md delete, push-URL and update-ref text. Card G2x carries no file reservation: the 2.1 engine keeps G2's files with reported G2 and cannot repair an accepted chain tip | reported (final round 3) |
+| REL | coordinator | c98c444, 7b53a2d | version 2.2.0 in both manifests and plugin.json; CHANGELOG 2.2.0 | reported (final round 3) |
