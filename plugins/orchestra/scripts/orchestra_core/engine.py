@@ -80,7 +80,23 @@ CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
 PARKABLE = ('queued', 'running', 'reported')
 DISPOSITIONS = dict(finding=('rejected', 'deferred', 'inline', 'card', 'brief'),
                     out_of_scope=('inline', 'card', 'brief'))  # SPEC 5.12 item 1
-TASK_STATES = ('queued', 'running', 'reported', 'repairing', 'accepted', 'parked')
+TASK_STATES = ('queued', 'running', 'reported', 'repairing', 'accepted', 'parked', 'held')
+
+
+def _append_progress(state_dir, text):
+    """Append one entry to progress.md: one O_APPEND open and one write of the whole entry (SPEC 5.9 item 5)."""
+    path = Path(state_dir) / 'progress.md'
+    try:
+        old = path.read_bytes()
+    except OSError:
+        old = b''
+    gap = '' if not old.strip() else ('' if old.endswith(b'\n') else '\n')
+    entry = (gap + text + ('' if text.endswith('\n') else '\n')).encode()
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+    try:
+        os.write(fd, entry)
+    finally:
+        os.close(fd)
 
 
 def _fingerprint(text):
@@ -386,6 +402,8 @@ class Engine:
                     raise EngineError('Invalid task ' + key)
             if any(dep not in state['tasks'] for dep in task['dependencies']):
                 raise EngineError('Invalid stored dependency')
+            if 'held_finding' in task and (not isinstance(task['held_finding'], str) or not task['held_finding'].strip()):
+                raise EngineError('Invalid task held_finding')
         findings = state.get('findings', [])
         if not isinstance(findings, list) or any(
                 not isinstance(f, dict) or any(not isinstance(f.get(k), str) for k in ('id', 'fingerprint', 'text', 'reason', 'at'))
@@ -639,13 +657,14 @@ class Engine:
                 if repair_of not in state['tasks'] or state['tasks'][repair_of]['role'] != 'builder':
                     raise EngineError('Repair needs a specific earlier builder task')
                 original = state['tasks'][repair_of]
-                if original['state'] not in ('reported', 'accepted') or original.get('repaired_by'):
+                if original['state'] not in ('reported', 'accepted', 'held') or original.get('repaired_by'):
                     raise EngineError('Repair needs a reported builder without an existing repair')
                 if repair_of in task['dependencies']:
                     raise EngineError('repair_of replaces an accepted dependency on the original')
                 verdicts = self._review_verdicts(state, {}, task_id=repair_of)
                 if not any(self._task_findings(r, repair_of) for r in verdicts.values()):
                     raise EngineError('Repair needs earlier checked coding findings')
+                self._check_repair_ladder(state, original)
                 # Suspend the whole chain atomically. Reports and workers remain as history,
                 # but none of those old assignments reserve capacity or writable files.
                 original['repaired_by'] = task['id']
@@ -661,6 +680,51 @@ class Engine:
             task['rev'] = '2.2'
             task['seq'] = len(state['tasks'])  # state.json is saved with sorted keys, so add order is stored
             state['tasks'][task['id']] = task
+
+    def _check_repair_ladder(self, state, original):
+        """The ladder ends in hold (SPEC 5.2 item 4): a repair of a repair, or of a card the repair-diff check
+        blocked, needs the chain held or a current final receipt that blames it. 2.1 chains stay valid history."""
+        if original['state'] == 'held' or self._final_blocks(state, original['id']):
+            return
+        if original['mode'] == 'repair':
+            raise EngineError('Escalation ends at one repair; hold the chain')
+        if self._blocked_by_repair_check(state, original['id']):
+            raise EngineError('Repair-diff check blocked %s; hold the chain' % original['id'])
+
+    def _final_blocks(self, state, task_id):
+        """A current final receipt with blocking findings attributed to the card."""
+        verdicts = self._review_verdicts(state, {}, task_id=task_id, final=True)
+        return any(self._task_findings(r, task_id) for r in verdicts.values())
+
+    def _blocked_by_repair_check(self, state, task_id):
+        """The card's current blocking verdict comes from a repair-diff check (`repair_check: true`, SPEC 5.2 item 2b)."""
+        verdicts = self._review_verdicts(state, {}, task_id=task_id)
+        return any(r.get('repair_check') and self._task_findings(r, task_id) for r in verdicts.values())
+
+    def hold(self, actor, lease, task_id, finding):
+        """End the repair ladder: move the whole chain to `held` and log it (SPEC 5.2 item 2)."""
+        if not isinstance(finding, str) or not finding.strip():
+            raise EngineError('Hold needs a finding')
+        finding = finding.strip()
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = state['tasks'].get(task_id)
+            if not task or task['role'] != 'builder' or task['state'] != 'reported' or task.get('repaired_by'):
+                raise EngineError('Hold needs a reported builder card without an existing repair')
+            blocked = any(self._task_findings(r, task_id) for r in self._review_verdicts(state, {}, task_id=task_id).values())
+            if not ((task['mode'] == 'repair' and blocked)
+                    or (task['mode'] == 'implementation' and self._blocked_by_repair_check(state, task_id))):
+                raise EngineError('Hold needs a repair card with current blocking findings, '
+                                  'or a card blocked by a repair-diff check')
+            chain = [task_id]
+            while state['tasks'][chain[-1]].get('repair_of'):
+                chain.append(state['tasks'][chain[-1]]['repair_of'])
+            for ident in chain:
+                state['tasks'][ident]['state'] = 'held'
+            task['held_finding'] = finding
+            at = datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')
+            _append_progress(self.state_dir, '- held %s (chain %s): %s (at %s)' % (task_id, ', '.join(chain), finding, at))
+            return dict(held=chain, finding=finding)
 
     @staticmethod
     def _check_wave(state, task):
@@ -753,8 +817,8 @@ class Engine:
         if sum(t['state'] == 'running' for t in occupied) >= self.policy['max_workers']:
             return []
         return [t['id'] for t in state['tasks'].values() if t['state'] == 'queued'
-                and all(state['tasks'][d]['state'] == 'accepted' for d in t['dependencies'])
-                and all(state['tasks'][d]['state'] in ('reported', 'accepted') for d in t.get('review_of', []))
+                and all(state['tasks'][d]['state'] in ('accepted', 'held') for d in t['dependencies'])
+                and all(state['tasks'][d]['state'] in ('reported', 'accepted', 'held') for d in t.get('review_of', []))
                 and not any(other['id'] != t['id']
                             and self._collides(self._reservation(t, state), self._reservation(other, state))
                             and not (other['id'] in t.get('review_of', []) and other['state'] == 'reported'
@@ -867,7 +931,7 @@ class Engine:
             covered = [state['tasks'][i] for i in ids]
             if any(t.get('worker') == reviewer and not self._read_review(t) for t in covered):
                 raise EngineError('Worker cannot review own artifact')
-            if any(t['state'] not in ('reported', 'accepted') for t in covered):
+            if any(t['state'] not in ('reported', 'accepted', 'held') for t in covered):
                 raise EngineError('Review covers incomplete work')
             scope = None if final else self._scope_of(state, ids)
             artifact = self.artifact(scope)
@@ -881,7 +945,7 @@ class Engine:
                 raise EngineError('Review report metadata, verdict or artifact does not match')
             if not isinstance(body.get('summary'), str) or not body['summary'].strip():
                 raise EngineError('Review needs a nonempty semantic summary')
-            task_findings = self._check_task_findings(body, ids, findings)
+            task_findings = self._check_task_findings(state, body, ids, findings)
             repair_check = self._check_repair_marker(body, final)
             if not final and findings and (repair_check or any(t.get('repaired_by') for t in covered)):
                 self._check_chain_tips(state, covered, task_findings)
@@ -898,11 +962,16 @@ class Engine:
             if repair_check:
                 receipt['repair_check'] = True
             state['reviews'].append(receipt)
+            for key, found in (task_findings or {}).items():
+                if key not in ids:
+                    for finding in found:
+                        _append_progress(self.state_dir, '- gate %s attributed to held %s: %s'
+                                         % (', '.join(self._failed_gates(state, body)), key, finding))
             return copy.deepcopy(receipt)
 
-    @staticmethod
-    def _check_task_findings(body, ids, findings):
-        """Per-task findings (SPEC 5.1 item 4): covered keys only, and the ordered union equals `findings`."""
+    def _check_task_findings(self, state, body, ids, findings):
+        """Per-task findings (SPEC 5.1 item 4): covered keys only, and the ordered union equals `findings`.
+        A held chain tip outside the coverage is also a key when the report cites a failed gate receipt (SPEC 5.4 item 3)."""
         if 'task_findings' not in body:
             return None
         per_task = body['task_findings']
@@ -910,11 +979,23 @@ class Engine:
                 not isinstance(v, list) or any(not isinstance(f, str) or not f.strip() for f in v)
                 for v in per_task.values()):
             raise EngineError('Invalid task findings')
-        if any(key not in ids for key in per_task):
+        if any(key not in ids and not self._held_tip_with_failed_gate(state, body, key) for key in per_task):
             raise EngineError('Task findings name an uncovered task')
         if list(dict.fromkeys(f for v in per_task.values() for f in v)) != findings:
             raise EngineError('Task findings must match the review findings')
         return per_task
+
+    @staticmethod
+    def _failed_gates(state, body):
+        """Ids of the failed gate receipts the report cites; a malformed citation is refused later by `_check_gate_receipts`."""
+        cited = body.get('gate_receipts', [])
+        if not isinstance(cited, list):
+            return []
+        return [g['id'] for g in state['gates'] if g['id'] in cited and not g['passed']]
+
+    def _held_tip_with_failed_gate(self, state, body, key):
+        task = state['tasks'].get(key)
+        return bool(task and task['state'] == 'held' and not task.get('repaired_by') and self._failed_gates(state, body))
 
     @staticmethod
     def _check_repair_marker(body, final):
@@ -1010,7 +1091,7 @@ class Engine:
     def _accept_refusal(self, state, cache, task_id):
         """Why `accept` would refuse this card now, or None when every accept check passes."""
         task = state['tasks'].get(task_id)
-        if not task or task['state'] != 'reported':
+        if not task or task['state'] not in ('reported', 'held'):
             return 'Task has no reported result'
         verdicts = self._review_verdicts(state, cache, task_id=task_id)
         if any(self._task_findings(r, task_id) for r in verdicts.values()):
