@@ -102,3 +102,6 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | E3 | builder | ed533ec | wave label, per-task findings, repair-diff tip rule, `repair_check`, accept-before-repair, `supersede`, `status` waves; 18 tests red then green | ACCEPTED (R3 CLEAN) |
 | W3 gate | coordinator | 986fe93 | engine 181, hooks 143, integration 21, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
 | R3 | code-reviewer checkpoint | ed533ec | independent red run; tip rule fails closed; notes: `seq` field missing from spec section 6, migrated-card order in `supersede` | CLEAN |
+| E4 | builder | 5551c24 | `held` state and `hold`, repair ladder refusals, held dependencies satisfied, held-tip gate attribution, single-append progress writes; 17 tests red then green | ACCEPTED (R4 CLEAN) |
+| W4 gate | coordinator | 9fd008a | engine 198, hooks 143, integration 21, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R4 | code-reviewer checkpoint | 5551c24 | no acceptance fail-open through hold; notes: repair-check refusal should require mode implementation (engine.py:691), final-receipt exception untested, progress append before state save | CLEAN |
