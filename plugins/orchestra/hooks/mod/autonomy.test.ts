@@ -21,7 +21,7 @@ function stage(on: On) {
   return { registered, bands };
 }
 
-const ARGV_TAIL = (action: string) => ['--cli', 'autonomy', action];
+const ARGV_TAIL = (action: string) => ['--cli', '--repo', '/work/proj', 'autonomy', action];
 const isAutonomy = (argv: readonly string[]) => argv.includes('autonomy');
 const autonomyRuns = (r: Rig) => r.runs.filter((run) => isAutonomy(run.argv));
 const action = (argv: readonly string[]) => argv[argv.length - 1];
@@ -58,7 +58,7 @@ test('autonomy: on, off and status call the CLI with the right argv and render i
   await $.session.start(start);
   const on1 = await run($ as never, 'on');
   expect(action(autonomyRuns(r).at(-1)!.argv)).toBe('arm');
-  expect(autonomyRuns(r).at(-1)!.argv.slice(-3)).toEqual(ARGV_TAIL('arm'));
+  expect(autonomyRuns(r).at(-1)!.argv.slice(-5)).toEqual(ARGV_TAIL('arm'));
   expect(autonomyRuns(r).at(-1)!.argv[1]).toContain('scripts/run-hook.sh');
   expect(autonomyRuns(r).at(-1)!.init!.cwd).toBe('/work/proj');
   expect(on1.text).toContain('armed');
