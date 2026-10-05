@@ -171,6 +171,46 @@ class WorkflowIntegration(unittest.TestCase):
         self.cli('accept','T',lease=True)
         self.cli('artifact','--tasks','NOPE',expected=2)
 
+    def test_parked_member_wave_reaches_completion(self):
+        def add(ident,**kw):
+            task=dict(id=ident,role='builder',mode='implementation',inputs=['fixture outcome'],acceptance=['fixture check'],
+                      files=[ident+'.txt'],resources=[],dependencies=[],wave='W1')
+            task.update(kw)
+            if task['wave'] is None:
+                del task['wave']
+            self.cli('add',str(self.write(ident+'.json',task)),lease=True)
+        def run(ident,worker):
+            token=self.cli('dispatch',ident,worker,lease=True)[1]['assignment']
+            self.cli('report',worker,token,str(self.write(ident+'.txt','Inspected fixture; nothing to change.')))
+        for ident in ('B1','B3'):
+            add(ident)
+            run(ident,'worker-'+ident)
+        add('B2')
+        add('V1',role='code-reviewer',mode='checkpoint',files=[],review_of=['wave:W1'],wave=None)
+        self.assertEqual(['B1','B2','B3'],self.cli('status')[1]['tasks']['V1']['review_of'])
+        self.cli('park','B2','--reason','needs a human step',lease=True)
+        self.cli('park','V1','--reason','member parked',lease=True)
+        add('V2',role='code-reviewer',mode='checkpoint',files=[],review_of=['B1','B3'],wave=None)
+        run('V2','review-worker-2')
+        self.review(['B1','B3'])
+        for ident in ('B1','B3','V2'):
+            self.cli('accept',ident,lease=True)
+        self.cli('unpark','B2',lease=True)
+        run('B2','worker-B2')
+        add('V3',role='code-reviewer',mode='checkpoint',files=[],review_of=['B2'],wave=None)
+        run('V3','review-worker-3')
+        self.review(['B2'])
+        for ident in ('B2','V3'):
+            self.cli('accept',ident,lease=True)
+        self.cli('finish',lease=True,expected=2)  # V1 is still parked
+        self.cli('supersede','V1',lease=True)
+        status=self.cli('status')[1]
+        self.assertEqual(['V2','V3'],status['tasks']['V1']['superseded_by'])
+        self.assertEqual(['B1','B3','B2'],status['waves'][0]['tasks'])  # first-add order
+        self.cli('gate','fixture','--',*self.check,lease=True)
+        self.review(list(status['tasks']),True)
+        self.cli('finish',lease=True)
+
     def test_dirty_candidate_invalidates_review_and_permit(self):
         task=dict(id='I',role='investigator',mode='code',inputs=['fixture'],acceptance=['inspect'],files=[],resources=[],dependencies=[])
         self.cli('add',str(self.write('I.json',task)),lease=True)
