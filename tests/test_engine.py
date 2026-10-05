@@ -2874,7 +2874,7 @@ class RunBriefTests(AutonomyFixture, HoldFixture):
         self.assertIn('repaired (B1, R1)', accepted)
         self.assertIn('R1 (builder/repair)', accepted)
 
-    def test_run_brief_lists_notes_deferred_and_brief_items(self):
+    def test_run_brief_lists_notes(self):
         self.built('B1')
         note = lambda body: body.update(out_of_scope=['docs drift'], issues=body['issues'] + [dict(text='nit: rename x', severity='note')])
         receipt = self.reviewed('clean', ['B1'], mutate=note, final=True)
