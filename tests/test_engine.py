@@ -39,15 +39,21 @@ class EngineFixture(unittest.TestCase):
         task.update(kw)
         self.engine.add_task('main', self.lease, task)
 
-    def review(self, path, reviewer='reviewer', categories=None, tasks=None, findings=None, final=False, engine=None):
+    def review(self, path, reviewer='reviewer', categories=None, tasks=None, findings=None, final=False, engine=None,
+               task_findings=None, repair_check=None):
         engine = engine or self.engine
         artifact = engine.artifact() if final or not tasks else engine.artifact(engine.scope_for(tasks))
-        path.write_text(json.dumps(dict(reviewer=reviewer, categories=categories or ['correctness'],
-                                       tasks=tasks or [], findings=findings or [], final=final,
-                                       issues=[dict(text=f, severity='blocking', impact='Fixture impact: a named requirement is unmet.')
-                                               for f in findings or []],
-                                       verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact,
-                                       summary='Behavior checked against acceptance criteria.')))
+        body = dict(reviewer=reviewer, categories=categories or ['correctness'],
+                    tasks=tasks or [], findings=findings or [], final=final,
+                    issues=[dict(text=f, severity='blocking', impact='Fixture impact: a named requirement is unmet.')
+                            for f in findings or []],
+                    verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact,
+                    summary='Behavior checked against acceptance criteria.')
+        if task_findings is not None:
+            body['task_findings'] = task_findings
+        if repair_check is not None:
+            body['repair_check'] = repair_check
+        path.write_text(json.dumps(body))
 
 
 class EngineTests(EngineFixture):
@@ -504,11 +510,12 @@ class CompletionTests(EngineFixture):
 
 
 class FinalBlockerTests(EngineFixture):
-    def record(self, name, tasks, categories=None, findings=None, final=False):
+    def record(self, name, tasks, categories=None, findings=None, final=False, task_findings=None, repair_check=None):
         from orchestra_core.engine import CATEGORIES
         categories = categories or CATEGORIES
         path = self.root / (name + '.json')
-        self.review(path, reviewer=name, tasks=tasks, categories=categories, findings=findings, final=final)
+        self.review(path, reviewer=name, tasks=tasks, categories=categories, findings=findings, final=final,
+                    task_findings=task_findings, repair_check=repair_check)
         return self.engine.record_review('main', self.lease, name, path, categories,
                                          tasks, final=final, findings=findings)
 
@@ -625,7 +632,7 @@ class FinalBlockerTests(EngineFixture):
         self.task('R1', mode='repair', repair_of='B1', files=['a'])
         token = self.engine.dispatch('main', self.lease, 'R1', 'worker2')
         self.engine.report('worker2', token, 'First repair')
-        self.record('blocked2', ['B1', 'R1'], findings=['bug2'])
+        self.record('blocked2', ['B1', 'R1'], findings=['bug2'], task_findings={'R1': ['bug2']})
         self.task('R2', mode='repair', repair_of='R1', files=['a'])
         self.assertEqual(['R2'], self.engine.ready('main', self.lease))
         token = self.engine.dispatch('main', self.lease, 'R2', 'worker3')
@@ -2092,3 +2099,287 @@ class FindingsLedgerTests(EngineFixture):
             self.assertEqual(before, len(self.engine.status()['gates']))
         with self.assertRaisesRegex(EngineError, 'boundary actions run only through the guarded hook'):
             self.engine.run_gate('main', self.lease, 'unsafe', ['git', 'branch', '-d', 'x'])
+
+
+class WaveReviewTests(EngineFixture):
+    """SPEC 5.1 (wave review, per-task findings, repair-diff check, supersede) and 5.4 item 4 (status waves)."""
+
+    def built(self, name, **kw):
+        self.task(name, **kw)
+        token = self.engine.dispatch('main', self.lease, name, 'w-' + name)
+        self.engine.report('w-' + name, token, 'Built ' + name)
+
+    def reviewed(self, name, tasks, findings=None, task_findings=None, repair_check=None, categories=None,
+                 final=False, reviewer='reviewer'):
+        path = self.root / (name + '.json')
+        self.review(path, reviewer=reviewer, tasks=tasks, findings=findings, task_findings=task_findings,
+                    repair_check=repair_check, categories=categories, final=final)
+        return self.engine.record_review('main', self.lease, reviewer, path, categories or ['correctness'],
+                                         tasks, final=final, findings=findings)
+
+    def review_card(self, name, review_of, **kw):
+        self.task(name, role='code-reviewer', mode='checkpoint', files=kw.pop('files', []), review_of=review_of, **kw)
+
+    def ran_review(self, name, review_of, **kw):
+        self.review_card(name, review_of, **kw)
+        self.engine.report('rw-' + name, self.engine.dispatch('main', self.lease, name, 'rw-' + name), 'Reviewed')
+
+    def test_wave_review_of_resolves_wave_members_at_add(self):
+        self.task('B1', wave='W1')
+        self.task('B2', wave='W1')
+        self.task('B3', wave='W2')
+        self.task('B4')
+        self.review_card('V1', ['wave:W1'])
+        self.assertEqual(['B1', 'B2'], self.engine.status()['tasks']['V1']['review_of'])
+        with self.assertRaisesRegex(EngineError, 'Unknown wave: NOPE'):
+            self.review_card('V2', ['wave:NOPE'])
+
+    def test_wave_label_refused_on_repair_and_review_cards(self):
+        self.built('B1', wave='W1')
+        self.reviewed('first', ['B1'], findings=['bug'])
+        message = 'Only builder implementation cards join a wave'
+        with self.assertRaisesRegex(EngineError, message):
+            self.task('R1', mode='repair', repair_of='B1', wave='W1')
+        self.assertNotIn('repaired_by', self.engine.status()['tasks']['B1'])
+        with self.assertRaisesRegex(EngineError, message):
+            self.review_card('V1', ['B1'], wave='W1')
+        with self.assertRaisesRegex(EngineError, message):
+            self.task('C1', mode='cleanup', wave='W1')
+        with self.assertRaisesRegex(EngineError, 'Invalid task wave'):
+            self.task('B2', wave='')
+
+    def test_adding_card_to_reviewed_wave_is_refused(self):
+        self.task('B1', wave='W1')
+        self.review_card('V1', ['wave:W1'])
+        with self.assertRaisesRegex(EngineError, 'Wave W1 already has a review; start a new wave'):
+            self.task('B2', wave='W1')
+        self.task('B3', wave='W2')
+
+    def test_status_lists_waves_in_first_add_order(self):
+        # Ids sort against the add order, and state.json is saved with sorted keys.
+        self.task('Z1', wave='W2')
+        self.task('M1', wave='W1')
+        self.task('Y2', wave='W2')
+        self.task('A1', wave='W3')
+        self.task('N1')
+        waves = self.engine.status()['waves']
+        self.assertEqual([('W2', ['Z1', 'Y2']), ('W1', ['M1']), ('W3', ['A1'])],
+                         [(w['wave'], w['tasks']) for w in waves])
+
+    def test_wave_review_task_findings_block_only_named_card(self):
+        self.built('B1', wave='W1')
+        self.built('B2', wave='W1')
+        self.reviewed('wave', ['B1', 'B2'], findings=['f'], task_findings={'B1': ['f'], 'B2': []})
+        self.engine.accept('main', self.lease, 'B2')
+        with self.assertRaisesRegex(EngineError, 'current review findings'):
+            self.engine.accept('main', self.lease, 'B1')
+
+    def test_task_findings_must_match_findings_union(self):
+        self.built('B1')
+        self.built('B2')
+        for findings, task_findings, message in [
+                (['f'], {'B1': ['g']}, 'Task findings must match'),
+                (['f', 'g'], {'B1': ['f']}, 'Task findings must match'),
+                (['f'], {'B1': ['f'], 'B9': []}, 'Task findings name an uncovered task'),
+                (['f'], {'B1': 'f'}, 'Invalid task findings'),
+                (['f'], ['f'], 'Invalid task findings')]:
+            with self.assertRaisesRegex(EngineError, message):
+                self.reviewed('bad', ['B1', 'B2'], findings=findings, task_findings=task_findings)
+        self.assertEqual([], self.engine.status()['reviews'])
+        receipt = self.reviewed('good', ['B1', 'B2'], findings=['f', 'g'], task_findings={'B1': ['f'], 'B2': ['g']})
+        self.assertEqual({'B1': ['f'], 'B2': ['g']}, receipt['task_findings'])
+
+    def test_review_without_task_findings_blocks_all_covered(self):
+        self.built('B1', wave='W1')
+        self.built('B2', wave='W1')
+        receipt = self.reviewed('wave', ['B1', 'B2'], findings=['f'])
+        self.assertNotIn('task_findings', receipt)
+        for name in ('B1', 'B2'):
+            with self.assertRaisesRegex(EngineError, 'current review findings'):
+                self.engine.accept('main', self.lease, name)
+
+    def test_repair_diff_check_covering_chain_accepts_original(self):
+        self.built('B1', wave='W1')
+        self.built('B2', wave='W1')
+        self.reviewed('wave', ['B1', 'B2'], findings=['f'], task_findings={'B1': ['f'], 'B2': []})
+        self.engine.accept('main', self.lease, 'B2')
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), 'Repaired')
+        self.reviewed('check', ['R1', 'B1'], repair_check=True)
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
+        self.assertEqual(['accepted'] * 3, [self.engine.status()['tasks'][i]['state'] for i in ('B1', 'B2', 'R1')])
+
+    def test_repair_diff_check_covers_card_with_all_findings_rejected(self):
+        self.built('B1', wave='W1')
+        self.built('B2', wave='W1')
+        wave = self.reviewed('wave', ['B1', 'B2'], findings=['only-f'], task_findings={'B1': [], 'B2': ['only-f']})
+        self.engine.accept('main', self.lease, 'B1')
+        self.engine.add_finding('main', self.lease, wave['id'], 'finding', 0, 'rejected', 'Refuted: the code handles it')
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'B2')
+        check = self.reviewed('check', ['B2'], repair_check=True)
+        self.assertTrue(check['repair_check'])
+        self.engine.accept('main', self.lease, 'B2')
+        self.assertEqual('accepted', self.engine.status()['tasks']['B2']['state'])
+
+    def test_replacement_wave_review_after_member_parked(self):
+        self.built('B1', wave='W1')
+        self.task('B2', wave='W1')
+        self.built('B3', wave='W1')
+        self.review_card('V1', ['wave:W1'])
+        self.engine.park('main', self.lease, 'B2', 'needs a push')
+        self.assertNotIn('V1', self.engine.ready('main', self.lease))
+        self.engine.park('main', self.lease, 'V1', 'member parked')
+        self.review_card('V2', ['B1', 'B3'])
+        self.assertEqual(['V2'], self.engine.ready('main', self.lease))
+        self.engine.report('rw', self.engine.dispatch('main', self.lease, 'V2', 'rw'), 'Reviewed B1 and B3')
+        self.reviewed('wave', ['B1', 'B3'])
+        for name in ('B1', 'B3', 'V2'):
+            self.engine.accept('main', self.lease, name)
+        self.assertEqual('parked', self.engine.status()['tasks']['B2']['state'])
+
+    def test_absent_task_findings_key_is_clean_at_every_reader(self):
+        self.built('B')
+        self.built('C')
+        self.reviewed('wave', ['B', 'C'], findings=['f'], task_findings={'B': ['f']})
+        with self.assertRaisesRegex(EngineError, 'Repair needs earlier checked coding findings'):
+            self.task('RC', mode='repair', repair_of='C', files=['C'])
+        self.engine.accept('main', self.lease, 'C')
+        self.task('R1', mode='repair', repair_of='B', files=['B'])
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), 'Repaired')
+        self.reviewed('check', ['R1', 'B'], repair_check=True)
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B')
+        # C's newest receipt for its task is the wave review, whose findings are for B only.
+        self.reviewed('final', ['B', 'C', 'R1'], final=True, categories=['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup'])
+        self.engine.check_completion('main', self.lease)
+
+    def test_stale_newest_receipt_with_findings_for_other_task_keeps_verdict(self):
+        self.built('B')
+        self.built('C')
+        self.reviewed('c-security', ['C'], categories=['security'])
+        self.reviewed('wave', ['B', 'C'], findings=['f'], task_findings={'B': ['f'], 'C': []})
+        (self.repo / 'B').write_text('edited after review')
+        self.engine.accept('main', self.lease, 'C')
+        with self.assertRaises(EngineError):
+            self.engine.accept('main', self.lease, 'B')
+
+    def test_repair_diff_check_finding_on_ancestor_refused(self):
+        self.built('B1', wave='W1')
+        self.reviewed('wave', ['B1'], findings=['f'])
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), 'Repaired')
+        with self.assertRaisesRegex(EngineError, 'Attribute repair-diff findings to the chain tip R1'):
+            self.reviewed('check', ['R1', 'B1'], findings=['g'], task_findings={'B1': ['g']}, repair_check=True)
+        with self.assertRaisesRegex(EngineError, 'Attribute repair-diff findings to the chain tip'):
+            self.reviewed('check', ['R1', 'B1'], findings=['g'], repair_check=True)
+        receipt = self.reviewed('check', ['R1', 'B1'], findings=['g'], task_findings={'R1': ['g'], 'B1': []},
+                                repair_check=True)
+        self.assertEqual({'R1': ['g'], 'B1': []}, receipt['task_findings'])
+
+    def test_clean_wave_member_accepts_after_sibling_repair(self):
+        self.built('B1', wave='W1')
+        self.built('B2', wave='W1')
+        self.ran_review('V1', ['wave:W1'])
+        self.reviewed('wave', ['B1', 'B2'], findings=['f'], task_findings={'B1': [], 'B2': ['f']})
+        self.task('R2', mode='repair', repair_of='B2', files=['B2'])
+        with self.assertRaisesRegex(EngineError, r'Accept B1 first; a repair would make its evidence stale'):
+            self.engine.dispatch('main', self.lease, 'R2', 'r2')
+        self.engine.accept('main', self.lease, 'B1')
+        with self.assertRaisesRegex(EngineError, r'Accept V1 first; a repair would make its evidence stale'):
+            self.engine.dispatch('main', self.lease, 'R2', 'r2')
+        self.engine.accept('main', self.lease, 'V1')
+        self.engine.report('r2', self.engine.dispatch('main', self.lease, 'R2', 'r2'), 'Repaired')
+        (self.repo / 'B2').write_text('repaired')
+        self.assertEqual('accepted', self.engine.status()['tasks']['B1']['state'])
+
+    def test_repair_dispatch_refused_only_by_overlapping_acceptable_cards(self):
+        for name, files in (('I1', ['docs/x.md']), ('I2', [])):
+            self.built(name, role='investigator', mode='code', files=files)
+        self.built('B2', files=['b.py'])
+        self.ran_review('V1', ['B2'], files=['b.py'])
+        self.reviewed('first', ['B2'], findings=['f'])
+        self.task('R2', mode='repair', repair_of='B2', files=['b.py'])
+        with self.assertRaisesRegex(EngineError, r'Accept I2 first; a repair would make its evidence stale'):
+            self.engine.dispatch('main', self.lease, 'R2', 'r2')
+        self.engine.accept('main', self.lease, 'I2')
+        with self.assertRaisesRegex(EngineError, r'Accept V1 first; a repair would make its evidence stale'):
+            self.engine.dispatch('main', self.lease, 'R2', 'r2')
+        self.engine.accept('main', self.lease, 'V1')
+        self.engine.report('r2', self.engine.dispatch('main', self.lease, 'R2', 'r2'), 'Repaired')  # I1 does not block
+        (self.repo / 'b.py').write_text('repaired')
+        self.assertEqual('reported', self.engine.status()['tasks']['I1']['state'])
+        self.engine.accept('main', self.lease, 'I1')
+
+    def test_record_review_stores_repair_check_marker(self):
+        self.built('B1')
+        receipt = self.reviewed('plain', ['B1'])
+        self.assertNotIn('repair_check', receipt)
+        receipt = self.reviewed('marked', ['B1'], repair_check=True)
+        self.assertIs(True, receipt['repair_check'])
+        self.assertIs(True, self.engine.status()['reviews'][-1]['repair_check'])
+        for value in (False, 'true', 1, None):
+            path = self.root / 'bad.json'
+            self.review(path, tasks=['B1'])
+            body = json.loads(path.read_text())
+            body['repair_check'] = value
+            path.write_text(json.dumps(body))
+            with self.assertRaisesRegex(EngineError, 'repair_check must be true on a checkpoint receipt'):
+                self.engine.record_review('main', self.lease, 'reviewer', path, ['correctness'], ['B1'])
+        self.built('B2')
+        with self.assertRaisesRegex(EngineError, 'repair_check must be true on a checkpoint receipt'):
+            self.reviewed('final', ['B1', 'B2'], final=True, repair_check=True,
+                          categories=['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup'])
+
+    def test_supersede_unstarted_review_when_replacements_cover_it(self):
+        self.built('B1', wave='W1')
+        self.built('B2', wave='W1')
+        self.review_card('V1', ['wave:W1'])
+        self.ran_review('V2', ['B1'])
+        self.reviewed('one', ['B1'])
+        self.engine.accept('main', self.lease, 'V2')
+        self.review_card('V0', ['B1', 'B2'])  # added after V2: only reviews added after V0 count for it
+        with self.assertRaisesRegex(EngineError, r'Review V1 cannot be superseded: B2 is not covered'):
+            self.engine.supersede('main', self.lease, 'V1')
+        self.ran_review('V3', ['B2'])
+        self.reviewed('two', ['B2'])
+        self.engine.accept('main', self.lease, 'V3')
+        with self.assertRaisesRegex(EngineError, r'Review V0 cannot be superseded: B1 is not covered'):
+            self.engine.supersede('main', self.lease, 'V0')  # V2 and V3 are older than V0
+        with self.assertRaisesRegex(EngineError, 'Invalid or interrupted coordinator lease'):
+            self.engine.supersede('main', 'wrong', 'V1')
+        self.engine.supersede('main', self.lease, 'V1')
+        card = self.engine.status()['tasks']['V1']
+        self.assertEqual(('accepted', ['V2', 'V3']), (card['state'], card['superseded_by']))
+        with self.assertRaisesRegex(EngineError, 'queued or parked'):
+            self.engine.supersede('main', self.lease, 'V2')  # accepted, was dispatched
+        with self.assertRaisesRegex(EngineError, 'review card'):
+            self.task('B9')
+            self.engine.supersede('main', self.lease, 'B9')
+
+    def test_supersede_refuses_dispatched_card_and_uncovering_newer_reviews(self):
+        self.built('B1')
+        self.built('B2')
+        self.review_card('V1', ['B1', 'B2'])
+        self.review_card('V2', ['B1'])  # newer but still queued: it covers nothing yet
+        with self.assertRaisesRegex(EngineError, 'B1 is not covered'):
+            self.engine.supersede('main', self.lease, 'V1')
+        self.engine.report('rw', self.engine.dispatch('main', self.lease, 'V2', 'rw'), 'Reviewed')
+        self.reviewed('one', ['B1'])
+        self.engine.accept('main', self.lease, 'V2')
+        with self.assertRaisesRegex(EngineError, 'B2 is not covered'):
+            self.engine.supersede('main', self.lease, 'V1')
+        self.engine.park('main', self.lease, 'V1', 'review the parked one later')
+        with self.assertRaisesRegex(EngineError, 'B2 is not covered'):
+            self.engine.supersede('main', self.lease, 'V1')
+
+    def test_status_marks_wave_dependency_from_dependencies_and_paths(self):
+        self.task('A1', wave='W1', files=['a1'])
+        self.task('A2', wave='W2', files=['a2'], dependencies=['A1'])
+        self.task('A3', wave='W3', files=['a3'])
+        self.task('A4', wave='W4', files=['a4'], inputs=['a3/notes.md'])
+        self.task('A5', wave='W5', files=['a4/sub'])
+        self.task('A6', wave='W6', files=['a6'])
+        waves = {w['wave']: w['next_depends'] for w in self.engine.status()['waves']}
+        self.assertEqual({'W1': True, 'W2': False, 'W3': True, 'W4': True, 'W5': False, 'W6': False}, waves)

@@ -39,7 +39,8 @@ def parser():
         sub.add_parser(name)
     art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
     art.add_argument('--tasks', help='Comma-separated task IDs')
-    add = sub.add_parser('add')
+    add = sub.add_parser('add', help='Add a card from a task JSON file; a builder implementation card may carry "wave": "W", '
+                                     'and a review card may name "review_of": ["wave:W"] for every card of wave W')
     add.add_argument('task', help='Task JSON path')
     dispatch = sub.add_parser('dispatch')
     dispatch.add_argument('task_id')
@@ -80,6 +81,8 @@ def parser():
     park.add_argument('--reason', required=True)
     unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
     unpark.add_argument('task_id')
+    supersede = sub.add_parser('supersede', help='Accept an unstarted review that newer accepted reviews cover in full')
+    supersede.add_argument('task_id')
     route = sub.add_parser('classify')
     route.add_argument('shell_command')
     return p
@@ -225,6 +228,9 @@ def execute(args):
     if args.command=='unpark':
         engine.unpark(args.actor,args.lease,args.task_id)
         return {'unparked':args.task_id},0
+    if args.command=='supersede':
+        engine.supersede(args.actor,args.lease,args.task_id)
+        return {'superseded':args.task_id},0
     raise EngineError('Unsupported command')
 
 
