@@ -1,6 +1,6 @@
 # Orchestra 2.2 implementation plan
 
-Status: plan for review. Built from `docs/SPEC-v2.2.md` at bca4e98a2b83e1e8c4e5e69eba7a1f4ca6ed9f6d (section 10 has no open decision), and aligned by card D5 with the spec as amended for critic C7 in the same commit (C7/R4-1 to R4-8 and the coordinator decisions after C7, spec section 10). **This is a substantial plan: an independent critic must check it before any build starts.**
+Status: plan for review. Built from `docs/SPEC-v2.2.md` at bca4e98a2b83e1e8c4e5e69eba7a1f4ca6ed9f6d (section 10 has no open decision), and aligned by card D5 with the spec as amended for critic C7 in the same commit (C7/R4-1 to R4-8 and the coordinator decisions after C7, spec section 10). Critic C8 (feasibility) checked it at a5f46e4: P-1 and P-2 were blocking and are fixed in this amendment, with notes P-3 to P-13 (marked C8/P-n where they changed text).
 
 Labels: OBSERVED (read or run in this worktree at bca4e98), REASONED (follows from the spec and the code), UNKNOWN (not established).
 
@@ -48,7 +48,7 @@ Commands (OBSERVED unless marked):
 
 ## 2. Standing orders for every ticket
 
-Each brief carries these verbatim, together with: the `Mode:` line, the plugin root `/Users/yusri/Documents/Claude/Projects/orchestra-plugin-wt/design-2.2/plugins/orchestra`, the ticket text below, and its Keep and Remove lists.
+Each brief carries these verbatim, together with: the `Mode:` line, the plugin root (the ticket worktree's `plugins/orchestra`), the ticket text below, and its Keep and Remove lists.
 
 > Project charter (AGENTS.md): Build the approved portable workflow, not an application. Keep source reference repositories read-only. Never publish private audit snapshots, credentials, personal paths or product delivery state. One main coordinator owns state, assignments and integration and can execute reserved inline work alongside disjoint workers. Workers do not delegate. Parallel writers use separate worktrees and own explicit paths; preserve sibling edits. Models follow `plugins/orchestra/config/models.json` (Opus 5.5 `claude-opus-5-5` and Sonnet 5.5 `claude-sonnet-5-5` only; the generator writes `agents/*.md`) ... Use Python 3.11+ standard library and Git. Test invalid inputs, stale evidence, independent review, reservations, hooks and install/uninstall behavior. Do not claim arbitrary-shell or hostile-worker isolation from prompts or caller-supplied identifiers. Check live hook/profile discovery separately from unit tests. Commit each working iteration with explicit paths. Never stage wholesale, stash, force push, reset hard or remove unpreserved work. The only public target is this clean package repository. Keep feedback concise; detailed evidence belongs in docs/BUILD-LEDGER.md.
 >
@@ -58,13 +58,14 @@ Each brief carries these verbatim, together with: the `Mode:` line, the plugin r
 
 **Plan rules for every builder:**
 
-1. **Flip rule.** A 2.1 test may break only because the ticket adds a refusal the spec names. Fix it with the smallest fixture step that satisfies the new rule: add `issues`, accept the overlapping reported card first, add `task_findings`, add Keep/Remove headings, or hold before the repair. Never weaken an assertion. List every flipped test and its step in the report. Delete a 2.1 test only where the spec's flip table says it is removed.
+1. **Flip rule.** A 2.1 test may break only because of a behavior change named in the ticket's spec sections (a new refusal, a renamed heading or message, a changed constructor call, a removed cap). Update the assertion to the new behavior; never weaken it. Fix it with the smallest fixture step that satisfies the new rule: add `issues`, accept the overlapping reported card first, add `task_findings`, add Keep/Remove headings, or hold before the repair. Never weaken an assertion. List every flipped test and its step in the report. Delete a 2.1 test only where the spec's flip table says it is removed.
 2. **Edit only your owned paths.** If a needed change falls outside them, stop and report `STATUS: BLOCKED` naming the file.
 3. **Strings are spec literals.** Copy refusal messages, progress lines and headings character for character from the spec section named in the ticket.
 4. **Generated files.** Run the generator or `sync.py` in write mode. Commit only the generated files your ticket owns.
 
 **Done contract (every ticket).** The report starts with `STATUS:` and `ARTIFACT: <commit sha> <owned paths>`. It then gives:
-- the tests-first names, with the red run on the wave base (command, failure count, exit code);
+- the tests-first names, with the red run on the wave base (command, failure count, exit code). Names marked (regression), or that guard behavior the base already has, are reported green on the base instead;
+- for every `-k` command, the `Ran N` line and the list of tests-first names it actually ran (a `-k` pattern that matches nothing still exits 0);
 - the green run of every acceptance command, with its exit code;
 - the flipped 2.1 tests and their fixture steps;
 - confirmation that each Keep item holds and each Remove item is gone;
@@ -72,7 +73,7 @@ Each brief carries these verbatim, together with: the `Mode:` line, the plugin r
 
 ## 3. Waves and ownership
 
-Each ticket's builder works in its own worktree off the wave base. The wave base is design/2.2 at the previous wave's closing tip, or bca4e98 for W1.
+Each ticket's builder works in its own worktree off the wave base. The wave base is design/2.2 at the previous wave's closing tip, or a5f46e4 for W1 (code identical to bca4e98; the spec text includes the C7 amendment). Line numbers in this plan stay at bca4e98.
 
 | Wave | Tickets | Gate before next wave | Why |
 |---|---|---|---|
@@ -96,8 +97,8 @@ Each ticket's builder works in its own worktree off the wave base. The wave base
 | P/scripts/orchestra_core/guards.py | G1 | G2 | | | | | | | |
 | P/scripts/orchestra_core/relaunch.py | | | | | | | | | H1 new |
 | tests/test_engine.py | E1 | E2 | E3 | E4 | E5 | E6 | E7 | E8 | |
-| tests/test_hooks.py | E1 | G2 | | | | E6 | E7 | E8 | |
-| tests/test_integration.py | E1 | | E3 | | E5 | | E7 | | H1 |
+| tests/test_hooks.py | E1 | G2 | E3 | E4 | E5 | E6 | E7 | E8 | |
+| tests/test_integration.py | E1 | E2 | E3 | E4 | E5 | | E7 | E8 | H1 |
 | tests/test_guard_corpus.py | G1 | G2 | | | | | | | |
 | tests/test_packaging.py | P1x | | | | | | | | H1 |
 | tests/test_skills.py | K2 | | | | | | | | |
@@ -141,7 +142,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Goal:** add review `issues` with severities, stamp `rev: "2.2"` on cards, and migrate the shared test helpers first. Add the keep/remove heading check in `add_task`. Let two read-only reviews with no shared resource run together.
 - **Spec:** 5.6 (items 2 to 4 and 6), 5.13 items 1 and 2 (the engine side), 5.17, and section 6 rows `rev` and `notes`.
 - **Class / preset:** Architectural; builder `implementation` (`Mode: implementation`).
-- **Starting artifact:** bca4e98.
+- **Starting artifact:** design/2.2 at the C8 amendment tip (code identical to bca4e98).
 - **Owns:** engine.py, orchestra.py (`review` reads the body), test_engine.py, test_integration.py, test_hooks.py (helper migration only).
 - **Depends on:** none.
 - **Order inside the ticket:**
@@ -181,7 +182,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Goal:** in both guards, read a unique long-option prefix as the guarded option. Deny `commit --amend`. Add the 5.16 item 7 chain and its 13 variants as regression cases.
 - **Spec:** 5.15 (all), 5.16 item 7.
 - **Class / preset:** Bounded; builder `sensitive`.
-- **Starting artifact:** bca4e98.
+- **Starting artifact:** design/2.2 at the C8 amendment tip (code identical to bca4e98).
 - **Owns:** guards.py, guard.ts, guard.test.ts, guard-rules.json (`commit_guarded_flags: ["--amend"]`), guard-corpus.json, guard-fixtures.ts (via `sync.py`), test_guard_corpus.py, tests/fixtures/git-long-options.json (new).
 - **Depends on:** none.
 - **Decisions:**
@@ -204,7 +205,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Goal:** try to reproduce the `FAIL_CLOSED` message at the mod seam for H1 and H2 with the testkit fake `$`, and record the result in the report. `delegate` spawns from the plugin root. CLI reads pass `--repo` and keep their spawn cwd. Failure reasons name the failure class. An exit-2 deny surfaces its own reason.
 - **Spec:** 5.16 items 1, 2, 4 and 8.
 - **Class / preset:** Bounded; builder `sensitive` (bug lane: diagnose and write the failing test before the fix).
-- **Starting artifact:** bca4e98.
+- **Starting artifact:** design/2.2 at the C8 amendment tip (code identical to bca4e98).
 - **Owns:** orchestra.ts, orchestra.test.ts. `testkit.ts` is read-only to M1. If the fake `$` cannot express a missing cwd, M1 reports BLOCKED naming `testkit.ts`.
 - **Depends on:** none.
 - **Signatures:**
@@ -232,7 +233,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - final-review.md: 5.5 items 1 to 9, 5.7, 5.11.
   - autonomy.md: 5.3, 5.8, 5.9, 5.10.
 - **Class / preset:** Bounded; builder `mechanical`.
-- **Starting artifact:** bca4e98.
+- **Starting artifact:** design/2.2 at the C8 amendment tip (code identical to bca4e98).
 - **Owns:**
   - P/skills/orchestra/references/{coordination,briefs,triage,handoff,parallel,finishing,repair-rounds,final-review,autonomy}.md
   - tests/skill_phrases/orchestra.json
@@ -253,7 +254,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - autonomy.md:22 also gains "Held work never blocks a later wave; the final phase must clear it before `finish`".
 - **Constraints** (OBSERVED, test_skills.py):
   - briefs.md must stay at or under 1800 bytes (it is 1593 now), and orchestrator.md at or under 10500 bytes. Fit the Keep/Remove part and the known-findings line by tightening first; drop no rule.
-  - **Budget rule** (coordinator decision 10 after C7): if a rule still cannot fit, K1 reports DONE, not BLOCKED, with the measured size and the minimum new cap (at most 15% above the old one). test_skills.py is K2's file in W1, so the coordinator raises the cap at test_skills.py:206 (briefs.md) or :210 (orchestrator.md) as reserved inline work at the W1 merge, after K2 merges, and records the old cap, the new cap and the reason in docs/BUILD-LEDGER.md. Until then K1's test_skills.py acceptance excepts only that one budget assertion.
+  - **Budget rule** (coordinator decision 10 after C7): if a rule still cannot fit, K1 reports DONE, not BLOCKED, with the measured size and the minimum new cap (at most 15% above the old one). test_skills.py is K2's file in W1, so the coordinator raises the cap at test_skills.py:206 (briefs.md) or :210 (orchestrator.md) as reserved inline work at the W1 merge, after K2 merges, and records the old cap, the new cap and the reason in docs/BUILD-LEDGER.md. In that overflow case K1's acceptance is the file run with the one failing budget test named and its failure quoted: `python3.11 -m unittest discover -s tests -p 'test_skills.py'` shows exactly one failure, in `test_budgets` (briefs.md) or `test_generated_agent_budgets` (orchestrator.md), with the measured size (C8/P-12).
   - `exact artifact` stays only in repair-rounds.md, `empty context` only in briefs.md, and `reserve every card` only in parallel.md.
   - Keep repair-rounds.md's Source header.
   - final-review.md keeps `` `Lens: specialist:<name>` `` and `specialists.md`, and never says "The lens never gates".
@@ -280,7 +281,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
   - 5.1 and 5.4 (checkpoint.md, final.md).
   - 5.2 (build references/repair.md:7).
 - **Class / preset:** Bounded; builder `mechanical`.
-- **Starting artifact:** bca4e98.
+- **Starting artifact:** design/2.2 at the C8 amendment tip (code identical to bca4e98).
 - **Owns:**
   - P/skills/orchestra-review/SKILL.md
   - P/skills/orchestra-review/references/{checkpoint,final,correctness}.md and references/standards.md (new)
@@ -320,7 +321,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Goal:** add the `code-reviewer-standards` variant on Sonnet medium, change the code-reviewer prompt to "the three lens cards", and record the matrix sentence.
 - **Spec:** 5.5 (models.json, roles.json, generate.py, generated agents, AGENTS.md, docs/models.md, docs/roles.md), section 7.
 - **Class / preset:** Bounded; builder `mechanical`.
-- **Starting artifact:** bca4e98.
+- **Starting artifact:** design/2.2 at the C8 amendment tip (code identical to bca4e98).
 - **Owns:** models.json, roles.json, generate.py, P/agents/code-reviewer.md, P/agents/code-reviewer-checkpoint.md, P/agents/code-reviewer-standards.md (new, generated), tests/test_packaging.py, AGENTS.md, docs/models.md, docs/roles.md.
 - **Depends on:** none.
 - **Decisions:**
@@ -363,7 +364,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Spec:** 5.12, 5.7 items 2 to 4, 5.11 items 1 and 2, 5.4 item 3 (base rule; the held-tip exception is in E4), 5.14 item 5, and section 6 rows `findings`, `out_of_scope` and `gate_receipts`.
 - **Class / preset:** Architectural; builder `implementation`.
 - **Starting artifact:** design/2.2 at the W1 closing tip.
-- **Owns:** engine.py, orchestra.py, test_engine.py.
+- **Owns:** engine.py, orchestra.py, test_engine.py, test_integration.py (fixture upkeep only).
 - **Depends on:** E1.
 - **Signatures:**
   - `add_finding(self, actor, lease, review_id, kind, index, disposition, reason, card=None) -> dict`. It needs the lease. `kind` is `finding` or `out_of_scope`. `index` must point at an existing item of that receipt. Dispositions:
@@ -451,7 +452,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Spec:** 5.1 (all items), 5.4 item 4, section 6 rows `wave`, `superseded_by`, `task_findings` and `repair_check`.
 - **Class / preset:** Architectural; builder `implementation`.
 - **Starting artifact:** design/2.2 at the W2 closing tip.
-- **Owns:** engine.py, orchestra.py, test_engine.py, test_integration.py.
+- **Owns:** engine.py, orchestra.py, test_engine.py, test_integration.py, test_hooks.py (fixture upkeep only).
 - **Depends on:** E2 (the ledger feeds rejected-only coverage; `gate_receipts` sits next to `task_findings` in `record_review`).
 - **Signatures:**
   - `_task_findings(receipt, task_id) -> list[str]`. With `task_findings` present it returns that task's entry; an absent key returns `[]`. Without `task_findings` it returns `findings`. It is used by:
@@ -507,7 +508,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Spec:** 5.2 (all), 5.3, 5.4 item 3 (held work), section 6 row `held_finding`.
 - **Class / preset:** Architectural; builder `implementation`.
 - **Starting artifact:** design/2.2 at the W3 closing tip.
-- **Owns:** engine.py, orchestra.py, test_engine.py.
+- **Owns:** engine.py, orchestra.py, test_engine.py, test_hooks.py and test_integration.py (fixture upkeep only).
 - **Depends on:** E3.
 - **Signatures:**
   - Module function `_append_progress(state_dir, text)`: one `os.open(path, O_WRONLY | O_APPEND | O_CREAT)` and one `os.write` of the whole entry, locked or not; it may read the file only to choose the separator (spec 5.9 item 5, C7/R4-2). E4 adds it for its two writers; E6 moves the brief writers onto it.
@@ -552,7 +553,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Spec:** 5.5 items 3 to 7 (engine), section 6 row `cleared`.
 - **Class / preset:** Architectural; builder `implementation`.
 - **Starting artifact:** design/2.2 at the W4 closing tip.
-- **Owns:** engine.py, test_engine.py, test_integration.py.
+- **Owns:** engine.py, test_engine.py, test_integration.py, test_hooks.py (fixture upkeep only).
 - **Depends on:** E4.
 - **Decisions** (now spec text, 5.5 items 3 and 4 and section 6; coordinator decision 13 after C7):
   - A repair card added with a current final finding stores `final_round: int` and `final_findings: list[str]`, for E6's brief.
@@ -635,12 +636,13 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
     - `test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout` (patches `STOP_LOCK_BUDGET`; asserts `autonomy.active` stays true)
     - `test_hook_stop_busy_unarmed_writes_no_brief` (C7/R4-3)
     - `test_hook_stop_runs_when_lock_frees_within_budget` (C7/R4-3)
-- **Flips** (heading only; the cap-to-deadline changes are E7's):
+- **Flips** (heading only; the cap-to-deadline changes are E7's). Line numbers are at bca4e98 and will have moved: find each test by the assertion it holds. The binding rule is every assertion of `## Autonomy report` or `'Autonomy report'` in test_engine.py and test_hooks.py (C8/P-4):
   - test_engine.py:1626, 1642, 1661, 1673, 1679 and 1694: `## Autonomy report` becomes `## Run brief`. Where a test asserts the heading next to a cap stop, keep the cap stop as it is.
   - test_engine.py:1652 and 1663 (spec flip table, C7/R4-4): count `## Run brief` instead of `## Autonomy report`; the cap stop stays until E7.
   - test_engine.py:1694: `last_brief` still holds the stop brief after `interrupt` (C7/R4-5).
   - test_hooks.py:1439 and 1448: "Autonomy report" becomes "Run brief".
   - test_hooks.py:1463 and 1471 (tests at 1460 and 1465): also assert "Run brief" absent.
+  - `test_main_uses_existing_repository_state_and_policy` (test_hooks.py:586, assertion at :606): assert the constructor call with `lock_wait=2.0` (C8/P-3).
   - test_hooks.py:1452 and 1465 (mock engines): stub `engine.status.return_value` with a dict that has no `last_brief` key.
 - **Acceptance:**
   - `python3.11 -m unittest discover -s tests -k test_run_brief_ -k test_close_session_writes_run_brief -k test_interrupt_and_harness_end_write_run_brief -k test_brief_command_is_read_only -k test_unarmed_completed_run_brief_says_ready_to_release -k test_session_start_ -k test_pretooluse_missing_cwd_ -k test_hook_state_read_fails_closed_after_lock_wait -k test_hook_busy_lock_keeps_raw_fallback_for_other_classes -k test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout -k test_progress_writes_are_single_appends -k test_end_paths_keep_stopped_autonomy_brief -k test_hook_stop_busy_unarmed_writes_no_brief -k test_hook_stop_runs_when_lock_frees_within_budget` exits 0.
@@ -717,10 +719,10 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Spec:** 5.8 item 8 (items 1 to 4; the template text was E7's), 5.10 items 1 to 4, 5.10 item 5.4 (`end_pass_session`), 5.10 item 6, 5.9 item 2 (`end_pass_session` and `settle` briefs), section 6 rows `relaunch`, `release` and `relaunch_pass`.
 - **Class / preset:** Architectural; builder `sensitive` (release and boundary path).
 - **Starting artifact:** design/2.2 at the W7 closing tip.
-- **Owns:** engine.py, hooks.py, orchestra.py, test_engine.py, test_hooks.py.
+- **Owns:** engine.py, hooks.py, orchestra.py, test_engine.py, test_hooks.py, test_integration.py (fixture upkeep only).
 - **Depends on:** E7 (signature, held-live stops), E6 (briefs).
 - **Signatures:**
-  - `parse_ledger` reads at most one `Release: pre-authorized <remote> <target>` line. It refuses with "Approval boundaries need exactly one Release line" when malformed or doubled.
+  - `parse_ledger` (spec 5.8 item 8 and spec section on the ledger, binding text): the approval boundaries hold exactly one Release line, either the fixed `- Release: no release, permit or deploy.` or one `- Release: pre-authorized <remote> <target>`, never both. Otherwise it refuses with "Approval boundaries need exactly one Release line". Add `test_arm_from_shipped_template_accepts_fixed_release_line` (arms from `config/autonomy-template.md` as shipped) and `test_ledger_with_both_release_lines_refused` (C8/P-10).
   - `arm_autonomy(self, home=None, relaunch=False)` refuses a pair unlike `policy.release` with "Release pre-authorization must match policy.release".
   - `_refuse_under_autonomy(self, state, action, remote=None, target=None)` exempts `release_permit` and `check_release` for the exact pair.
   - `_kept_autonomy` keeps a `relaunch` autonomy.
@@ -805,7 +807,7 @@ Architectural tickets (marked **[A]**) are checkpoint-worthy. Under 2.2 the wave
 - **Acceptance:**
   - `python3.11 -m unittest discover -s tests -k test_relaunch_` exits 0.
   - The file runs for test_integration.py and test_packaging.py each exit 0.
-  - `python3.11 scripts/build_release.py` exits 0, and `relaunch-prompt.md` is in the built tree.
+  - After committing: `D=$(mktemp -d); python3.11 scripts/build_release.py --out "$D"` exits 0, and `tar -tzf "$D"/orchestra-*.tar.gz | grep relaunch-prompt.md` finds the file (C8/P-13).
 - **Keep:** in-session autonomy; the downstream feature map's named replacements.
 - **Remove:** none.
 
@@ -842,7 +844,7 @@ The graph has no cycle (REASONED: every edge points to an earlier wave):
 
 | Producer → consumer | Produced | Consumed | Finding |
 |---|---|---|---|
-| E1 → E2 to E8 | `issues` in test helpers; `rev` stamp | Every later test fixture writes reports | OK once E1's migration commit lands first. Later tickets write new fixtures through the migrated helpers. |
+| E1 → E2 to E8 | `issues` in test helpers; `rev` stamp | Every later test fixture writes reports | OK once E1's migration commit lands first. Later tickets write new fixtures through the migrated helpers. Every engine ticket's acceptance includes the file runs of test_engine.py, test_hooks.py and test_integration.py. |
 | E2 → E3 | the ledger and `rejected` entries | rejected-only coverage (5.1 item 6) | OK; same names. |
 | E2 → E4 | `gate_receipts` and the failed-receipt rule | held-tip gate attribution (5.4 item 3) | OK; E4 adds only the uncovered-key exception. |
 | E3 → E4 | `_task_findings`, tip rule, uncovered-key refusal | held states, ladder | Conflict at test_engine.py:617-639: E3 adds `task_findings`, E4 adds `hold R1`. Ruled by the spec (5.1 and 5.2 flips); sequential owners. |
@@ -876,10 +878,10 @@ A spike is never merged and never reviewed in the wave.
 | Wave | Gate yes/no | Scoped gate commands (each must exit 0) |
 |---|---|---|
 | W1 | yes | `python3.11 -m unittest discover -s tests -p 'test_engine.py'`; the same with `test_integration.py`, `test_hooks.py`, `test_guard_corpus.py`, `test_skills.py` and `test_packaging.py`; `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1 claude plugin test plugins/orchestra`; `python3.11 plugins/orchestra/scripts/generate.py --check`; `python3 plugins/orchestra/hooks/mod/fixtures/sync.py --check`. W1 touches every test file, so this impact set covers every Python test file. It is derived from the wave, not a full-suite trigger. |
-| W2 | yes | `-p 'test_engine.py'`, `-p 'test_hooks.py'`, `-p 'test_guard_corpus.py'`; `claude plugin test` (as above); `sync.py --check` |
-| W3 | yes | `-p 'test_engine.py'`, `-p 'test_integration.py'` |
-| W4 | yes | `-p 'test_engine.py'`, `-p 'test_integration.py'` (held cards meet the integration helpers) |
-| W5 | yes | `-p 'test_engine.py'`, `-p 'test_integration.py'` |
+| W2 | yes | `-p 'test_engine.py'`, `-p 'test_hooks.py'`, `-p 'test_integration.py'`, `-p 'test_guard_corpus.py'`; `claude plugin test` (as above); `sync.py --check` |
+| W3 | yes | `-p 'test_engine.py'`, `-p 'test_hooks.py'`, `-p 'test_integration.py'` |
+| W4 | yes | `-p 'test_engine.py'`, `-p 'test_hooks.py'`, `-p 'test_integration.py'` (held cards meet the integration helpers) |
+| W5 | yes | `-p 'test_engine.py'`, `-p 'test_hooks.py'`, `-p 'test_integration.py'` |
 | W6 | yes | `-p 'test_engine.py'`, `-p 'test_hooks.py'`, `-p 'test_integration.py'` (brief text in integration contexts) |
 | W7 | yes | `-p 'test_engine.py'`, `-p 'test_hooks.py'`, `-p 'test_integration.py'`; `claude plugin test` |
 | W8 | yes | `-p 'test_engine.py'`, `-p 'test_hooks.py'`, `-p 'test_integration.py'` |
@@ -900,7 +902,7 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
 
 ## 7. Reviews and live checks
 
-- **Wave reviews:** one per wave, using code-reviewer-checkpoint on Opus medium. They cover the architectural tickets: E1 to E8, G2 and H1.
+- **Wave reviews:** one per wave, using code-reviewer-checkpoint on Opus medium. Each covers every ticket merged in its wave (spikes excepted), with the checkpoint lens on the architectural tickets.
 - **Final review:** the three parallel lenses on the frozen candidate (settled decision 5), each over every ticket:
   - correctness, Opus high: requirements, correctness, tests and architecture;
   - security, Opus high;
@@ -910,9 +912,9 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
 - **Release:** the coordinator's release card (5.18: version 2.2.0, CHANGELOG with every section, the mixed-version note and the 5.16 gap if M1 did not reproduce it), outside this plan's tickets.
 - **Live check L0** (X1, run by a builder in its own worktree):
   1. `D=$(mktemp -d) && cd "$D" && git init -q && git commit -q --allow-empty -m init`
-  2. `ORCHESTRA_RELAUNCH_PASS=probe-123 claude -p "Use the Workflow tool to run two agents in parallel. Agent one writes the word one to a.txt. Agent two writes the word two to b.txt. Wait for both. Then run printenv ORCHESTRA_RELAUNCH_PASS > env.txt with Bash in the foreground. Then print WORKFLOW-DONE followed by both agents' results." --permission-mode acceptEdits --output-format text > pass.log 2>&1; echo "exit $?"`
+  2. `ORCHESTRA_RELAUNCH_PASS=probe-123 claude -p "Use the Workflow tool to run two agents in parallel. Agent one writes the word one to a.txt. Agent two writes the word two to b.txt. Wait for both. Then run printenv ORCHESTRA_RELAUNCH_PASS > env.txt with Bash in the foreground. Then print WORKFLOW-DONE followed by both agents' results." --permission-mode bypassPermissions --output-format text > pass.log 2>&1; echo "exit $?"`
   3. `cat a.txt b.txt env.txt; grep -c WORKFLOW-DONE pass.log; claude --version`
-  4. Record Workflow = yes only if `a.txt` and `b.txt` exist and `pass.log` holds WORKFLOW-DONE with both results; no if the files are missing; inconclusive otherwise. Record env = yes if `env.txt` reads `probe-123`. Write both answers into docs/BUILD-LEDGER.md through the coordinator. The log stays in `$D`.
+  4. The scratch repository is disposable, so bypassPermissions is safe there; if the log still shows a tool denial, record that answer as inconclusive, never no (C8/P-11). Record Workflow = yes only if `a.txt` and `b.txt` exist and `pass.log` holds WORKFLOW-DONE with both results; no if the files are missing; inconclusive otherwise. Record env = yes if `env.txt` reads `probe-123`. Write both answers into docs/BUILD-LEDGER.md through the coordinator. The log stays in `$D`.
 - **Live check L1** (a coordinator step after the W9 merge and the final gate, before release; coordinator decision 15 after C7):
   1. Install the candidate through the isolated marketplace route that docs/VALIDATION.md row 12 uses.
   2. In a scratch clone with the plugin enabled, run a session that executes `git branch -D <a merged branch>`: expect allow. Then `git branch -D <an unmerged branch>`: expect the "not merged" reason.
@@ -926,7 +928,7 @@ In this table, `-p 'X'` means `python3.11 -m unittest discover -s tests -p 'X'`.
 |---|---|
 | Builder `STATUS: BLOCKED` (a file outside ownership, a missing fake) | Coordinator. It amends ownership by moving the file into the ticket in the same wave only when no sibling owns it; otherwise it queues a follow-up ticket in the next wave. |
 | Wave review blocking finding on a ticket | One builder `repair` card (Opus medium, override) against that ticket's tip, then the repair-diff check. |
-| Repair-diff check still blocks | The chain is held. On the installed 2.1 engine there is no `hold`: the coordinator parks the chain on its own branch and writes it into the brief (REASONED). If the held ticket's code is a dependency of the next wave (any engine ticket, G1→G2, E8→H1), the dependent tickets park too, with the reason named. Independent tickets continue. A cap never stops the run. |
+| Repair-diff check still blocks | The chain is held. On the installed 2.1 engine there is no `hold`, so the coordinator emulates it: the held ticket's code stays merged in design/2.2 (no separate branch, nothing reverted), the coordinator logs it in `progress.md` (held log: ticket, finding, tip) and in the run brief, and the chain's last card stays reported. Later-wave cards carry no engine `dependencies` on earlier-wave cards (the wave base already carries the code), so nothing waits on a held chain. The held chain goes into the final lenses and the final repair rounds (spec 5.5). A cap never stops the run. |
 | Wave gate fails | The reviewer attributes the failure to the responsible ticket as a blocking finding; route as above. |
 | X1 Workflow inconclusive or no | H1's prompt forbids Workflow (5.10 item 9). Not a failure. |
 | X1 env no | Not a failure. The pass binds through the marker file (spec 5.10 item 5.3), which H1 always writes. |
