@@ -105,3 +105,6 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | E4 | builder | 5551c24 | `held` state and `hold`, repair ladder refusals, held dependencies satisfied, held-tip gate attribution, single-append progress writes; 17 tests red then green | ACCEPTED (R4 CLEAN) |
 | W4 gate | coordinator | 9fd008a | engine 198, hooks 143, integration 21, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
 | R4 | code-reviewer checkpoint | 5551c24 | no acceptance fail-open through hold; notes: repair-check refusal should require mode implementation (engine.py:691), final-receipt exception untested, progress append before state save | CLEAN |
+| E5 | builder | 7e4ed32 | final receipts attribute to chain tips, address every held tip (finding or `cleared`), final repair `final_round`/`final_findings`; 5 tests red then green, 4 regression guards | ACCEPTED (R5 CLEAN) |
+| W5 gate | coordinator | 018d580 | engine 207, hooks 143, integration 25, corpus 35 OK; plugin test 88/88; sync, generate 0 | CLEAN |
+| R5 | code-reviewer checkpoint | 7e4ed32 | no approval or release fail-open; notes: checkpoint after final hides final blame (fails closed), non-builder final key stalls, falsy `cleared` stored silently | CLEAN |
