@@ -829,12 +829,34 @@ class MergedDeleteHookTest(unittest.TestCase):
         self.assertEqual(git(self.repo, 'rev-parse', '--verify', 'refs/heads/main'), git(self.repo, 'rev-parse', 'main'))
 
     def test_merged_delete_case_variant_of_checked_out_denied(self):
-        git(self.repo, 'config', 'core.ignorecase', 'true')  # main is checked out
-        result = self.run_hook('git branch -D Main')
-        self.assertEqual(decision_of(result), 'deny')
-        self.assertEqual(git(self.repo, 'symbolic-ref', '--short', 'HEAD'), 'main')
-        self.assertTrue(self.is_ancestor('main', 'main'))
-        self.assertEqual(git(self.repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/main'), 'refs/heads/main')
+        git(self.repo, 'config', 'core.ignorecase', 'true')  # main is checked out; the default compare fires first
+        self.assertDenied('git branch -D Main', 'Branch Main is the default branch')
+
+    def test_merged_delete_case_variant_checked_out_reason(self):
+        self.side('feat', 'f.txt', 'f\n')
+        git(self.repo, 'checkout', '-q', 'feat')
+        git(self.repo, 'config', 'core.ignorecase', 'true')
+        self.assertDenied('git branch -D Feat', 'Branch Feat is checked out')
+
+    def test_merged_delete_exact_ref_without_ignorecase(self):
+        git(self.repo, 'branch', 'feat', 'main')
+        git(self.repo, 'config', 'core.ignorecase', 'false')
+        self.assertDenied('git branch -D Feat', 'Branch Feat does not exist')
+
+    def test_merged_delete_case_twin_packed_denied(self):
+        # FC3: a packed feat and a loose Feat; on a case-insensitive filesystem rev-parse refs/heads/feat reads
+        # the loose Feat file, and git deletes both refs. A case-sensitive filesystem keeps two distinct refs.
+        self.side('feat', 'f.txt', 'f\n')
+        git(self.repo, 'pack-refs', '--all')
+        made = subprocess.run(['git', '-C', str(self.repo), 'branch', 'Feat', 'main'], capture_output=True, text=True)
+        refs = git(self.repo, 'for-each-ref', '--format=%(refname)', 'refs/heads/').split()
+        if made.returncode != 0 or not {'refs/heads/feat', 'refs/heads/Feat'} <= set(refs):
+            self.skipTest('git cannot create the case twin here: %s' % made.stderr.strip())
+        for ignorecase in ('true', 'false'):
+            git(self.repo, 'config', 'core.ignorecase', ignorecase)
+            for name in ('feat', 'Feat'):
+                with self.subTest(ignorecase=ignorecase, name=name):
+                    self.assertDenied('git branch -D ' + name, 'Branch %s has a case-variant twin; refusing to delete' % name)
 
     def test_merged_delete_unresolvable_default_denies(self):
         self.side('x', 'x.txt', 'x\n')
