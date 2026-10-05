@@ -17,6 +17,12 @@ Restart the client after installation. Enable the plugin and review its hook def
 
 No installer changes application instructions, restores symlinks, resumes old work, grants release rights or writes hook trust. Existing project rules remain applicable. Port a project's old Orchestra enforcement separately to avoid competing coordinators.
 
+### Upgrade from 2.1 to 2.2
+
+A run started under 2.1 loads under 2.2: its cards, reviews, gates and armed autonomy carry over, `max_passes` and `max_stalls` in its ledger are recorded and no longer enforced, and queued builder cards dispatch without Keep and Remove headings. Do not mix versions on one active run. A 2.1 engine rejects a `held` card and an armed autonomy without `max_passes`, and the 2.1 hooks then fail closed for that run. End every 2.1 session before the first `hold` or before arming under 2.2.
+
+The downstream shell relaunch harness no longer works against 2.x. `orchestra.py relaunch` replaces it (see Autonomous mode).
+
 ### Upgrade from 1.0.1
 
 A 1.0.1 run that was finished or interrupted leaves the repository unarmed under 2.0.0. Plain `start` and `status` then say to run `start --new-run`, which archives the old state and starts a fresh run.
@@ -84,7 +90,13 @@ Release is disabled by default. Explicit project policy names authorization, exa
 
 ### Autonomous mode
 
-`orchestra.py autonomy arm|disarm|status` (on Claude, `/orchestra-autonomy on|off|status`) lets the run continue unattended within a written ledger of goal, completion checks, pass and stall caps and a deadline. Release, push, merge, deletion and credential entry are hard boundaries: the coordinator parks the card and continues with other cards. A morning report lands in the run's `progress.md` and in the next session start. See the [CLI guide](docs/cli.md).
+`orchestra.py autonomy arm|disarm|status|settle` (on Claude, `/orchestra-autonomy on|off|status`) lets the run continue unattended within a written ledger of goal, completion checks and a deadline. The deadline is the only limit: no count of passes or stalls stops the run. Release, push, merge, deletion and credential entry are hard boundaries: the coordinator parks the card and continues with other cards. The one exception is a `- Release: pre-authorized <remote> <target>` line that matches the configured policy release. A run brief lands in the run's `progress.md` at every end of a run, shows at the next session start and prints with `orchestra.py brief`. See the [CLI guide](docs/cli.md).
+
+For fresh context on every pass, arm with `autonomy arm --relaunch`, end the interactive session, and run `orchestra.py relaunch --permission-mode MODE [--model ID]` in a terminal. It runs one `claude -p` pass at a time, ends each pass's session, backs off after a stalled pass and never stops for stalls. It replaces the downstream shell harness.
+
+### Waves, repair and hold
+
+Group builder cards into a wave with `"wave": "W"`, review the whole wave with `"review_of": ["wave:W"]`, and attribute findings per card with `task_findings`. A failed card gets one Opus repair; a chain that still fails is ended with `orchestra.py hold TASK --finding TEXT` and cleared in the final phase. `orchestra.py supersede`, `finding add|list`, `gate --again` and the `waves` in `status` are in the [CLI guide](docs/cli.md).
 
 ## Check and distribute
 
