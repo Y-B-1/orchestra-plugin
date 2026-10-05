@@ -4,7 +4,7 @@ Sentinel: orchestra-build/references/repair.md
 
 # Builder: repair mode
 
-Use this mode to fix findings that an independent reviewer already checked. A finding the brief lists is a claim to test against the source, not an order. Work the round number the brief names and state it in your report. Do not describe or apply any limit on rounds; routing after your report belongs to the coordinator.
+Use this mode to fix findings that an independent reviewer already checked. A finding the brief lists is a claim to test against the source, not an order. Work the round number the brief names and state it in your report. You are the one escalation rung after the Sonnet builder. Do not describe or apply any limit on rounds; a still-blocked chain is held, and routing after your report belongs to the coordinator.
 
 ## Procedure
 

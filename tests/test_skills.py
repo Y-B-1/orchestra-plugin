@@ -27,7 +27,7 @@ TABLE = {
     'orchestra-build': ['SKILL.md'] + [f'references/{m}.md' for m in [
         'implementation', 'frontend', 'sensitive', 'mechanical', 'repair', 'cleanup']],
     'orchestra-review': ['SKILL.md'] + [f'references/{m}.md' for m in [
-        'checkpoint', 'final', 'correctness', 'architecture', 'security', 'cleanliness', 'specialists']],
+        'checkpoint', 'final', 'correctness', 'architecture', 'security', 'cleanliness', 'specialists', 'standards']],
     'orchestra-operate': ['SKILL.md', 'references/gate.md', 'references/cleanup.md', 'references/release.md'],
 }
 CLI = 'orchestra/references/cli.md'
@@ -36,6 +36,12 @@ MODE_RULE = 'If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`
 ROLE_SKILLS = [d for d in TABLE if d not in ('orchestra', 'orchestra-worker')]
 DELETION_TEST = ('Apply the deletion test. If deleting a module only moves its complexity to the callers, '
                  'it earns its place. If the complexity vanishes, it was a pass-through.')
+MATERIALITY = ('A finding blocks only when it has a real, material impact on the requirements, tests or frameworks '
+               'the prompt names: a named requirement unmet, a named test failing or certain to fail, a binding '
+               'framework or charter rule broken, or a security or data-loss defect. An issue with no such impact, '
+               'or one affecting under about 20% of a piece of work that is otherwise correct while every named '
+               'requirement and test still holds, is a note. Notes go to the run brief and never trigger repair '
+               'or hold.')
 EXTRACT = ('Extract shared code only with two verified callers. Reuse an existing helper first. '
            'Count the net lines saved. Reject an abstraction that serves a single use.')
 TAGS = ['code that nothing calls; search for real usage before you claim it',
@@ -65,6 +71,7 @@ IDENTICAL_COPIES = [
      'A line that decides nothing, such as "handle edge cases", is a gap.'),
     ('orchestra-build/references/sensitive.md', 'orchestra-review/references/security.md',
      'A leaked secret needs rotation, and rewriting history does not replace it.'),
+    ('orchestra-review/SKILL.md', 'orchestra-critique/SKILL.md', MATERIALITY),
 ] + [('orchestra-review/references/cleanliness.md', 'orchestra-build/references/cleanup.md', t) for t in TAGS]
 
 
@@ -198,7 +205,8 @@ class SkillTreeTests(unittest.TestCase):
 
     def test_budgets(self):
         for d in TABLE:
-            self.assertLessEqual(len(read(f'{d}/SKILL.md').encode()), 4096, d)
+            # K2 (budget rule): review SKILL.md holds the materiality paragraph, so its cap is 4480 (was 4096).
+            self.assertLessEqual(len(read(f'{d}/SKILL.md').encode()), 4480 if d == 'orchestra-review' else 4096, d)
         self.assertLessEqual(len(read('orchestra-worker/SKILL.md').encode()), 2048)
         for rel in files():
             if '/references/' in rel and rel not in (CLI, 'orchestra/references/coordination.md'):
@@ -329,8 +337,18 @@ class CohesionTests(unittest.TestCase):
     def test_operator_gate_does_not_judge_requirements(self):
         self.assertNotIn('Requirements met', read('orchestra-operate/references/gate.md'))
 
+    def test_final_lens_table_covers_every_category(self):
+        rows = re.findall(r'^\| `(\w+)\.md` \| ([^|]+?) \|', read('orchestra-review/references/final.md'), re.M)
+        self.assertEqual(sorted(r[0] for r in rows), ['correctness', 'security', 'standards'])
+        seen = []
+        for _, cats in rows:
+            seen += [c.strip() for c in cats.split(',')]
+        self.assertEqual(len(seen), len(set(seen)), seen)
+        self.assertEqual(set(seen), {'requirements', 'correctness', 'tests', 'architecture', 'security',
+                                     'standards', 'cleanup'})
+
     def test_a_lens_file_never_points_into_another_lens_file(self):
-        lenses = ['correctness', 'architecture', 'security', 'cleanliness']
+        lenses = ['correctness', 'architecture', 'security', 'cleanliness', 'standards']
         for lens in lenses:
             text = read(f'orchestra-review/references/{lens}.md')
             for other in lenses:

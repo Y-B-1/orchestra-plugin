@@ -15,6 +15,7 @@
     "DONE: evidence shows it shipped",
     "Never review an artifact you authored",
     "Spike-class ticket",
-    "Find and report; never fix"
+    "Find and report; never fix",
+    "a finding blocks only when it has a real, material impact"
   ]
 }
