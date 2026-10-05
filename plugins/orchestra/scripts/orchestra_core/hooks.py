@@ -443,12 +443,17 @@ def _merged_delete_check(decision, cwd, autonomy):
         name = label = default[len('refs/heads/'):]
     else:
         return _deny('The default branch cannot be resolved; refusing to delete %s' % branch).output
-    if branch == name:
+    # FS2-1: on a case-insensitive filesystem refs/heads/Main is the file refs/heads/main.
+    fold = (lambda text: text.casefold()) if _git_out(cwd, 'config', '--bool', 'core.ignorecase')[1] == 'true' else (lambda text: text)
+    if fold(branch) == fold(name):
         return _deny('Branch %s is the default branch' % branch).output
     code, current = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'HEAD')
-    if code == 0 and current == branch:
+    if code == 0 and fold(current) == fold(branch):
         return _deny('Branch %s is checked out' % branch).output
     tracking = 'refs/remotes/%s/%s' % (remote, branch) if remote else 'refs/heads/' + branch
+    # for-each-ref matches case-exactly: rev-parse alone would resolve a case variant to another branch's tip.
+    if _git_out(cwd, 'for-each-ref', '--format=%(refname)', tracking)[1] != tracking:
+        return _deny('Branch %s does not exist' % branch).output
     code, tip = _git_out(cwd, 'rev-parse', '--verify', '--quiet', tracking + '^{commit}')
     if code != 0 or not tip:
         return _deny('Branch %s does not exist' % branch).output
