@@ -20,7 +20,9 @@
    "input": {
     "command": "git branch -D topic"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
   },
   {
    "id": "deny-destructive-4",
@@ -251,7 +253,9 @@
    "input": {
     "command": "git branch --delete --force topic"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
   },
   {
    "id": "deny-grouped-1",
@@ -328,7 +332,9 @@
    "input": {
     "command": "git push --delete origin main"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
   },
   {
    "id": "deny-push-destination-5",
@@ -1997,7 +2003,9 @@
    "input": {
     "command": "git branch -D x"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
   },
   {
    "id": "inline-r2b-56",
@@ -2032,7 +2040,9 @@
    "input": {
     "command": "git push --delete origin x"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
   },
   {
    "id": "inline-r2b-61",
@@ -9863,14 +9873,18 @@
    "input": {
     "command": "git push --del origin x"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
   },
   {
    "id": "long-option-deny-19",
    "input": {
     "command": "git push --delete origin x"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
   },
   {
    "id": "long-option-deny-20",
@@ -10132,6 +10146,165 @@
     "command": "git worktree prun"
    },
    "class": "allow"
+  },
+  {
+   "id": "merged-delete-1",
+   "input": {
+    "command": "git branch --delete --force x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-2",
+   "input": {
+    "command": "git branch -df x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-3",
+   "input": {
+    "command": "git branch --del --forc x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-4",
+   "input": {
+    "command": "git push origin --delete x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-5",
+   "input": {
+    "command": "git push origin -d x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-6",
+   "input": {
+    "command": "git push origin --del x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-7",
+   "input": {
+    "command": "git branch -d -f x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-8",
+   "input": {
+    "command": "git branch -f -d x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-9",
+   "input": {
+    "command": "git branch -d --force x"
+   },
+   "class": "boundary",
+   "category": "delete",
+   "decision_category": "merged-delete"
+  },
+  {
+   "id": "merged-delete-deny-1",
+   "input": {
+    "command": "git branch -D x y"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-2",
+   "input": {
+    "command": "git push origin --delete x y"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-3",
+   "input": {
+    "command": "git push origin :x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-4",
+   "input": {
+    "command": "git push https://h/r.git --delete x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-5",
+   "input": {
+    "command": "git push origin --delete --force x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-6",
+   "input": {
+    "command": "git branch -D -r origin/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-7",
+   "input": {
+    "command": "git branch -d y && git branch -D x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-8",
+   "input": {
+    "command": "git branch -D a; git branch -D b"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-9",
+   "input": {
+    "command": "cd /o && git branch -D x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-deny-10",
+   "input": {
+    "command": "GIT_DIR=/o git branch -D x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "merged-delete-boundary-1",
+   "input": {
+    "command": "git branch -d -r origin/x"
+   },
+   "class": "boundary",
+   "category": "delete"
   }
  ]
 }

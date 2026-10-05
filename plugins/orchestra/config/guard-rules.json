@@ -3,7 +3,7 @@
   "_doc": {
     "version": "Table format version.",
     "classes": "The five corpus classes (SPEC 5.1); a decision takes exactly one.",
-    "boundary_categories": "The two boundary categories, delete and merge; a boundary case must name one.",
+    "boundary_categories": "The two boundary categories, delete and merge; a boundary case must name one. merged-delete (SPEC 5.14) is a Decision category of a delete boundary, not a third kind; a corpus case names it with decision_category.",
     "tools": "shell and edit are tool names compared exactly with the payload tool_name; claude_matcher is the Claude PreToolUse matcher regex.",
     "shells": "Interpreter names compared with the basename of the first word after wrapper unwrapping; a heredoc consumed by one of them is classified as a script.",
     "shell_value_flags": "Shell options that take a value; skipped, with their value, while looking for the -c payload.",

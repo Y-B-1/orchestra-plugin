@@ -23,6 +23,13 @@ CONFIG = Path(__file__).resolve().parents[1] / 'plugins/orchestra/config'
 CLASSES = {'allow', 'deny', 'release', 'release-multi', 'boundary'}
 PLUGIN = Path(__file__).resolve().parents[1] / 'plugins/orchestra'
 CORPUS = json.loads((CONFIG / 'guard-corpus.json').read_text())['cases']
+MERGED_DELETE_SHAPES = [
+    'git branch -D x', 'git branch --delete --force x', 'git branch -df x', 'git branch --del --forc x',
+    'git push origin --delete x', 'git push --delete origin x', 'git push origin -d x', 'git push origin --del x']
+MERGED_DELETE_DENIED = [
+    'git branch -D x y', 'git push origin --delete x y', 'git push origin :x', 'git push https://h/r.git --delete x',
+    'git push origin --delete --force x', 'git branch -D -r origin/x', 'git branch -d y && git branch -D x',
+    'git branch -D a; git branch -D b', 'cd /o && git branch -D x', 'GIT_DIR=/o git branch -D x']
 LONG_OPTIONS = json.loads((Path(__file__).resolve().parent / 'fixtures/git-long-options.json').read_text())
 
 
@@ -41,12 +48,13 @@ class GuardCorpusTest(unittest.TestCase):
         self.assertEqual(len(ids), len(set(ids)))
         for case in CORPUS:
             with self.subTest(case=case['id']):
-                self.assertEqual(set(case) - {'category', '_doc'}, {'id', 'input', 'class'})
+                self.assertEqual(set(case) - {'category', 'decision_category', '_doc'}, {'id', 'input', 'class'})
                 self.assertIn(case['class'], CLASSES)
                 if case['class'] == 'boundary':
                     self.assertIn(case.get('category'), RULES['boundary_categories'])
                 else:
                     self.assertNotIn('category', case)
+                    self.assertNotIn('decision_category', case)
                 self.assertIn(set(case['input']) - {'cwd'}, [{'command'}, {'tool', 'path'}])
 
     def test_every_case_matches_the_python_classifier(self):
@@ -59,9 +67,70 @@ class GuardCorpusTest(unittest.TestCase):
                 else:
                     self.assertEqual(edit_class(case), case['class'], case['input'])
 
+    def test_corpus_decision_category_matches(self):
+        """SPEC 5.14 item 6: a case may name the Decision category; the guard must report exactly it."""
+        named = [case for case in CORPUS if 'decision_category' in case]
+        self.assertGreaterEqual(len(named), 15)
+        for case in named:
+            with self.subTest(case=case['id']):
+                self.assertEqual(case['class'], 'boundary')
+                self.assertEqual(classify_command(case['input']['command']).category, case['decision_category'])
+        self.assertEqual({case['decision_category'] for case in named}, {'merged-delete'})
+        by_command = {case['input'].get('command'): case for case in CORPUS}
+        for command in MERGED_DELETE_SHAPES:
+            with self.subTest(command=command):
+                self.assertEqual((by_command[command]['class'], by_command[command]['category'],
+                                  by_command[command].get('decision_category')), ('boundary', 'delete', 'merged-delete'))
+        for command in MERGED_DELETE_DENIED:
+            with self.subTest(command=command):
+                self.assertEqual(by_command[command]['class'], 'deny')
+        self.assertEqual((by_command['git branch -d -r origin/x']['class'], by_command['git branch -d -r origin/x']['category']),
+                         ('boundary', 'delete'))
+        self.assertNotIn('decision_category', by_command['git branch -d -r origin/x'])
+
+    def test_merged_delete_decision_carries_kind_remote_branch_and_argv(self):
+        local = classify_command('git branch --del --forc x')
+        self.assertEqual((local.klass, local.boundary, local.category, local.kind, local.remote, local.branch),
+                         ('boundary', 'delete', 'merged-delete', 'local', None, 'x'))
+        self.assertEqual(local.argv, ('git', 'branch', '--del', '--forc', 'x'))
+        for command in ('git push origin --delete x', 'git push --delete origin x', 'git push origin -d x', 'git push origin --del x'):
+            with self.subTest(command=command):
+                remote = classify_command(command)
+                self.assertEqual((remote.klass, remote.category, remote.kind, remote.remote, remote.branch),
+                                 ('boundary', 'merged-delete', 'remote', 'origin', 'x'))
+                self.assertEqual(remote.argv, tuple(command.split()))
+
+    def test_merged_delete_stand_alone_reasons(self):
+        for command in ('git branch -d y && git branch -D x', 'git branch -D a; git branch -D b', 'cd /o && git branch -D x',
+                        'git branch -D x | cat'):
+            with self.subTest(command=command):
+                decision = classify_command(command)
+                self.assertEqual((decision.action, decision.reason), ('deny', 'Execute branch deletions separately'))
+        for command in ('git -C $(pwd) branch -D x', 'git -C /o branch -D x', 'git --git-dir=/o branch -D x',
+                        'git --work-tree /o push origin --delete x', 'GIT_DIR=/o git branch -D x',
+                        'GIT_WORK_TREE=/o git push origin -d x', 'sudo git branch -D x', 'env X=1 git branch -D x',
+                        'nice git branch -D x', 'xargs git branch -D x', 'echo x $(git branch -D x)',
+                        "bash -c 'git branch -D x'", "sh -c 'git push origin --delete x'"):
+            with self.subTest(command=command):
+                decision = classify_command(command)
+                self.assertEqual((decision.action, decision.reason),
+                                 ('deny', 'Branch deletion must run plainly in the session repository'))
+
+    def test_merged_delete_never_widens_what_was_denied(self):
+        for command in ('git branch -D x y', 'git branch -D -r origin/x', 'git branch -D --remotes x', 'git branch -D -- x',
+                        'git branch -D -u o x', 'git branch -D', 'git branch -D $X', 'git branch -D $(echo x)', 'git branch -D "x y"', 'git branch -D x*',
+                        'git push origin --delete x y', 'git push origin --delete', 'git push origin :x',
+                        'git push origin --delete :x', 'git push origin --delete x:y', 'git push origin --delete --force x',
+                        'git push origin --delete -o x y', 'git push origin --delete --dry-run x', 'git push -n -d origin x',
+                        'git push origin --delete +x', 'git push https://h/r.git --delete x', 'git push ./r --delete x',
+                        'git push /r --delete x', 'git push git@h:r --delete x', 'git push origin --delete -- x',
+                        'git push origin --delete refs/heads/x*', 'git branch -dr origin/x -f'):
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'deny', command)
+
     def test_corpus_covers_every_existing_test_hooks_command(self):
         commands = {case['input'].get('command') for case in CORPUS}
-        names = ['DENY_COMMANDS', 'DENY_GROUPED', 'ALLOW_GROUPED', 'ALLOW_SEMANTIC', 'DENY_SEMANTIC',
+        names = ['MERGED_DELETE_COMMANDS', 'DENY_COMMANDS', 'DENY_GROUPED', 'ALLOW_GROUPED', 'ALLOW_SEMANTIC', 'DENY_SEMANTIC',
                  'RELEASE_COMMANDS', 'DENY_PUSH_DESTINATION', 'DENY_MALFORMED']
         for name in names:
             for command in getattr(test_hooks, name):
@@ -128,8 +197,8 @@ class GuardCorpusTest(unittest.TestCase):
         found = inline_commands((Path(test_hooks.__file__)).read_text())
         loop = ['git push --force origin x', 'git push -f origin x', 'git push --mirror origin',
                 'git push origin +x', 'git push --all origin', 'git push --tags origin',
-                'git push --delete origin x', 'git push origin a b', 'git reset --hard',
-                'git clean -f', 'git branch -D x', 'git add -A', 'git commit -a -m x',
+                'git push origin a b', 'git reset --hard',
+                'git clean -f', 'git add -A', 'git commit -a -m x',
                 'git checkout .', 'git checkout -f x', 'git restore .']
         hard = 'git reset ' + '--hard'
         concatenated = ['cat <<EOF\nx $(' + hard + ')\nEOF',
@@ -138,7 +207,7 @@ class GuardCorpusTest(unittest.TestCase):
                         'cat <<EOF\necho "\\$(' + hard + ')" "\\`' + hard + '\\`"\nEOF',
                         "cat <<'EOF'\necho '$(" + hard + ")'\nEOF"]
         refspec = ['git push origin ' + r for r in ['main', 'HEAD:main', 'topic:refs/heads/main', 'HEAD~1:main']]
-        self.assertEqual(len(loop + concatenated), 21)
+        self.assertEqual(len(loop + concatenated), 19)
         for command in loop + concatenated + refspec:
             with self.subTest(command=command):
                 self.assertIn(command, found)
@@ -249,8 +318,8 @@ class LongOptionAbbreviationTest(unittest.TestCase):
 
     def test_every_full_spelling_keeps_its_class_apart_from_amend(self):
         expected = {'git reset --hard': 'deny', 'git clean -f': 'deny', 'git clean -f --dry-run': 'allow',
-                    'git branch -d --force x': 'deny', 'git branch --delete x': 'boundary',
-                    'git push --force origin x': 'deny', 'git push --delete origin x': 'deny',
+                    'git branch -d --force x': 'boundary', 'git branch --delete x': 'boundary',
+                    'git push --force origin x': 'deny', 'git push --delete origin x': 'boundary',
                     'git restore --staged .': 'allow', 'git switch --force x': 'deny',
                     'git commit --all -m x': 'deny', 'git commit -m x': 'allow', 'git tag --delete v1': 'boundary',
                     'git worktree remove x': 'boundary', 'git worktree rem x': 'allow'}

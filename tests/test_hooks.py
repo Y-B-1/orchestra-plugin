@@ -7,8 +7,10 @@ import types
 import os
 import re
 from pathlib import Path
+import socket
 import subprocess
 import sys
+import threading
 import unittest
 from unittest import mock
 import tempfile
@@ -24,7 +26,7 @@ RUN_HOOK = PLUGIN / 'scripts/run-hook.sh'
 
 # Command lists shared with tests/test_guard_corpus.py, which requires each one in the corpus.
 DENY_COMMANDS = [
-    'git reset --hard', 'git clean -fd', 'git branch -D topic',
+    'git reset --hard', 'git clean -fd',
     'git checkout -- .', 'git restore .', 'git stash push',
     'git add -A', 'git add .', 'git add -u src', 'git commit -am done',
     'exec env X=1 git -C "a b" -c color.ui=never reset --hard',
@@ -39,8 +41,10 @@ DENY_COMMANDS = [
     'time git reset --hard', 'time -p git reset --hard',
     "builtin eval 'git reset --hard'", 'command -p git reset --hard', 'builtin command git reset --hard',
     "eval 'git reset --hard'", 'git --exec-path /tmp reset --hard',
-    'git reset --hard=HEAD', 'cd other && git push origin main', 'git branch --delete --force topic',
+    'git reset --hard=HEAD', 'cd other && git push origin main',
 ]
+# SPEC 5.14: classified boundary/delete with Decision category merged-delete; the hook decides on merge evidence.
+MERGED_DELETE_COMMANDS = ['git branch -D topic', 'git branch --delete --force topic']
 DENY_GROUPED = ['sudo -nu root git reset --hard',
                 'sudo -nuroot git reset --hard',
                 'sudo -nEu root git reset --hard',
@@ -61,7 +65,7 @@ RELEASE_COMMANDS = ['git push origin HEAD:main', 'gh pr merge 3',
                     'npm publish', 'vercel --prod', 'az deployment group create',
                     'git push -o "--dry-run" origin main', 'git push -o "--force" origin main']
 DENY_PUSH_DESTINATION = ['git push origin main side', 'git push --all origin',
-                         'git push --tags origin', 'git push --delete origin main',
+                         'git push --tags origin',
                          'git push origin :main', "git push origin 'refs/heads/*:refs/heads/*'",
                          'git push --follow-tags origin main']
 DENY_MALFORMED = ["git 'reset"]
@@ -165,6 +169,13 @@ class GuardsTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).action, 'deny')
 
+    def test_merged_delete_commands_are_boundary_delete_with_the_merged_delete_category(self):
+        for command in MERGED_DELETE_COMMANDS:
+            with self.subTest(command=command):
+                decision = classify_command(command)
+                self.assertEqual((decision.klass, decision.action, decision.boundary, decision.category),
+                                 ('boundary', 'allow', 'delete', 'merged-delete'))
+
     def test_grouped_wrapper_options(self):
         for command in DENY_GROUPED:
             with self.subTest(command=command):
@@ -228,8 +239,8 @@ class GuardsTest(unittest.TestCase):
     def test_a2_always_deny_rules_remain(self):
         for command in ['git push --force origin x', 'git push -f origin x', 'git push --mirror origin',
                         'git push origin +x', 'git push --all origin', 'git push --tags origin',
-                        'git push --delete origin x', 'git push origin a b', 'git reset --hard',
-                        'git clean -f', 'git branch -D x', 'git add -A', 'git commit -a -m x',
+                        'git push origin a b', 'git reset --hard',
+                        'git clean -f', 'git add -A', 'git commit -a -m x',
                         'git checkout .', 'git checkout -f x', 'git restore .']:
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).klass, 'deny')
@@ -664,6 +675,188 @@ def run_main(payload, *args, env=None):
 
 def git(cwd, *args):
     return subprocess.check_output(['git', '-C', str(cwd), *args], stderr=subprocess.PIPE, text=True).strip()
+
+
+class MergedDeleteHookTest(unittest.TestCase):
+    """SPEC 5.14 item 4: a merged-delete command is checked in Python against merge evidence, whatever the autonomy state."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name).resolve()
+        self.origin = root / 'origin.git'
+        git(root, 'init', '-q', '--bare', '-b', 'main', str(self.origin))
+        self.repo = root / 'work'
+        git(root, 'clone', '-q', str(self.origin), str(self.repo))
+        for key, value in (('user.name', 'T'), ('user.email', 't@example.invalid')):
+            git(self.repo, 'config', key, value)
+        git(self.repo, 'checkout', '-q', '-b', 'main')
+        self.commit('base.txt', 'base\n')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        git(self.repo, 'remote', 'set-head', 'origin', 'main')
+
+    def commit(self, name, text):
+        (self.repo / name).write_text(text)
+        git(self.repo, 'add', name)
+        git(self.repo, 'commit', '-q', '-m', name)
+
+    def side(self, branch, name, text, start='main'):
+        """A branch off `start` with one commit; HEAD returns to main."""
+        git(self.repo, 'checkout', '-q', '-b', branch, start)
+        self.commit(name, text)
+        git(self.repo, 'checkout', '-q', 'main')
+
+    def land_squash(self, branch):
+        git(self.repo, 'merge', '-q', '--squash', branch)
+        git(self.repo, 'commit', '-q', '-m', 'squash ' + branch)
+        git(self.repo, 'push', '-q', 'origin', 'main')
+
+    def run_hook(self, command, **kw):
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo)}
+        return handle_event('PreToolUse', payload, harness='claude', **kw)
+
+    def assertAllowed(self, command, **kw):
+        result = self.run_hook(command, **kw)
+        self.assertEqual(result.output, {}, command)
+
+    def assertDenied(self, command, text, **kw):
+        result = self.run_hook(command, **kw)
+        self.assertEqual(decision_of(result), 'deny', command)
+        self.assertIn(text, result.output['hookSpecificOutput']['permissionDecisionReason'])
+
+    def is_ancestor(self, tip, ref):
+        return subprocess.run(['git', '-C', str(self.repo), 'merge-base', '--is-ancestor', tip, ref]).returncode == 0
+
+    def test_merged_delete_allows_ancestor_branch(self):
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.assertTrue(self.is_ancestor('x', 'origin/main'))
+        self.assertAllowed('git branch -D x')
+
+    def test_merged_delete_allows_squash_tree_equal_branch(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.land_squash('x')
+        self.assertFalse(self.is_ancestor('x', 'origin/main'))
+        self.assertEqual(git(self.repo, 'rev-parse', 'x^{tree}'), git(self.repo, 'rev-parse', 'origin/main^{tree}'))
+        self.assertAllowed('git branch -D x')
+
+    def test_merged_delete_allows_branch_covered_by_tree_equal_branch(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.side('cover', 'cover.txt', 'c\n', start='x')
+        self.land_squash('cover')
+        self.assertFalse(self.is_ancestor('x', 'origin/main'))
+        self.assertNotIn(git(self.repo, 'rev-parse', 'x^{tree}'),
+                         git(self.repo, 'rev-list', '--first-parent', '--format=%T', 'origin/main').split())
+        self.assertAllowed('git branch -D x')
+        # The evidence is read afresh at each delete: without the covering branch the same tip is unmerged.
+        git(self.repo, 'branch', '-q', '-D', 'cover')
+        self.assertDenied('git branch -D x', 'Branch x is not merged into origin/main')
+
+    def test_merged_delete_denies_unmerged_branch(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.assertDenied('git branch -D x',
+                          'Branch x is not merged into origin/main (no ancestor, tree or covering-branch evidence)')
+        self.assertDenied('git branch --delete --force x', 'Branch x is not merged into origin/main')
+        self.assertDenied('git branch -D missing', 'does not exist')
+        git(self.repo, 'branch', 'y', 'main')
+        git(self.repo, 'checkout', '-q', 'y')
+        self.assertDenied('git branch -D y', 'checked out')
+        git(self.repo, 'checkout', '-q', 'main')
+        self.assertDenied('git branch -D main', 'default branch')
+        self.assertDenied('git push --delete origin main', 'default branch')
+
+    def test_merged_delete_unresolvable_default_denies(self):
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'remote', 'remove', 'origin')
+        git(self.repo, 'branch', '-q', '-m', 'main', 'trunk')
+        self.assertDenied('git branch -D x', 'cannot be resolved')
+
+    def test_merged_delete_checked_with_autonomy_off_and_no_engine(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.assertDenied('git branch -D x', 'is not merged')  # engine None
+        engine = mock.Mock()
+        engine.autonomy_active.return_value = False
+        self.assertDenied('git branch -D x', 'is not merged', engine=engine, armed=True)  # armed run, autonomy off
+        self.assertDenied('git branch -D x', 'is not merged', armed=True, autonomy=False)  # state unloadable, autonomy off
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.assertAllowed('git branch -D x', engine=engine, armed=True)
+
+    def test_merged_delete_denied_under_autonomy(self):
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.assertAllowed('git branch -D x')  # merged: the autonomy-off verdict
+        engine = mock.Mock()
+        engine.autonomy_active.return_value = True
+        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', engine=engine, armed=True)
+        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', armed=True, autonomy=True)
+        flaky = mock.Mock()
+        flaky.autonomy_active.side_effect = RuntimeError('state changed')  # O29: an unreadable status counts as active
+        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', engine=flaky, armed=True)
+
+    def remote_branch(self):
+        """A branch x merged into main and pushed, so origin and the tracking ref both carry it."""
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'push', '-q', 'origin', 'x')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+
+    def test_remote_delete_allowed_when_merged_and_ls_remote_matches(self):
+        self.remote_branch()
+        self.assertAllowed('git push origin --delete x')
+        self.assertAllowed('git push origin -d x')
+
+    def test_remote_delete_denied_when_ls_remote_differs_or_times_out(self):
+        self.remote_branch()
+        # Moved tip: another clone advanced origin/x after our last fetch.
+        other = Path(self.temp.name) / 'other'
+        git(Path(self.temp.name), 'clone', '-q', str(self.origin), str(other))
+        for key, value in (('user.name', 'T'), ('user.email', 't@example.invalid')):
+            git(other, 'config', key, value)
+        git(other, 'checkout', '-q', 'x')
+        (other / 'late.txt').write_text('late\n')
+        git(other, 'add', 'late.txt')
+        git(other, 'commit', '-q', '-m', 'late')
+        git(other, 'push', '-q', 'origin', 'x')
+        self.assertDenied('git push origin --delete x', 'does not report x at the tracking tip')
+        git(self.repo, 'fetch', '-q', 'origin')
+        # The fetched tip carries the late commit: the ls-remote check passes and the merge evidence now fails.
+        self.assertDenied('git push origin --delete x', 'Branch x is not merged into origin/main')
+
+    def test_remote_delete_unreachable_remote_denied(self):
+        self.remote_branch()
+        probe = socket.socket()
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+        probe.close()  # nothing listens: connection refused
+        git(self.repo, 'remote', 'set-url', 'origin', f'git://127.0.0.1:{port}/r.git')
+        self.assertDenied('git push origin --delete x', 'does not report x at the tracking tip')
+
+    def test_remote_delete_denied_when_the_remote_hangs(self):
+        self.remote_branch()
+        server = socket.socket()
+        server.bind(('127.0.0.1', 0))
+        server.listen(4)
+        self.addCleanup(server.close)
+        held = []
+
+        def accept():
+            try:
+                while True:
+                    held.append(server.accept()[0])  # accept, never answer
+            except OSError:
+                pass
+
+        threading.Thread(target=accept, daemon=True).start()
+        git(self.repo, 'remote', 'set-url', 'origin', f'git://127.0.0.1:{server.getsockname()[1]}/r.git')
+        start = time.monotonic()
+        self.assertDenied('git push origin --delete x', 'does not report x at the tracking tip')
+        self.assertLess(time.monotonic() - start, 9)
+        for conn in held:
+            conn.close()
 
 
 class MarkerHandshakeTest(unittest.TestCase):

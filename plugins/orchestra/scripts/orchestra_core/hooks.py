@@ -189,11 +189,17 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     klass = decision.klass
     if klass == 'deny':
         return _deny(decision.reason, decision.category == 'malformed')
-    if (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy):
+    active = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
+    if decision.category == 'merged-delete':
+        # SPEC 5.14 item 4: before the autonomy-off allow, and with or without an engine.
+        denied = _merged_delete_check(decision, cwd, active)
+        if denied:
+            return HookResult(denied)
+    if active:
         # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
         if klass in {'release', 'release-multi'}:
             return _deny('Autonomy is active: ' + _PARK_HINT)
-        if decision.category == 'boundary' and decision.boundary == 'delete':
+        if decision.boundary == 'delete':
             return _deny('Approval boundary under autonomy: ' + _PARK_HINT)
         if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
             return _deny('Approval boundary under autonomy: no merge on the default branch. ' + _PARK_HINT)
@@ -267,6 +273,103 @@ def _report_context(engine):
         return ''
     return ' Autonomy report (' + str(report.get('reason')) + '): ' + report['text'][:2000] \
         + ' Full report: ' + str(report.get('path')) + '.'
+
+
+def _git_out(repo, *args, timeout=10):
+    """(returncode, stdout) of a git command in repo; a spawn error or timeout is (1, '') so callers fail closed."""
+    try:
+        done = subprocess.run(['git', '-C', str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+        return done.returncode, done.stdout.decode(errors='replace').strip()
+    except (OSError, subprocess.SubprocessError):
+        return 1, ''
+
+
+def _first_parent_trees(repo, default):
+    """The trees of the first-parent commits of default, at most 2000 (one rev-list call)."""
+    code, out = _git_out(repo, 'rev-list', '--first-parent', '-n2000', '--format=%T', default, timeout=30)
+    return {line for line in out.splitlines() if line and not line.startswith('commit ')} if code == 0 else set()
+
+
+def _branch_merged(repo, tip, default):
+    """SPEC 5.14 item 4.5: tip is an ancestor of default, or its tree is a first-parent tree of default,
+    or tip is an ancestor of a local or remote-tracking ref whose tree is (evaluated afresh at each delete)."""
+    if _git_out(repo, 'merge-base', '--is-ancestor', tip, default)[0] == 0:
+        return True
+    trees = _first_parent_trees(repo, default)
+    if not trees:
+        return False
+    code, tree = _git_out(repo, 'rev-parse', '--verify', '--quiet', tip + '^{tree}')
+    if code == 0 and tree in trees:
+        return True
+    code, out = _git_out(repo, 'for-each-ref', '--contains', tip, '--format=%(refname)%09%(tree)', 'refs/heads', 'refs/remotes', timeout=30)
+    if code != 0:
+        return False
+    return any(line.partition('\t')[2] in trees for line in out.splitlines() if '\t' in line)
+
+
+def _remote_tip_matches(repo, remote, branch):
+    """SPEC 5.14 item 4.4: `git ls-remote` reports the branch at the remote-tracking tip. Prompts are off and
+    the call has a 3 s limit; any failure, timeout or difference is False."""
+    code, tracking = _git_out(repo, 'rev-parse', '--verify', '--quiet', 'refs/remotes/%s/%s' % (remote, branch))
+    if code != 0 or not tracking:
+        return False
+    env = dict(os.environ, GIT_TERMINAL_PROMPT='0')
+    try:
+        proc = subprocess.Popen(['git', '-C', str(repo), 'ls-remote', remote, 'refs/heads/' + branch], env=env,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                start_new_session=True)
+    except OSError:
+        return False
+    try:
+        out, _ = proc.communicate(timeout=3)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, 9)
+        except OSError:
+            pass
+        proc.communicate()
+        return False
+    if proc.returncode != 0:
+        return False
+    rows = [line.split() for line in out.decode(errors='replace').splitlines() if line.strip()]
+    return len(rows) == 1 and len(rows[0]) == 2 and rows[0][0] == tracking and rows[0][1] == 'refs/heads/' + branch
+
+
+def _merged_delete_check(decision, cwd, autonomy):
+    """SPEC 5.14 item 4: a deny payload for a merged-delete that is not safe, else None."""
+    if autonomy:
+        return _deny('Approval boundary under autonomy: ' + _PARK_HINT).output
+    branch, remote = decision.branch, decision.remote if decision.kind == 'remote' else None
+    if not branch:
+        return _deny('Branch deletion must run plainly in the session repository').output
+    if remote and _git_out(cwd, 'config', '--get', 'remote.%s.url' % remote)[1] == '':
+        return _deny('Remote %s is not configured' % remote).output
+    default = None
+    heads = ['refs/remotes/%s/HEAD' % remote, '%s/main' % remote] if remote else ['refs/remotes/origin/HEAD', 'origin/main', 'main']
+    for ref in heads:
+        code, target = _git_out(cwd, 'rev-parse', '--verify', '--quiet', ref + '^{commit}')
+        if code == 0 and target:
+            name = _git_out(cwd, 'symbolic-ref', '--short', ref)[1] if ref.endswith('/HEAD') else ref
+            default = name or ref
+            break
+    if default is None:
+        return _deny('The default branch cannot be resolved; refusing to delete %s' % branch).output
+    prefix = (remote or 'origin') + '/'
+    if branch == (default[len(prefix):] if default.startswith(prefix) else default):
+        return _deny('Branch %s is the default branch' % branch).output
+    code, current = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'HEAD')
+    if code == 0 and current == branch:
+        return _deny('Branch %s is checked out' % branch).output
+    tracking = 'refs/remotes/%s/%s' % (remote, branch) if remote else 'refs/heads/' + branch
+    code, tip = _git_out(cwd, 'rev-parse', '--verify', '--quiet', tracking + '^{commit}')
+    if code != 0 or not tip:
+        return _deny('Branch %s does not exist' % branch).output
+    if remote and not _remote_tip_matches(cwd, remote, branch):
+        return _deny('Remote %s does not report %s at the tracking tip' % (remote, branch)).output
+    if not _branch_merged(cwd, tip, default):
+        return _deny('Branch %s is not merged into %s (no ancestor, tree or covering-branch evidence)' % (branch, default)).output
+    return None
 
 
 def _on_default_branch(cwd):

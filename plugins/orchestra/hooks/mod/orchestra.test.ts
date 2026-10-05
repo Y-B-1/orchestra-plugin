@@ -102,6 +102,22 @@ test('tool.call: a delegated allow reaches the tool', async ($, on) => {
   expect(b.calls.length).toBe(1);
 });
 
+test('merged-delete is delegated', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  r.runAnswer = () => ({ exitCode: 0, stdout: deny('Branch x is not merged into origin/main (no ancestor, tree or covering-branch evidence)') });
+  await $.session.start(start);
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git branch -D x' });
+  expect(res).toEqual({ deny: 'Branch x is not merged into origin/main (no ancestor, tree or covering-branch evidence)' } as never);
+  expect(b.calls.length).toBe(0);
+  const stdin = JSON.parse(r.runs.at(-1)!.init!.stdin!);
+  expect(stdin.tool_input.command).toBe('git branch -D x');
+  r.runAnswer = () => ({ exitCode: 0, stdout: '{}' });
+  const ok = await $.tool.call({ tool: 'Bash', tool_use_id: 't2', command: 'git push origin --delete x' });
+  expect('deny' in ok).toBe(false);
+  expect(b.calls.length).toBe(1);
+});
+
 test('tool.call: delegation fails closed on a bad exit, bad JSON or a thrown run', async ($, on) => {
   const r = rig(on);
   const b = bottom(on, r);

@@ -69,6 +69,8 @@ class Decision:
     argv: tuple[str, ...] = ()
     source: str | None = None
     boundary: str | None = None  # 'delete' or 'merge' for class boundary; action stays allow.
+    kind: str | None = None  # category merged-delete only: 'local' or 'remote' (SPEC 5.14).
+    branch: str | None = None  # category merged-delete only: the one branch the command deletes.
 
     @property
     def klass(self):
@@ -431,6 +433,44 @@ def _boundary(kind, reason):
     return Decision('allow', reason, 'boundary', boundary=kind)
 
 
+_MERGED = 'merged-delete'
+_BRANCH_NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._/+-]*')
+_REMOTE_NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._-]*')
+_PLAIN_REASON = 'Branch deletion must run plainly in the session repository'
+_SEPARATE_REASON = 'Execute branch deletions separately'
+
+
+def _merged_delete(verb, options, flags, short, words, changed_repo, raw):
+    """SPEC 5.14 item 1: the exact merged-delete shapes, else None. `options` is what precedes `--`
+    with abbreviated long options spelled in full (5.15). A shape has one branch positional and no other option."""
+    if len(raw) != len(options):
+        return None  # A value option and its value were read away: not a bare delete.
+    positional = [x for x in options if not x.startswith('-')]
+    shorts = set(short)
+    flags = {x for x in flags if x.startswith('--')}
+    if verb == 'branch':
+        if not (flags <= {'--delete', '--force'} and shorts <= {'D', 'd', 'f'} and len(positional) == 1):
+            return None
+        if not (('D' in shorts or 'd' in shorts or '--delete' in flags) and
+                ('D' in shorts or 'f' in shorts or '--force' in flags)):
+            return None
+        remote, branch, kind = None, positional[0], 'local'
+    elif verb == 'push':
+        if not (flags == {'--delete'} or (not flags and shorts == {'d'})) or shorts - {'d'} or len(positional) != 2:
+            return None
+        remote, branch, kind = positional[0], positional[1], 'remote'
+        if not _REMOTE_NAME.fullmatch(remote):
+            return None
+    else:
+        return None
+    if not _BRANCH_NAME.fullmatch(branch):
+        return None
+    if changed_repo:
+        return _deny(_PLAIN_REASON)
+    return Decision('allow', 'Deletion is a boundary action', _MERGED, remote, None, tuple(words),
+                    boundary='delete', kind=kind, branch=branch)
+
+
 def _long_prefix(verb, token, guarded):
     """The guarded long option of `verb` that `token` abbreviates (its part before `=` is a non-empty strict
     prefix of it; the first match wins, so list guarded options most restrictive first), else None."""
@@ -491,6 +531,9 @@ def _git(words):
     if verb == 'clean' and ('f' in short or '--force' in flags) and not ('n' in short or '--dry-run' in flags):
         return _deny('Forced clean discards files')
     if verb == 'branch' and ('D' in short or (('d' in short or '--delete' in flags) and ('f' in short or '--force' in flags))):
+        merged = '--' not in args and _merged_delete(verb, options, flags, short, words, changed_repo, args)
+        if merged:
+            return merged
         return _deny('Forced branch deletion discards refs')
     wholesale = '.' in args or ':/' in args
     if verb == 'checkout' and (wholesale or '--force' in flags or 'f' in short):
@@ -516,6 +559,9 @@ def _git(words):
             return _deny('Force push rewrites remote history')
         dry_run = '--dry-run' in flags or 'n' in short
         positional = [x for x in options if not x.startswith('-')]
+        if (('--delete' in flags or 'd' in short) and not dry_run and '--' not in args and
+                (merged := _merged_delete(verb, options, flags, short, words, changed_repo, args))):
+            return merged
         if len(positional) > 2 or any(x in flags for x in _GIT['push_multi_flags']) or 'd' in short:
             return _deny('Push needs one explicit remote and refspec', 'release')
         remote, target = (positional + [None, None])[:2]
@@ -1836,6 +1882,16 @@ def _classify_command(command, _depth):
     if releases:
         # A prior cd/env or nested shell must not inherit a plain Git permit.
         return replace(releases[0][0], argv=tuple(releases[0][1]))
+    merged = [o for d, o, _ in items if d.category == _MERGED]
+    if merged:
+        # SPEC 5.14 item 2: a merged-delete stands alone and runs plainly, or the whole command denies.
+        words = list(merged[0])
+        plain = words[:1] == ['git'] and not any('$(' in word or '`' in word for word in words)
+        if len(items) > 1:
+            substituted = any('$(' in word or '`' in word for _, o, _ in items for word in o)
+            return _deny(_PLAIN_REASON if substituted else _SEPARATE_REASON)
+        if not plain:
+            return _deny(_PLAIN_REASON)
     for kind in ('delete', 'merge'):
         for decision, _, _ in items:
             if decision.boundary == kind:
