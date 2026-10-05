@@ -450,11 +450,17 @@ def _merged_delete_check(decision, cwd, autonomy):
     code, current = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'HEAD')
     if code == 0 and fold(current) == fold(branch):
         return _deny('Branch %s is checked out' % branch).output
-    tracking = 'refs/remotes/%s/%s' % (remote, branch) if remote else 'refs/heads/' + branch
-    # for-each-ref matches case-exactly: rev-parse alone would resolve a case variant to another branch's tip.
-    if _git_out(cwd, 'for-each-ref', '--format=%(refname)', tracking)[1] != tracking:
+    namespace = 'refs/remotes/%s/' % remote if remote else 'refs/heads/'
+    tracking = namespace + branch
+    # The tip comes from the exact listed row: rev-parse would resolve a case variant to another branch's tip,
+    # and with a case twin (FC3) git deletes both refs, so a twin is never deleted whatever core.ignorecase says.
+    code, listing = _git_out(cwd, 'for-each-ref', '--format=%(refname)%09%(objectname)', namespace)
+    rows = dict(line.split('\t', 1) for line in listing.splitlines() if '\t' in line) if code == 0 else {}
+    if tracking not in rows:
         return _deny('Branch %s does not exist' % branch).output
-    code, tip = _git_out(cwd, 'rev-parse', '--verify', '--quiet', tracking + '^{commit}')
+    if any(ref != tracking and ref.casefold() == tracking.casefold() for ref in rows):
+        return _deny('Branch %s has a case-variant twin; refusing to delete' % branch).output
+    code, tip = _git_out(cwd, 'rev-parse', '--verify', '--quiet', rows[tracking] + '^{commit}')
     if code != 0 or not tip:
         return _deny('Branch %s does not exist' % branch).output
     if remote and not _remote_tip_matches(cwd, remote, branch):

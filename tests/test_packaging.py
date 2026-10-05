@@ -105,6 +105,11 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(len(set(versions.values())), 1, versions)
         self.assertEqual(set(versions.values()), {'2.2.0'})
 
+    def test_changelog_first_heading_matches_version(self):
+        version = json.loads((PLUGIN / 'plugin.json').read_text())['version']
+        heading = next(line for line in (ROOT / 'CHANGELOG.md').read_text().splitlines() if line.startswith('## '))
+        self.assertTrue(heading[3:].startswith(version), heading)
+
     def test_mod_files_exist(self):
         claude = json.loads((PLUGIN / '.claude-plugin/plugin.json').read_text())
         self.assertEqual(claude['hooks'], ['./hooks/claude.json', './hooks/mods.json'])

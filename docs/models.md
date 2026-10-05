@@ -12,7 +12,7 @@ Source of truth: `plugins/orchestra/config/models.json`. This page describes it.
 | designer-planner (design, plan, product) | claude-opus-5-5 | high | `designer-planner.md` |
 | critic (all modes) | claude-opus-5-5 | high | `critic.md` |
 | builder: implementation, frontend, sensitive, mechanical, cleanup | claude-sonnet-5-5 | medium | `builder.md` |
-| builder repair | claude-opus-5-5 | medium | none; round 4 only, by dispatch-time model override (`"dispatch": "override"`); rounds 1 to 3 use the builder default (Sonnet medium) |
+| builder repair | claude-opus-5-5 | medium | none; by dispatch-time model override (`"dispatch": "override"`). The ladder is a Sonnet build, one Opus `repair`, then the card is held (work stays in place, held log, the run continues); the final repair loop has no round cap |
 | code-reviewer final | claude-opus-5-5 | high | `code-reviewer.md` |
 | code-reviewer checkpoint | claude-opus-5-5 | medium | `code-reviewer-checkpoint.md` |
 | code-reviewer standards lens | claude-sonnet-5-5 | medium | `code-reviewer-standards.md` |
