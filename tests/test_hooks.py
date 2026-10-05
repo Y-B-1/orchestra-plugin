@@ -1438,6 +1438,82 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertIn('park', reason)
         self.assertIn('--reason', reason)
 
+    def test_pretooluse_armed_without_session_under_relaunch(self):
+        self.ledger()
+        self.engine.arm_autonomy(relaunch=True)
+        self.engine.interrupt('main', self.lease)  # between passes: no active session, relaunch autonomy stays armed
+        self.assertFalse(self.engine.status()['session']['active'])
+        for command in ['git worktree remove x', 'rm -rf build']:
+            with self.subTest(command=command):
+                code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                decision = output['hookSpecificOutput']
+                self.assertEqual(decision['permissionDecision'], 'deny')
+                self.assertIn('Approval boundary under autonomy', decision['permissionDecisionReason'])
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')  # no session: no release, fail closed
+        self.assertIsNone(self.hook(self.repo, 'git status'))
+
+    def test_pretooluse_without_session_and_without_relaunch_stays_unarmed(self):
+        self.ledger()
+        self.engine.arm_autonomy()
+        self.engine.interrupt('main', self.lease)  # 2.1: a session end clears in-session autonomy
+        self.assertIsNone(self.hook(self.repo, 'git worktree remove x'))
+
+    def test_pretooluse_relaunch_armed_with_an_unloadable_state_is_active_without_a_session(self):
+        self.ledger()
+        self.engine.arm_autonomy(relaunch=True)
+        self.engine.interrupt('main', self.lease)
+        data = json.loads((self.state / 'state.json').read_text())
+        data['policy'] = 'changed'  # the engine cannot load this state any more
+        (self.state / 'state.json').write_text(json.dumps(data))
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git worktree remove x'}})
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_stop_without_session_under_relaunch_changes_nothing(self):
+        self.ledger()
+        self.engine.arm_autonomy(relaunch=True)
+        self.engine.interrupt('main', self.lease)
+        before = (self.state / 'state.json').read_bytes()
+        with mock.patch('sys.stdin', io.StringIO(json.dumps({'cwd': str(self.repo), 'session_id': 'other'}))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as output:
+            self.assertEqual(main(['Stop']), 0)
+        self.assertEqual(json.loads(output.getvalue()), {})
+        self.assertEqual(before, (self.state / 'state.json').read_bytes())
+
+    def test_pretooluse_preauthorized_release_reaches_permit_check(self):
+        from orchestra_core.engine import Engine
+        unit = [sys.executable, '-c', 'print("passed")']
+        policy = {'schema_version': 1, 'required_checks': [{'name': 'unit', 'argv': unit}],
+                  'release': {'enabled': True, 'authorization': 'user request', 'remote': 'origin', 'target': 'side',
+                              'argv': ['git', 'push', 'origin', 'side']}}
+        (self.state / 'state.json').unlink()
+        (self.state / 'policy.json').write_text(json.dumps(policy))
+        self.engine = Engine(self.state, self.repo, policy=policy, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main')
+        categories = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
+        report = self.root / 'final.json'
+        report.write_text(json.dumps(dict(reviewer='reviewer', categories=categories, tasks=[], findings=[], issues=[], final=True,
+                                          verdict='CLEAN', artifact=self.engine.artifact(),
+                                          summary='Behavior checked against acceptance criteria.')))
+        self.engine.record_review('main', self.lease, 'reviewer', report, categories, final=True)
+        self.engine.run_gate('main', self.lease, 'unit', unit)
+        push = ['git', 'push', 'origin', 'side']
+        self.fixed = [('- Release: pre-authorized origin side' if line.startswith('- Release:') else line) for line in self.fixed]
+        self.arm()
+        self.assertEqual(self.engine.status()['autonomy']['release'], {'remote': 'origin', 'target': 'side'})
+        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'deny')  # exact pair, no permit yet: the permit check
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
+        self.assertIn('No current explicit release permit', output['hookSpecificOutput']['permissionDecisionReason'])
+        self.engine.release_permit('main', self.lease, 'origin', 'side')
+        self.assertIsNone(self.hook(self.repo, ' '.join(push)))  # exact pair with a permit: allowed
+        for command in ['git push origin other', 'git push origin side && git status', 'rm -rf build']:
+            with self.subTest(command=command):
+                code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                decision = output['hookSpecificOutput']
+                self.assertEqual(decision['permissionDecision'], 'deny')
+                self.assertTrue(decision['permissionDecisionReason'].startswith(('Autonomy is active: ', 'Approval boundary under autonomy')),
+                                decision['permissionDecisionReason'])
+
     def test_release_is_denied_while_active_even_with_a_permit(self):
         from orchestra_core.engine import Engine
         unit = [sys.executable, '-c', 'print("passed")']
