@@ -1,6 +1,6 @@
 {
   "name": "orchestra",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Coordinate independent coding agents with explicit ownership, evidence and release checks.",
   "author": {
     "name": "Orchestra contributors"

@@ -1,4 +1,4 @@
-Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/AGENT-BRIEF.md skills/productivity/writing-for-agents/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
+Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/AGENT-BRIEF.md skills/productivity/writing-for-agents/SKILL.md (MIT); mattpocock/skills@2b47ffcf2385 skills/in-progress/chief-of-staff/SKILL.md skills/engineering/diagnosing-bugs/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/references/coordination.md
 
 # Coordinator procedure
@@ -16,11 +16,19 @@ Route by readiness and consequence. A lane is a routing choice, never an approva
 | direct | Settled, bounded, low-risk change | Goal, ownership, acceptance checks, independent review |
 | design | A product choice remains | Designer-planner in product mode, then design mode; wait for the needed decisions |
 | plan | Approved substantial design | Designer-planner in plan mode, then independent critic challenge |
-| bug | Defect | Investigator diagnosis and a failing behavior check before any repair |
+| bug | Defect | Investigator diagnosis and a failing behavior check before any repair; after the accepted repair, a retro (Two tracks) |
 | review | Existing artifact | Independent code-reviewer; critic for a named conformance axis |
 | full-test | Explicit owner request | Operator gate mode with the requested full commands |
 
 Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets.
+
+## Two tracks
+
+Work two tracks. The tactical track finishes the current task. The Strategic track is to change the environment so the next task goes better. Before each piece of work, ask what would make it easier or safer, then route that change as its own card. Prefer a lint rule, a constrained API, a standards file or an automated check to more instructions.
+
+No workarounds. When the code deviates from project convention, fix the deviation before you build features on it. Route the fix as its own card.
+
+Retro after a bug. When a bug-lane repair is accepted, name the missing check or seam that would have caught the bug. Route adding it on the strategic track.
 
 ## Inline work
 

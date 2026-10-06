@@ -1,4 +1,4 @@
-Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/productivity/handoff/SKILL.md (MIT); garrytan/gstack@4015c2870b06 context-save/SKILL.md context-restore/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
+Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md (MIT); mattpocock/skills@2b47ffcf2385 skills/productivity/handoff/SKILL.md (MIT); garrytan/gstack@4015c2870b06 context-save/SKILL.md context-restore/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/references/handoff.md
 
 # Progress ledger, resume and handoff
@@ -22,7 +22,7 @@ Re-inspect the artifact before accepting a report from before the interruption.
 
 ## Handoff
 
-Write a handoff for a fresh agent into the temporary directory, outside the workspace. Use named sections:
+Write a handoff for a fresh agent into `$TMPDIR`, else `/tmp` (`%TEMP%` on Windows), outside the workspace. Use named sections:
 
 - Goal and current lane
 - Decisions made, each with its reason
