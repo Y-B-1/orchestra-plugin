@@ -2,6 +2,15 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.3.0 — 2026-10-06
+
+Four small items folded from mattpocock/skills at 2b47ffcf2385 (second pin; credited in `plugins/orchestra/THIRD-PARTY-NOTICES`).
+
+- **Strategic track:** the coordinator works a tactical track (finish the task) and a strategic track (change the environment so the next task goes better: a lint rule, a constrained API, a standards file or a check, not more instructions). `coordination.md`, section Two tracks.
+- **No workarounds:** a deviation from project convention is fixed, as its own card, before feature work builds on it.
+- **Bug-lane retro:** after an accepted repair, name the missing check or seam that would have caught the bug and route adding it.
+- **Handoff directory:** `handoff.md` names the temporary directory: `$TMPDIR`, else `/tmp` (`%TEMP%` on Windows).
+
 ## 2.2.0 — 2026-10-05
 
 The full change set is `docs/SPEC-v2.2.md` section 5; each item below names its section.

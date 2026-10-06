@@ -47,6 +47,11 @@
     "overrides Push and Engine-gated actions for that remote and target only",
     "ready to release",
     "an explicit release assignment from the user, before or after the brief, counts",
-    "Held / next phase"
+    "Held / next phase",
+    "Strategic track",
+    "change the environment so the next task goes better",
+    "No workarounds",
+    "name the missing check or seam that would have caught the bug",
+    "`$TMPDIR`, else `/tmp`"
   ]
 }
