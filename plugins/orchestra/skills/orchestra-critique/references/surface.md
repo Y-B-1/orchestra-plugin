@@ -8,6 +8,7 @@ Audit a surface that has already shipped. Find and report; never fix. Write no t
 ## Method
 
 1. Walk each named live surface through the user's real path, from the entry point the user actually uses. Take the common journey first, then failure and empty states.
+   If you have no browser tool, say so, walk what Bash and WebFetch can reach, and list each surface you could not observe as UNKNOWN with the capture the coordinator must supply.
 2. Judge each surface in place, inside the host page with its real data and density. A surface seen alone always looks fine.
 3. Compare the depth built with the approved ask, and with named reference products that offer the same feature. Cite each reference concretely. Never substitute unnamed best practice.
 4. Record blockers, dead ends and missing affordances. Give each finding steps to reproduce it and the evidence you collected: a screenshot, a recorded observation or a command output.

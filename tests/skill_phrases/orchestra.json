@@ -27,7 +27,7 @@
     "single Agent dispatch",
     "default whenever the host has the Workflow tool",
     "reserve every card before the script",
-    "agentType: 'orchestra:",
+    "`orchestra:<role>-<mode>` when that file exists",
     "isolation: 'worktree'",
     "never approves its own implementation",
     "Plugin root",

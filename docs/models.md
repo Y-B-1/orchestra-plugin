@@ -24,7 +24,7 @@ The orchestrator row is the user's selection: the model and effort picked in the
 
 ## Tool restrictions
 
-Every worker file carries a `tools:` allowlist from `config/roles.json`. Builders get `Read, Edit, Write, Bash`; designer-planner adds `WebFetch, WebSearch`; operator gets `Read, Write, Bash`; critic, code-reviewer and investigator code get `Read, Bash`; investigator docs gets `Read, Bash, WebFetch, WebSearch`. The allowlist keeps unused tool definitions, MCP servers and the installed-skill listing out of each worker's context. See docs/roles.md.
+Every worker file carries a `tools:` allowlist from `config/roles.json`. Builders get `Read, Edit, Write, Bash`; designer-planner adds `WebFetch, WebSearch`; operator gets `Read, Write, Bash`; code-reviewer and investigator code get `Read, Bash`; critic gets `Read, Bash, WebFetch, WebSearch`; investigator docs gets `Read, Bash, WebFetch, WebSearch`. The allowlist keeps unused tool definitions, MCP servers and the installed-skill listing out of each worker's context. See docs/roles.md.
 
 ## Notes
 
@@ -34,10 +34,10 @@ Each worker agent file pins both model and reasoning effort. Hold settings const
 
 | v1 role | v2 role | Model change |
 | --- | --- | --- |
-| founder-mind, red-teamer, auditor | designer-planner, critic | none (Opus high) |
+| founder-mind, red-teamer, auditor | designer-planner, critic | designer-planner Sonnet high; critic Opus high |
 | builder-repair | builder repair | dispatch override, no file |
-| gatekeeper, releaser | operator gate, release | none (Sonnet medium) |
-| janitor | operator cleanup | none |
+| gatekeeper, releaser | operator gate, release | Haiku high |
+| janitor | operator cleanup | Haiku high |
 
 ## Fast mode
 

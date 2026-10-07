@@ -89,10 +89,13 @@ def generated(root=ROOT):
             front = ['---', f'name: {name}', f"description: {json.dumps(role['description'] + mode_note(role['id'], preset))}",
                      *selection_lines(values), f"skills: [{', '.join(preload)}]"]
             if not orchestrator:
-                tools = role.get('preset_tools', {}).get(preset, role['tools'])
-                if role.get('read_only') and set(tools) & WRITE_TOOLS:
+                tools = role.get('preset_tools', {}).get(preset, role.get('tools'))
+                if not tools:
+                    raise ValueError(f"{name}: worker needs a non-empty tools allowlist")
+                bases = {tool.split('(')[0].strip() for tool in tools}
+                if role.get('read_only') and bases & WRITE_TOOLS:
                     raise ValueError(f"{name}: read-only role lists a write tool")
-                if set(tools) & {'Agent', 'Task'}:
+                if bases & {'Agent', 'Task'}:
                     raise ValueError(f"{name}: workers never delegate")
                 front.append(f"tools: {', '.join(tools)}")
             front += ['---', '', instructions.replace('__ORCHESTRA_ROOT__', '${CLAUDE_PLUGIN_ROOT}')]

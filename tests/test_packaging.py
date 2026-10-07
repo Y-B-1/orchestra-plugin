@@ -42,16 +42,21 @@ class NativeTests(unittest.TestCase):
             if name.startswith(read_only):
                 self.assertFalse(tools & {'Edit', 'Write', 'NotebookEdit'}, name)
 
-    def test_generate_refuses_write_tool_on_read_only_role(self):
+    def test_generate_refuses_bad_tool_allowlists(self):
         roles = json.loads((PLUGIN / 'config/roles.json').read_text())
-        critic = next(r for r in roles['roles'] if r['id'] == 'critic')
-        critic['tools'] = ['Read', 'Edit']
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp) / 'orchestra'
-            shutil.copytree(PLUGIN, root, ignore=shutil.ignore_patterns('agents'))
-            (root / 'config/roles.json').write_text(json.dumps(roles))
-            with self.assertRaisesRegex(ValueError, 'read-only role lists a write tool'):
-                generate.generated(root)
+        cases = [('critic', 'tools', ['Read', 'Edit'], 'read-only role lists a write tool'),
+                 ('builder', 'tools', ['Read', 'Agent(Explore)'], 'workers never delegate'),
+                 ('investigator', 'preset_tools', {'code': ['Read', 'Task']}, 'workers never delegate'),
+                 ('operator', 'tools', [], 'non-empty tools allowlist')]
+        for role_id, key, value, message in cases:
+            changed = json.loads(json.dumps(roles))
+            next(r for r in changed['roles'] if r['id'] == role_id)[key] = value
+            with self.subTest(role_id), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp) / 'orchestra'
+                shutil.copytree(PLUGIN, root, ignore=shutil.ignore_patterns('agents', '__pycache__'))
+                (root / 'config/roles.json').write_text(json.dumps(changed))
+                with self.assertRaisesRegex(ValueError, message):
+                    generate.generated(root)
 
     def test_standards_preset_is_sonnet_medium_variant_file(self):
         path = PLUGIN / 'agents/code-reviewer-standards.md'

@@ -86,7 +86,9 @@
       ],
       "tools": [
         "Read",
-        "Bash"
+        "Bash",
+        "WebFetch",
+        "WebSearch"
       ]
     },
     {

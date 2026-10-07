@@ -11,7 +11,7 @@ Each brief is focused and self-contained, names one output and its constraints, 
 
 ## Workflow script
 
-Each `agent()` call sets `agentType: 'orchestra:<role>'`, the effort from the model matrix, and a brief whose first lines carry the `Mode:` line. Concurrent editors set `isolation: 'worktree'` (references/worktrees.md). The script holds no coordinator state: reserve every card before the script and record every report after it.
+Each `agent()` call sets `agentType` to the card's agent file and a brief whose first lines carry the `Mode:` line. The agent file is `orchestra:<role>-<mode>` when that file exists (`builder-mechanical`, `builder-cleanup`, `code-reviewer-checkpoint`, `code-reviewer-standards` for the standards lens, `investigator-code`), and `orchestra:<role>` otherwise. The file pins model, effort and tools; set no model or effort override. Concurrent editors set `isolation: 'worktree'` (references/worktrees.md). The script holds no coordinator state: reserve every card before the script and record every report after it.
 
 Every Opus repair card, the build-phase rung and each final-round repair, is added together with its round and goes through the Agent tool with the model override, never through a script (references/repair-rounds.md). Dispatch it only after the accept step of coordination.md.
 
