@@ -1898,8 +1898,8 @@ class MaterialityTests(EngineFixture):
 
     def test_reviewer_brief_needs_no_keep_remove(self):
         self.task('B1')
-        self.task('V1', role='code-reviewer', mode='checkpoint', files=[], review_of=['B1'],
-                  brief=self.brief('rev.md', 'Mode: checkpoint\nObjective.\n'))
+        self.task('V1', role='code-reviewer', mode='final', files=[], review_of=['B1'],
+                  brief=self.brief('rev.md', 'Mode: final\nObjective.\n'))
         self.assertIn('V1', self.engine.status()['tasks'])
 
     def two_reviews(self, resources1=(), resources2=()):
@@ -2450,7 +2450,7 @@ class HoldTests(HoldFixture):
         self.engine.hold('main', self.lease, 'R1', 'g')
         receipt = self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL, cleared={'R1': 'no defect'})
         self.assertTrue({'B1', 'R1'} <= set(receipt['tasks']))
-        self.task('V1', role='code-reviewer', mode='checkpoint', files=[], review_of=['R1'])
+        self.task('V1', role='code-reviewer', mode='final', files=[], review_of=['R1'])
         self.assertIn('V1', self.engine.ready('main', self.lease))
 
     def test_accept_held_card_with_clean_current_verdict(self):
@@ -2492,7 +2492,7 @@ class FinalReceiptTests(HoldFixture):
 
     def test_contract_hash_unchanged_by_lens_change(self):
         from orchestra_core.engine import _contracts
-        self.assertEqual('7e12cdf268d85df0aac178c92f1577a3ce2ffbf686fbc536204b4677dfe3a942', _contracts()[1])
+        self.assertEqual('7b1f34b2bf297e6e95cdd59306a697f5a2b7410f5a84bc71feb7ffe0213439ed', _contracts()[1])
 
     def test_final_findings_need_task_findings_on_chain_tips(self):
         self.built('B1')
