@@ -10,11 +10,14 @@ import sys
 import tempfile
 import unittest
 
-from test_packaging import PLUGIN
+PLUGIN=Path(__file__).resolve().parents[1]/'plugins/orchestra'
 
 CLI=PLUGIN/'scripts/orchestra.py'
 HOOK=PLUGIN/'scripts/run-hook.sh'
 CATEGORIES=['requirements','correctness','security','tests','architecture','standards','cleanup']
+BASE=['requirements','correctness','tests','architecture']
+SELF_REVIEW='SELF_REVIEW: '+json.dumps(dict(checks=[dict(command='fixture check',exit_code=0)],
+                                          criteria=[dict(criterion='fixture outcome',met=True,evidence='Inspected fixture.')]))
 
 
 class WorkflowIntegration(unittest.TestCase):
@@ -39,7 +42,7 @@ class WorkflowIntegration(unittest.TestCase):
                 'release':{'enabled':True,'authorization':'Isolated local fixture push only',
                            'remote':'fixture-remote','target':'main','argv':['git','push','fixture-remote','main']}}
         self.policy=self.write('policy.json',policy)
-        self.lease=self.cli('start','--policy',str(self.policy))[1]['lease']
+        self.lease=self.cli('start','--items','3','--policy',str(self.policy))[1]['lease']
 
     def git(self,*args):
         return subprocess.check_output(['git','-C',str(self.repo),*args],stderr=subprocess.PIPE).decode().strip()
@@ -53,15 +56,24 @@ class WorkflowIntegration(unittest.TestCase):
         cmd=[sys.executable,str(CLI),'--repo',str(self.repo),'--state',str(self.state)]
         if lease:
             cmd+=['--lease',self.lease]
-        result=subprocess.run(cmd+list(args),capture_output=True,text=True,timeout=25)
+        args=list(args)
+        if args[:1]==['dispatch']:  # a 3-item run is inline: a helper needs a reason
+            args+=['--helper','fixture helper']
+        if args[:1]==['report']:
+            path=Path(args[3])
+            if 'SELF_REVIEW:' not in path.read_text():
+                path.write_text(path.read_text()+'\n'+SELF_REVIEW+'\n')
+        result=subprocess.run(cmd+args,capture_output=True,text=True,timeout=25)
         self.assertEqual(result.returncode,expected,result.stderr+result.stdout)
         return result,json.loads(result.stdout if expected==0 else result.stderr)
 
     def review(self,ids,final=False,summary='Inspected fixture source and concrete failure checks.'):
-        artifact=self.cli('artifact')[1] if final or not ids else self.cli('artifact','--tasks',','.join(ids))[1]
-        p=self.write('final.json' if final else 'checkpoint.json',
-                     dict(reviewer='independent-reviewer',categories=CATEGORIES,tasks=ids,findings=[],issues=[],
-                          verdict='CLEAN',final=final,summary=summary,artifact=artifact))
+        assert final, 'only the pre-PR review is recorded'
+        artifact=self.cli('artifact')[1]
+        ids=list(self.cli('status')[1]['tasks'])
+        p=self.write('final.json',
+                     dict(reviewer='independent-reviewer',categories=BASE,tasks=ids,findings=[],issues=[],
+                          verdict='CLEAN',final=True,summary=summary,artifact=artifact))
         self.cli('review',str(p),lease=True)
 
     def configure_local_release(self, argv, timeout=2):
@@ -70,7 +82,7 @@ class WorkflowIntegration(unittest.TestCase):
         policy['release']['argv']=argv
         policy['release_timeout_seconds']=timeout
         self.policy.write_text(json.dumps(policy))
-        self.lease=self.cli('start','--new-run','--policy',str(self.policy))[1]['lease']
+        self.lease=self.cli('start','--new-run','--items','3','--policy',str(self.policy))[1]['lease']
         self.cli('gate','fixture','--',*self.check,lease=True)
         self.review([],True)
         self.cli('permit','fixture-remote','main',lease=True)
@@ -121,12 +133,11 @@ class WorkflowIntegration(unittest.TestCase):
             token=self.cli('dispatch',ident,'worker-'+ident,lease=True)[1]['assignment']
             self.cli('report','worker-'+ident,token,str(self.write(ident+'.txt','Inspected fixture; no source change needed.')))
         self.assertNotIn('lease',json.dumps(self.cli('status')[1]))
-        for removed in ('route','audit-policy','review-groups'):
+        for removed in ('audit-policy','review-groups'):
             result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--state',str(self.state),removed],
                                   capture_output=True,text=True,timeout=25)
             self.assertNotEqual(result.returncode,0,removed)
         self.cli('finish',lease=True,expected=2)
-        self.review(['B1','B2'])
         for ident in ['B1','B2']:
             self.cli('accept',ident,lease=True)
         self.cli('gate','fixture','--',*self.check,lease=True)
@@ -141,12 +152,12 @@ class WorkflowIntegration(unittest.TestCase):
         remote_head=subprocess.check_output(['git','--git-dir',str(self.remote),'rev-parse','refs/heads/main']).decode().strip()
         self.assertEqual(remote_head,self.git('rev-parse','HEAD'))
         self.cli('finish',lease=True)
-        self.lease=self.cli('start','--new-run')[1]['lease']
+        self.lease=self.cli('start','--new-run','--items','3')[1]['lease']
         self.assertEqual(self.cli('status')[1]['tasks'],{})
         self.assertEqual(len(list((self.state/'history').glob('*.json'))),1)
         self.assertEqual(self.git('status','--porcelain'),'')
 
-    def test_inline_card_uses_main_actor_and_independent_review(self):
+    def test_inline_card_uses_main_actor_and_accepts_on_self_review(self):
         task=dict(id='INLINE',role='builder',mode='implementation',inputs=['fixture'],
                   acceptance=['fixture check'],files=['fixture.txt'],resources=[],dependencies=[])
         self.cli('add',str(self.write('inline.json',task)),lease=True)
@@ -154,11 +165,9 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertEqual(result['executor'],'main')
         self.assertTrue(result['inline'])
         self.cli('report','main',result['token'],str(self.write('inline.txt','Inspected fixture source.')))
-        self.cli('accept','INLINE',lease=True,expected=2)
-        self.review(['INLINE'])
         self.cli('accept','INLINE',lease=True)
 
-    def test_artifact_tasks_output_is_accepted_by_review(self):
+    def test_scoped_artifact_ignores_sibling_edits(self):
         task=dict(id='T',role='builder',mode='implementation',inputs=['fixture'],
                   acceptance=['fixture check'],files=['fixture.txt'],resources=[],dependencies=[])
         self.cli('add',str(self.write('T.json',task)),lease=True)
@@ -168,51 +177,8 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertEqual(['fixture.txt'],artifact['scope'])
         self.assertNotIn('scope',self.cli('artifact')[1])
         (self.repo/'sibling.txt').write_text('sibling uncommitted edit\n')
-        p=self.write('scoped.json',dict(reviewer='independent-reviewer',categories=['correctness'],tasks=['T'],
-                     findings=[],issues=[],verdict='CLEAN',final=False,summary='Inspected fixture source.',artifact=artifact))
-        self.cli('review',str(p),lease=True)
         self.cli('accept','T',lease=True)
         self.cli('artifact','--tasks','NOPE',expected=2)
-
-    def test_parked_member_wave_reaches_completion(self):
-        def add(ident,**kw):
-            task=dict(id=ident,role='builder',mode='implementation',inputs=['fixture outcome'],acceptance=['fixture check'],
-                      files=[ident+'.txt'],resources=[],dependencies=[],wave='W1')
-            task.update(kw)
-            if task['wave'] is None:
-                del task['wave']
-            self.cli('add',str(self.write(ident+'.json',task)),lease=True)
-        def run(ident,worker):
-            token=self.cli('dispatch',ident,worker,lease=True)[1]['assignment']
-            self.cli('report',worker,token,str(self.write(ident+'.txt','Inspected fixture; nothing to change.')))
-        for ident in ('B1','B3'):
-            add(ident)
-            run(ident,'worker-'+ident)
-        add('B2')
-        add('V1',role='code-reviewer',mode='checkpoint',files=[],review_of=['wave:W1'],wave=None)
-        self.assertEqual(['B1','B2','B3'],self.cli('status')[1]['tasks']['V1']['review_of'])
-        self.cli('park','B2','--reason','needs a human step',lease=True)
-        self.cli('park','V1','--reason','member parked',lease=True)
-        add('V2',role='code-reviewer',mode='checkpoint',files=[],review_of=['B1','B3'],wave=None)
-        run('V2','review-worker-2')
-        self.review(['B1','B3'])
-        for ident in ('B1','B3','V2'):
-            self.cli('accept',ident,lease=True)
-        self.cli('unpark','B2',lease=True)
-        run('B2','worker-B2')
-        add('V3',role='code-reviewer',mode='checkpoint',files=[],review_of=['B2'],wave=None)
-        run('V3','review-worker-3')
-        self.review(['B2'])
-        for ident in ('B2','V3'):
-            self.cli('accept',ident,lease=True)
-        self.cli('finish',lease=True,expected=2)  # V1 is still parked
-        self.cli('supersede','V1',lease=True)
-        status=self.cli('status')[1]
-        self.assertEqual(['V2','V3'],status['tasks']['V1']['superseded_by'])
-        self.assertEqual(['B1','B3','B2'],status['waves'][0]['tasks'])  # first-add order
-        self.cli('gate','fixture','--',*self.check,lease=True)
-        self.review(list(status['tasks']),True)
-        self.cli('finish',lease=True)
 
     def test_dirty_candidate_invalidates_review_and_permit(self):
         task=dict(id='I',role='investigator',mode='code',inputs=['fixture'],acceptance=['inspect'],files=[],resources=[],dependencies=[])
@@ -276,7 +242,6 @@ class WorkflowIntegration(unittest.TestCase):
     def test_final_lens_then_repair_then_completion(self):
         self.built('B1')
         self.built('B2')
-        self.receipt('wave',['B1','B2'],CATEGORIES)
         self.accept_all('B1','B2')
         self.cli('gate','fixture','--',*self.check,lease=True)
         lens=self.lens_round('L',[(self.LENSES[0],dict(findings=['f'],task_findings={'B2':['f']})),(self.LENSES[1],{}),(self.LENSES[2],{})])
@@ -291,13 +256,12 @@ class WorkflowIntegration(unittest.TestCase):
 
     def test_final_round_repairs_held_and_lens_chains_then_completes(self):
         self.built('B1')
-        self.receipt('wave',['B1'],CATEGORIES,findings=['f'])
+        self.accept_all(*self.lens_round('F',[(CATEGORIES,dict(findings=['f'],task_findings={'B1':['f']}))]))
         self.card('R1',mode='repair',repair_of='B1',files=['B1.txt'])
         self.run_card('R1')
         self.receipt('check',['R1','B1'],['correctness'],findings=['g'],task_findings={'R1':['g'],'B1':[]},repair_check=True)
         self.cli('hold','R1','--finding','g',lease=True)
         self.built('B2')
-        self.receipt('b2',['B2'],CATEGORIES)
         self.accept_all('B2')
         self.cli('gate','fixture','--',*self.check,lease=True)
         lens=self.lens_round('L',[
@@ -307,7 +271,7 @@ class WorkflowIntegration(unittest.TestCase):
         self.accept_all(*lens)
         self.card('R2',mode='repair',repair_of='R1',files=['B1.txt'])
         self.card('R3',mode='repair',repair_of='B2',files=['B2.txt'])
-        self.assertEqual([(1,['g persists']),(1,['leak in B2'])],
+        self.assertEqual([(2,['g persists']),(2,['leak in B2'])],
                          [(self.status_task(i)['final_round'],self.status_task(i)['final_findings']) for i in ('R2','R3')])
         self.run_card('R2')
         self.run_card('R3')
@@ -317,7 +281,6 @@ class WorkflowIntegration(unittest.TestCase):
 
     def test_final_rounds_repeat_until_clean_with_no_cap(self):
         self.built('B1')
-        self.receipt('wave',['B1'],CATEGORIES)
         self.accept_all('B1')
         self.cli('gate','fixture','--',*self.check,lease=True)
         tip,repairs=['B1'],[]
@@ -335,7 +298,6 @@ class WorkflowIntegration(unittest.TestCase):
 
     def test_final_receipt_stale_when_card_added_after_it(self):
         self.built('B1')
-        self.receipt('wave',['B1'],CATEGORIES)
         self.accept_all('B1')
         self.cli('gate','fixture','--',*self.check,lease=True)
         first=self.lens_round('L',[(CATEGORIES,{})])
@@ -381,7 +343,7 @@ class LinkedWorktreeHook(unittest.TestCase):
     def test_push_from_linked_worktree_follows_the_main_checkout_run(self):
         command='git push origin side'
         self.assertIsNone(self.hook(self.linked,command))
-        lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start'],env=self.env,
+        lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--items','3'],env=self.env,
                                         capture_output=True,text=True,check=True).stdout)['lease']
         self.assertEqual(self.hook(self.linked,command),'deny')
         self.assertEqual(self.hook(self.repo,command),'deny')
@@ -396,7 +358,7 @@ class LinkedWorktreeHook(unittest.TestCase):
         bare=self.root/'bare.git'
         subprocess.run(['git','clone','-q','--bare',str(self.repo),str(bare)],check=True,capture_output=True)
         self.git(bare,'worktree','add','-q',str(self.root/'bare checkout'),'main')
-        subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start'],env=self.env,
+        subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--items','3'],env=self.env,
                        capture_output=True,text=True,check=True)
         parent_state=subprocess.run([sys.executable,'-c',
                                      'import sys;sys.path.insert(0,sys.argv[1]);'
@@ -428,6 +390,10 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.env=dict(os.environ,ORCHESTRA_STATE_DIR=str(self.state))
 
     def cli(self,*args,expected=0):
+        args=list(args)
+        if args[:1]==['start'] and '--items' not in args and (
+                '--new-run' in args or not (self.state/'state.json').exists()):
+            args+=['--items','3']  # a new run needs its item count; a resumed one refuses it
         result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),*args],env=self.env,
                               capture_output=True,text=True,timeout=25)
         self.assertEqual(result.returncode,expected,result.stderr+result.stdout)
@@ -634,6 +600,8 @@ steps = plan[min(n, len(plan)) - 1]
 (root / ('prompt-%d.txt' % n)).write_text(sys.stdin.read())
 state = Path(os.environ['ORCHESTRA_STATE_DIR'])
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
+SELF_REVIEW = 'SELF_REVIEW: ' + json.dumps(dict(checks=[dict(command='fixture check', exit_code=0)],
+                                                criteria=[dict(criterion='fixture outcome', met=True, evidence='Inspected.')]))
 
 def run(*args, env=None, lease=True):
     cmd = [sys.executable, cli, '--repo', repo]
@@ -645,7 +613,7 @@ def run(*args, env=None, lease=True):
     return json.loads(done.stdout)
 
 def review(ids, final):
-    artifact = run('artifact') if final else run('artifact', '--tasks', ','.join(ids))
+    artifact = run('artifact')
     path = root / 'review.json'
     path.write_text(json.dumps(dict(reviewer='independent-reviewer', categories=CATEGORIES, tasks=ids, findings=[],
                                     issues=[], verdict='CLEAN', final=final, summary='Inspected fixture source.',
@@ -671,11 +639,10 @@ for step in steps:
         (state / 'relaunch' / 'pass-other.marker').write_text('other\n')
         start({k: v for k, v in os.environ.items() if k != 'ORCHESTRA_RELAUNCH_PASS'})
     elif step == 'work1':
-        token = run('dispatch', 'B1', 'worker')['assignment']
-        (root / 'b1.txt').write_text('Inspected fixture; no source change needed.')
+        token = run('dispatch', 'B1', 'worker', '--helper', 'fixture helper')['assignment']
+        (root / 'b1.txt').write_text('Inspected fixture; no source change needed.\n' + SELF_REVIEW + '\n')
         run('report', 'worker', token, str(root / 'b1.txt'), lease=False)
     elif step == 'work2':
-        review(['B1'], False)
         run('accept', 'B1')
         run('gate', 'ok', '--', sys.executable, '-c', 'pass')
         review(['B1'], True)
@@ -715,6 +682,55 @@ class Holder(relaunch.Engine):
 relaunch.Engine = Holder
 sys.exit(relaunch.run(repo, state, 'default', launcher=[sys.argv[4], '-c', 'pass']))
 """
+
+
+class RouteCliIntegration(unittest.TestCase):
+    """The 2.4 routing contract through the real CLI: start --items, route, dispatch --helper and the help text."""
+
+    def setUp(self):
+        HarnessSessionIntegration.setUp(self)
+
+    def raw(self,*args,expected=0):
+        result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),*args],env=self.env,
+                              capture_output=True,text=True,timeout=25)
+        self.assertEqual(result.returncode,expected,result.stderr+result.stdout)
+        return json.loads(result.stdout) if expected==0 else result.stderr+result.stdout
+
+    def test_new_run_needs_items(self):
+        self.assertIn('A new run needs --items N',self.raw('start',expected=2))
+
+    def test_start_items_routes_both_ways_and_route_changes_it(self):
+        lease=self.raw('start','--items','5')['lease']
+        self.assertEqual(self.raw('status')['session']['route'],'inline')
+        self.raw('--lease',lease,'interrupt')
+        lease=self.raw('start','--new-run','--items','6')['lease']
+        session=self.raw('status')['session']
+        self.assertEqual((session['items'],session['route']),(6,'workflow'))
+        self.raw('route','--items','2','--reason','scope shrank',expected=2)  # the route needs the lease
+        self.raw('--lease',lease,'route','--items','2','--reason','scope shrank')
+        session=self.raw('status')['session']
+        self.assertEqual((session['items'],session['route']),(2,'inline'))
+        self.assertEqual([(e['items'],e['reason']) for e in session['route_log']],[(2,'scope shrank')])
+
+    def test_inline_route_refuses_a_helper_without_a_reason(self):
+        lease=self.raw('start','--items','3')['lease']
+        task=self.root/'B1.json'
+        task.write_text(json.dumps(dict(id='B1',role='builder',mode='implementation',inputs=['s'],acceptance=['a'],
+                                        files=['b1.txt'],resources=[],dependencies=[])))
+        self.raw('--lease',lease,'add',str(task))
+        self.assertIn('pass --helper REASON',self.raw('--lease',lease,'dispatch','B1','worker',expected=2))
+        self.assertTrue(self.raw('--lease',lease,'dispatch','B1','worker','--helper','needs a second pair of hands')['assignment'])
+
+    def test_help_text_matches_the_contract(self):
+        def helptext(*cmd):
+            return subprocess.run([sys.executable,str(CLI),*cmd,'--help'],capture_output=True,text=True,timeout=25).stdout
+        self.assertIn('--items',helptext('start'))
+        self.assertIn('6 or more',helptext('start'))
+        route=helptext('route')
+        self.assertTrue('--items' in route and '--reason' in route)
+        self.assertIn('--helper REASON',helptext('dispatch'))
+        self.assertNotIn('wave',helptext('add').lower())
+        self.assertNotIn('supersede',subprocess.run([sys.executable,str(CLI),'--help'],capture_output=True,text=True,timeout=25).stdout)
 
 
 class RelaunchIntegration(unittest.TestCase):
