@@ -40,9 +40,15 @@ CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture'
 REBIND_WINDOW_SECONDS = 60
 KEEP_REMOVE = ('## Keep', '## Remove')  # builder briefs carry both headings; checked at add only (SPEC 5.13)
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
-               gate_timeout_seconds=300, secret_scan=dict(required=False, argv=[]),
-               release=dict(enabled=False, remote=None, target=None, argv=[]))
+ALWAYS_LENSES = ('requirements', 'correctness', 'tests', 'architecture')
+INLINE_MAX_ITEMS = 5  # contract item 3: 1 to 5 items run inline, 6 or more go through a plan
+SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
+DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
+               secret_scan=dict(required=False, argv=[]),
+               release=dict(enabled=False, remote=None, target=None, argv=[]),
+               sensitive_paths=['**/auth/**', '**/security/**', '**/*secret*', '**/hooks/**', '**/guard*',
+                                '**/migrations/**', '.github/**'],
+               standards_min_lines=200)
 
 
 def _contracts():
@@ -242,10 +248,16 @@ class Engine:
                 raise EngineError('Invalid policy ' + key)
         if not isinstance(self.policy['required_checks'], list):
             raise EngineError('Invalid required checks')
-        categories = self.policy['required_review_categories']
-        if (not isinstance(categories, list) or not categories
-                or any(not isinstance(c, str) or c not in CATEGORIES for c in categories)):
+        categories = self.policy.get('required_review_categories')  # an explicit override of the derived lenses
+        if categories is not None and (not isinstance(categories, list) or not categories
+                                       or any(not isinstance(c, str) or c not in CATEGORIES for c in categories)):
             raise EngineError('required_review_categories must be a non-empty list of known categories')
+        globs = self.policy['sensitive_paths']
+        if not isinstance(globs, list) or any(not isinstance(g, str) or not g for g in globs):
+            raise EngineError('sensitive_paths must be a list of glob strings')
+        minimum = self.policy['standards_min_lines']
+        if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 0:
+            raise EngineError('standards_min_lines must be a non-negative integer')
         self.modes, self.contract_hash = _contracts()
         self.policy_hash = _digest(dict(policy=self.policy, contracts=self.contract_hash))
         self._git('rev-parse', '--show-toplevel')
@@ -264,10 +276,8 @@ class Engine:
     def _in_scope(path, scope):
         return any(path == s or path.startswith(s + '/') for s in scope)
 
-    def artifact(self, scope=None):
-        """Whole-repo evidence, or with `scope` (repository-relative paths) evidence for those paths plus HEAD."""
-        scope = sorted({Path(s).as_posix() for s in scope}) if scope else None
-        # Hash every tracked and untracked nonignored entry. Index and status are also bound.
+    def _file_entries(self, scope=None):
+        """[name, value] for every tracked and untracked nonignored entry, limited to `scope` when given."""
         names = self._git('ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')
         entries = []
         for raw in sorted(set(names) - {b''}):
@@ -284,6 +294,17 @@ class Engine:
             else:
                 value = ['missing']
             entries.append([os.fsdecode(raw), value])
+        return entries
+
+    def _entry_digests(self):
+        """{path: short digest} of every entry: what a final receipt keeps to tell later which files changed."""
+        return {name: _digest(value)[:16] for name, value in self._file_entries()}
+
+    def artifact(self, scope=None):
+        """Whole-repo evidence, or with `scope` (repository-relative paths) evidence for those paths plus HEAD."""
+        scope = sorted({Path(s).as_posix() for s in scope}) if scope else None
+        # Hash every tracked and untracked nonignored entry. Index and status are also bound.
+        entries = self._file_entries(scope)
         common = Path(self._git('rev-parse', '--git-common-dir').decode().strip())
         if not common.is_absolute():
             common = self.repo / common
@@ -396,7 +417,11 @@ class Engine:
                         os.unlink(name)
 
     @staticmethod
-    def _validate_state(state):
+    def _route_for(items):
+        return 'inline' if items <= INLINE_MAX_ITEMS else 'workflow'
+
+    @classmethod
+    def _validate_state(cls, state):
         if not isinstance(state, dict) or state.get('version') != 1:
             raise EngineError('Unsupported run state schema')
         for key, kind in [('repo', str), ('policy', str), ('tasks', dict),
@@ -436,6 +461,16 @@ class Engine:
                 raise EngineError('Invalid harness session')
             if 'relaunch_pass' in session and (not isinstance(session['relaunch_pass'], str) or not session['relaunch_pass']):
                 raise EngineError('Invalid relaunch pass')
+            if 'items' in session:
+                if (type(session['items']) is not int or session['items'] < 1
+                        or session.get('route') != cls._route_for(session['items'])
+                        or not isinstance(session.get('route_log', []), list)
+                        or any(not isinstance(e, dict) or type(e.get('items')) is not int
+                               or not isinstance(e.get('reason'), str) or not isinstance(e.get('at'), str)
+                               for e in session.get('route_log', []))):
+                    raise EngineError('Invalid session route')
+            if 'base' in session and (not isinstance(session['base'], str) or not session['base']):
+                raise EngineError('Invalid session base')
             pending = session.get('pending_rebind')
             if 'pending_rebind' in session and (not isinstance(pending, dict) or not isinstance(pending.get('from'), str)
                     or isinstance(pending.get('at'), bool) or not isinstance(pending.get('at'), (int, float))):
@@ -458,6 +493,10 @@ class Engine:
                 raise EngineError('Invalid task final_findings')
             if 'held_finding' in task and (not isinstance(task['held_finding'], str) or not task['held_finding'].strip()):
                 raise EngineError('Invalid task held_finding')
+            if 'helper_reason' in task and (not isinstance(task['helper_reason'], str) or not task['helper_reason'].strip()):
+                raise EngineError('Invalid task helper_reason')
+            if 'self_review' in task and not cls._self_review_ok(task['self_review']):
+                raise EngineError('Invalid task self_review')
         findings = state.get('findings', [])
         if not isinstance(findings, list) or any(
                 not isinstance(f, dict) or any(not isinstance(f.get(k), str) for k in ('id', 'fingerprint', 'text', 'reason', 'at'))
@@ -468,6 +507,9 @@ class Engine:
             for key in ('out_of_scope', 'gate_receipts'):
                 if key in review and (not isinstance(review[key], list) or any(not isinstance(v, str) for v in review[key])):
                     raise EngineError('Invalid reviews state')
+            if 'entries' in review and (not isinstance(review['entries'], dict)
+                                        or any(not isinstance(k, str) or not isinstance(v, str) for k, v in review['entries'].items())):
+                raise EngineError('Invalid reviews state')
         fields = {
             'reviews': {'id': str, 'reviewer': str, 'categories': list, 'tasks': list, 'final': bool,
                         'findings': list, 'artifact': dict, 'action': str, 'path': str, 'source': str, 'sha256': str},
@@ -521,35 +563,76 @@ class Engine:
         """The run state without any lease: the board and `where` never see one (SPEC 11.2)."""
         with self._state(False) as state:
             result = self._redact_leases(copy.deepcopy(state))
-            result['waves'] = self._waves(state)
+            result['required_lenses'] = self._required_lenses(state)
             return result
 
-    @staticmethod
-    def _added_order(state):
-        """Task ids in the order they were added; a migrated 2.1 card without `seq` sorts before every card with one,
-        in its stored position."""
-        tasks = state['tasks']
-        stored = {ident: n for n, ident in enumerate(tasks)}
-        return sorted(tasks, key=lambda i: (0, stored[i]) if 'seq' not in tasks[i] else (1, tasks[i]['seq']))
+    def current_gate_ids(self):
+        """Ids of the passed gate receipts for the current whole-repository artifact; [] when there are none."""
+        with self._state(False) as state:
+            gates = [g for g in state['gates'] if g['passed']]
+        if not gates:
+            return []
+        artifact = self.artifact()
+        return [g['id'] for g in gates if g['artifact'] == artifact and self._intact(g)]
 
     @staticmethod
-    def _waves(state):
-        """Waves in first-add order, each with whether the next wave depends on its code (SPEC 5.4 item 4)."""
-        members = {}
-        for ident in Engine._added_order(state):
-            task = state['tasks'][ident]
-            if 'wave' in task:
-                members.setdefault(task['wave'], []).append(task)
-        names = list(members)
-        waves = []
-        for index, name in enumerate(names):
-            nxt = members[names[index + 1]] if index + 1 < len(names) else []
-            ids = {t['id'] for t in members[name]}
-            owned = [f for t in members[name] for f in t['files']]
-            depends = any(set(c['dependencies']) & ids or Engine._paths_overlap(c['files'] + c['inputs'], owned)
-                          for c in nxt)
-            waves.append(dict(wave=name, tasks=[t['id'] for t in members[name]], next_depends=bool(depends)))
-        return waves
+    def _glob_regex(glob):
+        out, i = [], 0
+        while i < len(glob):
+            if glob.startswith('**/', i):
+                out.append('(?:.*/)?')
+                i += 3
+            elif glob.startswith('/**', i) and i + 3 == len(glob):
+                out.append('/.*')
+                i += 3
+            elif glob.startswith('**', i):
+                out.append('.*')
+                i += 2
+            elif glob[i] == '*':
+                out.append('[^/]*')
+                i += 1
+            elif glob[i] == '?':
+                out.append('[^/]')
+                i += 1
+            else:
+                out.append(re.escape(glob[i]))
+                i += 1
+        return re.compile(''.join(out))
+
+    def _changed(self, base):
+        """(paths, changed line count) from the run's base commit to the working tree, untracked files included."""
+        paths, lines = set(), 0
+        for row in self._git('diff', '--numstat', '-z', '--no-renames', base, '--').split(b'\0'):
+            if row:
+                added, deleted, name = row.decode(errors='replace').split('\t', 2)
+                paths.add(name)
+                lines += (int(added) + int(deleted)) if added.isdigit() and deleted.isdigit() else 0
+        for raw in self._git('ls-files', '-z', '--others', '--exclude-standard').split(b'\0'):
+            if raw:
+                name = os.fsdecode(raw)
+                paths.add(name)
+                path = self.repo / name
+                if path.is_file() and not path.is_symlink():
+                    data = path.read_bytes()
+                    lines += len(data.splitlines())
+        return sorted(paths), lines
+
+    def _required_lenses(self, state):
+        """Contract item 6: the review categories completion needs. An explicit policy list overrides the derived set;
+        a run with no stored base (made by 2.3) needs every category."""
+        explicit = self.policy.get('required_review_categories')
+        if explicit is not None:
+            return list(explicit)
+        base = (state['session'] or {}).get('base')
+        if base is None:
+            return list(CATEGORIES)
+        paths, lines = self._changed(base)
+        wanted = set(ALWAYS_LENSES)
+        if any(self._glob_regex(g).fullmatch(p) for g in self.policy['sensitive_paths'] for p in paths):
+            wanted.add('security')
+        if lines > self.policy['standards_min_lines']:
+            wanted.update(('standards', 'cleanup'))
+        return [c for c in CATEGORIES if c in wanted]
 
     @staticmethod
     def _lease(state, actor, lease):
@@ -568,9 +651,18 @@ class Engine:
         nonce = names[0][len('pass-'):-len('.marker')] if len(names) == 1 else None
         return nonce if nonce and re.fullmatch(r'[A-Za-z0-9_-]+', nonce) else None
 
-    def open_session(self, actor, harness_session=None, relaunch_pass=None):
+    @staticmethod
+    def _check_items(items):
+        if isinstance(items, bool) or not isinstance(items, int) or items < 1:
+            raise EngineError('Items must be an integer of 1 or more')
+
+    def open_session(self, actor, harness_session=None, relaunch_pass=None, items=None, require_items=False):
+        """Open the coordinator session. A new run (no earlier session record) stores `items`, `route` and `base`; a
+        resumed run keeps them. `require_items` is the CLI's rule that a new run states its size (contract item 3)."""
         if not isinstance(actor, str) or not actor.strip():
             raise EngineError('Missing coordinator')
+        if items is not None:
+            self._check_items(items)
         if harness_session is not None and (not isinstance(harness_session, str) or not harness_session.strip()):
             raise EngineError('Invalid harness session id')
         if relaunch_pass is not None and (not isinstance(relaunch_pass, str) or not relaunch_pass.strip()):
@@ -579,7 +671,20 @@ class Engine:
             if state['session'] and state['session']['active']:
                 raise EngineError('A coordinator session is already active')
             lease = uuid.uuid4().hex
+            prior = state['session']
+            if prior is None and items is None and require_items:
+                raise EngineError('A new run needs --items N, the number of work items')
+            if prior is not None and items is not None:
+                raise EngineError('--items applies only to a new run; use route to change it')
             state['session'] = dict(actor=actor, lease=lease, active=True)
+            if prior is None:
+                state['session']['base'] = self._git('rev-parse', 'HEAD').decode().strip()
+                if items is not None:
+                    state['session'].update(items=items, route=self._route_for(items), route_log=[])
+            else:
+                for key in ('base', 'items', 'route', 'route_log'):
+                    if key in prior:
+                        state['session'][key] = prior[key]
             if harness_session is not None:
                 state['session']['harness_session'] = harness_session
             auto = state['autonomy']
@@ -594,6 +699,20 @@ class Engine:
                     task.pop('report', None)
             state['permits'] = []
             return lease
+
+    def set_route(self, actor, lease, items, reason):
+        """Change the item count and the route it implies, and log why (contract item 3)."""
+        self._check_items(items)
+        if not isinstance(reason, str) or not reason.strip():
+            raise EngineError('Route needs a reason')
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            session = state['session']
+            session.update(items=items, route=self._route_for(items))
+            session.setdefault('route_log', []).append(dict(
+                items=items, reason=reason.strip(),
+                at=datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')))
+            return dict(items=items, route=session['route'])
 
     def interrupt(self, actor, lease):
         with self._state() as state:
@@ -702,7 +821,11 @@ class Engine:
                     raise EngineError('Missing task ' + key)
             if task['id'] in state['tasks']:
                 raise EngineError('Duplicate task')
+            if 'wave' in task:
+                raise EngineError('Waves are removed; use dependencies')
             self._check_contract(task)
+            if task['role'] == 'designer-planner' and task['mode'] == 'plan' and state['session'].get('route') == 'inline':
+                raise EngineError('Inline route: no plan card; the main session groups the work')
             if task['role'] == 'builder' and 'brief' in task:
                 self._check_keep_remove(task)
             if self._is_release(task) and any(self._is_release(t) for t in state['tasks'].values()):
@@ -726,20 +849,7 @@ class Engine:
                     raise EngineError('File ownership escapes repository')
             if any(dep not in state['tasks'] for dep in task['dependencies']):
                 raise EngineError('Unknown dependency or cycle')
-            self._check_wave(state, task)
             review_of = task.get('review_of', [])
-            if isinstance(review_of, list) and any(isinstance(i, str) and i.startswith('wave:') for i in review_of):
-                # Resolve each "wave:W" to the plain ids of W's cards now, so the list is frozen (SPEC 5.1 item 2).
-                resolved = []
-                for ident in review_of:
-                    if isinstance(ident, str) and ident.startswith('wave:'):
-                        members = [t['id'] for t in state['tasks'].values() if t.get('wave') == ident[5:]]
-                        if not members:
-                            raise EngineError('Unknown wave: ' + ident[5:])
-                        resolved += members
-                    else:
-                        resolved.append(ident)
-                review_of = task['review_of'] = resolved
             if (not isinstance(review_of, list)
                     or any(not isinstance(i, str) or i not in state['tasks'] for i in review_of)
                     or len(review_of) != len(set(review_of))):
@@ -845,19 +955,6 @@ class Engine:
             return dict(held=chain, finding=finding)
 
     @staticmethod
-    def _check_wave(state, task):
-        """A wave label belongs to builder implementation cards, and a reviewed wave takes no new card (SPEC 5.1 items 1-2)."""
-        if 'wave' not in task:
-            return
-        if not isinstance(task['wave'], str) or not task['wave'].strip():
-            raise EngineError('Invalid task wave')
-        if task['role'] != 'builder' or task['mode'] != 'implementation':
-            raise EngineError('Only builder implementation cards join a wave')
-        members = {t['id'] for t in state['tasks'].values() if t.get('wave') == task['wave']}
-        if any(t['role'] in REVIEW_ROLES and members & set(t.get('review_of', [])) for t in state['tasks'].values()):
-            raise EngineError('Wave %s already has a review; start a new wave' % task['wave'])
-
-    @staticmethod
     def _is_release(task):
         return task['role'] == 'operator' and task['mode'] == 'release'
 
@@ -950,13 +1047,26 @@ class Engine:
             self._lease(state, actor, lease)
             return self._ready(state)
 
-    def dispatch(self, actor, lease, task_id, worker):
-        return self._start_assignment(actor, lease, task_id, worker, inline=False)
+    def dispatch(self, actor, lease, task_id, worker, helper=None):
+        return self._start_assignment(actor, lease, task_id, worker, inline=False, helper=helper)
 
     def start_inline(self, actor, lease, task_id):
         return self._start_assignment(actor, lease, task_id, actor, inline=True)
 
-    def _start_assignment(self, actor, lease, task_id, worker, inline):
+    @staticmethod
+    def _check_route(state, task, inline, helper):
+        """Contract item 3. A state with no `route` (made by 2.3) is not checked."""
+        route = state['session'].get('route')
+        if route is None or task['role'] != 'builder':
+            return
+        if route == 'workflow':
+            if not any(t['role'] == 'designer-planner' and t['mode'] == 'plan' and t['state'] == 'accepted'
+                       for t in state['tasks'].values()):
+                raise EngineError('Workflow route: accept the designer-planner plan card first')
+        elif not inline and not (isinstance(helper, str) and helper.strip()):
+            raise EngineError('Inline route: the main session does this work; pass --helper REASON to dispatch a helper')
+
+    def _start_assignment(self, actor, lease, task_id, worker, inline, helper=None):
         with self._state() as state:
             self._lease(state, actor, lease)
             if not isinstance(worker, str) or not worker.strip() or (worker == actor and not inline):
@@ -966,6 +1076,8 @@ class Engine:
                 raise EngineError('Independent review roles need a separate worker')
             if any(t.get('worker') == worker and t['state'] in ('running', 'reported') for t in state['tasks'].values()):
                 raise EngineError('Worker is already reserved')
+            if task:
+                self._check_route(state, task, inline, helper)
             if task and task['role'] == 'builder' and task['mode'] == 'repair':
                 self._check_accept_before_repair(state, task)
             if task_id not in self._ready(state):
@@ -973,12 +1085,14 @@ class Engine:
             self._check_contract(state['tasks'][task_id])
             token = uuid.uuid4().hex
             state['tasks'][task_id].update(state='running', worker=worker, assignment=token, lease=lease, inline=inline)
+            if isinstance(helper, str) and helper.strip():
+                state['tasks'][task_id]['helper_reason'] = helper.strip()
             return token
 
     def _evidence_scopes(self, state, task_id):
         """The scopes a card's acceptance depends on; None means the whole repository (SPEC 5.1 item 10)."""
         task = state['tasks'][task_id]
-        if not (task['role'] == 'builder' or task.get('review_required', False)):
+        if not task.get('review_required', False):
             return [self._scope_of(state, [task_id])]  # accepted on its own report artifact
         receipts = {r['id']: r for r in self._review_verdicts(state, {}, task_id=task_id).values()}
         return [r.get('scope') for r in receipts.values()]
@@ -993,6 +1107,31 @@ class Engine:
                                    for scope in self._evidence_scopes(state, other['id'])):
                 raise EngineError('Accept %s first; a repair would make its evidence stale' % other['id'])
 
+    @staticmethod
+    def _self_review_ok(review):
+        """The SELF_REVIEW shape of contract item 1: non-empty `checks` and `criteria`, each entry well typed."""
+        if not isinstance(review, dict):
+            return False
+        checks, criteria = review.get('checks'), review.get('criteria')
+        return (isinstance(checks, list) and bool(checks) and isinstance(criteria, list) and bool(criteria)
+                and all(isinstance(c, dict) and isinstance(c.get('command'), str) and c['command'].strip()
+                        and type(c.get('exit_code')) is int for c in checks)
+                and all(isinstance(c, dict) and isinstance(c.get('criterion'), str) and c['criterion'].strip()
+                        and type(c.get('met')) is bool and isinstance(c.get('evidence'), str) for c in criteria))
+
+    @classmethod
+    def _parse_self_review(cls, report):
+        lines = [line for line in report.splitlines() if line.startswith('SELF_REVIEW: ')]
+        if len(lines) != 1:
+            raise EngineError(SELF_REVIEW_ERROR)
+        try:
+            review = json.loads(lines[0][len('SELF_REVIEW: '):])
+        except ValueError:
+            raise EngineError(SELF_REVIEW_ERROR) from None
+        if not cls._self_review_ok(review):
+            raise EngineError(SELF_REVIEW_ERROR)
+        return review
+
     def report(self, worker, token, report):
         if not isinstance(report, str) or not report.strip():
             raise EngineError('Empty worker report')
@@ -1001,12 +1140,16 @@ class Engine:
             if not task or task['state'] != 'running' or task['worker'] != worker:
                 raise EngineError('Invalid assignment')
             self._lease(state, state['session']['actor'], task['lease'])
+            review = self._parse_self_review(report) if task['role'] == 'builder' else None
             task.update(state='reported', report=report,
                         report_artifact=self.artifact(self._scope_of(state, [task['id']])))
+            if review is not None:
+                task['self_review'] = review
             ancestor = task
             while ancestor.get('repair_of'):
                 ancestor = state['tasks'][ancestor['repair_of']]
                 ancestor['state'] = 'reported'
+                ancestor['report_artifact'] = self.artifact(self._scope_of(state, [ancestor['id']]))  # the repair changed its files
 
     def _snapshot(self, path, kind):
         path = Path(path).resolve()
@@ -1041,7 +1184,7 @@ class Engine:
             if not isinstance(categories, list) or not categories or not set(categories) <= set(CATEGORIES):
                 raise EngineError('Invalid review categories')
             if not final and not ids:
-                raise EngineError('Checkpoint review needs task coverage')
+                raise EngineError('Review needs task coverage')
             if any(i not in state['tasks'] for i in ids):
                 raise EngineError('Unknown reviewed task')
             if final and (len(ids) != len(set(ids)) or set(ids) not in (set(state['tasks']), self._pre_release_ids(state))):
@@ -1065,6 +1208,10 @@ class Engine:
                 raise EngineError('Review needs a nonempty semantic summary')
             task_findings = self._check_task_findings(state, body, ids, findings)
             repair_check = self._check_repair_marker(body, final)
+            if not final and repair_check:
+                self._check_fix_review(state, covered)
+            elif not final and not any(t['role'] == 'critic' and t.get('worker') == reviewer for t in state['tasks'].values()):
+                raise EngineError('Only the pre-PR review and the fix re-review are recorded')
             if not final and findings and (repair_check or any(t.get('repaired_by') for t in covered)):
                 self._check_chain_tips(state, covered, task_findings)
             if final and findings and covered:
@@ -1082,17 +1229,13 @@ class Engine:
                 receipt['task_findings'] = task_findings
             if repair_check:
                 receipt['repair_check'] = True
+            if final:
+                receipt['entries'] = self._entry_digests()  # lets a clean fix re-review tell which files changed since
             state['reviews'].append(receipt)
-            for key, found in (task_findings or {}).items():
-                if key not in ids:
-                    for finding in found:
-                        _append_progress(self.state_dir, '- gate %s attributed to held %s: %s'
-                                         % (', '.join(self._failed_gates(state, body)), key, finding))
             return copy.deepcopy(receipt)
 
     def _check_task_findings(self, state, body, ids, findings):
-        """Per-task findings (SPEC 5.1 item 4): covered keys only, and the ordered union equals `findings`.
-        A held chain tip outside the coverage is also a key when the report cites a failed gate receipt (SPEC 5.4 item 3)."""
+        """Per-task findings (SPEC 5.1 item 4): covered keys only, and the ordered union equals `findings`."""
         if 'task_findings' not in body:
             return None
         per_task = body['task_findings']
@@ -1100,32 +1243,35 @@ class Engine:
                 not isinstance(v, list) or any(not isinstance(f, str) or not f.strip() for f in v)
                 for v in per_task.values()):
             raise EngineError('Invalid task findings')
-        if any(key not in ids and not self._held_tip_with_failed_gate(state, body, key) for key in per_task):
+        if any(key not in ids for key in per_task):
             raise EngineError('Task findings name an uncovered task')
         if list(dict.fromkeys(f for v in per_task.values() for f in v)) != findings:
             raise EngineError('Task findings must match the review findings')
         return per_task
 
     @staticmethod
-    def _failed_gates(state, body):
-        """Ids of the failed gate receipts the report cites; a malformed citation is refused later by `_check_gate_receipts`."""
-        cited = body.get('gate_receipts', [])
-        if not isinstance(cited, list):
-            return []
-        return [g['id'] for g in state['gates'] if g['id'] in cited and not g['passed']]
-
-    def _held_tip_with_failed_gate(self, state, body, key):
-        task = state['tasks'].get(key)
-        return bool(task and task['state'] == 'held' and not task.get('repaired_by') and self._failed_gates(state, body))
-
-    @staticmethod
     def _check_repair_marker(body, final):
-        """`repair_check` marks a repair-diff check; only the value true, only on a checkpoint receipt (SPEC 5.1 item 6)."""
+        """`repair_check` marks the fix re-review; only the value true, and never on the final receipt (contract item 4)."""
         if 'repair_check' not in body:
             return False
         if body['repair_check'] is not True or final:
-            raise EngineError('repair_check must be true on a checkpoint receipt')
+            raise EngineError('repair_check must be true on a non-final fix re-review')
         return True
+
+    @staticmethod
+    def _check_fix_review(state, covered):
+        """The fix re-review covers repair cards whose chain starts at a final-review finding, plus their ancestors."""
+        repairs = [t for t in covered if t['role'] == 'builder' and t['mode'] == 'repair']
+        allowed, fixes = set(), 0
+        for repair in repairs:
+            chain = [repair]
+            while chain[-1].get('repair_of'):
+                chain.append(state['tasks'][chain[-1]['repair_of']])
+            if any(t.get('final_findings') for t in chain):
+                fixes += 1
+                allowed.update(t['id'] for t in chain)
+        if not fixes or fixes != len(repairs) or any(t['id'] not in allowed for t in covered):
+            raise EngineError('A fix re-review covers repair cards of a final-review finding and their ancestors')
 
     def _check_chain_tips(self, state, covered, task_findings, kind='repair-diff'):
         """Tip rule (SPEC 5.1 item 6, 5.5 item 3): a blocked repair-diff check or final receipt names chain tips, never an ancestor."""
@@ -1200,18 +1346,52 @@ class Engine:
             raise EngineError('Review findings must equal the blocking issues in order')
         return [i['text'] for i in issues if i['severity'] == 'note']
 
-    def _review_verdicts(self, state, cache, task_id=None, final=False):
-        """Newest relevant verdict wins; altered evidence cannot restore an older verdict."""
+    def _kept_current(self, state, review, cache):
+        """Ids a CLEAN fix re-review resolves when a stale final review stays current for completion, else None.
+        Every file changed since the final review must belong to a repair card that a later, current, CLEAN fix
+        re-review covered (contract item 5)."""
+        if not review['final'] or 'entries' not in review:
+            return None
+        ids = [r['id'] for r in state['reviews']]
+        later = [r for r in state['reviews'][ids.index(review['id']) + 1:]
+                 if r.get('repair_check') and not r['findings'] and self._intact(r)
+                 and r['artifact'] == self._artifact_cached(cache, r.get('scope'))]
+        repairs = {i for r in later for i in r['tasks']
+                   if state['tasks'][i]['role'] == 'builder' and state['tasks'][i]['mode'] == 'repair'}
+        scope = self._scope_of(state, sorted(repairs)) if repairs else None
+        if scope is None:
+            return None
+        if 'entries' not in cache:
+            cache['entries'] = self._entry_digests()
+        old, now = review['entries'], cache['entries']
+        if any(old.get(name) != now.get(name) and not self._in_scope(name, scope) for name in old.keys() | now.keys()):
+            return None
+        if any(review['artifact'][k] != self._artifact_cached(cache, None)[k] for k in ('repo', 'identity', 'policy')):
+            return None
+        return {i for r in later for i in r['tasks']}
+
+    def _review_verdicts(self, state, cache, task_id=None, final=False, keep=False):
+        """Newest relevant verdict wins; altered evidence cannot restore an older verdict. With `keep`, a stale final
+        review that a CLEAN fix re-review keeps current counts as current (`cache['resolved']` records the ids)."""
         verdicts = {}
         since = state['tasks'][task_id].get('review_since', 0) if task_id is not None else 0
         for review in state['reviews'][since:]:
             if task_id is not None and task_id not in review['tasks']:
                 continue
-            if final and (not review['final'] or not self._pre_release_ids(state) <= set(review['tasks'])):
+            if final and not review['final']:
                 continue
             # Each receipt is compared against the artifact recomputed with its own stored scope.
             # A stale newest receipt leaves its categories without a current verdict (O19).
             current = review['artifact'] == self._artifact_cached(cache, review.get('scope'))
+            resolved = None
+            if not current and keep and review['final']:
+                resolved = self._kept_current(state, review, cache)
+                if resolved is not None:
+                    current = True
+            if final and not self._pre_release_ids(state) <= set(review['tasks']) | (resolved or set()):
+                continue  # a repair card the fix re-review covered counts as covered by the final review it fixed
+            if resolved is not None:
+                cache.setdefault('resolved', {})[review['id']] = resolved
             for category in review['categories']:
                 verdicts[category] = (review, current)
         # A stale non-CLEAN newest receipt in any category voids every verdict until re-review (O22).
@@ -1235,10 +1415,15 @@ class Engine:
             return 'Task has current review findings'
         if task.get('repaired_by') and state['tasks'][task['repaired_by']]['state'] != 'accepted':
             return 'Task repair must be accepted first'
-        reviewed = task['role'] == 'builder' or task.get('review_required', False)
-        if reviewed and not verdicts:
-            return 'Task needs current independent review'
-        if not reviewed and task['report_artifact'] != self._artifact_cached(cache, self._scope_of(state, [task_id])):
+        if task['role'] == 'builder':
+            review = task.get('self_review')
+            if review is None:
+                return SELF_REVIEW_ERROR
+            if any(c['exit_code'] != 0 for c in review['checks']) or not all(c['met'] for c in review['criteria']):
+                return 'Self-review has a failing check or unmet criterion'
+        elif task.get('review_required', False):
+            return None if verdicts else 'Task needs current independent review'
+        if task['report_artifact'] != self._artifact_cached(cache, self._scope_of(state, [task_id])):
             return 'Reported artifact is stale'
         return None
 
@@ -1249,26 +1434,6 @@ class Engine:
             if refusal:
                 raise EngineError(refusal)
             state['tasks'][task_id]['state'] = 'accepted'
-
-    def supersede(self, actor, lease, task_id):
-        """Clear an unstarted review that newer accepted reviews cover in full (SPEC 5.1 item 11)."""
-        with self._state() as state:
-            self._lease(state, actor, lease)
-            task = state['tasks'].get(task_id)
-            if not task or task['role'] not in REVIEW_ROLES or not task.get('review_of'):
-                raise EngineError('Only a review card with review_of can be superseded')
-            if task['state'] not in ('queued', 'parked') or 'worker' in task:
-                raise EngineError('Only a queued or parked review that was never dispatched can be superseded')
-            ids = self._added_order(state)
-            newer = [state['tasks'][i] for i in ids[ids.index(task_id) + 1:]
-                     if state['tasks'][i]['state'] == 'accepted' and state['tasks'][i]['role'] in REVIEW_ROLES
-                     and state['tasks'][i].get('review_of')]
-            for covered in task['review_of']:
-                if not any(covered in t['review_of'] for t in newer):
-                    raise EngineError('Review %s cannot be superseded: %s is not covered by an accepted newer review'
-                                      % (task_id, covered))
-            task.update(state='accepted', superseded_by=[t['id'] for t in newer if set(t['review_of']) & set(task['review_of'])])
-            task.pop('parked_reason', None)
 
     def add_finding(self, actor, lease, review_id, kind, index, disposition, reason, card=None):
         """Record the coordinator's disposition of one receipt item (SPEC 5.12). A rejection accepts no card."""
@@ -1412,14 +1577,21 @@ class Engine:
             raise EngineError('All tasks must be accepted')
         artifact = self.artifact()
         cache = {None: artifact}
-        verdicts = self._review_verdicts(state, cache, final=True)
-        categories = {category for category, review in verdicts.items() if not review['findings']}
-        if any(review['findings'] for review in verdicts.values()):
+        verdicts = self._review_verdicts(state, cache, final=True, keep=True)
+
+        def open_findings(review):
+            resolved = cache.get('resolved', {}).get(review['id'])
+            if resolved is None:
+                return review['findings']
+            return [f for key, found in (review.get('task_findings') or {}).items() if key not in resolved for f in found]
+
+        categories = {category for category, review in verdicts.items() if not open_findings(review)}
+        if any(open_findings(review) for review in verdicts.values()):
             raise EngineError('Current final review has findings')
         for task_id in state['tasks']:
             if any(self._task_findings(r, task_id) for r in self._review_verdicts(state, cache, task_id=task_id).values()):
                 raise EngineError('Current task review has findings: ' + task_id)
-        required_categories = set(self.policy['required_review_categories'])
+        required_categories = set(self._required_lenses(state))
         if (require_review or state['tasks']) and not required_categories <= categories:
             raise EngineError('Current final review coverage is incomplete')
         triaged = {f['fingerprint'] for f in state.get('findings', []) if f['source'].get('kind') == 'out_of_scope'}
@@ -1669,14 +1841,6 @@ class Engine:
             else:
                 status = 'still ' + tip['state']
             held_log.append('%s (chain %s): %s -- %s' % (tip['id'], ', '.join(chain_of(tip['id'])), tip['held_finding'], status))
-        gates = {g['id']: g for g in state['gates']}
-        for review in state['reviews']:
-            blamed = [k for k, found in (review.get('task_findings') or {}).items()
-                      if found and k not in review['tasks'] and k in tasks]
-            failed = [gates[i] for i in review.get('gate_receipts', []) if i in gates and not gates[i]['passed']]
-            for key in blamed:
-                for gate in failed:
-                    held_log.append('gate %s attributed to held %s: %s' % (gate['id'], key, '; '.join(review['task_findings'][key])))
         rounds = {}
         for task in tasks.values():
             if task.get('final_round'):
@@ -1695,10 +1859,7 @@ class Engine:
             if t['state'] != 'accepted':
                 continue
             line = '%s (%s/%s)' % (t['id'], t['role'], t['mode'])
-            if t.get('superseded_by'):
-                by = t['superseded_by']
-                line += ' superseded by ' + ', '.join(by if isinstance(by, list) else [by])
-            elif t.get('repair_of') or t.get('repaired_by'):
+            if t.get('repair_of') or t.get('repaired_by'):
                 line += ' repaired (%s)' % ', '.join(self._brief_chain(tasks, t['id'], full=True))
             accepted.append(line)
         start_gates = auto['armed_gates'] if auto else 0
