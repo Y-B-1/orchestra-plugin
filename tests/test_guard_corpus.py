@@ -564,5 +564,40 @@ def inline_commands(source):
     return found
 
 
+SUITE_COMMANDS = [
+    'pytest', 'pytest -q tests', 'python -m pytest', 'python3 -m pytest -x', 'python -m unittest',
+    'python3 -m unittest discover -s tests', 'python3 -m unittest tests.test_hooks tests.test_guard_corpus',
+    'npm test', 'npm run test', 'npm run test:e2e', 'pnpm test', 'yarn test', 'npx vitest', 'npx vitest run',
+    'npx jest', 'npx playwright test', 'go test ./...', 'cargo test', 'make test', 'cd pkg && pytest',
+    'env CI=1 npm test', 'time pytest', 'bash -c "pytest -q"', '.venv/bin/pytest', 'uv run pytest',
+    'pytest tests/a.py::test_x tests/b.py', 'python -m pytest -k slow',
+]
+NOT_SUITE_COMMANDS = [
+    'npm run build', 'npm install', 'echo pytest', 'grep unittest tests/test_hooks.py', 'cat package.json',
+    'git log --oneline', 'python3 script.py', 'python3 -m json.tool x.json', 'ls tests', 'go build ./...',
+    'cargo build', 'make build', 'yarn install', 'npx tsc', 'npx playwright install',
+]
+TARGETED_PROBES = [
+    'python -m unittest tests.test_x.Class.test_y', 'python3 -m unittest -v tests.test_x.Class.test_y',
+    'pytest tests/test_x.py::test_y', 'pytest -q tests/test_x.py::Class::test_y', 'python -m pytest tests/test_x.py::test_y',
+]
+
+
+class TestSuiteClassifierTest(unittest.TestCase):
+    def test_suite_commands(self):
+        for command in SUITE_COMMANDS:
+            with self.subTest(command=command):
+                self.assertTrue(guards.runs_test_suite(command))
+
+    def test_near_misses_probes_and_non_strings(self):
+        for command in NOT_SUITE_COMMANDS + TARGETED_PROBES + ['', "git 'reset", None, 5]:
+            with self.subTest(command=command):
+                self.assertFalse(guards.runs_test_suite(command))
+
+    def test_a_probe_beside_a_suite_is_still_a_suite(self):
+        self.assertTrue(guards.runs_test_suite('pytest tests/a.py::t && pytest'))
+        self.assertTrue(guards.runs_test_suite('python -m unittest tests.test_x.Class.test_y tests.test_z'))
+
+
 if __name__ == '__main__':
     unittest.main()

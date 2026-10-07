@@ -1092,6 +1092,16 @@ class MarkerHandshakeTest(unittest.TestCase):
             self.assertEqual(main(['SessionStart', '--harness', 'claude']), 0)
             self.assertIn('additionalContext', output.getvalue())
 
+    def test_reviewer_and_critic_calls_are_never_skipped_by_a_fresh_marker(self):
+        self.marker()
+        for kind in ('orchestra:code-reviewer', 'orchestra:critic'):
+            payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': 'Bash', 'agent_id': 'a1', 'agent_type': kind,
+                       'tool_input': {'command': 'git stash'}}
+            code, output = run_main(payload, '--harness', 'claude', env=self.env)
+            self.assertGuards(output)
+        payload.update(agent_type='orchestra:builder')
+        self.assertEqual(run_main(payload, '--harness', 'claude', env=self.env)[1], {})
+
     def test_fresh_marker_skips_before_any_git_or_engine_work(self):
         self.marker()
         with mock.patch('subprocess.check_output', side_effect=AssertionError('git ran')):
@@ -2108,6 +2118,104 @@ class RunBriefHookTest(unittest.TestCase):
         self.assertEqual(data['session']['outcome'], 'ended')
         self.assertEqual(data['permits'], [])
         self.assertEqual(data['last_brief']['reason'], 'ended')
+
+
+class RunEngine:
+    """Fake engine adapter: an active run, optional gate receipt ids, optional failing status."""
+    def __init__(self, state_path, active=True, gate_ids=None, broken=False):
+        self.state_path, self.active, self.broken = state_path, active, broken
+        if gate_ids is not None:
+            self.current_gate_ids = lambda: list(gate_ids)
+
+    def status(self):
+        if self.broken:
+            raise RuntimeError('state unreadable')
+        return {'session': {'active': self.active} if self.active is not None else None}
+
+
+class PlanV24GuardTest(unittest.TestCase):
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.state = self.dir / 'state.json'
+
+    def engine(self, **kw):
+        return RunEngine(self.state, **kw)
+
+    def agent(self, subagent_type, tool='Agent', engine=None, **extra):
+        data = {'prompt': 'x'}
+        if subagent_type is not None:
+            data['subagent_type'] = subagent_type
+        payload = {'tool_name': tool, 'tool_input': data, 'cwd': str(self.dir), **extra}
+        return handle_event('PreToolUse', payload, harness='claude', engine=engine)
+
+    def review_call(self, text, agent_type, engine=None):
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': text}, 'cwd': str(self.dir)}
+        if agent_type is not None:
+            payload.update(agent_id='a1', agent_type=agent_type)
+        return handle_event('PreToolUse', payload, harness='claude', engine=engine)
+
+    def test_non_orchestra_agent_denied_during_run(self):
+        for tool in ('Agent', 'Task'):
+            for kind in ('general-purpose', 'Explore', 'Plan', 'claude', '', None, 7, 'orchestrator'):
+                with self.subTest(tool=tool, kind=kind):
+                    result = self.agent(kind, tool, self.engine())
+                    self.assertEqual(decision_of(result), 'deny')
+                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
+                                     'Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits)')
+
+    def test_orchestra_agent_allowed_during_run(self):
+        self.assertEqual(self.agent('orchestra:builder', engine=self.engine()).output, {})
+
+    def test_non_orchestra_agent_allowed_without_active_run(self):
+        self.assertEqual(self.agent('general-purpose').output, {})
+        self.assertEqual(self.agent('general-purpose', engine=self.engine(active=False)).output, {})
+        self.assertEqual(self.agent('general-purpose', engine=self.engine(active=None)).output, {})
+
+    def test_agent_guard_fails_closed_on_engine_error_only_for_an_active_raw_session(self):
+        broken = self.engine(broken=True)
+        self.state.write_text(json.dumps({'session': {'active': True}}))
+        self.assertEqual(decision_of(self.agent('general-purpose', engine=broken)), 'deny')
+        self.state.write_text('{not json')
+        self.assertEqual(decision_of(self.agent('general-purpose', engine=broken)), 'deny')
+        self.state.write_text(json.dumps({'session': {'active': False}}))
+        self.assertEqual(self.agent('general-purpose', engine=broken).output, {})
+        self.assertEqual(decision_of(self.agent('general-purpose', engine=mock.Mock())), 'deny')
+
+    def test_subagent_agent_call_still_hits_workers_do_not_delegate(self):
+        result = self.agent('orchestra:builder', engine=self.engine(), agent_id='a1', agent_type='orchestra:builder')
+        self.assertIn('Workers do not delegate', result.output['hookSpecificOutput']['permissionDecisionReason'])
+
+    def test_reviewers_cannot_rerun_suites_while_gate_receipts_exist(self):
+        engine = self.engine(gate_ids=['gate-1', 'gate-2'])
+        for kind in ('orchestra:code-reviewer', 'orchestra:code-reviewer-checkpoint', 'orchestra:critic'):
+            for text in ('python3 -m unittest discover', 'cd x && pytest -q', 'npm test'):
+                with self.subTest(kind=kind, text=text):
+                    result = self.review_call(text, kind, engine)
+                    self.assertEqual(decision_of(result), 'deny')
+                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
+                                     'Cite gate receipt gate-1, gate-2; reviewers do not rerun suites')
+
+    def test_suite_allowed_without_receipts_engine_or_method(self):
+        for engine in (self.engine(gate_ids=[]), None, self.engine()):
+            with self.subTest(engine=engine):
+                self.assertEqual(self.review_call('pytest', 'orchestra:critic', engine).output, {})
+
+    def test_other_agents_and_main_session_may_run_suites(self):
+        engine = self.engine(gate_ids=['gate-1'])
+        self.assertEqual(self.review_call('pytest', 'orchestra:builder', engine).output, {})
+        self.assertEqual(self.review_call('pytest', None, engine).output, {})
+        self.assertEqual(self.review_call('pytest', 'orchestra:codex-reviewer', engine).output, {})
+
+    def test_targeted_probe_allowed_for_reviewers(self):
+        engine = self.engine(gate_ids=['gate-1'])
+        for text in ('python3 -m unittest tests.test_x.Class.test_y', 'pytest tests/test_x.py::test_y'):
+            self.assertEqual(self.review_call(text, 'orchestra:code-reviewer', engine).output, {}, text)
+
+    def test_failing_gate_listing_never_blocks_a_reviewer(self):
+        engine = self.engine()
+        engine.current_gate_ids = mock.Mock(side_effect=RuntimeError('x'))
+        self.assertEqual(self.review_call('pytest', 'orchestra:critic', engine).output, {})
 
 
 if __name__ == '__main__':
