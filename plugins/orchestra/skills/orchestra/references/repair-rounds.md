@@ -3,7 +3,7 @@ Sentinel: orchestra/references/repair-rounds.md
 
 # Repair ladder
 
-The ladder has two rungs and then holds: Sonnet builder, one Opus repair, then hold. No round counter, cap or breaker applies, and a hold never stops or blocks a run.
+The ladder has two rungs and then holds: builder, one Opus repair, then hold. No round counter, cap or breaker applies, and a hold never stops or blocks a run.
 
 | Rung | Action |
 | --- | --- |

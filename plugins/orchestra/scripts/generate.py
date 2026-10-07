@@ -57,7 +57,10 @@ def variants_of(matrix):
 
 VARIANT_NOTES = {('investigator', 'code'): ' Mode: code. Read-only bounded code discovery.',
                  ('code-reviewer', 'checkpoint'): " Mode: checkpoint. Exact-diff checkpoint review of one wave's reported tickets.",
-                 ('code-reviewer', 'standards'): ' Mode: final. Lens: standards. Standards and cleanup categories only.'}
+                 ('code-reviewer', 'standards'): ' Mode: final. Lens: standards. Standards and cleanup categories only.',
+                 ('builder', 'mechanical'): ' Mode: mechanical. One stated transform applied across many sites.',
+                 ('builder', 'cleanup'): ' Mode: cleanup. End-of-run simplify pass on confirmed review findings.'}
+WRITE_TOOLS = {'Edit', 'Write', 'NotebookEdit'}
 
 
 def mode_note(role_id, preset):
@@ -85,10 +88,13 @@ def generated(root=ROOT):
             name = role['id'] if preset == 'default' else role['id'] + '-' + preset
             front = ['---', f'name: {name}', f"description: {json.dumps(role['description'] + mode_note(role['id'], preset))}",
                      *selection_lines(values), f"skills: [{', '.join(preload)}]"]
-            if role.get('read_only'):
-                front.append('disallowedTools: Agent, Edit, Write, NotebookEdit')
-            elif not orchestrator:
-                front.append('disallowedTools: Agent')
+            if not orchestrator:
+                tools = role.get('preset_tools', {}).get(preset, role['tools'])
+                if role.get('read_only') and set(tools) & WRITE_TOOLS:
+                    raise ValueError(f"{name}: read-only role lists a write tool")
+                if set(tools) & {'Agent', 'Task'}:
+                    raise ValueError(f"{name}: workers never delegate")
+                front.append(f"tools: {', '.join(tools)}")
             front += ['---', '', instructions.replace('__ORCHESTRA_ROOT__', '${CLAUDE_PLUGIN_ROOT}')]
             output[f'agents/{name}.md'] = '\n'.join(front) + '\n'
     return output

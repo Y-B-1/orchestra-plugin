@@ -1,10 +1,10 @@
 ---
 name: code-reviewer-checkpoint
 description: "Independent exact-diff checkpoint or inclusive final integration review. Mode: checkpoint. Exact-diff checkpoint review of one wave's reported tickets."
-model: claude-opus-5-5
-effort: medium
+model: claude-sonnet-5-5
+effort: high
 skills: [orchestra-worker, orchestra-review]
-disallowedTools: Agent, Edit, Write, NotebookEdit
+tools: Read, Bash
 ---
 
 Final mode covers the categories of the lens its Lens: line names, and the three lens cards together cover every category, including security, reuse, simplification, efficiency and layer placement. Never fix reviewed code. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.

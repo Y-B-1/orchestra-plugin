@@ -10,7 +10,7 @@ One installable Claude Code plugin source, with a reusable core for other harnes
 
 Main orchestrator plus ten workers: investigator, founder-mind, designer-planner, red-teamer, builder, code-reviewer, auditor, gatekeeper, janitor, releaser. Investigator has code/docs modes; designer-planner has design/plan modes; builder has implementation/frontend/sensitive/mechanical/repair presets; code-reviewer has checkpoint/final modes; auditor has spec/standards/ledger modes. Founder-mind preserves product depth, researched references, user simulation and shipped-surface audit. All workers return evidence and never own coordinator state or fan-out.
 
-Claude model matrix (see `config/models.json`): main, designer-planner, critic and final reviewer Opus 5.5 high; checkpoint reviewer and checked builder repair Opus 5.5 medium; builder, operator and docs investigator Sonnet 5.5 medium; code discovery Sonnet 5.5 low. Only Opus 5.5 and Sonnet 5.5 run. No cross-provider model names or parallel-effort inflation. Main model remains a user choice.
+Claude model matrix (see `config/models.json`): main is the user's selection; critic Opus 5.5 high; final reviewer and checked builder repair Opus 5.5 medium; designer-planner and checkpoint reviewer Sonnet 5.5 high; builder, standards lens and docs investigator Sonnet 5.5 medium; mechanical and cleanup builders, operator and code discovery Haiku 5.5 high. Only Opus 5.5, Sonnet 5.5 and Haiku 5.5 run. No cross-provider model names or parallel-effort inflation. Main model remains a user choice.
 
 ## Routing and scheduling
 
