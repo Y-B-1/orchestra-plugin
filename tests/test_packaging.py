@@ -28,7 +28,7 @@ class NativeTests(unittest.TestCase):
     def test_role_matrix_files_and_read_only_enforcement(self):
         claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
         self.assertEqual(claude, {f'{n}.md' for n in [
-            'builder', 'builder-cleanup', 'builder-mechanical', 'code-reviewer', 'code-reviewer-checkpoint', 'code-reviewer-standards', 'critic', 'designer-planner',
+            'builder', 'builder-cleanup', 'builder-mechanical', 'code-reviewer', 'code-reviewer-standards', 'critic', 'designer-planner',
             'investigator', 'investigator-code', 'operator', 'orchestrator']})
         read_only = ('investigator', 'critic', 'code-reviewer')
         for name in claude - {'orchestrator.md'}:
@@ -78,7 +78,6 @@ class NativeTests(unittest.TestCase):
                     if l.startswith('description:')][0]
             return json.loads(line.split(':', 1)[1])
         for base, variant, mode in [('investigator-code', 'investigator', 'Mode: code.'),
-                                    ('code-reviewer-checkpoint', 'code-reviewer', 'Mode: checkpoint.'),
                                     ('builder-mechanical', 'builder', 'Mode: mechanical.'),
                                     ('builder-cleanup', 'builder', 'Mode: cleanup.')]:
             self.assertIn(mode, desc(base + '.md'))

@@ -2,7 +2,8 @@
   "schema_version": 1,
   "max_workers": 20,
   "required_checks": [],
-  "required_review_categories": ["requirements", "correctness", "security", "tests", "architecture", "standards", "cleanup"],
+  "sensitive_paths": ["**/auth/**", "**/security/**", "**/*secret*", "**/hooks/**", "**/guard*", "**/migrations/**", ".github/**"],
+  "standards_min_lines": 200,
   "secret_scan": {"required": false, "argv": []},
   "release": {"enabled": false, "remote": null, "target": null, "argv": []}
 }

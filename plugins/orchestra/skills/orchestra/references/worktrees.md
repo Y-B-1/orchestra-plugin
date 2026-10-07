@@ -3,7 +3,14 @@ Sentinel: orchestra/references/worktrees.md
 
 # Worktrees
 
-A worktree buys isolation and nothing else. Give one to each concurrent editor; a lone editor and a read-only worker use the main tree.
+A worktree buys isolation and nothing else. Use the fewest that keep writers apart:
+
+- Work whose files intersect shares one worktree.
+- A single writer, or writers in sequence, use none: the main tree.
+- Concurrent writers on disjoint files get one worktree per group.
+- A read-only worker uses the main tree.
+
+Group the work into PRs first (the inline session for 1 to 5 items, the designer-planner for 6 or more); a worktree follows a group, never a ticket.
 
 ## Create
 
@@ -12,7 +19,7 @@ A worktree buys isolation and nothing else. Give one to each concurrent editor; 
 3. Confirm the worktree directory is ignored by git.
 4. Set up the project and run the scoped baseline checks before any edit.
 
-One worktree serves one unit of work. The dispatcher who created it removes it in the same wave.
+A worktree serves one group of work. The dispatcher who created it removes it when that group merges.
 
 ## Share nothing
 

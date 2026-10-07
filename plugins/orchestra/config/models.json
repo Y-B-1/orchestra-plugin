@@ -61,10 +61,6 @@
       "model": "claude-opus-5-5",
       "effort": "medium",
       "presets": {
-        "checkpoint": {
-          "model": "claude-sonnet-5-5",
-          "effort": "high"
-        },
         "final": {
           "model": "claude-opus-5-5",
           "effort": "medium"

@@ -6,9 +6,9 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 
 | Command | Purpose | Lease |
 | --- | --- | --- |
-| `start [--policy FILE] [--harness-session ID] [--new-run]` | Start a run and print the lease once. With `--harness-session`, ending that Claude Code session releases the run. | no |
+| `start [--policy FILE] [--harness-session ID] [--new-run] [--items N]` | Start a run and print the lease once. `--items N` sets the route (1 to 5 inline, 6 or more workflow). With `--harness-session`, ending that Claude Code session releases the run. | no |
 | `where` | Print the repository, the state directory and whether `standing-orders.md` exists. | no |
-| `status` | Print cards, session state and the waves in first-add order. Never prints a lease. | no |
+| `status` | Print cards, session state, the route and `required_lenses`. Never prints a lease. | no |
 | `board` | Group card ids by role and state. | no |
 | `artifact [--tasks ID[,ID]]` | Print the whole-repo artifact, or with `--tasks` the artifact scoped to those cards' reserved files plus HEAD. | no |
 | `report WORKER TOKEN FILE` | Record a worker's result file against its assignment token. | no |
@@ -18,10 +18,11 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `relaunch --permission-mode MODE [--model ID] [--launcher ARGV...]` | Run fresh `claude -p` passes from a terminal until a stop. `--launcher ARGV...` must come last; every later word goes to the launcher. | no |
 | `classify "SHELL COMMAND"` | Print the guard verdict for a command string without running it. | no |
 | `ready` | List cards that can be dispatched now. | yes |
-| `add TASK.json` | Add a card. A builder implementation card may carry `"wave": "W"`; a review card may name `"wave:W"` in `review_of`. | yes |
-| `dispatch TASK WORKER` | Reserve a card for a worker. | yes |
+| `route --items N --reason TEXT` | Change the route after `start`; the reason is logged in `route_log`. | yes |
+| `add TASK.json` | Add a card. On the workflow route, the designer-planner plan card must be accepted first. | yes |
+| `dispatch TASK WORKER [--helper REASON]` | Reserve a card for a worker. On the inline route `--helper REASON` is required. | yes |
 | `inline TASK` | Reserve a card for the main coordinator. | yes |
-| `review REVIEW.json` | Record an independent structured review. | yes |
+| `review REVIEW.json` | Record the independent pre-PR review (`final: true`) or the fix re-review (`repair_check: true`). | yes |
 | `accept TASK` | Accept a card whose current evidence allows it. | yes |
 | `gate [--again] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. | yes |
 | `scan` | Run the configured secret scan; an unavailable optional scanner is reported, not passed. | yes |
@@ -29,7 +30,6 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `release REMOTE TARGET` | Run the release command named in policy under a current permit. Refused while autonomy is active. | yes |
 | `finding add --review ID --kind finding\|out_of_scope --index N --disposition D --reason TEXT [--card ID]` | Record what happened to a review finding. | yes |
 | `hold TASK --finding TEXT` | End the repair ladder: move a blocked repair chain to `held` and log the finding. | yes |
-| `supersede TASK` | Accept an unstarted review that newer accepted reviews cover in full. | yes |
 | `park TASK --reason TEXT` | Set a card aside at an approval boundary. | yes |
 | `unpark TASK` | Return a parked card to the queue. | yes |
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |
@@ -46,22 +46,24 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 
 ## Changes in 2.2.0
 
-- New: `hold`, `supersede`, `brief`, `finding add|list`, `gate --again`, `autonomy arm --relaunch`, `autonomy settle`, `relaunch`, the `wave` card field and `"wave:W"` in `review_of`, and `waves` in `status`.
+- New: `hold`, `brief`, `finding add|list`, `gate --again`, `autonomy arm --relaunch`, `autonomy settle` and `relaunch`. The 2.2 wave field and `supersede` are removed in 2.4.
 - Changed: autonomy has no pass or stall cap. Caps in a 2.1 ledger are recorded, not enforced. The run brief replaces the autonomy report.
 - Changed: `gate` refuses boundary commands, and a repeat of a passed gate needs `--again`.
 - Every 2.1 command keeps working. A run started under 2.1 loads under 2.2; see the README upgrade note before mixing versions on one run.
 
+## Changes in 2.4.0
+
+- New: `start --items N`, `route`, `dispatch --helper REASON`, the `SELF_REVIEW:` builder line, `required_lenses` in `status`, and the policy keys `sensitive_paths` and `standards_min_lines` (default 200). Lenses: correctness always; security when a changed file matches `sensitive_paths`; standards and cleanup above `standards_min_lines` changed lines.
+- Changed: only the pre-PR review and the fix re-review are recorded. Reviewers cite gate receipts (`current_gate_ids`) and do not rerun suites.
+- Removed: waves, `supersede`, `task_findings`, the checkpoint review and the checkpoint reviewer.
+
 ## Scoped evidence
 
-A task report and a checkpoint (non-final) review bind to the covered cards' reserved files plus HEAD. An uncommitted edit outside those files does not stale the evidence; an edit inside them, or any new commit, does. A card with no reserved files gets the whole-repo artifact, and a checkpoint review that covers such a card uses the whole-repo artifact too. Final reviews, gates, release permits, release receipts and completion evidence always bind to the whole repository. The newest receipt per category that covers a card decides that category. If it is stale there is no current verdict; the engine never falls back to an older receipt.
+A task report binds to the covered cards' reserved files plus HEAD. An uncommitted edit outside those files does not stale the evidence; an edit inside them, or any new commit, does. A card with no reserved files gets the whole-repo artifact. Reviews, gates, release permits, release receipts and completion evidence always bind to the whole repository. The newest receipt per category that covers a card decides that category. If it is stale there is no current verdict; the engine never falls back to an older receipt.
 
-## Waves, repair and hold
+## Repair and hold
 
-A wave is a label on builder implementation cards. `add` refuses `wave` on any other card, and refuses a card for wave W once a review of W exists ("Wave W already has a review; start a new wave"). A review card names `"review_of": ["wave:W"]`; `add` resolves it to the ids of every card labelled W and stores plain ids. `status` lists `waves` in the order each label first appeared, each with its card ids and `next_depends`, whether a card of the next wave depends on it through `dependencies`, `files` or `inputs`. A wave-boundary gate is due only when `next_depends` is true.
-
-A wave review is a checkpoint review. Its report may carry `task_findings`, which maps each covered card to its own blocking findings: an empty list or a missing key means clean for that card. Without `task_findings`, every covered card gets the whole `findings` list, as in 2.1. A repair-diff check carries `repair_check: true`.
-
-The repair ladder has one repair rung: the Sonnet implementation card, then one Opus builder `repair` card. `hold TASK --finding TEXT` ends it. It is refused unless TASK is a repair card in state `reported` with a current blocking verdict, or an implementation card whose current blocking verdict comes from a repair-diff check. It moves the whole chain to `held`, stores the finding and appends a `held` line to `<state>/progress.md`. A held card reserves nothing and satisfies a dependency, so a later wave still runs; `finish` still needs the final phase to clear it. `supersede TASK` accepts a queued or parked review card that was never dispatched, when every id it covers is covered by a newer accepted review; otherwise it is refused and names the uncovered id.
+The repair ladder has one repair rung: the Sonnet implementation card, then one Opus builder `repair` card, then one fix re-review (`repair_check: true`, `final: false`). `hold TASK --finding TEXT` ends it. It is refused unless TASK is a repair card in state `reported` with a current blocking verdict, or an implementation card whose current blocking verdict comes from a fix re-review. It moves the whole chain to `held`, stores the finding and appends a `held` line to `<state>/progress.md`. A held card reserves nothing and satisfies a dependency; `finish` still needs the final phase to clear it.
 
 Accept a card before adding a repair that overlaps its evidence: dispatching a repair is refused while a reported card passes every `accept` check and shares reserved files with it ("Accept X first; a repair would make its evidence stale").
 

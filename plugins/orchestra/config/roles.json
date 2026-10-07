@@ -117,9 +117,8 @@
     },
     {
       "id": "code-reviewer",
-      "description": "Independent exact-diff checkpoint or inclusive final integration review.",
+      "description": "Independent pre-PR review of the integrated candidate, and the fix re-review of a repair.",
       "modes": [
-        "checkpoint",
         "final"
       ],
       "skill": "orchestra-review",

@@ -57,9 +57,9 @@ On Claude Code the plugin also registers a function-hook module that classifies 
 
 ## Roles and models
 
-[Role contracts](docs/roles.md) describe responsibilities and the v1 to v2 mapping. [Model matrix](docs/models.md) lists model and effort settings. The coordinator runs in the main session and never as a worker. The six worker roles are investigator, designer-planner, critic, builder, code-reviewer and operator; each role has one skill and loads one mode file for its brief's `Mode:` line. The generator produces 8 Claude worker agents plus the orchestrator.
+[Role contracts](docs/roles.md) describe responsibilities and the v1 to v2 mapping. [Model matrix](docs/models.md) lists model and effort settings. The coordinator runs in the main session and never as a worker. The six worker roles are investigator, designer-planner, critic, builder, code-reviewer and operator; each role has one skill and loads one mode file for its brief's `Mode:` line. The generator produces 10 Claude worker agents plus the orchestrator.
 
-Every final integration review covers requirements, correctness, security, tests, architecture, standards and cleanup, in four lenses (correctness, architecture, security, cleanliness). A critic runs a separate pass for each needed conformance axis. The operator runs actual commands and executes only a configured authorized release. A reviewer cannot approve their own work.
+One pre-PR review covers the integrated candidate. Correctness is always a lens; security applies when a changed file matches policy `sensitive_paths`; standards and cleanup apply above `standards_min_lines` changed lines. A critic runs a separate pass for each needed conformance axis. The operator runs actual commands and executes only a configured authorized release. A reviewer cannot approve their own work.
 
 | v1 role | v2 role and mode |
 | --- | --- |
@@ -72,7 +72,7 @@ Every final integration review covers requirements, correctness, security, tests
 | auditor | critic / spec, standards, ledger |
 | builder | builder / implementation, frontend, sensitive, mechanical |
 | builder-repair | builder / repair |
-| code-reviewer, code-reviewer-checkpoint | code-reviewer / final, checkpoint |
+| code-reviewer, code-reviewer-checkpoint | code-reviewer / final |
 | gatekeeper | operator / gate |
 | janitor | operator / cleanup |
 | releaser | operator / release |
@@ -94,9 +94,9 @@ Release is disabled by default. Explicit project policy names authorization, exa
 
 For fresh context on every pass, arm with `autonomy arm --relaunch`, end the interactive session, and run `orchestra.py relaunch --permission-mode MODE [--model ID]` in a terminal. It runs one `claude -p` pass at a time, ends each pass's session, backs off after a stalled pass and never stops for stalls. It replaces the downstream shell harness.
 
-### Waves, repair and hold
+### Routing, repair and hold
 
-Group builder cards into a wave with `"wave": "W"`, review the whole wave with `"review_of": ["wave:W"]`, and attribute findings per card with `task_findings`. A failed card gets one Opus repair; a chain that still fails is ended with `orchestra.py hold TASK --finding TEXT` and cleared in the final phase. `orchestra.py supersede`, `finding add|list`, `gate --again` and the `waves` in `status` are in the [CLI guide](docs/cli.md).
+`start --items N` fixes the route: 1 to 5 items run inline, with `dispatch --helper REASON` for a helper; 6 or more need an accepted designer-planner plan card and Workflow builders. Builders end with one `SELF_REVIEW:` line. Review happens once, before the PR. A failed card gets one Opus repair and one fix re-review (`repair_check: true`); a chain that still fails is ended with `orchestra.py hold TASK --finding TEXT` and cleared in the final phase. `route`, `finding add|list` and `gate --again` are in the [CLI guide](docs/cli.md).
 
 ## Check and distribute
 

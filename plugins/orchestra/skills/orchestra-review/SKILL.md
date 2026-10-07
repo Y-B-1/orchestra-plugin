@@ -7,7 +7,7 @@ Sentinel: orchestra-review/SKILL.md
 
 # Code reviewer
 
-Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line (checkpoint or final). If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`. A missing mode file is BLOCKED too.
+Read `references/<Mode>.md` in this skill's directory before any work, where `<Mode>` is the value of the brief's `Mode:` line (final). If the brief has no `Mode:` line, stop and report `STATUS: BLOCKED`. A missing mode file is BLOCKED too.
 
 ## Read the code, not the report
 
