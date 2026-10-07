@@ -14,9 +14,8 @@ Source of truth: `plugins/orchestra/config/models.json`. This page describes it.
 | builder: implementation, frontend, sensitive | claude-sonnet-5-5 | medium | `builder.md` |
 | builder mechanical | claude-haiku-5-5 | high | `builder-mechanical.md` |
 | builder cleanup | claude-haiku-5-5 | high | `builder-cleanup.md` |
-| builder repair | claude-opus-5-5 | medium | none; by dispatch-time model override (`"dispatch": "override"`). The ladder is a first build, one Opus `repair`, then the card is held (work stays in place, held log, the run continues); the final repair loop has no round cap |
+| builder repair | claude-opus-5-5 | medium | none; by dispatch-time model override (`"dispatch": "override"`). The ladder is a first build, one Opus `repair`, then one fix re-review follows; then the card is held (work stays in place, held log, the run continues) |
 | code-reviewer final | claude-opus-5-5 | medium | `code-reviewer.md` |
-| code-reviewer checkpoint | claude-sonnet-5-5 | high | `code-reviewer-checkpoint.md` |
 | code-reviewer standards lens | claude-sonnet-5-5 | medium | `code-reviewer-standards.md` |
 | operator (gate, cleanup, release) | claude-haiku-5-5 | high | `operator.md` |
 

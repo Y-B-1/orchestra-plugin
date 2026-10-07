@@ -1,6 +1,6 @@
 ---
 name: code-reviewer
-description: "Independent exact-diff checkpoint or inclusive final integration review."
+description: "Independent pre-PR review of the integrated candidate, and the fix re-review of a repair."
 model: claude-opus-5-5
 effort: medium
 skills: [orchestra-worker, orchestra-review]

@@ -20,7 +20,7 @@ Done when every report in hand carries a verdict, a severity and a route, and ea
 
 ## Out-of-scope findings
 
-Only the final review raises them, in `out_of_scope`. Triage each into one of three and record it with `orchestra.py finding add --review <id> --kind out_of_scope --index N --disposition inline|card|brief --reason TEXT [--card ID]`:
+Only the pre-PR review raises them, in `out_of_scope`. Triage each into one of three and record it with `orchestra.py finding add --review <id> --kind out_of_scope --index N --disposition inline|card|brief --reason TEXT [--card ID]`:
 
 - `inline`: a small reversible fix you make yourself, reserved with `inline TASK`.
 - `card`: a new builder card, batch or plan, for work that needs its own review.

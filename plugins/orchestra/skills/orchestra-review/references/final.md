@@ -3,11 +3,11 @@ Sentinel: orchestra-review/references/final.md
 
 # Code reviewer: final mode
 
-Review the full integration diff against the named base and the current artifact. Include how tickets interact, not only each ticket alone.
+This is the pre-PR review. Review the full integration diff against the named base and the current artifact. Include how tickets interact, not only each ticket alone. A brief that names a fix range is a fix re-review (below).
 
 ## Lens
 
-The brief's `Lens:` line names one lens file: `correctness.md`, `security.md` or `standards.md`. Open that file and review only through it, with the checklist files the table names for it.
+The brief's `Lens:` line names one lens file: `correctness.md`, `security.md` or `standards.md`. Open that file and review only through it, with the checklist files the table names for it. The coordinator derives which lenses run from the diff; you review the one your brief names.
 
 A `Lens:` line of `specialist:<name>` names a section of `specialists.md` instead. Open that file and review only through the named section. Tag each finding with the closest category from the table below, and set `categories` to the ones you used.
 
@@ -27,7 +27,7 @@ Set `categories` in the verdict to the row for your lens and no other. Findings 
 - Find contracts that two tickets each assume differently.
 - Find the same symbol or file changed by more than one ticket.
 - Confirm that every requirement in the approved ask is met by code in the diff.
-- Cite the operator's gate receipt in `gate_receipts`. Run no full suite. A cited failed receipt is a blocking finding for the correctness lens.
+- Cite the operator's gate receipt in `gate_receipts`. Run no full suite; the guard denies suite commands while a current receipt exists. A cited failed receipt is a blocking finding for the correctness lens.
 
 ## Attribution
 
@@ -38,3 +38,9 @@ Set `categories` in the verdict to the row for your lens and no other. Findings 
 ## Verdict
 
 Echo the `artifact` output as the base skill says. Set `final` to true. Return BLOCKED if any finding in your categories is an open blocker.
+
+## Fix re-review
+
+When the brief names a fix range and `repair_check`, review only that range against the findings it answers and the rejected findings the brief lists. For each finding, report fixed, not fixed or regressed. Open a new finding only for a defect the fix introduced. Do not reopen settled code.
+
+Put `repair_check: true` in the report body and set `final` to false. Key a BLOCKED `task_findings` on the chain tip: the repair card. Never key a card a repair covers.

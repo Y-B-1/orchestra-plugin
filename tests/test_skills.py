@@ -27,7 +27,7 @@ TABLE = {
     'orchestra-build': ['SKILL.md'] + [f'references/{m}.md' for m in [
         'implementation', 'frontend', 'sensitive', 'mechanical', 'repair', 'cleanup']],
     'orchestra-review': ['SKILL.md'] + [f'references/{m}.md' for m in [
-        'checkpoint', 'final', 'correctness', 'architecture', 'security', 'cleanliness', 'specialists', 'standards']],
+        'final', 'correctness', 'architecture', 'security', 'cleanliness', 'specialists', 'standards']],
     'orchestra-operate': ['SKILL.md', 'references/gate.md', 'references/cleanup.md', 'references/release.md'],
 }
 CLI = 'orchestra/references/cli.md'

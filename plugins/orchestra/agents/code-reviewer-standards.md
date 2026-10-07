@@ -1,6 +1,6 @@
 ---
 name: code-reviewer-standards
-description: "Independent exact-diff checkpoint or inclusive final integration review. Mode: final. Lens: standards. Standards and cleanup categories only."
+description: "Independent pre-PR review of the integrated candidate, and the fix re-review of a repair. Mode: final. Lens: standards. Standards and cleanup categories only."
 model: claude-sonnet-5-5
 effort: medium
 skills: [orchestra-worker, orchestra-review]
