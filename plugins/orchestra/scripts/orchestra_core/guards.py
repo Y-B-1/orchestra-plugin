@@ -1838,13 +1838,14 @@ def _positionals(words):
 
 
 def _is_test_probe(module, rest):
-    """A single-test target: unittest `pkg.mod.Class.test_x`, pytest `file::test_x`. Anything else runs a suite."""
+    """A single-test target: unittest `pkg.mod.Class.test_x` (a test method under a capitalized class name), pytest
+    `file::test_x`. Anything else, a dotted package or module such as `src.app.tests` included, runs a suite."""
     targets = _positionals(rest)
     if len(targets) != 1:
         return False
     if module == 'unittest':
         parts = targets[0].split('.')
-        return len(parts) >= 3 and parts[-1].startswith('test') and all(parts)
+        return len(parts) >= 3 and parts[-1].startswith('test') and parts[-2][:1].isupper() and all(parts)
     return '::' in targets[0] and bool(targets[0].rsplit('::', 1)[1]) and not targets[0].startswith('::')
 
 
@@ -1860,11 +1861,20 @@ def _words_run_suite(words, depth):
         return _words_run_suite(rest[rest.index('run') + 1:], depth + 1)
     if exe in ('pytest', 'py.test'):
         return not _is_test_probe('pytest', rest)
-    if _PYTHON.fullmatch(exe) and '-m' in rest[:-1]:
-        module, after = rest[rest.index('-m') + 1], rest[rest.index('-m') + 2:]
+    if exe == 'coverage' and 'run' in rest:  # `coverage run [options] -m pytest` reads like python
+        return _words_run_suite(['python'] + rest[rest.index('run') + 1:], depth + 1)
+    if _PYTHON.fullmatch(exe):
+        if '-m' in rest[:-1]:
+            module, after = rest[rest.index('-m') + 1], rest[rest.index('-m') + 2:]
+        else:  # the joined form `-munittest`
+            joined = [k for k, word in enumerate(rest) if word.startswith('-m') and len(word) > 2]
+            if not joined:
+                return False
+            module, after = rest[joined[0]][2:], rest[joined[0] + 1:]
         return module in ('pytest', 'unittest') and not _is_test_probe(module, after)
     if exe in ('npm', 'pnpm', 'yarn'):
-        return bool(args) and (args[0] == 'test' or (_TEST_SCRIPT.fullmatch(args[0]) and len(args) > 1 and args[1].startswith('test')))
+        tests = ('test', 't') if exe != 'yarn' else ('test',)  # npm and pnpm alias `t` to `test`
+        return bool(args) and (args[0] in tests or (_TEST_SCRIPT.fullmatch(args[0]) and len(args) > 1 and args[1].startswith('test')))
     if exe == 'npx':
         return bool(args) and (args[0] in ('vitest', 'jest') or (args[0] == 'playwright' and args[1:2] == ['test']))
     if exe in ('go', 'cargo'):
