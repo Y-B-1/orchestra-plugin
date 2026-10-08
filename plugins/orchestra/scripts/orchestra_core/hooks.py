@@ -185,7 +185,8 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         role = 'subagent'  # Claude Code sets agent_id only for calls made inside a subagent.
     if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
         return _deny('Workers do not delegate')
-    if name in {'Agent', 'Task'} and _run_active(engine):
+    unloaded_run = engine is None and armed and (state_dir is None or _raw_session_active(Path(state_dir) / 'state.json'))
+    if name in {'Agent', 'Task'} and (_run_active(engine) or unloaded_run):  # item 9, failing closed when busy or unloadable
         kind = data.get('subagent_type')
         if not (isinstance(kind, str) and kind.startswith('orchestra:')):
             return _deny(AGENT_GUARD)

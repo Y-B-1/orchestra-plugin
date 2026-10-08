@@ -1933,6 +1933,26 @@ class RunBriefHookTest(unittest.TestCase):
         import fcntl
         fcntl.flock(handle, fcntl.LOCK_UN)
 
+    def agent_main(self, kind='general-purpose'):
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Agent',
+                                 'tool_input': {'prompt': 'x', 'subagent_type': kind}})
+        self.assertEqual(code, 0)
+        return output.get('hookSpecificOutput', {}).get('permissionDecisionReason')
+
+    def test_agent_guard_denies_while_an_active_run_is_busy(self):
+        self.hold_lock()
+        self.assertEqual(self.agent_main(), hooks_module.AGENT_GUARD)
+        self.assertIsNone(self.agent_main('orchestra:builder'))
+
+    def test_agent_guard_denies_while_an_active_run_cannot_load(self):
+        data = json.loads((self.state / 'state.json').read_text())
+        data['version'] = 99
+        (self.state / 'state.json').write_text(json.dumps(data))
+        self.assertEqual(self.agent_main(), hooks_module.AGENT_GUARD)
+        data['session']['active'] = False
+        (self.state / 'state.json').write_text(json.dumps(data))
+        self.assertIsNone(self.agent_main())  # an ended run is outside a run
+
     def test_session_start_shows_newest_brief_without_autonomy(self):
         self.engine.interrupt('main', self.lease)
         context = self.session_context()
