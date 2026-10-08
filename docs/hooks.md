@@ -5,7 +5,7 @@ One classifier and two native adapters replace duplicated provider guards. Comma
 | Event | Effect | Does not do |
 | --- | --- | --- |
 | SessionStart | Supply main or worker contract and skill path; add the session id for `start --harness-session`; show a pending autonomy morning report | Seed state, repair files, resume, arm autonomy |
-| SubagentStart | Supply worker boundaries to agents whose type starts with `orchestra:`; return nothing for any other agent | Veto native startup or authenticate identity |
+| SubagentStart | Supply worker boundaries to agents whose type starts with `orchestra:`; during an active run, tell any other agent to stop (advisory); otherwise return nothing | Veto native startup or authenticate identity |
 | PreToolUse | Classify the call and deny covered destructive Git, stash, wholesale staging, protected state/config patches; check recognizable releases and, under autonomy, approval boundaries | Interpret arbitrary scripts, aliases, stdin or all provider tools |
 | Stop | Continue only an existing explicitly armed intact ledger until the deadline, completion, only parked cards, no ready card or disarm; no pass or stall count stops it. Under `relaunch` with no active session it does nothing | Start an unrequested loop or continue corrupt state |
 | SessionEnd | Release the run bound to the ending session (see below) | Release on `clear` or `resume`; release a run started without `--harness-session` |

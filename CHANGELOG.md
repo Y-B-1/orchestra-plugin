@@ -10,7 +10,7 @@ Inline-first routing, builder self-review and one review before the PR. The deci
 - **Routing (S3, S11):** `start --items N` is required for a new run; 1 to 5 items run inline (`dispatch --helper REASON` for a helper builder), 6 or more go through a designer-planner plan card and Workflow builders. `route` changes the route mid-run.
 - **Self-review (S6):** a builder report carries one `SELF_REVIEW:` JSON line with its checks and criteria; the engine accepts a builder card on it while the artifact is current.
 - **One review before the PR (S4, S5, S7):** checkpoint review, waves, gates between waves, `supersede` and the `code-reviewer-checkpoint` agent are removed. Only the pre-PR review and one fix re-review are recorded; a chain still blocked after that is held. Lenses come from the diff: security on `sensitive_paths`, standards above `standards_min_lines`.
-- **Guards (S9, S10):** during a run the main session may start only `orchestra:*` agents (denied also when the run state cannot be loaded), and tool calls from any other agent, including agents a Workflow starts, are denied. Reviewers and critics cite a current gate receipt instead of rerunning a test suite.
+- **Guards (S9, S10):** during a run the main session may start only `orchestra:*` agents (denied also when the run state cannot be loaded), and shell, edit and agent calls from any other agent, including agents a Workflow starts, are denied (file reads are not guarded). Reviewers and critics cite a current gate receipt instead of rerunning a test suite.
 - **Upgrade:** a 2.3 run loads under 2.4 with 2.3 routing; its gate and review receipts go stale (README, Upgrade from 2.3 to 2.4).
 
 ## 2.3.0 — 2026-10-06
