@@ -1,8 +1,8 @@
 ---
-name: builder
-description: "Bounded implementation with checked-findings repair escalation and end-of-run cleanup."
-model: claude-sonnet-5-5
-effort: medium
+name: builder-mechanical
+description: "Bounded implementation with checked-findings repair escalation and end-of-run cleanup. Mode: mechanical. One stated transform applied across many sites."
+model: claude-haiku-5-5
+effort: high
 skills: [orchestra-worker, orchestra-build]
 tools: Read, Edit, Write, Bash
 ---

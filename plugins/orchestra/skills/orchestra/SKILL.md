@@ -1,6 +1,6 @@
 ---
 name: orchestra
-description: Coordinate bounded engineering work with dependency-aware assignments, independent reviews, artifact-bound checks, and project-authorized release. Use for multi-part delivery or when the user selects Orchestra.
+description: Coordinate bounded engineering work with dependency-aware assignments, an independent pre-PR review, artifact-bound checks, and project-authorized release. Use for multi-part delivery or when the user selects Orchestra.
 ---
 Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md skills/dispatching-parallel-agents/SKILL.md (MIT); garrytan/gstack@4015c2870b06 review/sections/review-army.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/SKILL.md
@@ -20,19 +20,18 @@ A trusted session start supplies context only. Repair, resume and autonomy begin
 
 ## The loop
 
-Route, reserve, dispatch, check, integrate, review. Every card ends with evidence you inspected yourself, and every integration ends with an independent final review and the named project checks. A review grants no external permission. Release stays disabled until project configuration names authorization, remote, target, required checks and commands.
+Route, reserve, dispatch, check, integrate, review. Every card ends with evidence you inspected yourself, and every PR candidate gets one independent pre-PR review and the named project checks. A review grants no external permission. Release stays disabled until project configuration names authorization, remote, target, required checks and commands.
 
-## Executor choice
+## Route
 
-Choose one executor per ready item, separately from its lane.
+Count the items in the request, then `start --items N`. Change the count mid-run with `route --items N --reason TEXT`.
 
-| Executor | Use when |
+| Items | Route |
 | --- | --- |
-| inline | A question, a doc read, or a one-file reversible edit where the main session already holds the context |
-| single Agent dispatch | One unit with nothing independent beside it that still needs a worker: deeper investigation, isolation, or a different model |
-| Workflow | 2+ independent units in any phase (tickets, review lenses, audits, research angles) |
+| 1 to 5 | Inline. The main session groups the work into PRs, plans it and edits it. It may start helper subagents, Workflow included. Dispatch a builder helper with `dispatch --helper REASON`. Add no plan card. |
+| 6 or more | Workflow. A designer-planner `plan` card groups the work into PRs. Accept it, then builders work through Workflow. |
 
-Workflow is the default whenever the host has the Workflow tool. The user's standing opt-in makes it the default with or without ultracode. The main session never approves its own implementation, whichever executor built it. Mechanics: [parallel](references/parallel.md).
+Use the fewest worktrees (references/worktrees.md). A single Agent dispatch fits one unit that still needs a worker. Workflow is the default for 2+ independent units whenever the host has the Workflow tool; the user's standing opt-in makes it so with or without ultracode. While a run is active the guard denies a subagent type that does not start with `orchestra:`; use `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it. Mechanics: [parallel](references/parallel.md).
 
 ## References
 
@@ -44,7 +43,7 @@ Workflow is the default whenever the host has the Workflow tool. The user's stan
 - Isolated worktrees: [worktrees](references/worktrees.md)
 - Closing a branch: [finishing](references/finishing.md)
 - Fix rounds: [repair-rounds](references/repair-rounds.md)
-- Final review and cleanup: [final-review](references/final-review.md)
+- Pre-PR review and cleanup: [final-review](references/final-review.md)
 - Conformance axes: [audit-axes](references/audit-axes.md)
 - Overnight mode: [autonomy](references/autonomy.md)
 - Engine commands and schemas: [CLI](references/cli.md)

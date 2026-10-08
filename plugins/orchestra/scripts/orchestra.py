@@ -34,6 +34,8 @@ def parser():
     start = sub.add_parser('start')
     start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
     start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
+    start.add_argument('--items', type=int, help='Number of work items in the request (required when this opens a new run): '
+                       '1 to 5 run inline in the main session, 6 or more go through a designer-planner plan')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
     for name in ['status','ready','board','interrupt','finish','scan']:
@@ -41,12 +43,18 @@ def parser():
     sub.add_parser('brief', help='Print the newest run brief; no lease, read-only')
     art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
     art.add_argument('--tasks', help='Comma-separated task IDs')
-    add = sub.add_parser('add', help='Add a card from a task JSON file; a builder implementation card may carry "wave": "W", '
-                                     'and a review card may name "review_of": ["wave:W"] for every card of wave W')
+    route = sub.add_parser('route', help='Change the item count and the route it implies (1 to 5 inline, 6 or more workflow) '
+                                         'and log the reason')
+    route.add_argument('--items', required=True, type=int)
+    route.add_argument('--reason', required=True)
+    add = sub.add_parser('add', help='Add a card from a task JSON file. Inline route: no designer-planner plan card. '
+                                     'Order cards with dependencies')
     add.add_argument('task', help='Task JSON path')
     dispatch = sub.add_parser('dispatch')
     dispatch.add_argument('task_id')
     dispatch.add_argument('worker')
+    dispatch.add_argument('--helper', metavar='REASON', help='Inline route: why a helper does this builder card instead of the '
+                          'main session. Workflow route: a builder card needs an accepted designer-planner plan card first')
     inline = sub.add_parser('inline', help='Reserve a card for execution by the main coordinator')
     inline.add_argument('task_id')
     report = sub.add_parser('report')
@@ -91,10 +99,8 @@ def parser():
     hold = sub.add_parser('hold', help='End the repair ladder: move a blocked repair chain to held and log the finding')
     hold.add_argument('task_id')
     hold.add_argument('--finding', required=True)
-    supersede = sub.add_parser('supersede', help='Accept an unstarted review that newer accepted reviews cover in full')
-    supersede.add_argument('task_id')
-    route = sub.add_parser('classify')
-    route.add_argument('shell_command')
+    classify = sub.add_parser('classify')
+    classify.add_argument('shell_command')
     return p
 
 
@@ -106,7 +112,7 @@ def archive_inactive(state,engine):
             return
         old = read_json(source)
         if old.get('session',{}).get('active'):
-            if old.get('repo') != str(engine.repo) or old.get('policy') != engine.policy_hash:
+            if old.get('repo') != str(engine.repo) or not engine.binds(old):
                 raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives
             raise EngineError('Stop or finish the active run before starting another')
         archive = {'state':old,'policy':load_policy(state)}
@@ -127,13 +133,17 @@ def execute(args):
     engine = Engine(state,repo,policy)
     if args.command=='start':
         if args.new_run:
+            if args.items is None:  # refuse before archiving, so the ended run stays in place
+                raise EngineError('A new run needs --items N, the number of work items')
+            engine._check_items(args.items)
             archive_inactive(state,engine)
-        lease = engine.open_session(args.actor,args.harness_session,relaunch_pass=os.environ.get('ORCHESTRA_RELAUNCH_PASS') or None)
+        lease = engine.open_session(args.actor,args.harness_session,relaunch_pass=os.environ.get('ORCHESTRA_RELAUNCH_PASS') or None,
+                                    items=args.items,require_items=True)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
     if args.command=='status':
-        return engine.status(),0
+        return engine.status(lenses=True),0
     if args.command=='brief':  # lease-free and read-only, like status
         text=engine.brief()
         return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
@@ -176,7 +186,7 @@ def execute(args):
         engine.add_task(args.actor,args.lease,read_json(args.task))
         return {'added':read_json(args.task)['id']},0
     if args.command=='dispatch':
-        token = engine.dispatch(args.actor,args.lease,args.task_id,args.worker)
+        token = engine.dispatch(args.actor,args.lease,args.task_id,args.worker,helper=args.helper)
         return {'assignment':token,'task':args.task_id,'worker':args.worker},0
     if args.command=='accept':
         engine.accept(args.actor,args.lease,args.task_id)
@@ -249,9 +259,8 @@ def execute(args):
         return {'unparked':args.task_id},0
     if args.command=='hold':
         return engine.hold(args.actor,args.lease,args.task_id,args.finding),0
-    if args.command=='supersede':
-        engine.supersede(args.actor,args.lease,args.task_id)
-        return {'superseded':args.task_id},0
+    if args.command=='route':
+        return engine.set_route(args.actor,args.lease,args.items,args.reason),0
     raise EngineError('Unsupported command')
 
 

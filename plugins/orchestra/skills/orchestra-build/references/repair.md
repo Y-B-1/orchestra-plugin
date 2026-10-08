@@ -4,7 +4,7 @@ Sentinel: orchestra-build/references/repair.md
 
 # Builder: repair mode
 
-Use this mode to fix findings that an independent reviewer already checked. A finding the brief lists is a claim to test against the source, not an order. Work the round number the brief names and state it in your report. You are the one escalation rung after the Sonnet builder. Do not describe or apply any limit on rounds; a still-blocked chain is held, and routing after your report belongs to the coordinator.
+Use this mode to fix findings that the pre-PR review raised and the coordinator checked. A finding the brief lists is a claim to test against the source, not an order. You are the one repair after the first builder; one fix re-review follows, and routing after your report belongs to the coordinator.
 
 ## Procedure
 
@@ -32,10 +32,10 @@ When a finding contradicts the spec or the brief, or the fix needs a change outs
 
 ## Report
 
-Plain, technical, no thanks or agreement phrases. Give the round number, then one entry per finding with its ID:
+Plain, technical, no thanks or agreement phrases. Give one entry per finding with its ID:
 
 - verdict: fixed, not reproduced, or disputed;
 - the change, as paths and a one-line description;
 - the evidence: the failing run, the passing run, the command and the exit code.
 
-End with the exact artifact commit so a fresh independent review can start from it. Your own report does not count as that review.
+End with the exact artifact commit and the fix range so the fix re-review can start from it, then the `SELF_REVIEW:` line. Your own report does not count as that re-review.

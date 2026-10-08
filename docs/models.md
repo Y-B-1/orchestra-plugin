@@ -1,6 +1,6 @@
 # Model matrix
 
-Source of truth: `plugins/orchestra/config/models.json`. This page describes it. Only claude-opus-5-5 and claude-sonnet-5-5 are used. Parallel work never raises effort.
+Source of truth: `plugins/orchestra/config/models.json`. This page describes it. Only claude-opus-5-5, claude-sonnet-5-5 and claude-haiku-5-5 are used. Parallel work never raises effort.
 
 ## Claude
 
@@ -8,21 +8,22 @@ Source of truth: `plugins/orchestra/config/models.json`. This page describes it.
 | --- | --- | --- | --- |
 | orchestrator (main) | user's selection | user's selection | `orchestrator.md`, with no `model:` or `effort:` line |
 | investigator docs (default) | claude-sonnet-5-5 | medium | `investigator.md` |
-| investigator code | claude-sonnet-5-5 | low | `investigator-code.md` |
-| designer-planner (design, plan, product) | claude-opus-5-5 | high | `designer-planner.md` |
+| investigator code | claude-haiku-5-5 | high | `investigator-code.md` |
+| designer-planner (design, plan, product) | claude-sonnet-5-5 | high | `designer-planner.md` |
 | critic (all modes) | claude-opus-5-5 | high | `critic.md` |
-| builder: implementation, frontend, sensitive, mechanical, cleanup | claude-sonnet-5-5 | medium | `builder.md` |
-| builder repair | claude-opus-5-5 | medium | none; by dispatch-time model override (`"dispatch": "override"`). The ladder is a Sonnet build, one Opus `repair`, then the card is held (work stays in place, held log, the run continues); the final repair loop has no round cap |
-| code-reviewer final | claude-opus-5-5 | high | `code-reviewer.md` |
-| code-reviewer checkpoint | claude-opus-5-5 | medium | `code-reviewer-checkpoint.md` |
+| builder: implementation, frontend, sensitive | claude-sonnet-5-5 | medium | `builder.md` |
+| builder mechanical | claude-haiku-5-5 | high | `builder-mechanical.md` |
+| builder cleanup | claude-haiku-5-5 | high | `builder-cleanup.md` |
+| builder repair | claude-opus-5-5 | medium | none; by dispatch-time model override (`"dispatch": "override"`). The ladder is a first build, one Opus `repair`, then one fix re-review follows; then the card is held (work stays in place, held log, the run continues) |
+| code-reviewer final | claude-opus-5-5 | medium | `code-reviewer.md` |
 | code-reviewer standards lens | claude-sonnet-5-5 | medium | `code-reviewer-standards.md` |
-| operator (gate, cleanup, release) | claude-sonnet-5-5 | medium | `operator.md` |
+| operator (gate, cleanup, release) | claude-haiku-5-5 | high | `operator.md` |
 
-The orchestrator row is the user's selection: the model and effort picked in the client, never pinned by the plugin (`"selection": "user"`). Builder `cleanup` equals the builder default, so it adds no file. Builder `repair` has no variant file; the coordinator passes `claude-opus-5-5` at dispatch, and only after an independent review returned checked coding findings.
+The orchestrator row is the user's selection: the model and effort picked in the client, never pinned by the plugin (`"selection": "user"`). Builder `repair` has no variant file; the coordinator passes `claude-opus-5-5` at dispatch, and only after an independent review returned checked coding findings. Haiku 5.5 pricing doubles for prompts above 100K tokens; keep Haiku briefs short.
 
 ## Tool restrictions
 
-The read-only roles are investigator, critic and code-reviewer, including their variants; they disallow `Agent, Edit, Write, NotebookEdit`, and every other worker disallows `Agent`. See docs/roles.md.
+Every worker file carries a `tools:` allowlist from `config/roles.json`. Builders get `Read, Edit, Write, Bash`; designer-planner adds `WebFetch, WebSearch`; operator gets `Read, Write, Bash`; code-reviewer and investigator code get `Read, Bash`; critic gets `Read, Bash, WebFetch, WebSearch`; investigator docs gets `Read, Bash, WebFetch, WebSearch`. The allowlist keeps unused tool definitions, MCP servers and the installed-skill listing out of each worker's context. See docs/roles.md.
 
 ## Notes
 
@@ -32,10 +33,10 @@ Each worker agent file pins both model and reasoning effort. Hold settings const
 
 | v1 role | v2 role | Model change |
 | --- | --- | --- |
-| founder-mind, red-teamer, auditor | designer-planner, critic | none (Opus high) |
+| founder-mind, red-teamer, auditor | designer-planner, critic | designer-planner Sonnet high; critic Opus high |
 | builder-repair | builder repair | dispatch override, no file |
-| gatekeeper, releaser | operator gate, release | none (Sonnet medium) |
-| janitor | operator cleanup | none |
+| gatekeeper, releaser | operator gate, release | Haiku high |
+| janitor | operator cleanup | Haiku high |
 
 ## Fast mode
 

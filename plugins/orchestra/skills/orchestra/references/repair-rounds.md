@@ -3,20 +3,21 @@ Sentinel: orchestra/references/repair-rounds.md
 
 # Repair ladder
 
-The ladder has two rungs and then holds: Sonnet builder, one Opus repair, then hold. No round counter, cap or breaker applies, and a hold never stops or blocks a run.
+The ladder has one repair, one fix re-review, then a hold. It runs after the pre-PR review and before the PR. A hold never stops a run.
 
 | Rung | Action |
 | --- | --- |
-| 1 | The implementation card, on the builder default model. |
-| 2 | One builder `repair` card, dispatched through the Agent tool with the Opus override (`claude-opus-5-5`), never through a script. It needs checked blocking findings on a `reported` or `accepted` target without `repaired_by`. |
-| Hold | `orchestra.py hold TASK --finding TEXT` when the repair is still blocked by a current verdict, or the repair-diff check blocks a card with no repair. It moves the whole chain to `held`. |
+| 1 | The implementation card, on the builder default model. Its self-review is its only review before the PR. |
+| 2 | One builder `repair` card per chain with a current pre-PR finding, dispatched through the Agent tool with the Opus override (`claude-opus-5-5`), never through a script. It needs checked blocking findings on a `reported` or `accepted` target without `repaired_by`. On the inline route, dispatch it with `dispatch --helper REASON`. |
+| 3 | One fix re-review of the fix diff only, with `repair_check: true`. CLEAN accepts the chain. |
+| Hold | `orchestra.py hold TASK --finding TEXT` when the fix re-review is BLOCKED. It moves the whole chain to `held`. |
 
-Each repair brief carries the exact artifact, the failing scenario and the scope of the defect. A repair of a repair, or of a card the repair-diff check blocked, is refused during the build until the chain is held. Notes never reach the ladder.
+Each repair brief carries the exact artifact, the failing scenario and the scope of the defect. A second repair on a chain is refused until the owner takes it. Notes never reach the ladder.
 
 ## Held work
 
-The hold appends `- held <id> (chain <ids>): <finding>` to `<state>/progress.md`; that is the held log. Held work blocks nothing in the build: it reserves no files and later waves run past it. The final phase clears it (references/final-review.md): a repair of the held tip, or every final lens clearing it with a reason. Completion refuses while a card is held.
+The hold appends `- held <id> (chain <ids>): <finding>` to `<state>/progress.md`; that is the held log. Held work reserves no files and blocks nothing else. The owner decides it: the run brief's Needs you and Held log sections carry the chain and its last finding. Completion refuses while a card is held.
 
 ## Why the ladder ends in a hold
 
-A second failed fix usually means the cause is not the patch. Holding keeps the run moving and puts the chain, with its last finding, in front of the final lenses and the user's brief; the deadline is the only outer limit.
+A second failed fix usually means the cause is not the patch. Holding puts the chain, with its last finding, in front of the owner instead of looping.

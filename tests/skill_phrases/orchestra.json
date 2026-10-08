@@ -23,11 +23,8 @@
     "cleanliness",
     "park",
     "gh api",
-    "Executor choice",
-    "single Agent dispatch",
-    "default whenever the host has the Workflow tool",
     "reserve every card before the script",
-    "agentType: 'orchestra:",
+    "`orchestra:<role>-<mode>` when that file exists",
     "isolation: 'worktree'",
     "never approves its own implementation",
     "Plugin root",
@@ -39,10 +36,6 @@
     "autonomy disarm",
     "autonomy status",
     "unpark TASK",
-    "Sonnet builder, one Opus repair, then hold",
-    "only when the next wave depends on its code",
-    "investigator-code re-diagnoses a repeated finding before the next repair",
-    "add every card of the round, then let all report, then record",
     "a non-builder cause goes to inline or card, never brief alone",
     "overrides Push and Engine-gated actions for that remote and target only",
     "ready to release",
@@ -52,6 +45,10 @@
     "change the environment so the next task goes better",
     "No workarounds",
     "name the missing check or seam that would have caught the bug",
-    "`$TMPDIR`, else `/tmp`"
+    "`$TMPDIR`, else `/tmp`",
+    "pre-PR review",
+    "`dispatch --helper REASON`",
+    "`start --items N`",
+    "SELF_REVIEW:"
   ]
 }

@@ -19,7 +19,7 @@ Run a rules gate twice: before you slice, and again on the finished plan. Compar
 4. Give every slice its class:
    - Spike: throwaway code that answers one question and reports what it proved, so a doubt becomes evidence. It is never merged.
    - Bounded: changes code whose flow already exists.
-   - Architectural: adds a subsystem or changes an interface others depend on. It gets a checkpoint review.
+   - Architectural: adds a subsystem or changes an interface others depend on. Order it first by dependency.
 
 ## Write each ticket
 
@@ -42,11 +42,15 @@ Plans decide what an implementer cannot decide alone. Give a test its name and a
 - Test readiness: from the accepted prerequisites alone, does each queued ticket become ready? Independent tickets can start at once.
 - Pre-flight: for each ticket that consumes what an earlier ticket produces, write one row with both tickets, what one produces against what the other consumes, and what you found. Rule each conflict against the spec. If tickets share nothing, write one line that says so.
 
+## Group into PRs and worktrees
+
+Group the tickets into PRs: each PR is one coherent change a reviewer can read alone. Then give each ticket group the fewest worktrees. Tickets whose files intersect share one worktree. A single writer, or writers in sequence, use none. Concurrent writers on disjoint files get one worktree per group. A worktree follows a group, not a ticket.
+
 ## Place the reviews
 
-Name the required checkpoint reviews for architectural foundations, the final integration review, the affected gate sets and every live check. A live check is a human step: write its exact steps. Optional full-suite testing stays on the project owner's trigger.
+Name the affected gate sets (the derived impact set, e2e) and every live check. One pre-PR review covers each PR; plan no other review. A live check is a human step: write its exact steps. Optional full-suite testing stays on the project owner's trigger.
 
-Route failure. For each ticket, name where a blocked review returns it.
+Route failure. For each ticket, name where a blocked pre-PR finding returns it.
 
 ## Self-check, then return
 
@@ -54,7 +58,8 @@ Route failure. For each ticket, name where a blocked review returns it.
 - Names and signatures agree across tickets.
 - No ticket carries more than one fresh context of work.
 - Every ticket has an owner, an acceptance command and a done contract.
+- Every ticket sits in one PR group and one worktree group.
 
 Return the plan, the graph, the pre-flight rows and the gaps. State that a substantial plan needs an independent critic before any build starts.
 
-Example: B1 owns an API adapter, B2 the settings view, B3 the documentation. B1 and B2 depend on the approved contract, and B3 starts at once. B1's checkpoint review does not wait for B2. If a shared fixture needs edits, one ticket owns it, or a dependency orders the edits.
+Example: B1 owns an API adapter, B2 the settings view, B3 the documentation. B1 and B2 depend on the approved contract, and B3 starts at once. B1 and B2 run together on disjoint paths. If a shared fixture needs edits, one ticket owns it, or a dependency orders the edits.

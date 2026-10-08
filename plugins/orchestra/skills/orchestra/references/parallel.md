@@ -11,9 +11,9 @@ Each brief is focused and self-contained, names one output and its constraints, 
 
 ## Workflow script
 
-Each `agent()` call sets `agentType: 'orchestra:<role>'`, the effort from the model matrix, and a brief whose first lines carry the `Mode:` line. Concurrent editors set `isolation: 'worktree'` (references/worktrees.md). The script holds no coordinator state: reserve every card before the script and record every report after it.
+Each `agent()` call sets `agentType` to the card's agent file and a brief whose first lines carry the `Mode:` line. The agent file is `orchestra:<role>-<mode>` when that file exists (`builder-mechanical`, `builder-cleanup`, `code-reviewer-standards` for the standards lens, `investigator-code`), and `orchestra:<role>` otherwise. The file pins model, effort and tools; set no model or effort override. Concurrent editors set `isolation: 'worktree'` (references/worktrees.md). The script holds no coordinator state: reserve every card before the script and record every report after it.
 
-Every Opus repair card, the build-phase rung and each final-round repair, is added together with its round and goes through the Agent tool with the model override, never through a script (references/repair-rounds.md). Dispatch it only after the accept step of coordination.md.
+Every Opus repair card is added after the pre-PR review and goes through the Agent tool with the model override, never through a script (references/repair-rounds.md). Dispatch it only after the accept step of coordination.md.
 
 ## After return
 
@@ -21,8 +21,8 @@ Merge and dedupe findings that name the same cause. Check for conflicts between 
 
 ## Review package
 
-For each reported card write `<state>/review-packages/<card>/`: the brief, the report, the base and head commits, the diff, and the command logs. The independent reviewer reads the package and the artifact, never the builder's conversation.
+For each reported card write `<state>/review-packages/<card>/`: the brief, the report with its `SELF_REVIEW:` line, the base and head commits, the diff, and the command logs. The pre-PR reviewer reads the packages and the artifact, never the builder's conversation.
 
 ## Plan execution
 
-Take tickets in plan order, each from its own brief and base commit, as engine cards. Ready independent cards run together; dependent cards wait for their accepted prerequisites. A card is complete when its contract holds: every named check ran and passed, every expected output was compared, every deviation has a recorded ruling. A worker that finds a plan defect returns BLOCKED naming it. You record the ruling, or route the defect to planning, before work continues.
+Take tickets in plan order, each from its own brief and base commit, as engine cards. The plan already groups them into PRs. Ready independent cards run together; dependent cards wait for their accepted prerequisites. A card is complete when its contract holds: every named check ran and passed, every expected output was compared, every deviation has a recorded ruling. A worker that finds a plan defect returns BLOCKED naming it. You record the ruling, or route the defect to planning, before work continues.

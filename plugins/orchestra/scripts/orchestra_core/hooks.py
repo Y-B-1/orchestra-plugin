@@ -15,7 +15,7 @@ import sys
 import subprocess
 import time
 
-from .guards import RULES, classify_command, guard_digest
+from .guards import RULES, classify_command, guard_digest, runs_test_suite
 
 _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
@@ -27,6 +27,10 @@ STOP_LOCK_BUDGET = 8.0  # SPEC 5.16 item 4: seconds from hook start that a busy-
 LOCK_WAIT = 2.0  # SPEC 5.16 item 3: seconds a hook read waits for the state lock
 MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry'
 BUSY = 'Orchestra state is busy; retry'
+AGENT_GUARD = 'Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits)'
+_REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
+SUBAGENT_GUARD = ('Orchestra run active: this agent is not an orchestra:* agent; stop and report. '
+                  'Start Agent and Workflow workers with an orchestra:<role> type')
 
 
 CONTEXT = (
@@ -131,6 +135,8 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         agent_type = payload.get('agent_type')
         if isinstance(agent_type, str) and agent_type.startswith('orchestra:'):
             return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': WORKER_CONTEXT}})
+        if _run_active(engine):  # SubagentStart cannot block; the PreToolUse deny below enforces
+            return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': SUBAGENT_GUARD}})
         return HookResult({})
     if event == 'SessionEnd':
         session_id = payload.get('session_id')
@@ -183,6 +189,13 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         role = 'subagent'  # Claude Code sets agent_id only for calls made inside a subagent.
     if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
         return _deny('Workers do not delegate')
+    unloaded_run = engine is None and armed and (state_dir is None or _raw_session_active(Path(state_dir) / 'state.json'))
+    if role == 'subagent' and _foreign_subagent(payload) and (_run_active(engine) or unloaded_run):
+        return _deny(SUBAGENT_GUARD)  # item 9: a Workflow agent never passes the Agent/Task check above it
+    if name in {'Agent', 'Task'} and (_run_active(engine) or unloaded_run):  # item 9, failing closed when busy or unloadable
+        kind = data.get('subagent_type')
+        if not (isinstance(kind, str) and kind.startswith('orchestra:')):
+            return _deny(AGENT_GUARD)
     if 'cwd' in payload:
         cwd = payload['cwd']
         if not isinstance(cwd, str):
@@ -223,6 +236,10 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             return _deny(MISSING_CWD)
         if busy:
             return _deny(BUSY)
+    if role == 'subagent' and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES) and runs_test_suite(command):
+        gates = _gate_ids(engine)
+        if gates:
+            return _deny('Cite gate receipt ' + ', '.join(gates) + '; reviewers do not rerun suites')
     active = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
     if decision.category == 'merged-delete':
         # SPEC 5.14 item 4: before the autonomy-off allow, and with or without an engine.
@@ -273,6 +290,42 @@ def _autonomy_active(engine):
         return engine.autonomy_active() is True  # Strict: an opaque adapter never reads as active.
     except Exception:
         return True  # O29: an error while reading autonomy status counts as active.
+
+
+def _foreign_subagent(payload):
+    """A call made inside a subagent whose type is not orchestra:* (a Workflow agent without agentType is
+    'workflow-subagent'). agent_type is a routing hint, never authentication."""
+    agent_type = payload.get('agent_type')
+    return bool(payload.get('agent_id')) and not (isinstance(agent_type, str) and agent_type.startswith('orchestra:'))
+
+
+def _reviewer_call(payload):
+    """A call made inside a reviewer or critic: the mod does not know the test-suite rule, so Python always guards it."""
+    return bool(payload.get('agent_id')) and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES)
+
+
+def _run_active(engine):
+    """Item 9: a loaded engine whose session is active. An engine that cannot say counts as active only when the
+    raw state shows (or cannot show otherwise) an active session; an inactive raw session allows."""
+    if engine is None:
+        return False
+    try:
+        session = engine.status()['session']
+        return bool(session) and session.get('active') is True
+    except Exception:
+        try:
+            return _raw_session_active(engine.state_path)
+        except Exception:
+            return True
+
+
+def _gate_ids(engine):
+    """Item 10: ids of the passed gate receipts for the current artifact; [] with no engine, no method or any error."""
+    try:
+        ids = engine.current_gate_ids()
+        return [str(item) for item in ids] if isinstance(ids, (list, tuple)) else []
+    except Exception:  # Includes AttributeError: an engine without the method has no receipts to cite.
+        return []
 
 
 def _preauthorized(engine, decision):
@@ -533,7 +586,9 @@ def main(argv=None):
     except (ValueError, UnicodeError):
         payload = None
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
-            and isinstance(payload, dict) and payload.get('tool_name') in _MOD_TOOLS and _mod_is_live(payload)):
+            and isinstance(payload, dict) and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
+            and not _foreign_subagent(payload)
+            and _mod_is_live(payload)):
         print('{}')
         return 0
     state_dir = os.environ.get('ORCHESTRA_STATE_DIR')
@@ -543,7 +598,7 @@ def main(argv=None):
     busy = False
     missing_cwd = False
     build_error = None
-    if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
+    if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
             from .paths import load_policy
@@ -568,7 +623,7 @@ def main(argv=None):
                     armed = (_raw_session_active(state_dir / 'state.json')  # O35
                              or _raw_relaunch_active(state_dir / 'state.json'))
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
-                if args.event == 'PreToolUse' and not armed:
+                if args.event in {'PreToolUse', 'SubagentStart'} and not armed:
                     engine = None  # An inactive session is an unarmed run.
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass

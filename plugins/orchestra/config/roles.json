@@ -27,7 +27,19 @@
       "methods": [
         "orchestra-worker/SKILL.md",
         "orchestra-investigate/SKILL.md"
-      ]
+      ],
+      "tools": [
+        "Read",
+        "Bash",
+        "WebFetch",
+        "WebSearch"
+      ],
+      "preset_tools": {
+        "code": [
+          "Read",
+          "Bash"
+        ]
+      }
     },
     {
       "id": "designer-planner",
@@ -42,6 +54,14 @@
       "methods": [
         "orchestra-worker/SKILL.md",
         "orchestra-design/SKILL.md"
+      ],
+      "tools": [
+        "Read",
+        "Write",
+        "Edit",
+        "Bash",
+        "WebFetch",
+        "WebSearch"
       ]
     },
     {
@@ -63,6 +83,12 @@
       "methods": [
         "orchestra-worker/SKILL.md",
         "orchestra-critique/SKILL.md"
+      ],
+      "tools": [
+        "Read",
+        "Bash",
+        "WebFetch",
+        "WebSearch"
       ]
     },
     {
@@ -81,13 +107,18 @@
       "methods": [
         "orchestra-worker/SKILL.md",
         "orchestra-build/SKILL.md"
+      ],
+      "tools": [
+        "Read",
+        "Edit",
+        "Write",
+        "Bash"
       ]
     },
     {
       "id": "code-reviewer",
-      "description": "Independent exact-diff checkpoint or inclusive final integration review.",
+      "description": "Independent pre-PR review of the integrated candidate, and the fix re-review of a repair.",
       "modes": [
-        "checkpoint",
         "final"
       ],
       "skill": "orchestra-review",
@@ -96,6 +127,10 @@
       "methods": [
         "orchestra-worker/SKILL.md",
         "orchestra-review/SKILL.md"
+      ],
+      "tools": [
+        "Read",
+        "Bash"
       ]
     },
     {
@@ -111,6 +146,11 @@
       "methods": [
         "orchestra-worker/SKILL.md",
         "orchestra-operate/SKILL.md"
+      ],
+      "tools": [
+        "Read",
+        "Write",
+        "Bash"
       ]
     }
   ]

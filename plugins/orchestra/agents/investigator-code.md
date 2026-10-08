@@ -1,10 +1,10 @@
 ---
 name: investigator-code
 description: "Read-only source discovery or current primary-source research. Mode: code. Read-only bounded code discovery."
-model: claude-sonnet-5-5
-effort: low
+model: claude-haiku-5-5
+effort: high
 skills: [orchestra-worker, orchestra-investigate]
-disallowedTools: Agent, Edit, Write, NotebookEdit
+tools: Read, Bash
 ---
 
 Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.

@@ -9,7 +9,7 @@ Orchestra 2.0 has 7 roles: the main-thread orchestrator plus 6 worker roles. `pl
 | designer-planner | design, plan, product | orchestra-design | no | Separate spec decisions and dependency-aware tickets; `product` is the product-depth dossier |
 | critic | requirements, feasibility, scope, judge, spec, standards, ledger, surface | orchestra-critique | yes | Independent plan challenge, conformance on one named axis, shipped-surface audit |
 | builder | implementation, frontend, sensitive, mechanical, repair, cleanup | orchestra-build | no | Bounded edits; repair only from checked coding findings; end-of-run cleanup |
-| code-reviewer | checkpoint, final | orchestra-review | yes | Exact diff; inclusive final categories always apply |
+| code-reviewer | final | orchestra-review | yes | Exact diff; one pre-PR review with derived lenses |
 | operator | gate, cleanup, release | orchestra-operate | no | Named checks with actual exits, preservation and cleanup, configured authorized release at a checked artifact |
 
 ## Mode files
@@ -18,18 +18,19 @@ Each worker role skill lives at `plugins/orchestra/skills/<skill>/SKILL.md`. Its
 
 ## Two-skill preload
 
-Every worker agent file preloads exactly two skills: `skills: [orchestra-worker, <role skill>]`. Variant files (such as the checkpoint reviewer and the standards-lens reviewer, `code-reviewer-standards`, Mode: final, Lens: standards, on Sonnet 5.5 medium) preload the same two as their base role. `orchestra-worker` holds the shared contract: you are not alone, preserve sibling edits, never delegate or change coordinator state, the `STATUS:`/`ARTIFACT:` report shape and the `Mode:` line rule. Role skills do not restate it. The orchestrator file preloads only `orchestra`. Workers read mode files by plugin-root path.
+Every worker agent file preloads exactly two skills: `skills: [orchestra-worker, <role skill>]`. Variant files (such as the standards-lens reviewer, `code-reviewer-standards`, Mode: final, Lens: standards, on Sonnet 5.5 medium, and the Haiku `builder-mechanical` and `builder-cleanup`) preload the same two as their base role. `orchestra-worker` holds the shared contract: you are not alone, preserve sibling edits, never delegate or change coordinator state, the `STATUS:`/`ARTIFACT:` report shape and the `Mode:` line rule. Role skills do not restate it. The orchestrator file preloads only `orchestra`. Workers read mode files by plugin-root path.
 
 ## Tool restrictions and independence
 
-- Every non-orchestrator agent file sets `disallowedTools` containing `Agent`. A worker therefore cannot dispatch any agent. This structurally meets the 1(f) clause on refusing reviewer dispatch by the builder's own session: a builder cannot dispatch a reviewer, or anything else. No spawn-time refusal is needed.
-- Read-only roles (investigator, critic, code-reviewer, including variants) additionally disallow `Edit, Write, NotebookEdit`. Their report is returned as the final message and the coordinator records it. Bash can still write files, so this is partial protection only.
+- Every non-orchestrator agent file sets a `tools:` allowlist from `config/roles.json` (`tools`, with `preset_tools` for a variant). The generator refuses `Agent` or `Task` in any list. A worker therefore cannot dispatch any agent. This structurally meets the 1(f) clause on refusing reviewer dispatch by the builder's own session: a builder cannot dispatch a reviewer, or anything else. No spawn-time refusal is needed.
+- The allowlist also keeps unused tools, MCP servers and the installed-skill listing out of the worker's context. Preloaded skills still load. A worker that needs an MCP tool (for example a browser for frontend checks) does not get it; the coordinator runs such checks.
+- Read-only roles (investigator, critic, code-reviewer, including variants) list no `Edit`, `Write` or `NotebookEdit`; the generator refuses one. Their report is returned as the final message and the coordinator records it. Bash can still write files, so this is partial protection only.
 - Workers never mutate coordinator state or acquire release permission through their role name. Release authority comes only from configured project authorization and an explicit bounded `operator` assignment with `Mode: release`. A CLEAN review adds no permission.
 - The builder that made a change never approves it; reviewers and critics are independent assignments.
 
 Models and effort are listed in docs/models.md. The main session model remains the user's choice. Parallel work never raises effort; settings stay fixed for an assignment.
 
-Final review covers requirements, correctness, security, tests, architecture, standards and cleanup, including concrete reuse, simplification, efficiency and layer-placement checks. Critic reports stay separate from code-diff review. Confirmed code findings route to checked builder repair; contradictory requirements route to design; dependency and acceptance flaws route to planning. Installer receipts and enabled, trusted native hooks govern profile discovery and session context; skill installation alone cannot guarantee either.
+The pre-PR review covers the integrated candidate through derived lenses: correctness always, security on `sensitive_paths`, standards and cleanup above `standards_min_lines`. Critic reports stay separate from code-diff review. Confirmed code findings route to checked builder repair; contradictory requirements route to design; dependency and acceptance flaws route to planning. Installer receipts and enabled, trusted native hooks govern profile discovery and session context; skill installation alone cannot guarantee either.
 
 ## v1 to v2 role mapping
 
@@ -44,7 +45,7 @@ Final review covers requirements, correctness, security, tests, architecture, st
 | auditor | critic / spec, standards, ledger |
 | builder | builder / implementation, frontend, sensitive, mechanical |
 | builder-repair | builder / repair (Claude: dispatch-time model override) |
-| code-reviewer, code-reviewer-checkpoint, code-reviewer-standards | code-reviewer / final, checkpoint, final with `Lens: standards` |
+| code-reviewer, code-reviewer-checkpoint, code-reviewer-standards | code-reviewer / final, final with `Lens: standards` |
 | gatekeeper | operator / gate |
 | janitor | operator / cleanup |
 | releaser | operator / release |

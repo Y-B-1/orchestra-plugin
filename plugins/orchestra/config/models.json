@@ -9,8 +9,8 @@
       "effort": "medium",
       "presets": {
         "code": {
-          "model": "claude-sonnet-5-5",
-          "effort": "low"
+          "model": "claude-haiku-5-5",
+          "effort": "high"
         },
         "docs": {
           "model": "claude-sonnet-5-5",
@@ -19,7 +19,7 @@
       }
     },
     "designer-planner": {
-      "model": "claude-opus-5-5",
+      "model": "claude-sonnet-5-5",
       "effort": "high"
     },
     "critic": {
@@ -43,8 +43,8 @@
           "effort": "medium"
         },
         "mechanical": {
-          "model": "claude-sonnet-5-5",
-          "effort": "medium"
+          "model": "claude-haiku-5-5",
+          "effort": "high"
         },
         "repair": {
           "model": "claude-opus-5-5",
@@ -52,22 +52,18 @@
           "dispatch": "override"
         },
         "cleanup": {
-          "model": "claude-sonnet-5-5",
-          "effort": "medium"
+          "model": "claude-haiku-5-5",
+          "effort": "high"
         }
       }
     },
     "code-reviewer": {
       "model": "claude-opus-5-5",
-      "effort": "high",
+      "effort": "medium",
       "presets": {
-        "checkpoint": {
-          "model": "claude-opus-5-5",
-          "effort": "medium"
-        },
         "final": {
           "model": "claude-opus-5-5",
-          "effort": "high"
+          "effort": "medium"
         },
         "standards": {
           "model": "claude-sonnet-5-5",
@@ -76,8 +72,8 @@
       }
     },
     "operator": {
-      "model": "claude-sonnet-5-5",
-      "effort": "medium"
+      "model": "claude-haiku-5-5",
+      "effort": "high"
     }
   }
 }

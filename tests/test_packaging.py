@@ -23,18 +23,40 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(set(matrix), {'schema_version', 'claude'})
         models = {sel['model'] for values in matrix['claude'].values() if values.get('selection') != 'user'
                   for sel in [values, *values.get('presets', {}).values()]}
-        self.assertTrue(models <= {'claude-opus-5-5', 'claude-sonnet-5-5'}, models)
+        self.assertTrue(models <= {'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'}, models)
 
     def test_role_matrix_files_and_read_only_enforcement(self):
         claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
         self.assertEqual(claude, {f'{n}.md' for n in [
-            'builder', 'code-reviewer', 'code-reviewer-checkpoint', 'code-reviewer-standards', 'critic', 'designer-planner',
+            'builder', 'builder-cleanup', 'builder-mechanical', 'code-reviewer', 'code-reviewer-standards', 'critic', 'designer-planner',
             'investigator', 'investigator-code', 'operator', 'orchestrator']})
         read_only = ('investigator', 'critic', 'code-reviewer')
         for name in claude - {'orchestrator.md'}:
             front = (PLUGIN / 'agents' / name).read_text().split('---')[1]
-            want = 'Agent, Edit, Write, NotebookEdit' if name.startswith(read_only) else 'Agent'
-            self.assertIn(f'disallowedTools: {want}\n', front, name)
+            self.assertNotIn('disallowedTools', front, name)
+            line = [l for l in front.splitlines() if l.startswith('tools: ')]
+            self.assertEqual(len(line), 1, name)
+            tools = set(line[0][len('tools: '):].split(', '))
+            self.assertIn('Read', tools, name)
+            self.assertFalse(tools & {'Agent', 'Task', 'Skill'}, name)
+            if name.startswith(read_only):
+                self.assertFalse(tools & {'Edit', 'Write', 'NotebookEdit'}, name)
+
+    def test_generate_refuses_bad_tool_allowlists(self):
+        roles = json.loads((PLUGIN / 'config/roles.json').read_text())
+        cases = [('critic', 'tools', ['Read', 'Edit'], 'read-only role lists a write tool'),
+                 ('builder', 'tools', ['Read', 'Agent(Explore)'], 'workers never delegate'),
+                 ('investigator', 'preset_tools', {'code': ['Read', 'Task']}, 'workers never delegate'),
+                 ('operator', 'tools', [], 'non-empty tools allowlist')]
+        for role_id, key, value, message in cases:
+            changed = json.loads(json.dumps(roles))
+            next(r for r in changed['roles'] if r['id'] == role_id)[key] = value
+            with self.subTest(role_id), tempfile.TemporaryDirectory() as temp:
+                root = Path(temp) / 'orchestra'
+                shutil.copytree(PLUGIN, root, ignore=shutil.ignore_patterns('agents', '__pycache__'))
+                (root / 'config/roles.json').write_text(json.dumps(changed))
+                with self.assertRaisesRegex(ValueError, message):
+                    generate.generated(root)
 
     def test_standards_preset_is_sonnet_medium_variant_file(self):
         path = PLUGIN / 'agents/code-reviewer-standards.md'
@@ -56,7 +78,8 @@ class NativeTests(unittest.TestCase):
                     if l.startswith('description:')][0]
             return json.loads(line.split(':', 1)[1])
         for base, variant, mode in [('investigator-code', 'investigator', 'Mode: code.'),
-                                    ('code-reviewer-checkpoint', 'code-reviewer', 'Mode: checkpoint.')]:
+                                    ('builder-mechanical', 'builder', 'Mode: mechanical.'),
+                                    ('builder-cleanup', 'builder', 'Mode: cleanup.')]:
             self.assertIn(mode, desc(base + '.md'))
             self.assertIn(desc(variant + '.md'), desc(base + '.md'))
             self.assertNotEqual(desc(base + '.md'), desc(variant + '.md'))
@@ -67,6 +90,7 @@ class NativeTests(unittest.TestCase):
         self.assertNotIn('effort:', front)
         self.assertIn('skills: [orchestra]\n', front)
         self.assertNotIn('disallowedTools', front)
+        self.assertNotIn('tools:', front)
 
     def test_generate_refuses_unresolved_preload_skill_and_missing_mode_file(self):
         def copy_plugin(temp):
@@ -103,7 +127,7 @@ class NativeTests(unittest.TestCase):
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
         versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
         self.assertEqual(len(set(versions.values())), 1, versions)
-        self.assertEqual(set(versions.values()), {'2.3.0'})
+        self.assertEqual(set(versions.values()), {'2.4.0'})
 
     def test_changelog_first_heading_matches_version(self):
         version = json.loads((PLUGIN / 'plugin.json').read_text())['version']

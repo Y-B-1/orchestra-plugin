@@ -17,6 +17,10 @@ Restart the client after installation. Enable the plugin and review its hook def
 
 No installer changes application instructions, restores symlinks, resumes old work, grants release rights or writes hook trust. Existing project rules remain applicable. Port a project's old Orchestra enforcement separately to avoid competing coordinators.
 
+### Upgrade from 2.3 to 2.4
+
+A run started under 2.3 loads under 2.4 when its policy is unchanged: `status`, `interrupt` and `finish` work, and its first write rebinds it to 2.4, after which 2.3 refuses it, so do not mix versions on one run. It keeps 2.3 routing, since it has no `--items`: no route check, and every review category is required. A queued `code-reviewer` checkpoint card no longer dispatches, because 2.4 removed that mode. A policy or role change made while a run is active is still refused: end that run with the version that started it, or move its `state.json` out of the state directory. A new run needs `start --items N`. Gate and review receipts recorded under 2.3 go stale under 2.4, because the evidence binds the policy hash: rerun the gate and the pre-PR review before `finish`.
+
 ### Upgrade from 2.1 to 2.2
 
 A run started under 2.1 loads under 2.2: its cards, reviews, gates and armed autonomy carry over, `max_passes` and `max_stalls` in its ledger are recorded and no longer enforced, and queued builder cards dispatch without Keep and Remove headings. Do not mix versions on one active run. A 2.1 engine rejects a `held` card and an armed autonomy without `max_passes`, and the 2.1 hooks then fail closed for that run. End every 2.1 session before the first `hold` or before arming under 2.2.
@@ -57,9 +61,9 @@ On Claude Code the plugin also registers a function-hook module that classifies 
 
 ## Roles and models
 
-[Role contracts](docs/roles.md) describe responsibilities and the v1 to v2 mapping. [Model matrix](docs/models.md) lists model and effort settings. The coordinator runs in the main session and never as a worker. The six worker roles are investigator, designer-planner, critic, builder, code-reviewer and operator; each role has one skill and loads one mode file for its brief's `Mode:` line. The generator produces 8 Claude worker agents plus the orchestrator.
+[Role contracts](docs/roles.md) describe responsibilities and the v1 to v2 mapping. [Model matrix](docs/models.md) lists model and effort settings. The coordinator runs in the main session and never as a worker. The six worker roles are investigator, designer-planner, critic, builder, code-reviewer and operator; each role has one skill and loads one mode file for its brief's `Mode:` line. The generator produces 10 Claude worker agents plus the orchestrator.
 
-Every final integration review covers requirements, correctness, security, tests, architecture, standards and cleanup, in four lenses (correctness, architecture, security, cleanliness). A critic runs a separate pass for each needed conformance axis. The operator runs actual commands and executes only a configured authorized release. A reviewer cannot approve their own work.
+One pre-PR review covers the integrated candidate. Correctness is always a lens; security applies when a changed file matches policy `sensitive_paths`; standards and cleanup apply above `standards_min_lines` changed lines. A critic runs a separate pass for each needed conformance axis. The operator runs actual commands and executes only a configured authorized release. A reviewer cannot approve their own work.
 
 | v1 role | v2 role and mode |
 | --- | --- |
@@ -72,7 +76,7 @@ Every final integration review covers requirements, correctness, security, tests
 | auditor | critic / spec, standards, ledger |
 | builder | builder / implementation, frontend, sensitive, mechanical |
 | builder-repair | builder / repair |
-| code-reviewer, code-reviewer-checkpoint | code-reviewer / final, checkpoint |
+| code-reviewer, code-reviewer-checkpoint | code-reviewer / final |
 | gatekeeper | operator / gate |
 | janitor | operator / cleanup |
 | releaser | operator / release |
@@ -82,7 +86,7 @@ Every final integration review covers requirements, correctness, security, tests
 Read [the CLI guide](docs/cli.md) for commands and the package [CLI reference](plugins/orchestra/skills/orchestra/references/cli.md) for task and review schemas. Run state lives under the user state directory, outside the application checkout. The core enforces dependencies, reservations, capacity, lifecycle and evidence freshness; the coordinator supplies semantic facts and checks findings.
 
 ```sh
-python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project start
+python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project start --items N
 python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project board
 ```
 
@@ -94,9 +98,9 @@ Release is disabled by default. Explicit project policy names authorization, exa
 
 For fresh context on every pass, arm with `autonomy arm --relaunch`, end the interactive session, and run `orchestra.py relaunch --permission-mode MODE [--model ID]` in a terminal. It runs one `claude -p` pass at a time, ends each pass's session, backs off after a stalled pass and never stops for stalls. It replaces the downstream shell harness.
 
-### Waves, repair and hold
+### Routing, repair and hold
 
-Group builder cards into a wave with `"wave": "W"`, review the whole wave with `"review_of": ["wave:W"]`, and attribute findings per card with `task_findings`. A failed card gets one Opus repair; a chain that still fails is ended with `orchestra.py hold TASK --finding TEXT` and cleared in the final phase. `orchestra.py supersede`, `finding add|list`, `gate --again` and the `waves` in `status` are in the [CLI guide](docs/cli.md).
+`start --items N` fixes the route: 1 to 5 items run inline, with `dispatch --helper REASON` for a helper; 6 or more need an accepted designer-planner plan card and Workflow builders. Builders end with one `SELF_REVIEW:` line. Review happens once, before the PR. A failed card gets one Opus repair and one fix re-review (`repair_check: true`); a chain still blocked after the fix re-review is held for the owner with `orchestra.py hold TASK --finding TEXT`. `route`, `finding add|list` and `gate --again` are in the [CLI guide](docs/cli.md).
 
 ## Check and distribute
 

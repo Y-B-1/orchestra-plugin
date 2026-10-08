@@ -32,7 +32,7 @@ Code written before its test is deleted and redone from the test. Exempt: genera
 
 | Claim | Needs | Does not count |
 | --- | --- | --- |
-| Tests pass | Full test command, zero failures | An earlier run, one file |
+| Tests pass | The owned and derived checks the brief lists, zero failures | An earlier run, a subset of them |
 | Build passes | Build command, exit 0 | Lint passing |
 | Lint or scan clean | The tool's own exit code 0 | A different tool's pass |
 | Bug fixed | The reproducing test passes | Code changed |
@@ -44,12 +44,17 @@ A failure you saw but did not cause still goes in the report by name.
 
 ## Self-review
 
-Read your own diff before reporting.
+You are the only reviewer before the pre-PR review, so review before you report. Rerun your fast checks. Walk your diff against each acceptance criterion and note the evidence. Then check:
 
-- Complete: every acceptance check in the brief is met or named as open.
 - Lean: nothing unrequested, no speculative option, each file has one job.
 - Honest tests: each asserts behavior and none asserts a mock.
 - Quiet output: no stray warnings or debug lines.
+
+End the report with exactly one line, with non-empty `checks` and `criteria` (every `exit_code` 0 and every `met` true, or name the open item in the report):
+
+`SELF_REVIEW: {"checks": [{"command": "<cmd>", "exit_code": 0}], "criteria": [{"criterion": "<text>", "met": true, "evidence": "<text>"}]}`
+
+The engine refuses a builder report without it, and accepts the card only on a clean line.
 
 Builder briefs carry `## Keep` and `## Remove` lists. Every Keep item still holds and every Remove item is gone when you report; name each in the report.
 

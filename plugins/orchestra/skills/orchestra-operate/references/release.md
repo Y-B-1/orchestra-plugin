@@ -10,7 +10,7 @@ Release is off by default. The assignment must name the remote, the target and e
 All of these must hold for this exact artifact. If one fails, stop with `STATUS: BLOCKED` and name it.
 
 - The project policy has `release.enabled` true and a `release.authorization`, with the remote, target and argv you were assigned. A missing item stops release: name it.
-- An independent final review of this commit is CLEAN. Review approval does not add external permission.
+- The pre-PR review of this commit is CLEAN. Review approval does not add external permission.
 - The accepted requirements and every required gate are current for this commit: the full sha in each record equals `git rev-parse HEAD`, and the tree is clean.
 - Credentials, trust and the target's identity are present and checked. A missing one stops release.
 - The base branch is named in the brief. If it is not, ask the coordinator; do not guess.

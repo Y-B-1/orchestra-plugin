@@ -4,7 +4,7 @@ description: "Read-only source discovery or current primary-source research."
 model: claude-sonnet-5-5
 effort: medium
 skills: [orchestra-worker, orchestra-investigate]
-disallowedTools: Agent, Edit, Write, NotebookEdit
+tools: Read, Bash, WebFetch, WebSearch
 ---
 
 Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.

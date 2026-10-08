@@ -142,3 +142,28 @@ Tracked here, not in the v1 engine (PLAN-v2 0.1). Integration is serial: merge, 
 | FC4 / FS4 / FT4 | final review, three lenses | 5b46ba6 | all CLEAN; notes for the next phase: the default-ref read can still pick a loose case twin of a packed default (no data loss), the SKILL-SOURCES E1 row title and closing cells still name the 2.0 round cap, and a comment cites the review tag FC3 | round 4 of the final loop: PASS |
 | R12 | code-reviewer checkpoint | 89d2877 | G2y fixes the case-twin finding; merged exact-name deletes still allowed; tests fail without the fix | CLEAN |
 | Gate | coordinator | 5b46ba6 | unittest 557 OK, fixture sync 0, plugin test 89 pass, generate --check 0, build_release 0 | PASS |
+
+## 2.4 build (v2.4)
+
+Plan: `docs/PLAN-v2.4.md` (S1–S11, contract items 1–10). Base 5f32fa4.
+
+| Card | Role | Commit | Evidence | Status |
+|---|---|---|---|---|
+| S1 | coordinator | 90a726d, 86aea84 | model matrix and tool allowlists; generate --check 0 | ACCEPTED |
+| E1 | builder | 221cc74 (merged 94a28c9) | engine: SELF_REVIEW, routing, receipts, repair ladder, derived lenses, waves removed, `current_gate_ids` | ACCEPTED (self-review; pre-PR review) |
+| H1 | builder | 985846b (merged 60f057d) | hooks: agent guard, reviewer test block, suite classifier | ACCEPTED (self-review; pre-PR review) |
+| K1 | builder | 9d7a267 (merged adce1cc) | skills, config, docs for 2.4; SELF_REVIEW line shape wrong (engine now enforces it) | ACCEPTED (self-review; pre-PR review) |
+| Gate 1 | coordinator | adce1cc | full suite: 1 failure, 10 errors, all stale test setups | FAILED |
+| INT | coordinator | 51312a2 | three stale test setups fixed | ACCEPTED |
+| Gate 2 | coordinator | 51312a2 | full suite 588 OK | PASS |
+| Pre-PR review | code-reviewer final, three lenses | 51312a2 | standards CLEAN; security BLOCKED (hook status read the diff and untracked files on each call); correctness BLOCKED (2.3 state refused by the policy hash) | round 1 |
+| R1–R6 | builder repair (Opus) | 37c3c0e..107cea2 | hook status without lenses; 2.3 state binding and fixture; agent guard fails closed; build SKILL test row; classifier gaps; docs | ACCEPTED (fix re-review CLEAN) |
+| Fix re-review | code-reviewer final, `repair_check` | 107cea2 | R1–R6 fixed; targeted tests 31 OK, guard corpus 38 OK; real 2.3 states made with the 2.3.0 CLI load and finish | CLEAN |
+| Gate 3 | coordinator | 107cea2 | full suite 597 OK, clean tree | PASS |
+| REL | coordinator | 9e797df | version 2.4.0 in three manifests; CHANGELOG 2.4.0; README note that 2.3 receipts go stale | reported |
+| SG | coordinator inline (owner: fix now) | cf3539d | subagent guard: non-`orchestra:*` subagent calls denied during a run, covering Workflow agents (`workflow-subagent`); fast path skipped; SubagentStart cannot block (live probe exit 2 ignored), gives context. Live: untyped Workflow agent denied, `orchestra:operator` Workflow agent allowed; 5 tests red then green | ACCEPTED |
+| SG review | code-reviewer final, security | cf3539d | active, busy, malformed, engine-error states deny; no-run and ended allow; no state writes; tests fail on pre-fix hooks.py | CLEAN |
+| Gate 4 | coordinator | cf3539d | full suite 601 OK, clean tree | PASS |
+| DOC | coordinator | this commit | hooks.md SubagentStart row, CHANGELOG read limit (SG review N1, N5) | reported |
+
+Deferred notes (next phase): stale checkpoint vocabulary in `tests/test_engine.py` names; SKILL-SOURCES "One checkpoint procedure." and the "Verification before completion" identical-wording claim (false since R4); `gate.md:27` full-test row; classifier edge cases (lowercase unittest class, `pkg.Tests.test_module`, `script.py -munittest`, `python3 -m coverage run -m pytest`, `-Im unittest`); the board mod computes unused lenses each heartbeat; `start --new-run` archives before refusing a bad actor or harness session. SG review notes: SubagentStart gives no context when the state is unloadable but raw-active (PreToolUse still denies); SubagentStart builds the engine for every agent (0.15 s, 4.2 s worst case under a held lock); no unit test for the busy `unloaded_run` subagent deny or the `main()` fast-path skip. Read/Grep/Glob from foreign agents are not guarded (190 ms per hook call). Strategic cards: briefs name the base commit (worktrees start from the pushed main); a builder-repair agent file so repair needs no model override.
