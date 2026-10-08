@@ -112,7 +112,7 @@ def archive_inactive(state,engine):
             return
         old = read_json(source)
         if old.get('session',{}).get('active'):
-            if old.get('repo') != str(engine.repo) or old.get('policy') != engine.policy_hash:
+            if old.get('repo') != str(engine.repo) or not engine.binds(old):
                 raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives
             raise EngineError('Stop or finish the active run before starting another')
         archive = {'state':old,'policy':load_policy(state)}

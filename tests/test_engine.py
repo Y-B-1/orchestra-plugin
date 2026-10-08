@@ -9,10 +9,23 @@ import tempfile
 import unittest
 from unittest import mock
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
+SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'
+sys.path.insert(0, str(SCRIPTS))
 from pathlib import Path
 
 from orchestra_core.engine import AUTONOMY_FIXED, Engine, EngineError, autonomy_preconditions
+
+STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
+
+
+def load_2_3_state(root, repo, name='state-2.3'):
+    """A state.json written by the 2.3 engine (`start`, no policy), bound to `repo`; returns (state dir, lease)."""
+    data = json.loads(STATE_2_3.read_text())
+    data['repo'] = str(pathlib.Path(repo).resolve())
+    state = pathlib.Path(root) / name
+    state.mkdir()
+    (state / 'state.json').write_text(json.dumps(data))
+    return state, data['session']['lease']
 
 
 def done(text='done', checks=None, criteria=None):
@@ -2774,14 +2787,54 @@ class RouteTests(EngineFixture):
         self.assertEqual((3, 'inline', []), tuple(engine.status()['session'][k] for k in ('items', 'route', 'route_log')))
 
     def test_a_2_3_state_without_items_keeps_the_old_routing(self):
-        self.assertNotIn('route', self.engine.status()['session'])
-        self.task('b')
-        self.task('plan', role='designer-planner', mode='plan', files=[])  # a plan card is allowed
-        token = self.engine.dispatch('main', self.lease, 'b', 'w')  # no --helper, no plan card
-        self.engine.report('w', token, done('Built b.'))
-        self.engine.accept('main', self.lease, 'b')
-        self.task('c')
-        self.engine.start_inline('main', self.lease, 'c')
+        state, lease = load_2_3_state(self.root, self.repo)
+        engine = Engine(state, self.repo)
+        self.assertNotIn('route', engine.status()['session'])
+        self.add(engine, lease, 'b')
+        self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[])  # a plan card is allowed
+        token = engine.dispatch('main', lease, 'b', 'w')  # no --helper, no plan card
+        engine.report('w', token, done('Built b.'))
+        engine.accept('main', lease, 'b')
+        self.add(engine, lease, 'c')
+        engine.start_inline('main', lease, 'c')
+
+
+class LegacyStateTests(EngineFixture):
+    """Contract item 3: a run state written by the 2.3 engine loads under 2.4; a real policy change still refuses."""
+
+    def test_a_2_3_state_loads_interrupts_resumes_and_finishes(self):
+        state, lease = load_2_3_state(self.root, self.repo)
+        engine = Engine(state, self.repo)
+        session = engine.status()['session']
+        self.assertTrue(session['active'])
+        self.assertNotIn('items', session)
+        engine.interrupt('main', lease)
+        lease = engine.open_session('main')  # a resumed 2.3 run needs no --items
+        engine.close_session('main', lease)
+        self.assertEqual('completed', engine.status()['session']['outcome'])
+
+    def test_the_cli_status_interrupt_and_finish_load_a_2_3_state(self):
+        state, lease = load_2_3_state(self.root, self.repo)
+        cli = [sys.executable, str(SCRIPTS / 'orchestra.py'), '--repo', str(self.repo), '--state', str(state)]
+        for command in (['status'], ['--lease', lease, 'interrupt']):
+            result = subprocess.run(cli + command, capture_output=True, text=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+        lease = json.loads(subprocess.run(cli + ['start'], capture_output=True, text=True, check=True).stdout)['lease']
+        result = subprocess.run(cli + ['--lease', lease, 'finish'], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+
+    def test_a_policy_change_still_refuses_a_2_3_state(self):
+        state, _ = load_2_3_state(self.root, self.repo)
+        with self.assertRaisesRegex(EngineError, r'policy changed while a run is active.*Upgrade from 2\.3 to 2\.4'):
+            Engine(state, self.repo, dict(max_workers=3)).status()
+
+    def test_a_state_with_items_never_takes_the_2_3_binding(self):
+        state, _ = load_2_3_state(self.root, self.repo)
+        data = json.loads((state / 'state.json').read_text())
+        data['session'].update(items=2, route='inline')
+        (state / 'state.json').write_text(json.dumps(data))
+        with self.assertRaisesRegex(EngineError, 'policy changed while a run is active'):
+            Engine(state, self.repo).status()
 
 
 class DerivedLensTests(EngineFixture):
@@ -2789,12 +2842,25 @@ class DerivedLensTests(EngineFixture):
     BASE = ['requirements', 'correctness', 'tests', 'architecture']
 
     def lenses(self):
-        return self.engine.status()['required_lenses']
+        return self.engine.status(lenses=True)['required_lenses']
 
     def write(self, path, lines=1):
         target = self.repo / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text('x\n' * lines)
+
+    def test_the_hook_facing_status_never_reads_the_diff(self):
+        self.write('src/auth/login.py', 300)
+        with mock.patch.object(Engine, '_changed', side_effect=AssertionError('status read the diff')):
+            self.assertNotIn('required_lenses', self.engine.status())
+
+    def test_the_cli_status_shows_the_lenses(self):
+        self.write('src/auth/login.py')
+        result = subprocess.run([sys.executable, str(SCRIPTS / 'orchestra.py'), '--repo', str(self.repo),
+                                 '--state', str(self.root / 'state'), 'status'], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(['requirements', 'correctness', 'security', 'tests', 'architecture'],
+                         json.loads(result.stdout)['required_lenses'])
 
     def test_an_unchanged_repository_needs_the_four_base_lenses(self):
         self.assertEqual(self.BASE, self.lenses())
@@ -2815,7 +2881,7 @@ class DerivedLensTests(EngineFixture):
         engine = Engine(self.root / 'small', self.repo, dict(standards_min_lines=5))
         engine.open_session('main')
         self.write('mid.txt', 6)
-        self.assertEqual(self.BASE + ['standards', 'cleanup'], engine.status()['required_lenses'])
+        self.assertEqual(self.BASE + ['standards', 'cleanup'], engine.status(lenses=True)['required_lenses'])
 
     def test_both_additions_together(self):
         self.write('migrations/0001.sql', 250)
@@ -2826,7 +2892,7 @@ class DerivedLensTests(EngineFixture):
         engine = Engine(self.root / 'explicit', self.repo, dict(required_review_categories=['correctness', 'tests']))
         engine.open_session('main')
         self.write('src/auth/login.py', 300)
-        self.assertEqual(['correctness', 'tests'], engine.status()['required_lenses'])
+        self.assertEqual(['correctness', 'tests'], engine.status(lenses=True)['required_lenses'])
 
     def test_completion_waits_for_a_derived_lens(self):
         self.write('src/auth/login.py')

@@ -1,0 +1,15 @@
+{
+  "autonomy": null,
+  "gates": [],
+  "permits": [],
+  "policy": "200f4380af6abf0be57f23ebc234e9d9efc5782a1a7a2e3cf70b7058172ac6d2",
+  "repo": "@REPO@",
+  "reviews": [],
+  "session": {
+    "active": true,
+    "actor": "main",
+    "lease": "daa7a7b812494e89b594b26393bfa83a"
+  },
+  "tasks": {},
+  "version": 1
+}

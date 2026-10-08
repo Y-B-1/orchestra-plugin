@@ -17,6 +17,10 @@ Restart the client after installation. Enable the plugin and review its hook def
 
 No installer changes application instructions, restores symlinks, resumes old work, grants release rights or writes hook trust. Existing project rules remain applicable. Port a project's old Orchestra enforcement separately to avoid competing coordinators.
 
+### Upgrade from 2.3 to 2.4
+
+A run started under 2.3 loads under 2.4 when its policy is unchanged: `status`, `interrupt` and `finish` work, and its first write rebinds it to 2.4, after which 2.3 refuses it, so do not mix versions on one run. It keeps 2.3 routing, since it has no `--items`: no route check, and every review category is required. A queued `code-reviewer` checkpoint card no longer dispatches, because 2.4 removed that mode. A policy or role change made while a run is active is still refused: end that run with the version that started it, or move its `state.json` out of the state directory. A new run needs `start --items N`.
+
 ### Upgrade from 2.1 to 2.2
 
 A run started under 2.1 loads under 2.2: its cards, reviews, gates and armed autonomy carry over, `max_passes` and `max_stalls` in its ledger are recorded and no longer enforced, and queued builder cards dispatch without Keep and Remove headings. Do not mix versions on one active run. A 2.1 engine rejects a `held` card and an armed autonomy without `max_passes`, and the 2.1 hooks then fail closed for that run. End every 2.1 session before the first `hold` or before arming under 2.2.

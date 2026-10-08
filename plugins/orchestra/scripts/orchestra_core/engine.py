@@ -24,7 +24,7 @@ from .guards import classify_command
 
 ACTIVE_MISMATCH = ('Repository or policy changed while a run is active, so a new run is refused. '
                    'End it with the version that started it, or move state.json out of the state '
-                   'directory (README, Upgrade from 1.0.1)')
+                   'directory (README, Upgrade from 2.3 to 2.4)')
 
 
 class EngineError(ValueError):
@@ -49,6 +49,11 @@ DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                sensitive_paths=['**/auth/**', '**/security/**', '**/*secret*', '**/hooks/**', '**/guard*',
                                 '**/migrations/**', '.github/**'],
                standards_min_lines=200)
+# Contract item 3: a run started by 2.3 binds the hash 2.3 computed: its DEFAULT and its role-to-modes digest.
+DEFAULT_2_3 = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
+                   gate_timeout_seconds=300, secret_scan=dict(required=False, argv=[]),
+                   release=dict(enabled=False, remote=None, target=None, argv=[]))
+CONTRACT_HASH_2_3 = '7e12cdf268d85df0aac178c92f1577a3ce2ffbf686fbc536204b4677dfe3a942'
 
 
 def _contracts():
@@ -236,8 +241,10 @@ class Engine:
             if self.state_dir == protected or protected in self.state_dir.parents:
                 raise EngineError('Run state must live outside the repository and immutable plugin root')
         self.policy = copy.deepcopy(DEFAULT)
+        legacy = copy.deepcopy(DEFAULT_2_3)
         if policy:
             self.policy.update(copy.deepcopy(policy))
+            legacy.update(copy.deepcopy(policy))
         if isinstance(self.policy['max_workers'], bool) or not isinstance(self.policy['max_workers'], int) or self.policy['max_workers'] < 1:
             raise EngineError('Invalid worker capacity')
         timeout = self.policy['gate_timeout_seconds']
@@ -260,6 +267,7 @@ class Engine:
             raise EngineError('standards_min_lines must be a non-negative integer')
         self.modes, self.contract_hash = _contracts()
         self.policy_hash = _digest(dict(policy=self.policy, contracts=self.contract_hash))
+        self._policy_hash_2_3 = _digest(dict(policy=legacy, contracts=CONTRACT_HASH_2_3))
         self._git('rev-parse', '--show-toplevel')
         if Path(self._git('rev-parse', '--show-toplevel').decode().strip()).resolve() != self.repo:
             raise EngineError('repo must name repository root')
@@ -387,11 +395,12 @@ class Engine:
                     self._validate_state(state)
                 except (ValueError, TypeError, KeyError, OSError) as exc:
                     raise EngineError('Malformed run state: ' + str(exc)) from exc
-                if state['repo'] != str(self.repo) or state['policy'] != self.policy_hash:
+                if state['repo'] != str(self.repo) or not self.binds(state):
                     session = state.get('session')
                     if session is None or (isinstance(session, dict) and session.get('active') is False):
                         raise EngineError('Repository or policy changed; run `start --new-run`')
                     raise EngineError(ACTIVE_MISMATCH)
+                state['policy'] = self.policy_hash  # a 2.3 binding is rebound on the next write
             else:
                 state = dict(version=1, repo=str(self.repo), policy=self.policy_hash,
                              session=None, tasks={}, reviews=[], gates=[], permits=[], autonomy=None)
@@ -415,6 +424,13 @@ class Engine:
                 finally:
                     if os.path.exists(name):
                         os.unlink(name)
+
+    def binds(self, state):
+        """The state's policy hash is this engine's, or the one 2.3 computed for the same policy on a state with no
+        `items` (contract item 3). Any other policy or roles change refuses."""
+        session = state.get('session')
+        return state.get('policy') == self.policy_hash or (
+            state.get('policy') == self._policy_hash_2_3 and not (isinstance(session, dict) and 'items' in session))
 
     @staticmethod
     def _route_for(items):
