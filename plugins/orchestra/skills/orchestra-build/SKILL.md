@@ -32,7 +32,7 @@ Code written before its test is deleted and redone from the test. Exempt: genera
 
 | Claim | Needs | Does not count |
 | --- | --- | --- |
-| Tests pass | Full test command, zero failures | An earlier run, one file |
+| Tests pass | The owned and derived checks the brief lists, zero failures | An earlier run, a subset of them |
 | Build passes | Build command, exit 0 | Lint passing |
 | Lint or scan clean | The tool's own exit code 0 | A different tool's pass |
 | Bug fixed | The reproducing test passes | Code changed |
