@@ -167,3 +167,19 @@ Plan: `docs/PLAN-v2.4.md` (S1–S11, contract items 1–10). Base 5f32fa4.
 | DOC | coordinator | this commit | hooks.md SubagentStart row, CHANGELOG read limit (SG review N1, N5) | reported |
 
 Deferred notes (next phase): stale checkpoint vocabulary in `tests/test_engine.py` names; SKILL-SOURCES "One checkpoint procedure." and the "Verification before completion" identical-wording claim (false since R4); `gate.md:27` full-test row; classifier edge cases (lowercase unittest class, `pkg.Tests.test_module`, `script.py -munittest`, `python3 -m coverage run -m pytest`, `-Im unittest`); the board mod computes unused lenses each heartbeat; `start --new-run` archives before refusing a bad actor or harness session. SG review notes: SubagentStart gives no context when the state is unloadable but raw-active (PreToolUse still denies); SubagentStart builds the engine for every agent (0.15 s, 4.2 s worst case under a held lock); no unit test for the busy `unloaded_run` subagent deny or the `main()` fast-path skip. Read/Grep/Glob from foreign agents are not guarded (190 ms per hook call). Strategic cards: briefs name the base commit (worktrees start from the pushed main); a builder-repair agent file so repair needs no model override.
+
+### 2.4 release and benchmark (2026-10-08)
+
+- Merged as PR #9, squash 3088dde; main matches the reviewed branch tree. Installed 2.4.0 from `orchestra-distribution`; a fresh headless session loaded the 2.4.0 skill path.
+- CI: none on GitHub. The owner's CI runs on company Azure and its results are not visible here; evidence for this release is the local full-suite gates (601 OK at cf3539d).
+- Benchmark rerun, same three items at e43a7bc (FC3 tag in `hooks.py` and `tests/test_hooks.py`, E1 labels in `docs/SKILL-SOURCES.md`), headless coordinator on Opus:
+
+| | 2.3 (baseline) | 2.4 |
+|---|---|---|
+| Agents started | 7 (3 builders, 1 checkpoint, 3 final lenses) | 1 (pre-PR code-reviewer, Opus) |
+| Sub-agent tokens (`subagent_tokens`) | 486,453 | 35,990 |
+| Edits | builders | coordinator inline |
+| Wall time | ~555 s | 398 s |
+| Result | 3 files, all CLEAN | 3 files (5+/5-), CLEAN, commit 8530c4b (throwaway) |
+
+Coordinator cost was not measured for 2.3. For 2.4 the coordinator used 15,474 output tokens and 92,912 cache-write tokens; the whole run cost $1.93 at list price.
