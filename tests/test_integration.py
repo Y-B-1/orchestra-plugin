@@ -699,6 +699,14 @@ class RouteCliIntegration(unittest.TestCase):
     def test_new_run_needs_items(self):
         self.assertIn('A new run needs --items N',self.raw('start',expected=2))
 
+    def test_a_refused_new_run_keeps_the_ended_run(self):
+        lease=self.raw('start','--items','3')['lease']
+        self.raw('--lease',lease,'interrupt')
+        self.assertIn('A new run needs --items N',self.raw('start','--new-run',expected=2))
+        self.raw('start','--new-run','--items','0',expected=2)
+        self.assertFalse((self.state/'history').exists())  # the ended run was not archived
+        self.assertFalse(self.raw('status')['session']['active'])
+
     def test_start_items_routes_both_ways_and_route_changes_it(self):
         lease=self.raw('start','--items','5')['lease']
         self.assertEqual(self.raw('status')['session']['route'],'inline')

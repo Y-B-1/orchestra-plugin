@@ -133,6 +133,9 @@ def execute(args):
     engine = Engine(state,repo,policy)
     if args.command=='start':
         if args.new_run:
+            if args.items is None:  # refuse before archiving, so the ended run stays in place
+                raise EngineError('A new run needs --items N, the number of work items')
+            engine._check_items(args.items)
             archive_inactive(state,engine)
         lease = engine.open_session(args.actor,args.harness_session,relaunch_pass=os.environ.get('ORCHESTRA_RELAUNCH_PASS') or None,
                                     items=args.items,require_items=True)
