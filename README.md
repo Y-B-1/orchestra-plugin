@@ -86,7 +86,7 @@ One pre-PR review covers the integrated candidate. Correctness is always a lens;
 Read [the CLI guide](docs/cli.md) for commands and the package [CLI reference](plugins/orchestra/skills/orchestra/references/cli.md) for task and review schemas. Run state lives under the user state directory, outside the application checkout. The core enforces dependencies, reservations, capacity, lifecycle and evidence freshness; the coordinator supplies semantic facts and checks findings.
 
 ```sh
-python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project start
+python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project start --items N
 python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project board
 ```
 
@@ -100,7 +100,7 @@ For fresh context on every pass, arm with `autonomy arm --relaunch`, end the int
 
 ### Routing, repair and hold
 
-`start --items N` fixes the route: 1 to 5 items run inline, with `dispatch --helper REASON` for a helper; 6 or more need an accepted designer-planner plan card and Workflow builders. Builders end with one `SELF_REVIEW:` line. Review happens once, before the PR. A failed card gets one Opus repair and one fix re-review (`repair_check: true`); a chain that still fails is ended with `orchestra.py hold TASK --finding TEXT` and cleared in the final phase. `route`, `finding add|list` and `gate --again` are in the [CLI guide](docs/cli.md).
+`start --items N` fixes the route: 1 to 5 items run inline, with `dispatch --helper REASON` for a helper; 6 or more need an accepted designer-planner plan card and Workflow builders. Builders end with one `SELF_REVIEW:` line. Review happens once, before the PR. A failed card gets one Opus repair and one fix re-review (`repair_check: true`); a chain still blocked after the fix re-review is held for the owner with `orchestra.py hold TASK --finding TEXT`. `route`, `finding add|list` and `gate --again` are in the [CLI guide](docs/cli.md).
 
 ## Check and distribute
 

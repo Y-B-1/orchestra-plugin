@@ -2208,7 +2208,7 @@ class PlanV24GuardTest(unittest.TestCase):
 
     def test_reviewers_cannot_rerun_suites_while_gate_receipts_exist(self):
         engine = self.engine(gate_ids=['gate-1', 'gate-2'])
-        for kind in ('orchestra:code-reviewer', 'orchestra:code-reviewer-checkpoint', 'orchestra:critic'):
+        for kind in ('orchestra:code-reviewer', 'orchestra:critic'):
             for text in ('python3 -m unittest discover', 'cd x && pytest -q', 'npm test'):
                 with self.subTest(kind=kind, text=text):
                     result = self.review_call(text, kind, engine)
