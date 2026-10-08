@@ -559,11 +559,13 @@ class Engine:
             return [Engine._redact_leases(v) for v in value]
         return value
 
-    def status(self):
-        """The run state without any lease: the board and `where` never see one (SPEC 11.2)."""
+    def status(self, lenses=False):
+        """The run state without any lease: the board and `where` never see one (SPEC 11.2). `lenses` adds
+        `required_lenses`, which reads the diff; the hooks never ask for it."""
         with self._state(False) as state:
             result = self._redact_leases(copy.deepcopy(state))
-            result['required_lenses'] = self._required_lenses(state)
+            if lenses:
+                result['required_lenses'] = self._required_lenses(state)
             return result
 
     def current_gate_ids(self):

@@ -140,7 +140,7 @@ def execute(args):
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
     if args.command=='status':
-        return engine.status(),0
+        return engine.status(lenses=True),0
     if args.command=='brief':  # lease-free and read-only, like status
         text=engine.brief()
         return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
