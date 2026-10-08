@@ -2202,6 +2202,39 @@ class PlanV24GuardTest(unittest.TestCase):
         self.assertEqual(self.agent('general-purpose', engine=broken).output, {})
         self.assertEqual(decision_of(self.agent('general-purpose', engine=mock.Mock())), 'deny')
 
+    def tool_in_subagent(self, agent_type, tool='Bash', engine=None):
+        data = {'command': 'git add src/a.ts docs/b.md'} if tool == 'Bash' else {'file_path': str(self.dir / 'f.txt'), 'content': 'x'}
+        payload = {'tool_name': tool, 'tool_input': data, 'cwd': str(self.dir), 'agent_id': 'a1'}
+        if agent_type is not None:
+            payload['agent_type'] = agent_type
+        return handle_event('PreToolUse', payload, harness='claude', engine=engine)
+
+    def test_non_orchestra_subagent_tools_denied_during_run(self):
+        # A Workflow agent with no agentType arrives as 'workflow-subagent' (live probe, Claude Code 2.1.292)
+        for kind in ('workflow-subagent', 'general-purpose', 'Explore', '', None):
+            for tool in ('Bash', 'Write'):
+                with self.subTest(kind=kind, tool=tool):
+                    result = self.tool_in_subagent(kind, tool, self.engine())
+                    self.assertEqual(decision_of(result), 'deny')
+                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
+                                     hooks_module.SUBAGENT_GUARD)
+
+    def test_non_orchestra_subagent_denied_when_run_cannot_load(self):
+        self.state.write_text(json.dumps({'session': {'active': True}}))
+        self.assertEqual(decision_of(self.tool_in_subagent('workflow-subagent', engine=self.engine(broken=True))), 'deny')
+
+    def test_orchestra_subagent_and_no_run_unaffected(self):
+        self.assertEqual(self.tool_in_subagent('orchestra:builder', engine=self.engine()).output, {})
+        self.assertEqual(self.tool_in_subagent('workflow-subagent').output, {})
+        self.assertEqual(self.tool_in_subagent('workflow-subagent', engine=self.engine(active=False)).output, {})
+
+    def test_non_orchestra_subagent_start_is_told_to_stop_during_run(self):
+        payload = {'agent_id': 'a1', 'agent_type': 'workflow-subagent'}
+        result = handle_event('SubagentStart', payload, harness='claude', engine=self.engine())
+        self.assertEqual(result.output['hookSpecificOutput']['additionalContext'], hooks_module.SUBAGENT_GUARD)
+        self.assertEqual(handle_event('SubagentStart', payload, harness='claude', engine=None).output, {})
+        self.assertEqual(handle_event('SubagentStart', payload, harness='claude', engine=self.engine(active=False)).output, {})
+
     def test_subagent_agent_call_still_hits_workers_do_not_delegate(self):
         result = self.agent('orchestra:builder', engine=self.engine(), agent_id='a1', agent_type='orchestra:builder')
         self.assertIn('Workers do not delegate', result.output['hookSpecificOutput']['permissionDecisionReason'])

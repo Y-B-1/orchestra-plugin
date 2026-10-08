@@ -29,6 +29,8 @@ MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, 
 BUSY = 'Orchestra state is busy; retry'
 AGENT_GUARD = 'Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits)'
 _REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
+SUBAGENT_GUARD = ('Orchestra run active: this agent is not an orchestra:* agent; stop and report. '
+                  'Start Agent and Workflow workers with an orchestra:<role> type')
 
 
 CONTEXT = (
@@ -133,6 +135,8 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         agent_type = payload.get('agent_type')
         if isinstance(agent_type, str) and agent_type.startswith('orchestra:'):
             return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': WORKER_CONTEXT}})
+        if _run_active(engine):  # SubagentStart cannot block; the PreToolUse deny below enforces
+            return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': SUBAGENT_GUARD}})
         return HookResult({})
     if event == 'SessionEnd':
         session_id = payload.get('session_id')
@@ -186,6 +190,8 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
         return _deny('Workers do not delegate')
     unloaded_run = engine is None and armed and (state_dir is None or _raw_session_active(Path(state_dir) / 'state.json'))
+    if role == 'subagent' and _foreign_subagent(payload) and (_run_active(engine) or unloaded_run):
+        return _deny(SUBAGENT_GUARD)  # item 9: a Workflow agent never passes the Agent/Task check above it
     if name in {'Agent', 'Task'} and (_run_active(engine) or unloaded_run):  # item 9, failing closed when busy or unloadable
         kind = data.get('subagent_type')
         if not (isinstance(kind, str) and kind.startswith('orchestra:')):
@@ -284,6 +290,13 @@ def _autonomy_active(engine):
         return engine.autonomy_active() is True  # Strict: an opaque adapter never reads as active.
     except Exception:
         return True  # O29: an error while reading autonomy status counts as active.
+
+
+def _foreign_subagent(payload):
+    """A call made inside a subagent whose type is not orchestra:* (a Workflow agent without agentType is
+    'workflow-subagent'). agent_type is a routing hint, never authentication."""
+    agent_type = payload.get('agent_type')
+    return bool(payload.get('agent_id')) and not (isinstance(agent_type, str) and agent_type.startswith('orchestra:'))
 
 
 def _reviewer_call(payload):
@@ -574,6 +587,7 @@ def main(argv=None):
         payload = None
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
             and isinstance(payload, dict) and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
+            and not _foreign_subagent(payload)
             and _mod_is_live(payload)):
         print('{}')
         return 0
@@ -584,7 +598,7 @@ def main(argv=None):
     busy = False
     missing_cwd = False
     build_error = None
-    if args.event in {'PreToolUse', 'Interrupt', 'Stop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
+    if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
             from .paths import load_policy
@@ -609,7 +623,7 @@ def main(argv=None):
                     armed = (_raw_session_active(state_dir / 'state.json')  # O35
                              or _raw_relaunch_active(state_dir / 'state.json'))
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
-                if args.event == 'PreToolUse' and not armed:
+                if args.event in {'PreToolUse', 'SubagentStart'} and not armed:
                     engine = None  # An inactive session is an unarmed run.
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
