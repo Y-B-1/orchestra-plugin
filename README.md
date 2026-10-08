@@ -19,7 +19,7 @@ No installer changes application instructions, restores symlinks, resumes old wo
 
 ### Upgrade from 2.3 to 2.4
 
-A run started under 2.3 loads under 2.4 when its policy is unchanged: `status`, `interrupt` and `finish` work, and its first write rebinds it to 2.4, after which 2.3 refuses it, so do not mix versions on one run. It keeps 2.3 routing, since it has no `--items`: no route check, and every review category is required. A queued `code-reviewer` checkpoint card no longer dispatches, because 2.4 removed that mode. A policy or role change made while a run is active is still refused: end that run with the version that started it, or move its `state.json` out of the state directory. A new run needs `start --items N`.
+A run started under 2.3 loads under 2.4 when its policy is unchanged: `status`, `interrupt` and `finish` work, and its first write rebinds it to 2.4, after which 2.3 refuses it, so do not mix versions on one run. It keeps 2.3 routing, since it has no `--items`: no route check, and every review category is required. A queued `code-reviewer` checkpoint card no longer dispatches, because 2.4 removed that mode. A policy or role change made while a run is active is still refused: end that run with the version that started it, or move its `state.json` out of the state directory. A new run needs `start --items N`. Gate and review receipts recorded under 2.3 go stale under 2.4, because the evidence binds the policy hash: rerun the gate and the pre-PR review before `finish`.
 
 ### Upgrade from 2.1 to 2.2
 
