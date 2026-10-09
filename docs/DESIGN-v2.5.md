@@ -134,11 +134,11 @@ The existing designer-planner product and design modes remain for written specs.
 
 ## Owner decisions
 
-- **D1. Tier guide numbers. Settled: tiny up to 50 changed lines per ask with no interface change; medium up to 400; above that, or more than one session, is large. The tier is set by the largest ask; the size check budget is the guide times the number of asks. The owner's data supports the 50 and 400 marks (see above).
+- **D1. Tier guide numbers. Settled:** tiny up to 50 changed lines per ask with no interface change; medium up to 400; above that, or more than one session, is large. The tier is set by the largest ask; the size check budget is the guide times the number of asks. The owner's data supports the 50 and 400 marks (see above).
 - **D2. Real diff over the declared tier. Settled: warn only.** The pre-PR step prints a warning with the real and budgeted sizes and continues.
 - **D3. Pre-PR reviewer model by summed diff. Settled.** 2.4 already has no per-card review: builders review their own work and one independent review runs before the PR. D3 sizes that one review. Up to 50 summed lines, one Haiku 5.5 diff check; 51 to 400, one Sonnet 5.5 reviewer; over 400, the Opus 5.5 reviewer with lenses derived from the diff, as in 2.4.
 - **D4. Home of the wayfinder map. Settled: local markdown** (`docs/maps/<name>.md`). The GitHub issue tracker stays optional.
-- **D5. Agent start cost threshold. Settled: no fixed number in the engine. The coordinator delegates a unit when it is not tiny and either runs beside other work or protects the context ceiling. A number would need a token estimate the coordinator cannot make reliably.
+- **D5. Agent start cost threshold. Settled: no fixed number in the engine.** The coordinator delegates a unit when it is not tiny and either runs beside other work or protects the context ceiling. A number would need a token estimate the coordinator cannot make reliably.
 
 ## Acceptance (for the plan that follows the decisions)
 
