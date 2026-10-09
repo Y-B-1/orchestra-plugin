@@ -9,7 +9,7 @@ The ladder has one repair, one fix re-review, then a hold. It runs after the pre
 | --- | --- |
 | 1 | The implementation card, on the builder default model. Its self-review is its only review before the PR. |
 | 2 | One builder `repair` card per chain with a current pre-PR finding, dispatched through the Agent tool with the Opus override (`claude-opus-5-5`), never through a script. It needs checked blocking findings on a `reported` or `accepted` target without `repaired_by`. On a size run the card carries `"size": "medium"`; on a 2.4 inline route, dispatch it with `dispatch --helper REASON`. |
-| 3 | One fix re-review of the fix diff only, with `repair_check: true`, by the agent `prepr` names for the fix diff, with no `Required categories:` line. CLEAN accepts the chain. |
+| 3 | One fix re-review of the fix diff only, with `repair_check: true`, by the agent `prepr` named for the pre-PR review, with no `Required categories:` line. CLEAN accepts the chain. |
 | Hold | `orchestra.py hold TASK --finding TEXT` when the fix re-review is BLOCKED. It moves the whole chain to `held`. |
 
 Each repair brief carries the exact artifact, the failing scenario and the scope of the defect. A second repair on a chain is refused until the owner takes it. Notes never reach the ladder.

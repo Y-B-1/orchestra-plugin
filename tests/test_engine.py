@@ -2955,6 +2955,18 @@ class SizeRouteTests(EngineFixture):
             with self.subTest(name), self.assertRaisesRegex(EngineError, 'Invalid session size'):
                 self.mutate('bad-' + name, change).status()
 
+    def test_bad_card_size_in_state_is_invalid(self):
+        engine, lease = self.run_with('medium', name='card-size')
+        self.add(engine, lease, 'b', size='tiny')
+        engine.interrupt('main', lease)
+        path = engine.state_path
+        for bad in ('large', 'huge', None):
+            data = json.loads(path.read_text())
+            data['tasks']['b']['size'] = bad
+            path.write_text(json.dumps(data))
+            with self.subTest(bad), self.assertRaisesRegex(EngineError, 'Invalid task size'):
+                engine.status()
+
     def test_route_size_logs_size_asks_reason(self):
         engine, lease = self.run_with('tiny', asks=2)
         self.assertEqual({'size': 'medium', 'asks': 3}, engine.set_route('main', lease, None, 'grew', size='medium', asks=3))

@@ -149,8 +149,8 @@ class NativeTests(unittest.TestCase):
 
     def test_prepr_reviewer_agents_exist(self):
         sys.path.insert(0, str(PLUGIN / 'scripts'))
-        from orchestra_core.engine import REVIEWER_BANDS, REVIEWER_FULL
-        for agent in [band[-1] for band in REVIEWER_BANDS] + [REVIEWER_FULL[-1]]:
+        from orchestra_core.engine import REVIEWER_BAND, REVIEWER_FULL
+        for agent in (REVIEWER_BAND[-1], REVIEWER_FULL[-1]):
             with self.subTest(agent):
                 self.assertTrue(agent.startswith('orchestra:'))
                 self.assertTrue((PLUGIN / 'agents' / (agent[len('orchestra:'):] + '.md')).is_file())

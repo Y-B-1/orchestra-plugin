@@ -2,13 +2,16 @@
 
 Status: plan for the approved `docs/DESIGN-v2.5.md`, repaired after the critic's BLOCKED review of 0cf91c7. Decisions D1 to D5 are settled and are not reopened here. A substantial plan needs an independent critic before any build starts.
 
+**Amendment (owner, 2026-10-09), after the benchmarks:** the Haiku band is dropped (G1). Up to 400 summed lines, one Sonnet 5.5 reviewer (`code-reviewer-medium`, `Lens: combined`); over 400, Opus 5.5 with one card per lens. The engine holds one band, `REVIEWER_BAND`, not `REVIEWER_BANDS`, and `code-reviewer-small` does not exist. Medium units run inline in sequence; only a large run splits units across builders (T1). Text below that names the small band is history.
+
+
 ## 1. Settled decisions and rulings
 
 | # | Decision |
 |---|---|
 | D1 | Tiny up to 50 changed lines per ask with no interface change; medium up to 400; above that, or more than one session, is large. The tier is the largest ask. The size-check budget is the tier guide times the number of asks. |
 | D2 | A real diff over the budget prints a warning with both sizes and continues. It never refuses. |
-| D3 | The one pre-PR review is sized by the summed diff: up to 50 lines one Haiku 5.5 diff check; 51 to 400 one Sonnet 5.5 reviewer; over 400 the Opus 5.5 reviewer with lenses derived from the diff, as in 2.4. |
+| D3 | Amended (see the amendment at the top). The one pre-PR review is sized by the summed diff: up to 50 lines one Haiku 5.5 diff check; 51 to 400 one Sonnet 5.5 reviewer; over 400 the Opus 5.5 reviewer with lenses derived from the diff, as in 2.4. |
 | D4 | The wayfinder map is local markdown at `docs/maps/<name>.md`. |
 | D5 | No start-cost number in the engine. The coordinator delegates a unit that is not tiny and either runs beside other work or protects the context ceiling. |
 | O1 | Owner, 2026-10-09: benchmarks run before the merge, lean. A failure blocks the merge (task B1). |

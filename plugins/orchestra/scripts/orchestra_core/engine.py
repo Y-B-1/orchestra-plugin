@@ -44,7 +44,7 @@ ALWAYS_LENSES = ('requirements', 'correctness', 'tests', 'architecture')
 INLINE_MAX_ITEMS = 5  # contract item 3: 1 to 5 items run inline, 6 or more go through a plan
 SIZES = ('tiny', 'medium', 'large')
 TIER_GUIDE = {'tiny': 50, 'medium': 400}  # contract item 1: changed lines per ask
-REVIEWER_BANDS = ((400, 'medium', 'orchestra:code-reviewer-medium'),)
+REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
@@ -523,6 +523,8 @@ class Engine:
                 raise EngineError('Invalid task held_finding')
             if 'helper_reason' in task and (not isinstance(task['helper_reason'], str) or not task['helper_reason'].strip()):
                 raise EngineError('Invalid task helper_reason')
+            if 'size' in task and task['size'] not in ('tiny', 'medium'):
+                raise EngineError('Invalid task size')
             if 'self_review' in task and not cls._self_review_ok(task['self_review']):
                 raise EngineError('Invalid task self_review')
         findings = state.get('findings', [])
@@ -657,9 +659,8 @@ class Engine:
         size, asks = session.get('size'), session.get('asks')
         budget = TIER_GUIDE[size] * asks if size in TIER_GUIDE else None
         over = budget is not None and lines is not None and lines > budget
-        reviewer, agent = REVIEWER_FULL
-        if lines is not None:
-            reviewer, agent = next(((name, who) for bound, name, who in REVIEWER_BANDS if lines <= bound), REVIEWER_FULL)
+        bound, *band = REVIEWER_BAND
+        reviewer, agent = band if lines is not None and lines <= bound else REVIEWER_FULL
         warning = ('Size warning: declared %s with %d ask(s) budgets %d changed lines; the diff has %d. Run route --size TIER '
                    '--reason TEXT if the work grew.' % (size, asks, budget, lines)) if over else None
         return dict(base=base, changed_lines=lines, size=size, asks=asks, budget=budget, over_budget=over,
@@ -1243,8 +1244,7 @@ class Engine:
             raise EngineError('Empty worker report')
         with self._state() as state:
             task = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
-            replacing = bool(task) and task['state'] == 'reported' and not any(
-                t.get('repair_of') == task['id'] for t in state['tasks'].values())
+            replacing = bool(task) and task['state'] == 'reported'  # a repair needs a covering review, refused below
             if not task or task['worker'] != worker or not (task['state'] == 'running' or replacing):
                 raise EngineError('Invalid assignment')
             if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):

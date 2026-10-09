@@ -8,7 +8,7 @@ Run the pre-PR review once, on the integrated, frozen PR candidate. It is the on
 ## Lenses
 
 1. The operator gates the gap first: the derived impact set and e2e. Reviewers cite that receipt and run targeted probes, never the full suites; any later change needs a re-gate.
-2. Run `orchestra.py prepr`. It prints `changed_lines`, the size `warning`, the `reviewer` band, its `agent` and the `lenses`. Up to 400 changed lines, dispatch one card to that agent with `Lens: combined` and a `Required categories:` line copied from `lenses`. Over 400, or with no base, dispatch one `orchestra:code-reviewer` card per lens in parallel. Every card has a `Lens:` line and covers every task, held ones included. The lenses:
+2. Run `orchestra.py prepr`. It prints `changed_lines`, the size `warning`, the `reviewer` band, its `agent` and the `lenses`. Up to 400 changed lines, dispatch one card to that agent with `Lens: combined` and a `Required categories:` line copied from `lenses`. Over 400, or with no base, dispatch one `orchestra:code-reviewer` card per lens in parallel. Every card has a `Lens:` line, sets `review_of` to every task, and covers every task, held ones included. The lenses:
    - correctness, always (requirements, correctness, tests, architecture);
    - security, when a changed file matches a glob in policy `sensitive_paths`;
    - standards (standards, cleanup, with the cleanliness checklist), when the run's diff exceeds policy `standards_min_lines` changed lines.
