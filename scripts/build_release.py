@@ -14,18 +14,21 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def build(out):
-    if subprocess.check_output(['git','status','--porcelain'], cwd=ROOT).strip():
+def build(out, root=ROOT):
+    root = Path(root).resolve()
+    if subprocess.check_output(['git','status','--porcelain'], cwd=root).strip():
         raise ValueError('Commit the checked candidate before packaging')
-    files = subprocess.check_output(['git','ls-files','-z'], cwd=ROOT).decode().split('\0')
+    files = subprocess.check_output(['git','ls-files','-z'], cwd=root).decode().split('\0')
     out = Path(out)
     out.mkdir(parents=True, exist_ok=True)
-    version = json.loads((ROOT/'plugins/orchestra/plugin.json').read_text())['version']
+    version = json.loads((root/'plugins/orchestra/plugin.json').read_text())['version']
     name = 'orchestra-' + version
     paths = []
     for relative in filter(None, files):
-        path = ROOT / relative
+        path = root / relative
         if path.is_symlink():
+            if path.resolve().is_relative_to(root):
+                continue
             raise ValueError(f'Distribution symlinks are unsupported: {relative}')
         data = path.read_bytes()
         if re.search(rb'/' + rb'Users/[^/\s]+/|gh[op]_[A-Za-z0-9]{20,}|sk-ant-api[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----', data):
