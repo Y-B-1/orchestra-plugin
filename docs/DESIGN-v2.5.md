@@ -1,6 +1,6 @@
 # Orchestra 2.5 design: route by diff size, not item count
 
-Status: draft for owner decisions (D1 to D5). No code until they are settled.
+Status: draft. Settled by the owner on 2026-10-09: D2 warn only, D4 local markdown. Open: D1 (revised below with request data), D3 (revised), D5.
 
 ## Problem
 
@@ -19,6 +19,32 @@ The end of a 2.4 run already uses the diff: pre-PR review lenses come from the a
 - So a worker earns its start cost only when its unit of work is clearly larger than about 40K to 60K tokens of work, or when it runs beside other work and saves wall time the owner wants.
 - `mattpocock/skills@49dd158 skills/engineering/wayfinder/SKILL.md`: a map of decision tickets for work larger than one session. Research tickets are worked by parallel subagents; human decision tickets (grilling) one per session. The map stops when no fog remains, then work is handed off to build.
 - Grilling is human-in-the-loop. A subagent cannot ask the owner questions mid-task, so alignment runs in the main session, never in a worker.
+
+## The owner's own request data
+
+Measured on 2026-10-09 from the owner's Equiti Commercial and Equiti Intelligence work (local repositories and transcripts, read locally, nothing published):
+
+| Source | Measure | Result |
+|---|---|---|
+| Equiti-Commercial, 1,040 main-line commits | changed lines per commit (lockfiles and generated files removed) | median 63; 44% up to 50 lines; 30% from 51 to 400; 24% over 400 |
+| Equiti Intelligence, 422 main-line commits | same | median 229; 21% up to 50; 45% from 51 to 400; 32% over 400 |
+| Transcripts, 212 distinct typed requests | requests listing 3 or more small UI tweaks (color, shadow, spacing, font and similar) | 6 (about 3%) |
+| Transcripts, requests with edits | single-ask requests whose edits passed 400 lines | 12 |
+
+What the data says:
+
+- **Sizes come in two groups:** many very small changes and a long tail of large ones. The 50 and 400 line marks fall between the groups, so the D1 guide fits this work.
+- **The item count fails in practice:** 12 requests with a single ask grew past 400 lines. Under 2.4 every one of them ran inline with no design step.
+- **Bundles of small tweaks are rare but real** (about 3% of typed requests). They need a rule, because their summed diff can pass 400 lines while each tweak stays trivial.
+
+## Many small asks in one request
+
+The tier answers one question: how likely is the agent to build the wrong thing? A color change has almost no such risk, and ten color changes still have almost none. So:
+
+- **Alignment tier = the largest single ask**, not the summed diff. Ten tweaks with no open decision are tiny, and they run one-shot with no grilling. One of the ten that needs a decision makes the run medium, and only that ask gets grilled.
+- **Review scales with the summed diff.** Review effort follows what the reviewer must read, so a 300-line bundle of tweaks gets a reviewer sized for 300 lines.
+- **The size check uses a budget:** the tier guide multiplied by the number of asks. Ten tiny asks get a 500-line budget before the D2 warning. This is the only place the ask count remains: as a budget multiplier, never as a route.
+- **Execution groups tweaks by file.** Ten tweaks in three files form three groups. The main session does them in one serial pass, which takes seconds per tweak. A worker per group would cost about 64K tokens each (2.3 benchmark) and save almost no time. Parallel Haiku mechanical builders pay off only for a very large bundle across many files (D5).
 
 ## Two separate questions
 
@@ -108,17 +134,17 @@ The existing designer-planner product and design modes remain for written specs.
 
 ## Open decisions for the owner
 
-- **D1. Tier guide numbers.** Recommended: tiny up to 50 changed lines with no interface change; medium up to 400; above that, or more than one session, is large. The qualitative test comes first; the numbers only drive the check in D2.
-- **D2. Real diff over the declared tier.** Recommended: refuse the pre-PR step until a `route --size` escalation is logged. One command fixes it, and the log shows where estimates go wrong.
-- **D3. Review for a tiny diff.** Recommended: keep one independent reviewer, but on Sonnet 5.5 medium instead of Opus. Independence is a project rule; a tiny diff does not need the Opus model.
-- **D4. Home of the wayfinder map.** Recommended: a local markdown file in the repo (`docs/maps/<name>.md`), with the GitHub issue tracker as an option. Local works offline, in any repo, and costs no API calls.
+- **D1. Tier guide numbers.** Recommended: tiny up to 50 changed lines per ask with no interface change; medium up to 400; above that, or more than one session, is large. The tier is set by the largest ask; the size check budget is the guide times the number of asks. The owner's data supports the 50 and 400 marks (see above).
+- **D2. Real diff over the declared tier. Settled: warn only.** The pre-PR step prints a warning with the real and budgeted sizes and continues.
+- **D3. Pre-PR reviewer model by summed diff.** 2.4 already has no per-card review: builders review their own work and one independent review runs before the PR. D3 sizes that one review. Recommended: up to 50 summed lines, one Haiku 5.5 diff check; 51 to 400, one Sonnet 5.5 reviewer; over 400, the Opus 5.5 reviewer with lenses derived from the diff, as in 2.4.
+- **D4. Home of the wayfinder map. Settled: local markdown** (`docs/maps/<name>.md`). The GitHub issue tracker stays optional.
 - **D5. Agent start cost threshold.** Recommended: no fixed number in the engine. The coordinator delegates a unit when it is not tiny and either runs beside other work or protects the context ceiling. A number would need a token estimate the coordinator cannot make reliably.
 
 ## Acceptance (for the plan that follows the decisions)
 
 1. `start` without `--size` on a new run exits non-zero and names `--size`.
 2. `start --size large` on a new run exits non-zero unless `--owner-request` is passed; the message names escalation.
-3. A tiny run whose candidate diff exceeds the D1 guide is refused (or warned, D2) at the pre-PR step until `route --size` logs a reason.
+3. A run whose candidate diff exceeds its budget (tier guide times asks) prints a warning at the pre-PR step naming both sizes, and the step still succeeds (D2).
 4. A builder dispatch for a unit marked tiny without `--helper` exits non-zero; for a medium unit it succeeds.
 5. A 2.4 state with `items` loads and keeps 2.4 routing; a 2.3 state still loads.
 6. The 2.4 benchmark task (three tiny edits) runs with 0 builders and 1 reviewer, and uses no more sub-agent tokens than 2.4 (35,990).
