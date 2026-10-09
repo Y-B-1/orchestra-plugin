@@ -17,6 +17,10 @@ Restart the client after installation. Enable the plugin and review its hook def
 
 No installer changes application instructions, restores symlinks, resumes old work, grants release rights or writes hook trust. Existing project rules remain applicable. Port a project's old Orchestra enforcement separately to avoid competing coordinators.
 
+### Upgrade from 2.4 to 2.5
+
+A run started under 2.4 loads under 2.5 and keeps item routing; new runs use `--size`; `--items` is refused on `start`. Do not resume a 2.5 run with a 2.4 engine: 2.4 loads it without a routing check.
+
 ### Upgrade from 2.3 to 2.4
 
 A run started under 2.3 loads under 2.4 when its policy is unchanged: `status`, `interrupt` and `finish` work, and its first write rebinds it to 2.4, after which 2.3 refuses it, so do not mix versions on one run. It keeps 2.3 routing, since it has no `--items`: no route check, and every review category is required. A queued `code-reviewer` checkpoint card no longer dispatches, because 2.4 removed that mode. A policy or role change made while a run is active is still refused: end that run with the version that started it, or move its `state.json` out of the state directory. A new run needs `start --items N`. Gate and review receipts recorded under 2.3 go stale under 2.4, because the evidence binds the policy hash: rerun the gate and the pre-PR review before `finish`.
@@ -86,7 +90,7 @@ One pre-PR review covers the integrated candidate. Correctness is always a lens;
 Read [the CLI guide](docs/cli.md) for commands and the package [CLI reference](plugins/orchestra/skills/orchestra/references/cli.md) for task and review schemas. Run state lives under the user state directory, outside the application checkout. The core enforces dependencies, reservations, capacity, lifecycle and evidence freshness; the coordinator supplies semantic facts and checks findings.
 
 ```sh
-python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project start --items N
+python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project start --size medium
 python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project board
 ```
 
@@ -100,7 +104,7 @@ For fresh context on every pass, arm with `autonomy arm --relaunch`, end the int
 
 ### Routing, repair and hold
 
-`start --items N` fixes the route: 1 to 5 items run inline, with `dispatch --helper REASON` for a helper; 6 or more need an accepted designer-planner plan card and Workflow builders. Builders end with one `SELF_REVIEW:` line. Review happens once, before the PR. A failed card gets one Opus repair and one fix re-review (`repair_check: true`); a chain still blocked after the fix re-review is held for the owner with `orchestra.py hold TASK --finding TEXT`. `route`, `finding add|list` and `gate --again` are in the [CLI guide](docs/cli.md).
+`start --size tiny|medium [--asks N]` sizes the run by the diff it will produce: tiny (up to 50 changed lines) stays in the main session, with `dispatch --helper REASON` for a helper; medium (up to 400) grills inline, then runs builders, 2+ units through Workflow; large is reached only with `route --size large` or an owner request, and maps the work before a plan card. `prepr` warns when the diff outgrows the budget and names the pre-PR reviewer. Builders end with one `SELF_REVIEW:` line. Review happens once, before the PR. A failed card gets one Opus repair and one fix re-review (`repair_check: true`); a chain still blocked after the fix re-review is held for the owner with `orchestra.py hold TASK --finding TEXT`. `route`, `prepr`, `finding add|list` and `gate --again` are in the [CLI guide](docs/cli.md).
 
 ## Check and distribute
 

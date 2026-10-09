@@ -145,7 +145,15 @@ class NativeTests(unittest.TestCase):
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
         versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
         self.assertEqual(len(set(versions.values())), 1, versions)
-        self.assertEqual(set(versions.values()), {'2.4.0'})
+        self.assertEqual(set(versions.values()), {'2.5.0'})
+
+    def test_prepr_reviewer_agents_exist(self):
+        sys.path.insert(0, str(PLUGIN / 'scripts'))
+        from orchestra_core.engine import REVIEWER_BANDS, REVIEWER_FULL
+        for agent in [band[-1] for band in REVIEWER_BANDS] + [REVIEWER_FULL[-1]]:
+            with self.subTest(agent):
+                self.assertTrue(agent.startswith('orchestra:'))
+                self.assertTrue((PLUGIN / 'agents' / (agent[len('orchestra:'):] + '.md')).is_file())
 
     def test_changelog_first_heading_matches_version(self):
         version = json.loads((PLUGIN / 'plugin.json').read_text())['version']
