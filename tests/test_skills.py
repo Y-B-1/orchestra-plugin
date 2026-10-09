@@ -18,7 +18,8 @@ TABLE = {
     'orchestra': ['SKILL.md', 'references/coordination.md', 'references/briefs.md', 'references/cli.md',
                   'references/triage.md', 'references/handoff.md', 'references/parallel.md',
                   'references/worktrees.md', 'references/finishing.md', 'references/repair-rounds.md',
-                  'references/final-review.md', 'references/audit-axes.md', 'references/autonomy.md'],
+                  'references/final-review.md', 'references/audit-axes.md', 'references/autonomy.md',
+                  'references/wayfinder.md'],
     'orchestra-worker': ['SKILL.md'],
     'orchestra-investigate': ['SKILL.md', 'references/code.md', 'references/docs.md'],
     'orchestra-design': ['SKILL.md', 'references/design.md', 'references/plan.md', 'references/product.md'],
@@ -363,7 +364,7 @@ class ProvenanceTests(unittest.TestCase):
     def test_matrix_sources_are_credited_in_notices(self):
         notices, matrix = self.notices(), SOURCES.read_text()
         shas = set(re.findall(r'^\| [^|]+ \| [\w.-]+/[\w.-]+ \| ([0-9a-f]{40}) ', matrix, re.M))
-        self.assertEqual(len(shas), 6, shas)
+        self.assertEqual(len(shas), 7, shas)
         for sha in shas:
             self.assertIn(sha, notices)
         ideas = set(re.findall(r'ideas: ([^`|;]+? \(idea level\))', matrix))

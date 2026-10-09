@@ -1132,7 +1132,7 @@ class RunStateResolutionTest(unittest.TestCase):
         git(self.repo, 'worktree', 'add', '-q', str(self.linked), '-b', 'side')
 
     def start(self, repo):
-        out = subprocess.run([sys.executable, str(CLI), '--repo', str(repo), 'start', '--items', '1'], env=os.environ,
+        out = subprocess.run([sys.executable, str(CLI), '--repo', str(repo), 'start', '--size', 'medium'], env=os.environ,
                              capture_output=True, text=True, check=True).stdout
         return json.loads(out)['lease']
 
@@ -1444,7 +1444,7 @@ class SessionEndBuildErrorTest(unittest.TestCase):
 
     def test_malformed_policy_names_the_error_and_manual_recovery(self):
         from orchestra_core.paths import state_location
-        subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), 'start', '--harness-session', 'S', '--items', '1'],
+        subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), 'start', '--harness-session', 'S', '--size', 'medium'],
                        env=os.environ, capture_output=True, text=True, check=True)
         (state_location(self.repo) / 'policy.json').write_text('{not json')
         code, output = self.session_end()
@@ -1460,7 +1460,7 @@ class SessionEndBuildErrorTest(unittest.TestCase):
     def test_malformed_policy_on_an_ended_run_stays_silent(self):
         """FX6 (O35): an ended run has nothing to record, even when the engine cannot be built."""
         from orchestra_core.paths import state_location
-        out = subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), 'start', '--harness-session', 'S', '--items', '1'],
+        out = subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), 'start', '--harness-session', 'S', '--size', 'medium'],
                              env=os.environ, capture_output=True, text=True, check=True).stdout
         subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), '--lease', json.loads(out)['lease'],
                         'interrupt'], env=os.environ, capture_output=True, text=True, check=True)
@@ -2248,6 +2248,15 @@ class PlanV24GuardTest(unittest.TestCase):
                     self.assertEqual(decision_of(result), 'deny')
                     self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
                                      'Cite gate receipt gate-1, gate-2; reviewers do not rerun suites')
+
+    def test_reviewer_test_block_covers_the_size_variants(self):
+        engine = self.engine(gate_ids=['gate-1'])
+        for kind in ('orchestra:code-reviewer-medium',):
+            with self.subTest(kind=kind):
+                result = self.review_call('python3 -m unittest discover', kind, engine)
+                self.assertEqual(decision_of(result), 'deny')
+                self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
+                                 'Cite gate receipt gate-1; reviewers do not rerun suites')
 
     def test_suite_allowed_without_receipts_engine_or_method(self):
         for engine in (self.engine(gate_ids=[]), None, self.engine()):

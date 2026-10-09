@@ -19,7 +19,9 @@ A final brief with no `Lens:` line is a blocker. Report `STATUS: BLOCKED` and na
 | `security.md` | security | none |
 | `standards.md` | standards, cleanup | `cleanliness.md` |
 
-Set `categories` in the verdict to the row for your lens and no other. Findings outside your lens go in the summary as a note. They do not change your verdict.
+A `Lens: combined` line runs every lens the diff needs in one card, for a diff of 400 changed lines or fewer. The brief also carries a `Required categories:` line, copied from the `lenses` that `prepr` printed. Open `correctness.md`, plus `security.md` and `standards.md` when the list names their categories, with the checklists the table names for each. Set `categories` to exactly that list. A combined brief with no `Required categories:` line is a blocker, like a missing `Lens:` line.
+
+With a single lens, set `categories` in the verdict to the row for your lens and no other. Findings outside your lens go in the summary as a note. They do not change your verdict.
 
 ## Whole-integration checks
 

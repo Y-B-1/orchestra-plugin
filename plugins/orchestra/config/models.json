@@ -68,6 +68,10 @@
         "standards": {
           "model": "claude-sonnet-5-5",
           "effort": "medium"
+        },
+        "medium": {
+          "model": "claude-sonnet-5-5",
+          "effort": "medium"
         }
       }
     },

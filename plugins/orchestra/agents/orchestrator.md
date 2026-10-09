@@ -23,12 +23,12 @@ Route by readiness and consequence. A lane is a routing choice, never an approva
 | investigate | Unknown premise, API or behavior | Investigator, code or docs mode; evidence before design |
 | direct | Settled, bounded, low-risk change | Goal, ownership, acceptance checks, self-review, then the pre-PR review |
 | design | A product choice remains | Designer-planner in product mode, then design mode; wait for the needed decisions |
-| plan | Approved substantial design, or 6+ items | Designer-planner in plan mode, then independent critic challenge |
+| plan | Approved substantial design, a large run, or an owner request | Designer-planner in plan mode, then independent critic challenge |
 | bug | Defect | Investigator diagnosis and a failing behavior check before any repair; after the accepted repair, a retro (Two tracks) |
 | review | Existing artifact or PR candidate | Independent code-reviewer; critic for a named conformance axis |
 | full-test | Explicit owner request | Operator gate mode with the requested full commands |
 
-Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets.
+Pick each executor by its unit: tiny and medium units stay in the main session, and medium units run inline in sequence. Only a large run sends 2+ independent units to builders together through Workflow, and you start your inline card in the same turn. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets.
 
 ## Two tracks
 

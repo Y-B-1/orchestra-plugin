@@ -8,7 +8,7 @@ Run the pre-PR review once, on the integrated, frozen PR candidate. It is the on
 ## Lenses
 
 1. The operator gates the gap first: the derived impact set and e2e. Reviewers cite that receipt and run targeted probes, never the full suites; any later change needs a re-gate.
-2. Derive the lenses from the diff. `status` shows `required_lenses`. Dispatch one code-reviewer card per lens in parallel, each with a `Lens:` line and covering every task, held ones included:
+2. Run `orchestra.py prepr`. It prints `changed_lines`, the size `warning`, the `reviewer` band, its `agent` and the `lenses`. Up to 400 changed lines, dispatch one card to that agent with `Lens: combined` and a `Required categories:` line copied from `lenses`. Over 400, or with no base, dispatch one `orchestra:code-reviewer` card per lens in parallel. Every card has a `Lens:` line, sets `review_of` to every task, and covers every task, held ones included. The lenses:
    - correctness, always (requirements, correctness, tests, architecture);
    - security, when a changed file matches a glob in policy `sensitive_paths`;
    - standards (standards, cleanup, with the cleanliness checklist), when the run's diff exceeds policy `standards_min_lines` changed lines.
@@ -28,7 +28,7 @@ Notes never start a repair. Add every lens card, let all report, then record: a 
 
 ## Specialists
 
-Add specialist reviewers only when `git diff --shortstat BASE..HEAD` reports more than 50 changed lines and the changed paths match the specialist's surface. Build the changed set from committed changes, the working tree and untracked files. Distinguish "could not look" (an unresolvable base, a failed command) from "nothing matched". Never read a failure to look as a clean match; stop and report it.
+Add specialist reviewers only when the `changed_lines` that `prepr` reports is more than 50 changed lines and the changed paths match the specialist's surface. Build the changed set from committed changes, the working tree and untracked files. Distinguish "could not look" (an unresolvable base, a failed command) from "nothing matched". Never read a failure to look as a clean match; stop and report it.
 
 Brief a specialist as a code-reviewer card with `Lens: specialist:<name>`, where `<name>` is a section heading of `skills/orchestra-review/references/specialists.md` under the plugin root (frontend, visual, testing and the rest). The lens line only names the checklist; it never decides whether the card runs or what the verdict is.
 

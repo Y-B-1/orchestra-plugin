@@ -24,14 +24,15 @@ Route, reserve, dispatch, check, integrate, review. Every card ends with evidenc
 
 ## Route
 
-Count the items in the request, then `start --items N`. Change the count mid-run with `route --items N --reason TEXT`.
+Size the work by the diff it will produce, then run `start --size` with the tier. Sizing, asks and escalation: [triage](references/triage.md).
 
-| Items | Route |
+| Size | Route |
 | --- | --- |
-| 1 to 5 | Inline. The main session groups the work into PRs, plans it and edits it. It may start helper subagents, Workflow included. Dispatch a builder helper with `dispatch --helper REASON`. Add no plan card. |
-| 6 or more | Workflow. A designer-planner `plan` card groups the work into PRs. Accept it, then builders work through Workflow. |
+| tiny, up to 50 lines | Inline edit, no alignment. A tiny builder card needs `dispatch --helper REASON`. |
+| medium, up to 400 | Grill inline, then build every unit inline in sequence. |
+| large | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it ([wayfinder](references/wayfinder.md)), then a `plan` card. Units of 2+ go to builders through Workflow. |
 
-Use the fewest worktrees (references/worktrees.md). A single Agent dispatch fits one unit that still needs a worker. Workflow is the default for 2+ independent units whenever the host has the Workflow tool; the user's standing opt-in makes it so with or without ultracode. While a run is active the guard denies a subagent type that does not start with `orchestra:`; use `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it. Mechanics: [parallel](references/parallel.md).
+Use the fewest worktrees (references/worktrees.md). A single Agent dispatch fits one unit that still needs a worker. Workflow is the default for 2+ independent large units whenever the host has the Workflow tool; the user's standing opt-in makes it so with or without ultracode. While a run is active the guard denies a subagent type that does not start with `orchestra:`; use `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it. Mechanics: [parallel](references/parallel.md).
 
 ## References
 
@@ -46,6 +47,7 @@ Use the fewest worktrees (references/worktrees.md). A single Agent dispatch fits
 - Pre-PR review and cleanup: [final-review](references/final-review.md)
 - Conformance axes: [audit-axes](references/audit-axes.md)
 - Overnight mode: [autonomy](references/autonomy.md)
+- Mapping large work: [wayfinder](references/wayfinder.md)
 - Engine commands and schemas: [CLI](references/cli.md)
 
 ## Roles

@@ -10,13 +10,14 @@ import sys
 import tempfile
 import unittest
 
+FIXTURES=Path(__file__).resolve().parent/'fixtures'
 PLUGIN=Path(__file__).resolve().parents[1]/'plugins/orchestra'
 
 CLI=PLUGIN/'scripts/orchestra.py'
 HOOK=PLUGIN/'scripts/run-hook.sh'
 CATEGORIES=['requirements','correctness','security','tests','architecture','standards','cleanup']
 BASE=['requirements','correctness','tests','architecture']
-SELF_REVIEW='SELF_REVIEW: '+json.dumps(dict(checks=[dict(command='fixture check',exit_code=0)],
+SELF_REVIEW='ARTIFACT: fixture\nSELF_REVIEW: '+json.dumps(dict(checks=[dict(command='fixture check',exit_code=0)],
                                           criteria=[dict(criterion='fixture outcome',met=True,evidence='Inspected fixture.')]))
 
 
@@ -42,7 +43,7 @@ class WorkflowIntegration(unittest.TestCase):
                 'release':{'enabled':True,'authorization':'Isolated local fixture push only',
                            'remote':'fixture-remote','target':'main','argv':['git','push','fixture-remote','main']}}
         self.policy=self.write('policy.json',policy)
-        self.lease=self.cli('start','--items','3','--policy',str(self.policy))[1]['lease']
+        self.lease=self.cli('start','--size','medium','--policy',str(self.policy))[1]['lease']
 
     def git(self,*args):
         return subprocess.check_output(['git','-C',str(self.repo),*args],stderr=subprocess.PIPE).decode().strip()
@@ -57,7 +58,7 @@ class WorkflowIntegration(unittest.TestCase):
         if lease:
             cmd+=['--lease',self.lease]
         args=list(args)
-        if args[:1]==['dispatch']:  # a 3-item run is inline: a helper needs a reason
+        if args[:1]==['dispatch']:  # a helper is accepted and ignored on a medium card
             args+=['--helper','fixture helper']
         if args[:1]==['report']:
             path=Path(args[3])
@@ -82,7 +83,7 @@ class WorkflowIntegration(unittest.TestCase):
         policy['release']['argv']=argv
         policy['release_timeout_seconds']=timeout
         self.policy.write_text(json.dumps(policy))
-        self.lease=self.cli('start','--new-run','--items','3','--policy',str(self.policy))[1]['lease']
+        self.lease=self.cli('start','--new-run','--size','medium','--policy',str(self.policy))[1]['lease']
         self.cli('gate','fixture','--',*self.check,lease=True)
         self.review([],True)
         self.cli('permit','fixture-remote','main',lease=True)
@@ -152,7 +153,7 @@ class WorkflowIntegration(unittest.TestCase):
         remote_head=subprocess.check_output(['git','--git-dir',str(self.remote),'rev-parse','refs/heads/main']).decode().strip()
         self.assertEqual(remote_head,self.git('rev-parse','HEAD'))
         self.cli('finish',lease=True)
-        self.lease=self.cli('start','--new-run','--items','3')[1]['lease']
+        self.lease=self.cli('start','--new-run','--size','medium')[1]['lease']
         self.assertEqual(self.cli('status')[1]['tasks'],{})
         self.assertEqual(len(list((self.state/'history').glob('*.json'))),1)
         self.assertEqual(self.git('status','--porcelain'),'')
@@ -343,7 +344,7 @@ class LinkedWorktreeHook(unittest.TestCase):
     def test_push_from_linked_worktree_follows_the_main_checkout_run(self):
         command='git push origin side'
         self.assertIsNone(self.hook(self.linked,command))
-        lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--items','3'],env=self.env,
+        lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--size','medium'],env=self.env,
                                         capture_output=True,text=True,check=True).stdout)['lease']
         self.assertEqual(self.hook(self.linked,command),'deny')
         self.assertEqual(self.hook(self.repo,command),'deny')
@@ -358,7 +359,7 @@ class LinkedWorktreeHook(unittest.TestCase):
         bare=self.root/'bare.git'
         subprocess.run(['git','clone','-q','--bare',str(self.repo),str(bare)],check=True,capture_output=True)
         self.git(bare,'worktree','add','-q',str(self.root/'bare checkout'),'main')
-        subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--items','3'],env=self.env,
+        subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--size','medium'],env=self.env,
                        capture_output=True,text=True,check=True)
         parent_state=subprocess.run([sys.executable,'-c',
                                      'import sys;sys.path.insert(0,sys.argv[1]);'
@@ -391,9 +392,9 @@ class HarnessSessionIntegration(unittest.TestCase):
 
     def cli(self,*args,expected=0):
         args=list(args)
-        if args[:1]==['start'] and '--items' not in args and (
+        if args[:1]==['start'] and '--size' not in args and (
                 '--new-run' in args or not (self.state/'state.json').exists()):
-            args+=['--items','3']  # a new run needs its item count; a resumed one refuses it
+            args+=['--size','medium']  # a new run needs its size; a resumed one refuses it
         result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),*args],env=self.env,
                               capture_output=True,text=True,timeout=25)
         self.assertEqual(result.returncode,expected,result.stderr+result.stdout)
@@ -586,6 +587,19 @@ class AutonomyIntegration(unittest.TestCase):
         self.assertTrue(trailing['passed'])
         self.assertNotIn(trailing['id'],(first['id'],again['id']))
 
+    def test_cli_gate_timeout_overrides_policy_for_one_run(self):
+        hang=[sys.executable,'-c','import time; time.sleep(10)']
+        for flags in (['--timeout','0.2','slow'],['slow','--timeout','0.2','--again']):
+            with self.subTest(flags=flags):
+                result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--lease',self.lease,'gate',*flags,'--',*hang],
+                                      env=self.env,capture_output=True,text=True,timeout=25)
+                self.assertEqual(1,result.returncode,result.stderr)
+                self.assertEqual(124,json.loads(result.stdout)['exit_code'])
+        for bad in ('0','-1','nan','x'):
+            with self.subTest(bad=bad):
+                refused=self.cli('--lease',self.lease,'gate','slow','--timeout',bad,'--',*hang,expected=2)
+                self.assertIn('Gate timeout must be positive and finite',refused)
+
 
 FAKE_PASS = r"""
 import json, os, signal, subprocess, sys, time
@@ -600,7 +614,7 @@ steps = plan[min(n, len(plan)) - 1]
 (root / ('prompt-%d.txt' % n)).write_text(sys.stdin.read())
 state = Path(os.environ['ORCHESTRA_STATE_DIR'])
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
-SELF_REVIEW = 'SELF_REVIEW: ' + json.dumps(dict(checks=[dict(command='fixture check', exit_code=0)],
+SELF_REVIEW = 'ARTIFACT: fixture\nSELF_REVIEW: ' + json.dumps(dict(checks=[dict(command='fixture check', exit_code=0)],
                                                 criteria=[dict(criterion='fixture outcome', met=True, evidence='Inspected.')]))
 
 def run(*args, env=None, lease=True):
@@ -684,8 +698,18 @@ sys.exit(relaunch.run(repo, state, 'default', launcher=[sys.argv[4], '-c', 'pass
 """
 
 
+def load_2_4_state(state,repo):
+    """Write a 2.4 run (`start --items 3`) into the state directory, bound to the repository and its HEAD; returns its lease."""
+    data=json.loads((FIXTURES/'state-2.4.json').read_text())
+    data['repo']=str(Path(repo).resolve())
+    data['session']['base']=subprocess.check_output(['git','-C',str(repo),'rev-parse','HEAD']).decode().strip()
+    Path(state).mkdir(parents=True,exist_ok=True)
+    (Path(state)/'state.json').write_text(json.dumps(data))
+    return data['session']['lease']
+
+
 class RouteCliIntegration(unittest.TestCase):
-    """The 2.4 routing contract through the real CLI: start --items, route, dispatch --helper and the help text."""
+    """The 2.4 routing contract through the real CLI, against a 2.4 state: route --items, dispatch --helper and the help text."""
 
     def setUp(self):
         HarnessSessionIntegration.setUp(self)
@@ -696,32 +720,21 @@ class RouteCliIntegration(unittest.TestCase):
         self.assertEqual(result.returncode,expected,result.stderr+result.stdout)
         return json.loads(result.stdout) if expected==0 else result.stderr+result.stdout
 
-    def test_new_run_needs_items(self):
-        self.assertIn('A new run needs --items N',self.raw('start',expected=2))
-
-    def test_a_refused_new_run_keeps_the_ended_run(self):
-        lease=self.raw('start','--items','3')['lease']
-        self.raw('--lease',lease,'interrupt')
-        self.assertIn('A new run needs --items N',self.raw('start','--new-run',expected=2))
-        self.raw('start','--new-run','--items','0',expected=2)
-        self.assertFalse((self.state/'history').exists())  # the ended run was not archived
-        self.assertFalse(self.raw('status')['session']['active'])
-
-    def test_start_items_routes_both_ways_and_route_changes_it(self):
-        lease=self.raw('start','--items','5')['lease']
-        self.assertEqual(self.raw('status')['session']['route'],'inline')
-        self.raw('--lease',lease,'interrupt')
-        lease=self.raw('start','--new-run','--items','6')['lease']
+    def test_route_items_changes_the_route_of_a_2_4_run(self):
+        lease=load_2_4_state(self.state,self.repo)
         session=self.raw('status')['session']
-        self.assertEqual((session['items'],session['route']),(6,'workflow'))
-        self.raw('route','--items','2','--reason','scope shrank',expected=2)  # the route needs the lease
+        self.assertEqual((session['items'],session['route']),(3,'inline'))
+        self.raw('route','--items','9','--reason','the brief grew',expected=2)  # the route needs the lease
+        self.raw('--lease',lease,'route','--items','9','--reason','the brief grew')
+        self.assertEqual(self.raw('status')['session']['route'],'workflow')
         self.raw('--lease',lease,'route','--items','2','--reason','scope shrank')
         session=self.raw('status')['session']
         self.assertEqual((session['items'],session['route']),(2,'inline'))
-        self.assertEqual([(e['items'],e['reason']) for e in session['route_log']],[(2,'scope shrank')])
+        self.assertEqual([(e['items'],e['reason']) for e in session['route_log']],[(9,'the brief grew'),(2,'scope shrank')])
+        self.assertIn('This run routes by items',self.raw('--lease',lease,'route','--size','tiny','--reason','r',expected=2))
 
     def test_inline_route_refuses_a_helper_without_a_reason(self):
-        lease=self.raw('start','--items','3')['lease']
+        lease=load_2_4_state(self.state,self.repo)
         task=self.root/'B1.json'
         task.write_text(json.dumps(dict(id='B1',role='builder',mode='implementation',inputs=['s'],acceptance=['a'],
                                         files=['b1.txt'],resources=[],dependencies=[])))
@@ -729,16 +742,142 @@ class RouteCliIntegration(unittest.TestCase):
         self.assertIn('pass --helper REASON',self.raw('--lease',lease,'dispatch','B1','worker',expected=2))
         self.assertTrue(self.raw('--lease',lease,'dispatch','B1','worker','--helper','needs a second pair of hands')['assignment'])
 
+    def test_a_2_4_run_resumes_without_flags(self):
+        lease=load_2_4_state(self.state,self.repo)
+        self.raw('--lease',lease,'interrupt')
+        self.assertTrue(self.raw('start')['lease'])
+        self.assertEqual(self.raw('status')['session']['items'],3)
+
     def test_help_text_matches_the_contract(self):
         def helptext(*cmd):
             return subprocess.run([sys.executable,str(CLI),*cmd,'--help'],capture_output=True,text=True,timeout=25).stdout
-        self.assertIn('--items',helptext('start'))
-        self.assertIn('6 or more',helptext('start'))
+        start=helptext('start')
+        self.assertTrue(all(flag in start for flag in ('--size','--asks','--owner-request')))
         route=helptext('route')
-        self.assertTrue('--items' in route and '--reason' in route)
+        self.assertTrue(all(flag in route for flag in ('--size','--items','--reason')))
         self.assertIn('--helper REASON',helptext('dispatch'))
+        self.assertIn('prepr',subprocess.run([sys.executable,str(CLI),'--help'],capture_output=True,text=True,timeout=25).stdout)
         self.assertNotIn('wave',helptext('add').lower())
         self.assertNotIn('supersede',subprocess.run([sys.executable,str(CLI),'--help'],capture_output=True,text=True,timeout=25).stdout)
+
+
+class SizeCli(unittest.TestCase):
+    """Contract items 2 to 7 through the real CLI."""
+
+    def setUp(self):
+        HarnessSessionIntegration.setUp(self)
+
+    def raw(self,*args,expected=0,both=False):
+        result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),*args],env=self.env,
+                              capture_output=True,text=True,timeout=25)
+        self.assertEqual(result.returncode,expected,result.stderr+result.stdout)
+        if both:
+            return result
+        return json.loads(result.stdout) if expected==0 else result.stderr+result.stdout
+
+    def card(self,lease,name,**extra):
+        task=self.root/(name+'.json')
+        task.write_text(json.dumps(dict(id=name,role='builder',mode='implementation',inputs=['s'],acceptance=['a'],
+                                        files=[name+'.txt'],resources=[],dependencies=[],**extra)))
+        self.raw('--lease',lease,'add',str(task))
+
+    def write(self,lines,name='big.txt'):
+        (self.repo/name).write_text('x\n'*lines)
+
+    def test_start_without_size_exits_nonzero_naming_size(self):
+        self.assertIn('--size',self.raw('start',expected=2))
+
+    def test_start_size_large_exits_nonzero_naming_escalation(self):
+        self.assertIn('escalate',self.raw('start','--size','large',expected=2))
+        self.assertTrue(self.raw('start','--size','large','--owner-request')['lease'])
+        self.assertTrue(self.raw('status')['session']['owner_request'])
+
+    def test_start_size_medium_with_asks_prints_a_lease(self):
+        out=self.raw('start','--size','medium','--asks','2')
+        self.assertTrue(out['lease'])
+        session=self.raw('status')['session']
+        self.assertEqual((session['size'],session['asks'],session['owner_request']),('medium',2,False))
+        self.assertNotIn('items',session)
+
+    def test_start_items_is_refused_pointing_to_size(self):
+        self.assertIn('--items is the 2.4 flag; start with --size',self.raw('start','--items','3',expected=2))
+        self.assertIn('--items is the 2.4 flag; start with --size',self.raw('start','--items','3','--size','tiny',expected=2))
+        self.assertFalse((self.state/'state.json').exists())
+
+    def test_start_flags_on_a_resumed_run_exit_nonzero(self):
+        lease=self.raw('start','--size','medium')['lease']
+        self.raw('--lease',lease,'interrupt')
+        for flags in (['--size','tiny'],['--asks','2'],['--owner-request']):
+            self.assertIn('apply to a new run',self.raw('start',*flags,expected=2))
+        self.assertTrue(self.raw('start')['lease'])
+        self.assertEqual(self.raw('status')['session']['size'],'medium')
+
+    def test_new_run_with_bad_size_asks_or_large_leaves_the_ended_run_in_place(self):
+        lease=self.raw('start','--size','tiny')['lease']
+        self.raw('--lease',lease,'interrupt')
+        for flags in ([],['--size','large'],['--size','huge'],['--size','tiny','--asks','0'],['--size','tiny','--asks','many']):
+            self.raw('start','--new-run',*flags,expected=2)
+        self.assertFalse((self.state/'history').exists())  # the ended run was not archived
+        self.assertFalse(self.raw('status')['session']['active'])
+        self.raw('start','--new-run','--size','medium')
+        self.assertTrue((self.state/'history').exists())
+
+    def test_route_needs_exactly_one_of_size_or_items(self):
+        lease=self.raw('start','--size','tiny')['lease']
+        self.assertIn('exactly one',self.raw('--lease',lease,'route','--reason','r',expected=2))
+        self.assertIn('exactly one',self.raw('--lease',lease,'route','--size','medium','--items','3','--reason','r',expected=2))
+        self.assertIn('This run routes by size',self.raw('--lease',lease,'route','--items','3','--reason','r',expected=2))
+
+    def test_route_size_logs_and_exits_zero(self):
+        lease=self.raw('start','--size','tiny','--asks','2')['lease']
+        out=self.raw('--lease',lease,'route','--size','medium','--reason','the diff grew')
+        self.assertEqual((out['size'],out['asks']),('medium',2))
+        self.raw('--lease',lease,'route','--size','tiny','--asks','4','--reason','four tweaks')
+        session=self.raw('status')['session']
+        self.assertEqual([(e['size'],e['asks'],e['reason']) for e in session['route_log']],
+                         [('medium',2,'the diff grew'),('tiny',4,'four tweaks')])
+        self.raw('--lease',lease,'route','--size','tiny','--asks','0','--reason','r',expected=2)
+
+    def test_dispatch_tiny_card_without_helper_exits_nonzero(self):
+        lease=self.raw('start','--size','tiny')['lease']
+        self.card(lease,'B1')
+        self.assertIn('Tiny unit',self.raw('--lease',lease,'dispatch','B1','worker',expected=2))
+        self.assertTrue(self.raw('--lease',lease,'dispatch','B1','worker','--helper','a disjoint file')['assignment'])
+
+    def test_dispatch_medium_card_exits_zero(self):
+        lease=self.raw('start','--size','medium')['lease']
+        self.card(lease,'B1')
+        self.assertTrue(self.raw('--lease',lease,'dispatch','B1','worker')['assignment'])
+
+    def test_prepr_over_budget_prints_warning_and_exits_zero(self):
+        self.raw('start','--size','tiny')
+        self.write(60)
+        result=self.raw('prepr',both=True)
+        out=json.loads(result.stdout)
+        warning=('Size warning: declared tiny with 1 ask(s) budgets 50 changed lines; the diff has 60. '
+                 'Run route --size TIER --reason TEXT if the work grew.')
+        self.assertEqual((out['warning'],out['over_budget'],out['budget'],out['changed_lines']),(warning,True,50,60))
+        self.assertEqual(result.stderr.strip(),warning)
+
+    def test_prepr_names_the_reviewer_agent_for_each_band(self):
+        self.raw('start','--size','tiny','--asks','9')
+        for lines,agent in ((10,'orchestra:code-reviewer-medium'),(100,'orchestra:code-reviewer-medium'),
+                            (450,'orchestra:code-reviewer')):
+            self.write(lines)
+            out=self.raw('prepr')
+            self.assertEqual((out['agent'],out['changed_lines']),(agent,lines))
+        self.assertIn('correctness',out['lenses'])
+
+    def test_prepr_on_a_2_3_state_exits_zero_with_nulls(self):
+        data=json.loads((FIXTURES/'state-2.3.json').read_text())
+        data['repo']=str(self.repo)
+        self.state.mkdir(parents=True,exist_ok=True)
+        (self.state/'state.json').write_text(json.dumps(data))
+        result=self.raw('prepr',both=True)
+        out=json.loads(result.stdout)
+        self.assertEqual((out['base'],out['changed_lines'],out['reviewer'],out['agent'],out['warning']),
+                         (None,None,'full','orchestra:code-reviewer',None))
+        self.assertEqual(result.stderr,'')
 
 
 class RelaunchIntegration(unittest.TestCase):

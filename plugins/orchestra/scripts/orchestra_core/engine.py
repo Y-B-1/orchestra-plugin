@@ -42,6 +42,11 @@ KEEP_REMOVE = ('## Keep', '## Remove')  # builder briefs carry both headings; ch
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
 ALWAYS_LENSES = ('requirements', 'correctness', 'tests', 'architecture')
 INLINE_MAX_ITEMS = 5  # contract item 3: 1 to 5 items run inline, 6 or more go through a plan
+SIZES = ('tiny', 'medium', 'large')
+TIER_GUIDE = {'tiny': 50, 'medium': 400}  # contract item 1: changed lines per ask
+REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
+REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
+ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
@@ -477,6 +482,13 @@ class Engine:
                 raise EngineError('Invalid harness session')
             if 'relaunch_pass' in session and (not isinstance(session['relaunch_pass'], str) or not session['relaunch_pass']):
                 raise EngineError('Invalid relaunch pass')
+            if 'size' in session or 'asks' in session or 'owner_request' in session:
+                log = session.get('route_log', [])
+                if ('items' in session or session.get('size') not in SIZES or not cls._asks_ok(session.get('asks'))
+                        or not isinstance(session.get('owner_request'), bool) or not isinstance(log, list)
+                        or any(not isinstance(e, dict) or e.get('size') not in SIZES or not cls._asks_ok(e.get('asks'))
+                               or not isinstance(e.get('reason'), str) or not isinstance(e.get('at'), str) for e in log)):
+                    raise EngineError('Invalid session size')
             if 'items' in session:
                 if (type(session['items']) is not int or session['items'] < 1
                         or session.get('route') != cls._route_for(session['items'])
@@ -511,6 +523,8 @@ class Engine:
                 raise EngineError('Invalid task held_finding')
             if 'helper_reason' in task and (not isinstance(task['helper_reason'], str) or not task['helper_reason'].strip()):
                 raise EngineError('Invalid task helper_reason')
+            if 'size' in task and task['size'] not in ('tiny', 'medium'):
+                raise EngineError('Invalid task size')
             if 'self_review' in task and not cls._self_review_ok(task['self_review']):
                 raise EngineError('Invalid task self_review')
         findings = state.get('findings', [])
@@ -635,6 +649,23 @@ class Engine:
                     lines += len(data.splitlines())
         return sorted(paths), lines
 
+    def prepr(self):
+        """Contract item 7: the pre-PR size check and reviewer choice. Read-only, no lease."""
+        with self._state(False) as state:
+            session = state['session'] or {}
+            base = session.get('base')
+            lenses = self._required_lenses(state)
+            lines = self._changed(base)[1] if base is not None else None
+        size, asks = session.get('size'), session.get('asks')
+        budget = TIER_GUIDE[size] * asks if size in TIER_GUIDE else None
+        over = budget is not None and lines is not None and lines > budget
+        bound, *band = REVIEWER_BAND
+        reviewer, agent = band if lines is not None and lines <= bound else REVIEWER_FULL
+        warning = ('Size warning: declared %s with %d ask(s) budgets %d changed lines; the diff has %d. Run route --size TIER '
+                   '--reason TEXT if the work grew.' % (size, asks, budget, lines)) if over else None
+        return dict(base=base, changed_lines=lines, size=size, asks=asks, budget=budget, over_budget=over,
+                    reviewer=reviewer, agent=agent, lenses=lenses, warning=warning)
+
     def _required_lenses(self, state):
         """Contract item 6: the review categories completion needs. An explicit policy list overrides the derived set;
         a run with no stored base (made by 2.3) needs every category."""
@@ -670,17 +701,38 @@ class Engine:
         return nonce if nonce and re.fullmatch(r'[A-Za-z0-9_-]+', nonce) else None
 
     @staticmethod
+    def _asks_ok(asks):
+        return type(asks) is int and asks >= 1
+
+    @classmethod
+    def _check_start(cls, size, asks, owner_request):
+        """Contract item 2: what a new run must state. The CLI runs it before archiving an ended run."""
+        if size is None:
+            raise EngineError('A new run needs --size tiny, medium or large')
+        if size not in SIZES:
+            raise EngineError('Size must be tiny, medium or large')
+        if asks is not None and not cls._asks_ok(asks):
+            raise EngineError(ASKS_ERROR)
+        if size == 'large' and not owner_request:
+            raise EngineError('A new run starts at tiny or medium; escalate with route --size large --reason TEXT, '
+                              'or pass --owner-request when the owner asked for a map')
+
+    @staticmethod
     def _check_items(items):
         if isinstance(items, bool) or not isinstance(items, int) or items < 1:
             raise EngineError('Items must be an integer of 1 or more')
 
-    def open_session(self, actor, harness_session=None, relaunch_pass=None, items=None, require_items=False):
-        """Open the coordinator session. A new run (no earlier session record) stores `items`, `route` and `base`; a
-        resumed run keeps them. `require_items` is the CLI's rule that a new run states its size (contract item 3)."""
+    def open_session(self, actor, harness_session=None, relaunch_pass=None, items=None, size=None, asks=None,
+                     owner_request=False, require_size=False):
+        """Open the coordinator session. A new run (no earlier session record) stores `size`, `asks`, `owner_request` and
+        `base` (a 2.4 test run stores `items` and `route`); a resumed run keeps them. `require_size` is the CLI's rule that
+        a new run states its size (contract items 2 and 3)."""
         if not isinstance(actor, str) or not actor.strip():
             raise EngineError('Missing coordinator')
         if items is not None:
             self._check_items(items)
+            if size is not None:
+                raise EngineError('Invalid session size')
         if harness_session is not None and (not isinstance(harness_session, str) or not harness_session.strip()):
             raise EngineError('Invalid harness session id')
         if relaunch_pass is not None and (not isinstance(relaunch_pass, str) or not relaunch_pass.strip()):
@@ -690,17 +742,23 @@ class Engine:
                 raise EngineError('A coordinator session is already active')
             lease = uuid.uuid4().hex
             prior = state['session']
-            if prior is None and items is None and require_items:
-                raise EngineError('A new run needs --items N, the number of work items')
             if prior is not None and items is not None:
                 raise EngineError('--items applies only to a new run; use route to change it')
+            if prior is not None and (size is not None or asks is not None or owner_request):
+                raise EngineError('--size, --asks and --owner-request apply to a new run; use start --new-run, or route --size '
+                                  'to change the tier')
+            if prior is None and items is None and (require_size or size is not None or asks is not None or owner_request):
+                self._check_start(size, asks, owner_request)
             state['session'] = dict(actor=actor, lease=lease, active=True)
             if prior is None:
                 state['session']['base'] = self._git('rev-parse', 'HEAD').decode().strip()
                 if items is not None:
                     state['session'].update(items=items, route=self._route_for(items), route_log=[])
+                elif size is not None:
+                    state['session'].update(size=size, asks=1 if asks is None else asks, owner_request=bool(owner_request),
+                                            route_log=[])
             else:
-                for key in ('base', 'items', 'route', 'route_log'):
+                for key in ('base', 'items', 'route', 'route_log', 'size', 'asks', 'owner_request'):
                     if key in prior:
                         state['session'][key] = prior[key]
             if harness_session is not None:
@@ -718,18 +776,35 @@ class Engine:
             state['permits'] = []
             return lease
 
-    def set_route(self, actor, lease, items, reason):
-        """Change the item count and the route it implies, and log why (contract item 3)."""
-        self._check_items(items)
+    def set_route(self, actor, lease, items, reason, size=None, asks=None):
+        """Change the tier (`size`, `asks`) of a size run, or the item count and the route it implies of a 2.4 run, and log
+        why (contract items 3 and 4). Exactly one of `items` and `size`."""
+        if (items is None) == (size is None):
+            raise EngineError('Route needs exactly one of --size or --items')
+        if size is None:
+            self._check_items(items)
+        elif size not in SIZES:
+            raise EngineError('Size must be tiny, medium or large')
+        if asks is not None and (size is None or not self._asks_ok(asks)):
+            raise EngineError(ASKS_ERROR)
         if not isinstance(reason, str) or not reason.strip():
             raise EngineError('Route needs a reason')
         with self._state() as state:
             self._lease(state, actor, lease)
             session = state['session']
+            at = datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')
+            if size is not None:
+                if 'items' in session:
+                    raise EngineError('This run routes by items; use route --items')
+                if 'size' not in session:
+                    raise EngineError('This run has no route; start a new run with --size')
+                session.update(size=size, asks=session['asks'] if asks is None else asks)
+                session.setdefault('route_log', []).append(dict(size=size, asks=session['asks'], reason=reason.strip(), at=at))
+                return dict(size=size, asks=session['asks'])
+            if 'size' in session:
+                raise EngineError('This run routes by size; use route --size')
             session.update(items=items, route=self._route_for(items))
-            session.setdefault('route_log', []).append(dict(
-                items=items, reason=reason.strip(),
-                at=datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')))
+            session.setdefault('route_log', []).append(dict(items=items, reason=reason.strip(), at=at))
             return dict(items=items, route=session['route'])
 
     def interrupt(self, actor, lease):
@@ -844,6 +919,12 @@ class Engine:
             self._check_contract(task)
             if task['role'] == 'designer-planner' and task['mode'] == 'plan' and state['session'].get('route') == 'inline':
                 raise EngineError('Inline route: no plan card; the main session groups the work')
+            session = state['session']
+            if (task['role'] == 'designer-planner' and task['mode'] == 'plan' and 'size' in session
+                    and session['size'] != 'large' and not session['owner_request'] and task.get('owner_request') is not True):
+                raise EngineError('Plan card needs a large run or an owner request; escalate with route --size large --reason TEXT')
+            if 'size' in task and task['size'] not in ('tiny', 'medium'):
+                raise EngineError('Invalid task size')
             if task['role'] == 'builder' and 'brief' in task:
                 self._check_keep_remove(task)
             if self._is_release(task) and any(self._is_release(t) for t in state['tasks'].values()):
@@ -872,6 +953,8 @@ class Engine:
                     or any(not isinstance(i, str) or i not in state['tasks'] for i in review_of)
                     or len(review_of) != len(set(review_of))):
                 raise EngineError('Review targets must name existing tasks')
+            if task['role'] == 'code-reviewer' and not review_of:
+                raise EngineError('A code-reviewer card needs review_of naming the tasks it reviews')
             if review_of and task['role'] not in REVIEW_ROLES:
                 raise EngineError('Only independent review roles can use review_of')
             if set(review_of) & set(task['dependencies']):
@@ -1074,7 +1157,13 @@ class Engine:
     @staticmethod
     def _check_route(state, task, inline, helper):
         """Contract item 3. A state with no `route` (made by 2.3) is not checked."""
-        route = state['session'].get('route')
+        session = state['session']
+        if task['role'] == 'builder' and 'size' in session:
+            size = task.get('size') or ('medium' if session['size'] == 'large' else session['size'])
+            if size == 'tiny' and not inline and not (isinstance(helper, str) and helper.strip()):
+                raise EngineError('Tiny unit: the main session does this work; pass --helper REASON to dispatch a helper')
+            return
+        route = session.get('route')
         if route is None or task['role'] != 'builder':
             return
         if route == 'workflow':
@@ -1155,10 +1244,16 @@ class Engine:
             raise EngineError('Empty worker report')
         with self._state() as state:
             task = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
-            if not task or task['state'] != 'running' or task['worker'] != worker:
+            replacing = bool(task) and task['state'] == 'reported'  # a repair needs a covering review, refused below
+            if not task or task['worker'] != worker or not (task['state'] == 'running' or replacing):
                 raise EngineError('Invalid assignment')
+            if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
+                raise EngineError('A review covers this report; route a change through a repair card')
             self._lease(state, state['session']['actor'], task['lease'])
             review = self._parse_self_review(report) if task['role'] == 'builder' else None
+            if task['role'] == 'builder' and not any(
+                    line.startswith('ARTIFACT:') and line[len('ARTIFACT:'):].strip() for line in report.splitlines()):
+                raise EngineError('Builder report needs a nonempty ARTIFACT line')
             task.update(state='reported', report=report,
                         report_artifact=self.artifact(self._scope_of(state, [task['id']])))
             if review is not None:
@@ -1492,7 +1587,10 @@ class Engine:
     def run_secret_scan(self, actor, lease):
         return self.run_gate(actor, lease, 'secret-scan', self.policy['secret_scan'].get('argv', []))
 
-    def run_gate(self, actor, lease, name, argv, again=False):
+    def run_gate(self, actor, lease, name, argv, again=False, timeout=None):
+        if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                                    or not math.isfinite(timeout) or timeout <= 0):
+            raise EngineError('Gate timeout must be positive and finite')
         unavailable = name == 'secret-scan' and argv == [] and not self.policy['secret_scan'].get('argv')
         if unavailable and self.policy['secret_scan'].get('required'):
             raise EngineError('Required secret scanner is unavailable')
@@ -1525,7 +1623,7 @@ class Engine:
                     process = subprocess.Popen(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT,
                                                start_new_session=True)
                     try:
-                        code = process.wait(timeout=self.policy['gate_timeout_seconds'])
+                        code = process.wait(timeout=timeout or self.policy['gate_timeout_seconds'])
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()

@@ -6,25 +6,26 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 
 | Command | Purpose | Lease |
 | --- | --- | --- |
-| `start [--policy FILE] [--harness-session ID] [--new-run] [--items N]` | Start a run and print the lease once. `--items N` sets the route (1 to 5 inline, 6 or more workflow). With `--harness-session`, ending that Claude Code session releases the run. | no |
+| `start [--policy FILE] [--harness-session ID] [--new-run] --size tiny\|medium\|large [--asks N] [--owner-request]` | Start a run and print the lease once. `--size` is required for a new run; `large` needs `--owner-request`. `--items` is refused (2.4 flag). With `--harness-session`, ending that Claude Code session releases the run. | no |
 | `where` | Print the repository, the state directory and whether `standing-orders.md` exists. | no |
-| `status` | Print cards, session state, the route and `required_lenses`. Never prints a lease. | no |
+| `status` | Print cards, session state (`size`, `asks`, `owner_request`, or the 2.4 route) and `required_lenses`. Never prints a lease. | no |
+| `prepr` | Print the size check and the pre-PR reviewer: `base`, `changed_lines`, `size`, `asks`, `budget`, `over_budget`, `reviewer`, `agent`, `lenses`, `warning`. Read-only; the warning never blocks. | no |
 | `board` | Group card ids by role and state. | no |
 | `artifact [--tasks ID[,ID]]` | Print the whole-repo artifact, or with `--tasks` the artifact scoped to those cards' reserved files plus HEAD. | no |
-| `report WORKER TOKEN FILE` | Record a worker's result file against its assignment token. | no |
+| `report WORKER TOKEN FILE` | Record a worker's result file against its assignment token. The same worker may replace the report until the card is accepted or a review covers it. | no |
 | `autonomy arm [--relaunch]\|disarm\|status\|settle` | Arm, disarm or inspect the autonomous loop. `arm --relaunch` keeps autonomy armed between sessions; `settle` checks the stop conditions without counting a pass. | no |
 | `brief` | Print the newest run brief. Read-only. | no |
 | `finding list [--for-brief]` | List the findings ledger, or render a "Known findings" block for reviewer briefs. | no |
 | `relaunch --permission-mode MODE [--model ID] [--launcher ARGV...]` | Run fresh `claude -p` passes from a terminal until a stop. `--launcher ARGV...` must come last; every later word goes to the launcher. | no |
 | `classify "SHELL COMMAND"` | Print the guard verdict for a command string without running it. | no |
 | `ready` | List cards that can be dispatched now. | yes |
-| `route --items N --reason TEXT` | Change the route after `start`; the reason is logged in `route_log`. | yes |
-| `add TASK.json` | Add a card. On the workflow route, the designer-planner plan card must be accepted first. | yes |
-| `dispatch TASK WORKER [--helper REASON]` | Reserve a card for a worker. On the inline route `--helper REASON` is required. | yes |
+| `route --size TIER [--asks N] --reason TEXT` | Change the tier after `start`, either way; the reason is logged in `route_log`. A 2.4 run uses `route --items N --reason TEXT` instead. | yes |
+| `add TASK.json` | Add a card. A builder card may carry `size` (`tiny` or `medium`). On a size run a designer-planner plan card needs a large run or an owner request. On a 2.4 workflow route, the plan card must be accepted first. | yes |
+| `dispatch TASK WORKER [--helper REASON]` | Reserve a card for a worker. A tiny builder card (and any builder card on a 2.4 inline route) needs `--helper REASON`. | yes |
 | `inline TASK` | Reserve a card for the main coordinator. | yes |
 | `review REVIEW.json` | Record the independent pre-PR review (`final: true`) or the fix re-review (`repair_check: true`). | yes |
 | `accept TASK` | Accept a card whose current evidence allows it. | yes |
-| `gate [--again] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. | yes |
+| `gate [--again] [--timeout SECONDS] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. `--timeout` overrides `gate_timeout_seconds` for this run. | yes |
 | `scan` | Run the configured secret scan; an unavailable optional scanner is reported, not passed. | yes |
 | `permit REMOTE TARGET` | Create a release permit for an exact remote and target. Refused while autonomy is active. | yes |
 | `release REMOTE TARGET` | Run the release command named in policy under a current permit. Refused while autonomy is active. | yes |
@@ -50,6 +51,13 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 - Changed: autonomy has no pass or stall cap. Caps in a 2.1 ledger are recorded, not enforced. The run brief replaces the autonomy report.
 - Changed: `gate` refuses boundary commands, and a repeat of a passed gate needs `--again`.
 - Every 2.1 command keeps working. A run started under 2.1 loads under 2.2; see the README upgrade note before mixing versions on one run.
+
+## Changes in 2.5.0
+
+- New: `start --size`, `--asks`, `--owner-request`, `route --size`, `prepr`, the builder card `size` field, and the reviewer agent `code-reviewer-medium` (`Lens: combined`).
+- Changed: a new run needs `--size`; `start --items` is refused. A 2.4 run keeps `route --items` and its item routes.
+- New: `gate --timeout SECONDS` for one run. `report` replaces a reported card's report for the same worker and token until the card is accepted, a review lists it or a repair of it exists ("A review covers this report; route a change through a repair card").
+- Changed: a builder report needs a nonempty `ARTIFACT:` line ("Builder report needs a nonempty ARTIFACT line").
 
 ## Changes in 2.4.0
 

@@ -65,6 +65,12 @@ Commit: 2b47ffcf2385995a536e43ddc9226e32cf9793d9
 License: MIT, same license text as the first mattpocock/skills pin above. Used for skills/in-progress/chief-of-staff, skills/engineering/diagnosing-bugs and skills/productivity/handoff.
 
 ================================================================
+mattpocock/skills (third pin, Orchestra 2.5.0)
+Repository: https://github.com/mattpocock/skills
+Commit: 49dd158d1076134a641b33efb035946536778336
+License: MIT, same license text as the first mattpocock/skills pin above. Used for skills/engineering/wayfinder.
+
+================================================================
 garrytan/gstack
 Repository: https://github.com/garrytan/gstack
 Commit: 4015c2870b064644131ed6f7cfcc1469cfe9808c

@@ -21,6 +21,8 @@
     "a finding blocks only when it has a real, material impact",
     "do not raise a known finding unless the code at its location changed",
     "repair_check: true",
-    "requirements, correctness, tests, architecture"
+    "requirements, correctness, tests, architecture",
+    "Lens: combined",
+    "Required categories:"
   ]
 }

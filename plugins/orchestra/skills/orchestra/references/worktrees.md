@@ -10,7 +10,7 @@ A worktree buys isolation and nothing else. Use the fewest that keep writers apa
 - Concurrent writers on disjoint files get one worktree per group.
 - A read-only worker uses the main tree.
 
-Group the work into PRs first (the inline session for 1 to 5 items, the designer-planner for 6 or more); a worktree follows a group, never a ticket.
+Group the work into PRs first (the main session on a tiny or medium run, the designer-planner on a large one); a worktree follows a group, never a ticket. Tiny units take no worktree.
 
 ## Create
 
