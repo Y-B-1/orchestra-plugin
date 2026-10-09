@@ -49,6 +49,10 @@
     "pre-PR review",
     "`dispatch --helper REASON`",
     "`start --items N`",
-    "SELF_REVIEW:"
+    "SELF_REVIEW:",
+    "Sentinel: orchestra/references/wayfinder.md",
+    "docs/maps/",
+    "One human decision ticket per session",
+    "Never start with the map"
   ]
 }
