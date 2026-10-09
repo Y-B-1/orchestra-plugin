@@ -29,10 +29,10 @@ Size the work by the diff it will produce, then run `start --size` with the tier
 | Size | Route |
 | --- | --- |
 | tiny, up to 50 lines | Inline edit, no alignment. A tiny builder card needs `dispatch --helper REASON`. |
-| medium, up to 400 | Grill inline, then execute. Units of 2+ go to builders through Workflow. |
-| large | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it ([wayfinder](references/wayfinder.md)), then a `plan` card. |
+| medium, up to 400 | Grill inline, then build every unit inline in sequence. |
+| large | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it ([wayfinder](references/wayfinder.md)), then a `plan` card. Units of 2+ go to builders through Workflow. |
 
-Use the fewest worktrees (references/worktrees.md). A single Agent dispatch fits one unit that still needs a worker. Workflow is the default for 2+ independent units whenever the host has the Workflow tool; the user's standing opt-in makes it so with or without ultracode. While a run is active the guard denies a subagent type that does not start with `orchestra:`; use `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it. Mechanics: [parallel](references/parallel.md).
+Use the fewest worktrees (references/worktrees.md). A single Agent dispatch fits one unit that still needs a worker. Workflow is the default for 2+ independent large units whenever the host has the Workflow tool; the user's standing opt-in makes it so with or without ultracode. While a run is active the guard denies a subagent type that does not start with `orchestra:`; use `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it. Mechanics: [parallel](references/parallel.md).
 
 ## References
 

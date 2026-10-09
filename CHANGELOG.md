@@ -6,7 +6,7 @@ Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
 Route by diff size instead of item count. The design is `docs/DESIGN-v2.5.md` (owner decisions D1 to D5), the contract is `docs/PLAN-v2.5.md` section 2.
 
-- **Size tiers (D1):** `start --size tiny|medium [--asks N]` is required for a new run. Tiny is up to 50 changed lines (inline edit, no alignment; a tiny builder card needs `dispatch --helper REASON`), medium up to 400 (grill inline, then builders, 2+ units through Workflow). `--asks` counts separately stated asks; the tier is the largest ask and the budget is the guide times the count.
+- **Size tiers (D1):** `start --size tiny|medium [--asks N]` is required for a new run. Tiny is up to 50 changed lines (inline edit, no alignment; a tiny builder card needs `dispatch --helper REASON`), medium up to 400 (grill inline, then every unit inline in sequence; the medium benchmark showed a worker's fixed cost exceeds a medium unit's inline time). Large runs 2+ units through Workflow builders, and the coordinator starts its own inline card in the same turn. `--asks` counts separately stated asks; the tier is the largest ask and the budget is the guide times the count.
 - **Large only by escalation:** `route --size large --reason TEXT`, or `start --size large --owner-request` when the owner asks for a map. A designer-planner plan card needs a large run or an owner request.
 - **Size check (D2):** the new read-only `prepr` command compares the diff with the budget and prints a warning; it never blocks.
 - **Reviewer by summed diff (D3):** `prepr` names the pre-PR reviewer: Sonnet 5.5 (`code-reviewer-medium`) up to 400 changed lines, one card with `Lens: combined`; Opus 5.5 with one card per lens above 400.
