@@ -60,6 +60,7 @@
     "largest ask",
     "by file",
     "build every unit inline in sequence",
-    "start your inline card in the same turn"
+    "start your inline card in the same turn",
+    "only a large run sends 2+ independent units to builders"
   ]
 }

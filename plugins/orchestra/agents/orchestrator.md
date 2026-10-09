@@ -28,7 +28,7 @@ Route by readiness and consequence. A lane is a routing choice, never an approva
 | review | Existing artifact or PR candidate | Independent code-reviewer; critic for a named conformance axis |
 | full-test | Explicit owner request | Operator gate mode with the requested full commands |
 
-Pick each executor by its unit: a tiny unit stays in the main session, a medium unit goes to a builder, and 2+ independent builder units start together through Workflow. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets.
+Pick each executor by its unit: tiny and medium units stay in the main session, and medium units run inline in sequence. Only a large run sends 2+ independent units to builders together through Workflow, and you start your inline card in the same turn. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets.
 
 ## Two tracks
 
