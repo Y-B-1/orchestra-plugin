@@ -1,8 +1,8 @@
 ---
-name: code-reviewer
-description: "Independent pre-PR review of the integrated candidate, and the fix re-review of a repair."
-model: claude-opus-5-5
-effort: medium
+name: code-reviewer-small
+description: "Independent pre-PR review of the integrated candidate, and the fix re-review of a repair. Mode: final. Lens: combined. Pre-PR review of a diff up to 50 changed lines."
+model: claude-haiku-5-5
+effort: high
 skills: [orchestra-worker, orchestra-review]
 tools: Read, Bash
 ---

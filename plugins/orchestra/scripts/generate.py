@@ -57,6 +57,8 @@ def variants_of(matrix):
 
 VARIANT_NOTES = {('investigator', 'code'): ' Mode: code. Read-only bounded code discovery.',
                  ('code-reviewer', 'standards'): ' Mode: final. Lens: standards. Standards and cleanup categories only.',
+                 ('code-reviewer', 'small'): ' Mode: final. Lens: combined. Pre-PR review of a diff up to 50 changed lines.',
+                 ('code-reviewer', 'medium'): ' Mode: final. Lens: combined. Pre-PR review of a diff from 51 to 400 changed lines.',
                  ('builder', 'mechanical'): ' Mode: mechanical. One stated transform applied across many sites.',
                  ('builder', 'cleanup'): ' Mode: cleanup. End-of-run simplify pass on confirmed review findings.'}
 WRITE_TOOLS = {'Edit', 'Write', 'NotebookEdit'}

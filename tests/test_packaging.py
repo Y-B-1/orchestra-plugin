@@ -28,7 +28,8 @@ class NativeTests(unittest.TestCase):
     def test_role_matrix_files_and_read_only_enforcement(self):
         claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
         self.assertEqual(claude, {f'{n}.md' for n in [
-            'builder', 'builder-cleanup', 'builder-mechanical', 'code-reviewer', 'code-reviewer-standards', 'critic', 'designer-planner',
+            'builder', 'builder-cleanup', 'builder-mechanical', 'code-reviewer', 'code-reviewer-medium', 'code-reviewer-small',
+            'code-reviewer-standards', 'critic', 'designer-planner',
             'investigator', 'investigator-code', 'operator', 'orchestrator']})
         read_only = ('investigator', 'critic', 'code-reviewer')
         for name in claude - {'orchestrator.md'}:
@@ -66,6 +67,23 @@ class NativeTests(unittest.TestCase):
         self.assertIn('effort: medium\n', front)
         desc = [l for l in front.splitlines() if l.startswith('description:')][0]
         self.assertIn('Lens: standards', desc)
+
+    def test_reviewer_size_variants_are_generated(self):
+        for name, model, effort in (('small', 'claude-haiku-5-5', 'high'), ('medium', 'claude-sonnet-5-5', 'medium')):
+            with self.subTest(name):
+                front = (PLUGIN / f'agents/code-reviewer-{name}.md').read_text().split('---')[1]
+                self.assertIn(f'name: code-reviewer-{name}\n', front)
+                self.assertIn(f'model: {model}\n', front)
+                self.assertIn(f'effort: {effort}\n', front)
+                desc = [l for l in front.splitlines() if l.startswith('description:')][0]
+                self.assertIn('Lens: combined', desc)
+
+    def test_reviewer_size_variants_keep_the_reviewer_tools(self):
+        for name in ('small', 'medium'):
+            with self.subTest(name):
+                front = (PLUGIN / f'agents/code-reviewer-{name}.md').read_text().split('---')[1]
+                line = [l for l in front.splitlines() if l.startswith('tools: ')][0]
+                self.assertEqual(set(line[len('tools: '):].split(', ')), {'Read', 'Bash'})
 
     def test_claude_repair_preset_is_override_dispatch_with_no_variant_file(self):
         matrix = json.loads((PLUGIN / 'config/models.json').read_text())['claude']

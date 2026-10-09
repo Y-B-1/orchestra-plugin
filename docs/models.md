@@ -15,8 +15,10 @@ Source of truth: `plugins/orchestra/config/models.json`. This page describes it.
 | builder mechanical | claude-haiku-5-5 | high | `builder-mechanical.md` |
 | builder cleanup | claude-haiku-5-5 | high | `builder-cleanup.md` |
 | builder repair | claude-opus-5-5 | medium | none; by dispatch-time model override (`"dispatch": "override"`). The ladder is a first build, one Opus `repair`, then one fix re-review follows; then the card is held (work stays in place, held log, the run continues) |
-| code-reviewer final | claude-opus-5-5 | medium | `code-reviewer.md` |
+| code-reviewer final, diff over 400 changed lines | claude-opus-5-5 | medium | `code-reviewer.md` |
 | code-reviewer standards lens | claude-sonnet-5-5 | medium | `code-reviewer-standards.md` |
+| code-reviewer, diff up to 50 changed lines (Lens: combined) | claude-haiku-5-5 | high | `code-reviewer-small.md` |
+| code-reviewer, diff from 51 to 400 changed lines (Lens: combined) | claude-sonnet-5-5 | medium | `code-reviewer-medium.md` |
 | operator (gate, cleanup, release) | claude-haiku-5-5 | high | `operator.md` |
 
 The orchestrator row is the user's selection: the model and effort picked in the client, never pinned by the plugin (`"selection": "user"`). Builder `repair` has no variant file; the coordinator passes `claude-opus-5-5` at dispatch, and only after an independent review returned checked coding findings. Haiku 5.5 pricing doubles for prompts above 100K tokens; keep Haiku briefs short.

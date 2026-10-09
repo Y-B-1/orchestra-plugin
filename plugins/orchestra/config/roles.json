@@ -123,7 +123,7 @@
       ],
       "skill": "orchestra-review",
       "read_only": true,
-      "prompt": "Final mode covers the categories of the lens its Lens: line names, and the three lens cards together cover every category, including security, reuse, simplification, efficiency and layer placement. Never fix reviewed code. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.",
+      "prompt": "Final mode covers the categories of the lens its Lens: line names, and the three lens cards together cover every category, including security, reuse, simplification, efficiency and layer placement. Lens: combined covers the categories its Required categories: line lists, in one card. Never fix reviewed code. Preserve sibling edits. Never delegate, own coordinator state, or release outside an explicit operator release assignment. Return exact artifact evidence and unresolved gaps.",
       "methods": [
         "orchestra-worker/SKILL.md",
         "orchestra-review/SKILL.md"
