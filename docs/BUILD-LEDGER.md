@@ -183,3 +183,24 @@ Deferred notes (next phase): stale checkpoint vocabulary in `tests/test_engine.p
 | Result | 3 files, all CLEAN | 3 files (5+/5-), CLEAN, commit 8530c4b (throwaway) |
 
 Coordinator cost was not measured for 2.3. For 2.4 the coordinator used 15,474 output tokens and 92,912 cache-write tokens; the whole run cost $1.93 at list price.
+
+## 2.5 build (v2.5, merged as 49f73b5, PR #10)
+
+Route by diff size, not item count. Design `docs/DESIGN-v2.5.md`, contract `docs/PLAN-v2.5.md`. Run state closed 2026-10-09; installed 2.5.0, and a fresh session loads `orchestra/2.5.0/skills/orchestra/SKILL.md`.
+
+| Step | Owner | Artifact | Evidence | Result |
+| --- | --- | --- | --- | --- |
+| B1 tiny (first) | coordinator | v2.5 local install | 203,029 sub-agent tokens against the 35,990 limit; Haiku small-band reviewer (D3) costlier and blocked on style nits | FAIL → owner amended D3 |
+| G1 | builder | e43a7bc | Haiku band dropped: Sonnet `code-reviewer-medium`, `Lens: combined`, up to 400 lines; Opus, one card per lens, above | ACCEPTED |
+| B1 tiny (rerun) | coordinator | fresh clone at e43a7bc | 0 builders, 28,794 sub-agent tokens | PASS |
+| B1 medium | coordinator | 2 units of 250–400 lines, 2 runs per arm | serial 266.9 s / 254.2 s; parallel 410.4 s / 288.7 s; worker fixed cost about 100 s (setup 108 s vs 47 s, integration 54 s vs 13 s) | FAIL → owner decision T1 |
+| T1 | builder | 47f200a | medium units run inline in sequence; worker splits only in a large run; coordinator starts its inline card in the same turn | ACCEPTED |
+| B1 large | coordinator | 2 units of about 600–800 lines, 2 runs per arm | serial 434.2 s / 433.6 s ($1.96 each); parallel 460.1 s / 261.5 s ($3.16 / $1.92); parallel-1 lost 105 s setup and 73 s recovery | best parallel 40% faster |
+| EG | builder | engine gaps | `gate --timeout`, replacement report until accept or review, required builder `ARTIFACT:` line | ACCEPTED |
+| RV-correctness, RV-standards | code-reviewer final | 1de30d4 | one BLOCKED finding on `coordination.md:23` (S1 medium-to-builder text against T1) | BLOCKED |
+| RS1 / FR1 | builder repair / fix re-review | 9908c0b | `coordination.md:23` and generated `orchestrator.md` match T1 | CLEAN |
+| N1 | coordinator inline | 0559bcd | deferred notes closed: task size validated in loaded state; unreachable `repair_of` clause removed; one `REVIEWER_BAND`; `final.md`, `repair-rounds.md`, `final-review.md` wording; DESIGN/PLAN amendment paragraphs. `tests.test_engine` 340 OK | ACCEPTED |
+| Gates | coordinator | 0559bcd | suite-engine-a, suite-engine-b, suite-integration, suite-rest exit 0 | PASS |
+| RV2, RV2S | code-reviewer final (correctness, standards) | 0559bcd | no blocking findings; notes only | CLEAN |
+
+Notes: a session started with its working directory in `plugins/orchestra` wrote a stray `plugins/orchestra/.claude/fast-jev-compaction/` cache (197 files); it was moved out of the tree, and fast-jev now anchors its archive at the git toplevel (fast-jev-compaction b3074e9). Deferred: `binds()` edge case; the `('tiny', 'medium')` literal appears twice in `engine.py` (RV2S note); PLAN-v2.5 history lines still name `REVIEWER_BANDS`.
