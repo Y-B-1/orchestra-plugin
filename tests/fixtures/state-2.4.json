@@ -1,0 +1,19 @@
+{
+  "autonomy": null,
+  "gates": [],
+  "permits": [],
+  "policy": "4b1d85568cf17dffc8adb272d1df95decfaf2a03c18c9176ff17190e4d5fb74d",
+  "repo": "@REPO@",
+  "reviews": [],
+  "session": {
+    "active": true,
+    "actor": "main",
+    "base": "@BASE@",
+    "items": 3,
+    "lease": "67db05d0f1fe4478b7527b91e8af682a",
+    "route": "inline",
+    "route_log": []
+  },
+  "tasks": {},
+  "version": 1
+}
