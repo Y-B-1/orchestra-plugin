@@ -3,9 +3,23 @@ Sentinel: orchestra/references/triage.md
 
 # Triage
 
-Use this for a bug report, a finding or a feature request before it becomes a card. Size each report on its own, then route it by the lane table in coordination.md.
+Use this to size a request before a run starts, and for a bug report, a finding or a feature request before it becomes a card. Size each report on its own, then route it by the lane table in coordination.md.
 
-## Steps
+## Size and align
+
+Size by the diff the work will produce, not by the number of items: tiny up to 50 changed lines, medium up to 400, large past that or past what one session can align.
+
+1. Read the files the work touches. When the area is unknown, start one `investigator-code` card, or a Workflow fan-out of `investigator-code` cards, one per area. Each returns a size estimate and the files it found.
+2. Count the asks: changes the owner could accept or reject on their own. Pass the count as `--asks`. The tier is the largest ask, never the sum; the budget is the tier guide times the count.
+3. Group tiny tweaks by file. The main session does each file's tweaks in one serial pass, with no card per tweak.
+4. Start with `start --size tiny|medium --asks N`. A new run never starts at large unless the owner asked for a map (`--owner-request`).
+5. Escalate with `route --size TIER --reason TEXT`. Tiny goes to medium when an edit needs a decision or the diff passes the guide. Medium goes to large when grilling passes the context ceiling (40% to 60% of the window), or when answers open questions faster than they close. Large starts a map ([wayfinder](wayfinder.md)).
+
+Grill in the main session only, never through a worker. Ask in frontier rounds, each question with a recommended answer. Put settled terms in the glossary and hard-to-reverse choices in decision records.
+
+Before the PR, `prepr` compares the diff with the budget and warns when it is over. The warning never blocks.
+
+## Steps for a report
 
 1. Reproduce the claim first. Run the described path against the current artifact and keep the command and output. Ask the reporter only what the code cannot answer.
 2. Give a verdict with its reason:

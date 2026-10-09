@@ -30,7 +30,6 @@
     "Plugin root",
     "review-packages",
     "sha256:",
-    "git diff --shortstat",
     "`Lens: specialist:<name>`",
     "autonomy arm",
     "autonomy disarm",
@@ -47,12 +46,18 @@
     "name the missing check or seam that would have caught the bug",
     "`$TMPDIR`, else `/tmp`",
     "pre-PR review",
-    "`dispatch --helper REASON`",
-    "`start --items N`",
     "SELF_REVIEW:",
     "Sentinel: orchestra/references/wayfinder.md",
     "docs/maps/",
     "One human decision ticket per session",
-    "Never start with the map"
+    "Never start with the map",
+    "`start --size`",
+    "`route --size`",
+    "`prepr`",
+    "Tiny unit",
+    "Lens: combined",
+    "references/wayfinder.md",
+    "largest ask",
+    "by file"
   ]
 }
