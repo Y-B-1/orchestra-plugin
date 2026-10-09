@@ -74,7 +74,7 @@ There is no "start large" path. A request that looks large still starts with a m
 
 ### Size check against the real diff (D2)
 
-The engine records the run's base commit (2.4 already does). Before the pre-PR review, the engine measures `git diff --shortstat <base>..<candidate>` and compares it with the declared tier. If the real diff is over the tier's guide and no escalation is logged, the pre-PR step refuses (or warns, D2). The fix is one `route` command with a reason. This keeps the declared size honest without asking the coordinator to predict perfectly.
+The engine records the run's base commit (2.4 already does). Before the pre-PR review, the engine measures the changed lines from the base to the candidate and compares them with the budget (tier guide times asks). If the real diff is over budget and no escalation is logged, the pre-PR step prints a warning with both numbers and continues (D2, warn only). Logging one `route` command with a reason clears the warning, and the log shows where estimates go wrong.
 
 ## Question 2: execution
 
