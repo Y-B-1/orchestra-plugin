@@ -12,7 +12,7 @@ import subprocess
 import sys
 import uuid
 
-from orchestra_core.engine import ACTIVE_MISMATCH, Engine, EngineError
+from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, repository, state_location
 from orchestra_core import relaunch
@@ -34,8 +34,11 @@ def parser():
     start = sub.add_parser('start')
     start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
     start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
-    start.add_argument('--items', type=int, help='Number of work items in the request (required when this opens a new run): '
-                       '1 to 5 run inline in the main session, 6 or more go through a designer-planner plan')
+    start.add_argument('--size', choices=['tiny', 'medium', 'large'], help='Size of the largest ask in the request (required when '
+                       'this opens a new run): tiny up to 50 changed lines, medium up to 400; large only with --owner-request')
+    start.add_argument('--asks', help='Number of separately stated asks (default 1); the size-check budget is the tier guide times it')
+    start.add_argument('--owner-request', action='store_true', help='The owner asked for a map: allows a large start and plan cards')
+    start.add_argument('--items', type=int, help='The 2.4 flag; refused, start with --size')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
     for name in ['status','ready','board','interrupt','finish','scan']:
@@ -43,9 +46,12 @@ def parser():
     sub.add_parser('brief', help='Print the newest run brief; no lease, read-only')
     art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
     art.add_argument('--tasks', help='Comma-separated task IDs')
-    route = sub.add_parser('route', help='Change the item count and the route it implies (1 to 5 inline, 6 or more workflow) '
-                                         'and log the reason')
-    route.add_argument('--items', required=True, type=int)
+    sub.add_parser('prepr', help='Print the pre-PR size check and reviewer choice; no lease, read-only')
+    route = sub.add_parser('route', help='Change the size tier (--size, optionally --asks), or on a 2.4 run the item count '
+                                         '(--items; 1 to 5 inline, 6 or more workflow), and log the reason')
+    route.add_argument('--size', choices=['tiny', 'medium', 'large'])
+    route.add_argument('--asks', help='With --size: the new count of separately stated asks; default keeps the current count')
+    route.add_argument('--items', type=int, help='2.4 runs only')
     route.add_argument('--reason', required=True)
     add = sub.add_parser('add', help='Add a card from a task JSON file. Inline route: no designer-planner plan card. '
                                      'Order cards with dependencies')
@@ -53,8 +59,9 @@ def parser():
     dispatch = sub.add_parser('dispatch')
     dispatch.add_argument('task_id')
     dispatch.add_argument('worker')
-    dispatch.add_argument('--helper', metavar='REASON', help='Inline route: why a helper does this builder card instead of the '
-                          'main session. Workflow route: a builder card needs an accepted designer-planner plan card first')
+    dispatch.add_argument('--helper', metavar='REASON', help='Why a helper does this builder card instead of the main session: '
+                          'required for a tiny unit on a size run, and for a 2.4 inline route. 2.4 workflow route: a builder '
+                          'card needs an accepted designer-planner plan card first')
     inline = sub.add_parser('inline', help='Reserve a card for execution by the main coordinator')
     inline.add_argument('task_id')
     report = sub.add_parser('report')
@@ -104,6 +111,15 @@ def parser():
     return p
 
 
+def parse_asks(text):
+    if text is None:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        raise EngineError(ASKS_ERROR) from None
+
+
 def archive_inactive(state,engine):
     with (state/'state.lock').open('a') as stream:
         fcntl.flock(stream,fcntl.LOCK_EX)
@@ -132,18 +148,24 @@ def execute(args):
     policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
     engine = Engine(state,repo,policy)
     if args.command=='start':
-        if args.new_run:
-            if args.items is None:  # refuse before archiving, so the ended run stays in place
-                raise EngineError('A new run needs --items N, the number of work items')
-            engine._check_items(args.items)
+        if args.items is not None:
+            raise EngineError('--items is the 2.4 flag; start with --size')
+        asks = parse_asks(args.asks)
+        if args.new_run:  # refuse before archiving, so the ended run stays in place
+            engine._check_start(args.size,asks,args.owner_request)
             archive_inactive(state,engine)
         lease = engine.open_session(args.actor,args.harness_session,relaunch_pass=os.environ.get('ORCHESTRA_RELAUNCH_PASS') or None,
-                                    items=args.items,require_items=True)
+                                    size=args.size,asks=asks,owner_request=args.owner_request,require_size=True)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
     if args.command=='status':
         return engine.status(lenses=True),0
+    if args.command=='prepr':  # lease-free and read-only, like status
+        result=engine.prepr()
+        if result['warning']:
+            print(result['warning'],file=sys.stderr)
+        return result,0
     if args.command=='brief':  # lease-free and read-only, like status
         text=engine.brief()
         return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
@@ -260,7 +282,7 @@ def execute(args):
     if args.command=='hold':
         return engine.hold(args.actor,args.lease,args.task_id,args.finding),0
     if args.command=='route':
-        return engine.set_route(args.actor,args.lease,args.items,args.reason),0
+        return engine.set_route(args.actor,args.lease,args.items,args.reason,size=args.size,asks=parse_asks(args.asks)),0
     raise EngineError('Unsupported command')
 
 

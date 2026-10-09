@@ -16,12 +16,24 @@ from pathlib import Path
 from orchestra_core.engine import AUTONOMY_FIXED, Engine, EngineError, autonomy_preconditions
 
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
+STATE_2_4 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.4.json'
 
 
 def load_2_3_state(root, repo, name='state-2.3'):
     """A state.json written by the 2.3 engine (`start`, no policy), bound to `repo`; returns (state dir, lease)."""
     data = json.loads(STATE_2_3.read_text())
     data['repo'] = str(pathlib.Path(repo).resolve())
+    state = pathlib.Path(root) / name
+    state.mkdir()
+    (state / 'state.json').write_text(json.dumps(data))
+    return state, data['session']['lease']
+
+
+def load_2_4_state(root, repo, name='state-2.4'):
+    """A state.json written by the 2.4 engine (`start --items 3`), bound to `repo` and its HEAD; returns (state dir, lease)."""
+    data = json.loads(STATE_2_4.read_text())
+    data['repo'] = str(pathlib.Path(repo).resolve())
+    data['session']['base'] = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
     state = pathlib.Path(root) / name
     state.mkdir()
     (state / 'state.json').write_text(json.dumps(data))
@@ -2711,16 +2723,18 @@ class RouteTests(EngineFixture):
                 self.run_with(bad)
 
     def test_a_new_run_can_be_required_to_state_its_size(self):
-        engine = Engine(self.root / 'needs-items', self.repo)
-        with self.assertRaisesRegex(EngineError, 'A new run needs --items N'):
-            engine.open_session('main', require_items=True)
-        lease = engine.open_session('main', items=2, require_items=True)
+        engine = Engine(self.root / 'needs-size', self.repo)
+        with self.assertRaisesRegex(EngineError, 'A new run needs --size tiny, medium or large'):
+            engine.open_session('main', require_size=True)
+        lease = engine.open_session('main', size='medium', require_size=True)
         engine.interrupt('main', lease)
-        lease = engine.open_session('main', require_items=True)  # a resumed run keeps its size
-        self.assertEqual(2, engine.status()['session']['items'])
+        lease = engine.open_session('main', require_size=True)  # a resumed run keeps its size
+        self.assertEqual('medium', engine.status()['session']['size'])
         engine.interrupt('main', lease)
+        with self.assertRaisesRegex(EngineError, 'apply to a new run'):
+            engine.open_session('main', size='tiny')
         with self.assertRaisesRegex(EngineError, 'applies only to a new run'):
-            engine.open_session('main', items=9)
+            engine.open_session('main', items=9)  # the 2.4 rule for items stays
 
     def test_inline_route_refuses_a_helper_without_a_reason(self):
         engine, lease = self.run_with(3)
@@ -2799,6 +2813,363 @@ class RouteTests(EngineFixture):
         engine.start_inline('main', lease, 'c')
 
 
+class SizeRouteTests(EngineFixture):
+    """Contract items 2 to 6: a run routes by the size of its diff."""
+
+    def run_with(self, size='medium', asks=None, owner_request=False, name='state-size'):
+        engine = Engine(self.root / name, self.repo)
+        return engine, engine.open_session('main', size=size, asks=asks, owner_request=owner_request, require_size=True)
+
+    def add(self, engine, lease, name, **kw):
+        task = dict(id=name, role='builder', mode='implementation', inputs=['spec'], acceptance=['check behavior'],
+                    files=[name], resources=[], dependencies=[])
+        task.update(kw)
+        engine.add_task('main', lease, task)
+
+    def test_new_run_without_size_is_refused_naming_size(self):
+        engine = Engine(self.root / 'nosize', self.repo)
+        with self.assertRaisesRegex(EngineError, 'A new run needs --size tiny, medium or large'):
+            engine.open_session('main', require_size=True)
+        self.assertIsNone(engine.status()['session'])
+
+    def test_size_large_on_new_run_needs_owner_request_and_names_escalation(self):
+        engine = Engine(self.root / 'large', self.repo)
+        with self.assertRaisesRegex(EngineError, r'escalate with route --size large --reason TEXT, or pass --owner-request '
+                                                 r'when the owner asked for a map'):
+            engine.open_session('main', size='large', require_size=True)
+        self.assertIsNone(engine.status()['session'])
+
+    def test_owner_request_allows_large_start(self):
+        engine, _ = self.run_with('large', owner_request=True)
+        session = engine.status()['session']
+        self.assertEqual(('large', 1, True), (session['size'], session['asks'], session['owner_request']))
+
+    def test_unknown_size_and_bad_asks_are_refused(self):
+        for bad in ('huge', '', 'Tiny', 3, True):
+            with self.subTest(size=bad), self.assertRaises(EngineError):
+                self.run_with(bad, name='bad-size')
+        for bad in (0, -1, True, '2', 2.5):
+            with self.subTest(asks=bad), self.assertRaisesRegex(EngineError, '--asks must be an integer, 1 or more'):
+                self.run_with('tiny', asks=bad, name='bad-asks')
+
+    def test_start_flags_on_a_resumed_run_are_refused(self):
+        engine, lease = self.run_with('medium', asks=2)
+        engine.interrupt('main', lease)
+        for kw in (dict(size='tiny'), dict(asks=3), dict(owner_request=True)):
+            with self.subTest(kw), self.assertRaisesRegex(
+                    EngineError, r'--size, --asks and --owner-request apply to a new run; use start --new-run, or route --size '
+                                 r'to change the tier'):
+                engine.open_session('main', **kw)
+        engine.open_session('main', require_size=True)  # a resumed run needs none of the flags
+        self.assertEqual(('medium', 2), tuple(engine.status()['session'][k] for k in ('size', 'asks')))
+
+    def test_session_records_size_asks_and_owner_request(self):
+        engine, _ = self.run_with('tiny', asks=3)
+        session = engine.status()['session']
+        self.assertEqual(('tiny', 3, False, []), tuple(session[k] for k in ('size', 'asks', 'owner_request', 'route_log')))
+        self.assertEqual(self.git('rev-parse', 'HEAD'), session['base'])
+        self.assertNotIn('route', session)
+        self.assertNotIn('items', session)
+
+    def test_relaunch_keeps_size_asks_and_owner_request(self):
+        engine, lease = self.run_with('large', asks=2, owner_request=True)
+        engine.set_route('main', lease, None, 'it shrank', size='medium')
+        engine.interrupt('main', lease)
+        engine.open_session('main')
+        session = engine.status()['session']
+        self.assertEqual(('medium', 2, True), (session['size'], session['asks'], session['owner_request']))
+        self.assertEqual(['it shrank'], [e['reason'] for e in session['route_log']])
+
+    def mutate(self, name, change):
+        engine, lease = self.run_with('medium', name=name)
+        engine.interrupt('main', lease)
+        path = engine.state_path
+        data = json.loads(path.read_text())
+        change(data['session'])
+        path.write_text(json.dumps(data))
+        return engine
+
+    def test_state_with_items_and_size_together_is_invalid(self):
+        engine = self.mutate('both', lambda s: s.update(items=2, route='inline'))
+        with self.assertRaisesRegex(EngineError, 'Invalid session size'):
+            engine.status()
+
+    def test_bad_size_or_asks_in_state_is_invalid(self):
+        changes = {'size': lambda s: s.update(size='huge'), 'asks0': lambda s: s.update(asks=0),
+                   'asksbool': lambda s: s.update(asks=True), 'owner': lambda s: s.update(owner_request='yes'),
+                   'log': lambda s: s.update(route_log=[{'size': 'huge', 'asks': 1, 'reason': 'r', 'at': 'x'}]),
+                   'asks-no-size': lambda s: (s.pop('size'), s.update(asks=1))}
+        for name, change in changes.items():
+            with self.subTest(name), self.assertRaisesRegex(EngineError, 'Invalid session size'):
+                self.mutate('bad-' + name, change).status()
+
+    def test_route_size_logs_size_asks_reason(self):
+        engine, lease = self.run_with('tiny', asks=2)
+        self.assertEqual({'size': 'medium', 'asks': 3}, engine.set_route('main', lease, None, 'grew', size='medium', asks=3))
+        session = engine.status()['session']
+        self.assertEqual(('medium', 3), (session['size'], session['asks']))
+        entry = session['route_log'][0]
+        self.assertEqual(('medium', 3, 'grew'), (entry['size'], entry['asks'], entry['reason']))
+        self.assertTrue(entry['at'])
+        with self.assertRaisesRegex(EngineError, 'Route needs a reason'):
+            engine.set_route('main', lease, None, ' ', size='tiny')
+        with self.assertRaises(EngineError):
+            engine.set_route('main', lease, None, 'why', size='huge')
+        with self.assertRaisesRegex(EngineError, '--asks must be an integer'):
+            engine.set_route('main', lease, None, 'why', size='tiny', asks=0)
+        with self.assertRaisesRegex(EngineError, 'Invalid or interrupted coordinator lease'):
+            engine.set_route('main', 'wrong', None, 'why', size='tiny')
+        with self.assertRaisesRegex(EngineError, 'exactly one'):
+            engine.set_route('main', lease, 3, 'why', size='tiny')
+        with self.assertRaisesRegex(EngineError, 'exactly one'):
+            engine.set_route('main', lease, None, 'why')
+        self.assertEqual(1, len(engine.status()['session']['route_log']))
+
+    def test_route_size_without_asks_keeps_the_current_count(self):
+        engine, lease = self.run_with('tiny', asks=4)
+        engine.set_route('main', lease, None, 'grew', size='medium')
+        self.assertEqual(4, engine.status()['session']['asks'])
+        self.assertEqual(4, engine.status()['session']['route_log'][0]['asks'])
+
+    def test_route_size_can_escalate_to_large_without_owner_request(self):
+        engine, lease = self.run_with('medium')
+        engine.set_route('main', lease, None, 'grilling passed the ceiling', size='large')
+        session = engine.status()['session']
+        self.assertEqual(('large', False), (session['size'], session['owner_request']))
+        engine.set_route('main', lease, None, 'it shrank', size='tiny')  # either direction
+        self.assertEqual('tiny', engine.status()['session']['size'])
+
+    def test_route_size_refused_on_items_run(self):
+        state, lease = load_2_4_state(self.root, self.repo)
+        engine = Engine(state, self.repo)
+        with self.assertRaisesRegex(EngineError, 'This run routes by items; use route --items'):
+            engine.set_route('main', lease, None, 'why', size='medium')
+
+    def test_route_items_refused_on_size_run(self):
+        engine, lease = self.run_with('medium')
+        with self.assertRaisesRegex(EngineError, 'This run routes by size; use route --size'):
+            engine.set_route('main', lease, 3, 'why')
+        self.assertEqual([], engine.status()['session']['route_log'])
+
+    def test_route_size_refused_on_2_3_run(self):
+        state, lease = load_2_3_state(self.root, self.repo)
+        engine = Engine(state, self.repo)
+        with self.assertRaisesRegex(EngineError, 'This run has no route; start a new run with --size'):
+            engine.set_route('main', lease, None, 'why', size='medium')
+        engine.set_route('main', lease, 3, 'why')  # route --items behaves as in 2.4
+        self.assertEqual('inline', engine.status()['session']['route'])
+
+    def test_tiny_card_dispatch_needs_helper_reason(self):
+        engine, lease = self.run_with('tiny')
+        self.add(engine, lease, 'b')
+        for helper in (None, '  '):
+            with self.subTest(helper), self.assertRaisesRegex(
+                    EngineError, 'Tiny unit: the main session does this work; pass --helper REASON to dispatch a helper'):
+                engine.dispatch('main', lease, 'b', 'w', helper=helper)
+        engine.dispatch('main', lease, 'b', 'w', helper='needs a second pair of hands')
+        self.assertEqual('needs a second pair of hands', engine.status()['tasks']['b']['helper_reason'])
+
+    def test_medium_card_dispatch_needs_no_helper(self):
+        engine, lease = self.run_with('medium')
+        self.add(engine, lease, 'b')
+        engine.dispatch('main', lease, 'b', 'w')
+        self.add(engine, lease, 'c')
+        engine.dispatch('main', lease, 'c', 'x', helper='ignored')  # accepted and ignored on a medium card
+        self.assertEqual('running', engine.status()['tasks']['c']['state'])
+
+    def test_card_size_overrides_run_size(self):
+        engine, lease = self.run_with('tiny')
+        self.add(engine, lease, 'b', size='medium')
+        engine.dispatch('main', lease, 'b', 'w')
+        engine, lease = self.run_with('medium', name='other')
+        self.add(engine, lease, 'b', size='tiny')
+        with self.assertRaisesRegex(EngineError, 'Tiny unit'):
+            engine.dispatch('main', lease, 'b', 'w')
+
+    def test_card_without_size_reads_the_run_tier_at_dispatch(self):
+        engine, lease = self.run_with('tiny')
+        self.add(engine, lease, 'b')
+        self.assertNotIn('size', engine.status()['tasks']['b'])
+        engine.set_route('main', lease, None, 'it grew', size='medium')
+        engine.dispatch('main', lease, 'b', 'w')  # no helper: the card now reads medium
+
+    def test_large_run_card_defaults_to_medium(self):
+        engine, lease = self.run_with('large', owner_request=True)
+        self.add(engine, lease, 'b')
+        engine.dispatch('main', lease, 'b', 'w')
+
+    def test_invalid_card_size_is_refused(self):
+        engine, lease = self.run_with('medium')
+        for bad in ('large', 'huge', '', None, 3):
+            with self.subTest(bad), self.assertRaisesRegex(EngineError, 'Invalid task size'):
+                self.add(engine, lease, 'b', size=bad)
+        self.assertEqual({}, engine.status()['tasks'])
+
+    def test_card_size_on_items_and_2_3_runs_is_validated_and_ignored(self):
+        for load, name in ((load_2_4_state, 'items'), (load_2_3_state, 'legacy')):
+            state, lease = load(self.root, self.repo, name)
+            engine = Engine(state, self.repo)
+            with self.assertRaisesRegex(EngineError, 'Invalid task size'):
+                self.add(engine, lease, 'x', size='huge')
+            self.add(engine, lease, 'b', size='medium')
+            self.add(engine, lease, 'c', size='tiny')
+            if name == 'items':
+                with self.assertRaisesRegex(EngineError, 'Inline route'):
+                    engine.dispatch('main', lease, 'b', 'w')  # the 2.4 route check, not the card size, decides
+            else:
+                engine.dispatch('main', lease, 'b', 'w')
+            if name == 'legacy':
+                engine.dispatch('main', lease, 'c', 'x')  # a tiny card on a 2.3 run needs no helper
+
+    def test_inline_reservation_of_a_tiny_card_is_not_gated(self):
+        engine, lease = self.run_with('tiny')
+        self.add(engine, lease, 'b')
+        token = engine.start_inline('main', lease, 'b')
+        engine.report('main', token, done('Built b.'))
+        engine.accept('main', lease, 'b')
+        self.assertTrue(engine.status()['tasks']['b']['inline'])
+
+    def test_plan_card_refused_on_tiny_and_medium_run(self):
+        for size in ('tiny', 'medium'):
+            engine, lease = self.run_with(size, name='plan-' + size)
+            with self.subTest(size), self.assertRaisesRegex(
+                    EngineError, 'Plan card needs a large run or an owner request; escalate with route --size large --reason TEXT'):
+                self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[])
+            self.add(engine, lease, 'product', role='designer-planner', mode='product', files=[])  # other modes stay
+
+    def test_plan_card_allowed_on_large_run(self):
+        engine, lease = self.run_with('medium')
+        engine.set_route('main', lease, None, 'grilling passed the ceiling', size='large')
+        self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[])
+        self.add(engine, lease, 'b')  # a large run does not force a plan before builders
+        engine.dispatch('main', lease, 'b', 'w')
+
+    def test_plan_card_allowed_with_session_owner_request(self):
+        engine, lease = self.run_with('large', owner_request=True)
+        engine.set_route('main', lease, None, 'shrank', size='medium')
+        self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[])
+
+    def test_plan_card_allowed_with_task_owner_request(self):
+        engine, lease = self.run_with('medium')
+        self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[], owner_request=True)
+        self.assertTrue(engine.status()['tasks']['plan']['owner_request'])
+
+
+class PrePrTests(EngineFixture):
+    """Contract item 7: the read-only size check and reviewer choice."""
+
+    def run_with(self, size='medium', asks=None, name='state-prepr', **kw):
+        engine = Engine(self.root / name, self.repo)
+        self.run_lease = engine.open_session('main', size=size, asks=asks, require_size=True, **kw)
+        return engine
+
+    def write(self, lines, path='big.txt'):
+        (self.repo / path).write_text('x\n' * lines)
+
+    def test_budget_is_guide_times_asks(self):
+        for size, asks, budget in (('tiny', 1, 50), ('tiny', 3, 150), ('medium', 1, 400), ('medium', 2, 800)):
+            engine = self.run_with(size, asks, name='b-%s-%d' % (size, asks))
+            with self.subTest(size, asks=asks):
+                out = engine.prepr()
+                self.assertEqual((size, asks, budget, False), (out['size'], out['asks'], out['budget'], out['over_budget']))
+                self.assertEqual(self.git('rev-parse', 'HEAD'), out['base'])
+
+    def test_over_budget_warns_with_both_sizes_and_succeeds(self):
+        engine = self.run_with('tiny', 2)
+        self.write(101)
+        out = engine.prepr()
+        self.assertTrue(out['over_budget'])
+        self.assertEqual(101, out['changed_lines'])
+        self.assertEqual('Size warning: declared tiny with 2 ask(s) budgets 100 changed lines; the diff has 101. '
+                         'Run route --size TIER --reason TEXT if the work grew.', out['warning'])
+
+    def test_within_budget_has_no_warning(self):
+        engine = self.run_with('tiny', 2)
+        self.write(100)
+        out = engine.prepr()
+        self.assertEqual((100, False, None), (out['changed_lines'], out['over_budget'], out['warning']))
+
+    def test_route_to_a_fitting_tier_clears_the_warning(self):
+        engine = self.run_with('tiny')
+        lease = self.run_lease
+        self.write(120)
+        self.assertIsNotNone(engine.prepr()['warning'])
+        engine.set_route('main', lease, None, 'grew', size='tiny', asks=2)  # budget 100: still over
+        self.assertIsNotNone(engine.prepr()['warning'])
+        engine.set_route('main', lease, None, 'grew', size='medium')
+        out = engine.prepr()
+        self.assertEqual((800, None), (out['budget'], out['warning']))  # medium keeps the 2 asks
+
+    def test_large_run_has_no_budget(self):
+        engine = self.run_with('large', owner_request=True)
+        self.write(900)
+        out = engine.prepr()
+        self.assertEqual(('large', None, False, None), (out['size'], out['budget'], out['over_budget'], out['warning']))
+
+    def test_items_run_gets_no_size_check(self):
+        state, _ = load_2_4_state(self.root, self.repo)
+        self.write(900)
+        out = Engine(state, self.repo).prepr()
+        self.assertEqual((None, None, None, False, None, 900),
+                         (out['size'], out['asks'], out['budget'], out['over_budget'], out['warning'], out['changed_lines']))
+
+    def test_prepr_without_a_base_reports_nulls_and_the_full_reviewer(self):
+        state, _ = load_2_3_state(self.root, self.repo)
+        engine = Engine(state, self.repo)
+        with mock.patch.object(Engine, '_changed', side_effect=AssertionError('read the diff without a base')):
+            out = engine.prepr()
+        self.assertEqual((None, None, 'full', 'orchestra:code-reviewer', None),
+                         (out['base'], out['changed_lines'], out['reviewer'], out['agent'], out['warning']))
+        self.assertEqual(['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup'],
+                         out['lenses'])
+        self.assertEqual((None, False), (out['budget'], out['over_budget']))
+
+    def test_prepr_on_a_state_with_no_session_reports_nulls(self):
+        engine = Engine(self.root / 'empty', self.repo)
+        out = engine.prepr()
+        self.assertEqual((None, None, None, 'full'), (out['base'], out['changed_lines'], out['size'], out['reviewer']))
+        self.assertIsNone(out['warning'])
+
+    def test_reviewer_bands_at_50_51_400_401(self):
+        engine = self.run_with('large', owner_request=True)
+        expected = ((50, 'small', 'orchestra:code-reviewer-small'), (51, 'medium', 'orchestra:code-reviewer-medium'),
+                    (400, 'medium', 'orchestra:code-reviewer-medium'), (401, 'full', 'orchestra:code-reviewer'))
+        for lines, reviewer, agent in expected:
+            self.write(lines)
+            out = engine.prepr()
+            with self.subTest(lines):
+                self.assertEqual((lines, reviewer, agent), (out['changed_lines'], out['reviewer'], out['agent']))
+
+    def test_reviewer_follows_summed_lines_not_largest_ask(self):
+        engine = self.run_with('tiny', 3)  # three tiny asks of 30 lines each: the sum is 90
+        for i in range(3):
+            self.write(30, 'ask%d.txt' % i)
+        out = engine.prepr()
+        self.assertEqual((90, 'medium'), (out['changed_lines'], out['reviewer']))
+
+    def test_untracked_files_count_toward_changed_lines(self):
+        engine = self.run_with('medium')
+        (self.repo / 'a').write_text('initial\nmore\n')  # tracked: the unterminated line is rewritten, one more is added: 3
+        self.write(10)  # untracked: 10
+        self.assertEqual(13, engine.prepr()['changed_lines'])
+
+    def test_prepr_writes_no_state(self):
+        engine = self.run_with('tiny')
+        self.write(80)
+        before = engine.state_path.read_bytes()
+        engine.prepr()
+        self.assertEqual(before, engine.state_path.read_bytes())
+
+    def test_the_cli_prints_the_warning_to_stderr_and_exits_zero(self):
+        engine = self.run_with('tiny')
+        self.write(80)
+        result = subprocess.run([sys.executable, str(SCRIPTS / 'orchestra.py'), '--repo', str(self.repo),
+                                 '--state', str(self.root / 'state-prepr'), 'prepr'], capture_output=True, text=True)
+        self.assertEqual(0, result.returncode, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertEqual(out['warning'], result.stderr.strip())
+
+
 class LegacyStateTests(EngineFixture):
     """Contract item 3: a run state written by the 2.3 engine loads under 2.4; a real policy change still refuses."""
 
@@ -2835,6 +3206,47 @@ class LegacyStateTests(EngineFixture):
         (state / 'state.json').write_text(json.dumps(data))
         with self.assertRaisesRegex(EngineError, 'policy changed while a run is active'):
             Engine(state, self.repo).status()
+
+    def test_2_4_state_loads_and_keeps_2_4_routing(self):
+        state, lease = load_2_4_state(self.root, self.repo)
+        engine = Engine(state, self.repo)
+        session = engine.status()['session']
+        self.assertEqual((3, 'inline'), (session['items'], session['route']))
+        task = dict(id='b', role='builder', mode='implementation', inputs=['spec'], acceptance=['check behavior'],
+                    files=['b'], resources=[], dependencies=[])
+        engine.add_task('main', lease, task)
+        with self.assertRaisesRegex(EngineError, 'Inline route: the main session does this work; pass --helper REASON'):
+            engine.dispatch('main', lease, 'b', 'w')
+        self.assertEqual({'items': 9, 'route': 'workflow'}, engine.set_route('main', lease, 9, 'grew'))
+        engine.interrupt('main', lease)
+        engine.open_session('main', require_size=True)  # a resumed 2.4 run needs no --size
+        self.assertEqual(9, engine.status()['session']['items'])
+
+    def test_2_4_fixture_holds_only_placeholders(self):
+        data = json.loads(STATE_2_4.read_text())
+        self.assertEqual(('@REPO@', '@BASE@'), (data['repo'], data['session']['base']))
+        text = STATE_2_4.read_text()
+        for needle in ('/Users', '/private', '/tmp'):
+            self.assertNotIn(needle, text)
+
+    def test_2_4_policy_and_contract_hash_are_pinned(self):
+        engine = Engine(self.root / 'pinned', self.repo)
+        self.assertEqual('4b1d85568cf17dffc8adb272d1df95decfaf2a03c18c9176ff17190e4d5fb74d', engine.policy_hash)
+        self.assertEqual('7b1f34b2bf297e6e95cdd59306a697f5a2b7410f5a84bc71feb7ffe0213439ed', engine.contract_hash)
+
+    def test_one_combined_receipt_covers_all_required_categories(self):
+        (self.repo / 'src' / 'auth').mkdir(parents=True)
+        (self.repo / 'src/auth/login.py').write_text('x\n')
+        required = self.engine.status(lenses=True)['required_lenses']
+        self.assertIn('security', required)
+        self.task('B')
+        self.engine.report('w', self.engine.dispatch('main', self.lease, 'B', 'w'), done('Built B.'))
+        self.engine.accept('main', self.lease, 'B')
+        every = sorted(self.engine.status()['tasks'])
+        path = self.root / 'combined.json'
+        self.review(path, reviewer='final-reviewer', tasks=every, categories=required, final=True)
+        self.engine.record_review('main', self.lease, 'final-reviewer', path, required, every, final=True)
+        self.engine.check_completion('main', self.lease)
 
 
 class DerivedLensTests(EngineFixture):
