@@ -224,7 +224,7 @@ No file appears in two tasks without a dependency. `docs/PLAN-v2.5.md` belongs t
 - **Measuring limits** (item 7): untracked binaries count by `splitlines()`, tracked binaries count 0, lockfiles and generated files count (a large lockfile moves the review to Opus). No new policy key, because it would change `policy_hash`.
 - **Benchmark inputs:** the 2.4 prompt, permission flags and token definition are not in the repository; the coordinator supplies them to B1, and B1 records them in the ledger. Acceptance 7 compares the better of two runs per arm; run-to-run noise is still large.
 - **Not enforced by the engine:** a large run does not require an accepted plan card before builders.
-- **B1 and the installed plugin:** whether `--plugin-dir` shadows the installed same-name 2.4.0 plugin was not tested while planning; B1's skill-path check settles it, and a failed check is a gap to report, not a pass.
+- **B1 and the installed plugin:** whether `--plugin-dir` shadows the installed same-name 2.4.0 plugin was not tested while planning; B1's plugin-path check settles it, and a failed check is a gap to report, not a pass.
 
 ## 9. Acceptance map
 
