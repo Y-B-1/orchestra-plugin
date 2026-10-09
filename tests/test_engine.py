@@ -117,7 +117,8 @@ class EngineTests(EngineFixture):
         self.engine.accept('main', self.lease, 'inline')
 
     def test_inline_cannot_replace_independent_review_or_survive_interruption(self):
-        self.task('review', role='code-reviewer', mode='final')
+        self.task('built')
+        self.task('review', role='code-reviewer', mode='final', review_of=['built'])
         with self.assertRaises(EngineError):
             self.engine.start_inline('main', self.lease, 'review')
         self.task('inline')
@@ -687,6 +688,12 @@ class FinalBlockerTests(EngineFixture):
                        dict(role='code-reviewer', mode='checkpoint', review_of=[{}])]:
             with self.assertRaises(EngineError):
                 self.task('invalid', **values)
+
+    def test_add_refuses_code_reviewer_without_review_of(self):
+        self.task('B1')
+        for values in [dict(), dict(review_of=[]), dict(dependencies=['B1'])]:
+            with self.subTest(values), self.assertRaisesRegex(EngineError, 'review_of'):
+                self.task('R1', role='code-reviewer', mode='final', **values)
 
     def test_builder_accepts_without_independent_review(self):
         for name, extra in (('a', {}), ('b', dict(review_required=True)), ('c', dict(review_required=False))):
@@ -3132,7 +3139,7 @@ class PrePrTests(EngineFixture):
 
     def test_reviewer_bands_at_50_51_400_401(self):
         engine = self.run_with('large', owner_request=True)
-        expected = ((50, 'small', 'orchestra:code-reviewer-small'), (51, 'medium', 'orchestra:code-reviewer-medium'),
+        expected = ((50, 'medium', 'orchestra:code-reviewer-medium'), (51, 'medium', 'orchestra:code-reviewer-medium'),
                     (400, 'medium', 'orchestra:code-reviewer-medium'), (401, 'full', 'orchestra:code-reviewer'))
         for lines, reviewer, agent in expected:
             self.write(lines)

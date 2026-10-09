@@ -9,7 +9,7 @@ Route by diff size instead of item count. The design is `docs/DESIGN-v2.5.md` (o
 - **Size tiers (D1):** `start --size tiny|medium [--asks N]` is required for a new run. Tiny is up to 50 changed lines (inline edit, no alignment; a tiny builder card needs `dispatch --helper REASON`), medium up to 400 (grill inline, then builders, 2+ units through Workflow). `--asks` counts separately stated asks; the tier is the largest ask and the budget is the guide times the count.
 - **Large only by escalation:** `route --size large --reason TEXT`, or `start --size large --owner-request` when the owner asks for a map. A designer-planner plan card needs a large run or an owner request.
 - **Size check (D2):** the new read-only `prepr` command compares the diff with the budget and prints a warning; it never blocks.
-- **Reviewer by summed diff (D3):** `prepr` names the pre-PR reviewer: Haiku 5.5 (`code-reviewer-small`) up to 50 changed lines, Sonnet 5.5 (`code-reviewer-medium`) up to 400, both one card with `Lens: combined`; Opus 5.5 with one card per lens above 400.
+- **Reviewer by summed diff (D3):** `prepr` names the pre-PR reviewer: Sonnet 5.5 (`code-reviewer-medium`) up to 400 changed lines, one card with `Lens: combined`; Opus 5.5 with one card per lens above 400.
 - **Wayfinder (D4, D5):** `references/wayfinder.md` maps large work as decision tickets in `docs/maps/<name>.md`; research tickets run together as investigator cards. Derived from mattpocock/skills at 49dd158d1076 (third pin, credited).
 - **Upgrade:** a 2.4 run loads under 2.5 and keeps item routing; `start --items` is refused (README, Upgrade from 2.4 to 2.5).
 

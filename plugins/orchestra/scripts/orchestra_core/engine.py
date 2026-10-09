@@ -44,7 +44,7 @@ ALWAYS_LENSES = ('requirements', 'correctness', 'tests', 'architecture')
 INLINE_MAX_ITEMS = 5  # contract item 3: 1 to 5 items run inline, 6 or more go through a plan
 SIZES = ('tiny', 'medium', 'large')
 TIER_GUIDE = {'tiny': 50, 'medium': 400}  # contract item 1: changed lines per ask
-REVIEWER_BANDS = ((50, 'small', 'orchestra:code-reviewer-small'), (400, 'medium', 'orchestra:code-reviewer-medium'))
+REVIEWER_BANDS = ((400, 'medium', 'orchestra:code-reviewer-medium'),)
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
@@ -952,6 +952,8 @@ class Engine:
                     or any(not isinstance(i, str) or i not in state['tasks'] for i in review_of)
                     or len(review_of) != len(set(review_of))):
                 raise EngineError('Review targets must name existing tasks')
+            if task['role'] == 'code-reviewer' and not review_of:
+                raise EngineError('A code-reviewer card needs review_of naming the tasks it reviews')
             if review_of and task['role'] not in REVIEW_ROLES:
                 raise EngineError('Only independent review roles can use review_of')
             if set(review_of) & set(task['dependencies']):
