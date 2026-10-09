@@ -11,6 +11,7 @@ Route by diff size instead of item count. The design is `docs/DESIGN-v2.5.md` (o
 - **Size check (D2):** the new read-only `prepr` command compares the diff with the budget and prints a warning; it never blocks.
 - **Reviewer by summed diff (D3):** `prepr` names the pre-PR reviewer: Sonnet 5.5 (`code-reviewer-medium`) up to 400 changed lines, one card with `Lens: combined`; Opus 5.5 with one card per lens above 400.
 - **Wayfinder (D4, D5):** `references/wayfinder.md` maps large work as decision tickets in `docs/maps/<name>.md`; research tickets run together as investigator cards. Derived from mattpocock/skills at 49dd158d1076 (third pin, credited).
+- **Engine gaps:** `gate --timeout SECONDS` overrides the policy timeout for one run. A reported card takes a replacement report from the same worker until accept or a review covers it, so a wrong report no longer needs park and unpark. A builder report needs a nonempty `ARTIFACT:` line, so a report cannot be accepted with no commit named.
 - **Upgrade:** a 2.4 run loads under 2.5 and keeps item routing; `start --items` is refused (README, Upgrade from 2.4 to 2.5).
 
 ## 2.4.0 — 2026-10-08

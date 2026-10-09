@@ -1243,10 +1243,17 @@ class Engine:
             raise EngineError('Empty worker report')
         with self._state() as state:
             task = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
-            if not task or task['state'] != 'running' or task['worker'] != worker:
+            replacing = bool(task) and task['state'] == 'reported' and not any(
+                t.get('repair_of') == task['id'] for t in state['tasks'].values())
+            if not task or task['worker'] != worker or not (task['state'] == 'running' or replacing):
                 raise EngineError('Invalid assignment')
+            if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
+                raise EngineError('A review covers this report; route a change through a repair card')
             self._lease(state, state['session']['actor'], task['lease'])
             review = self._parse_self_review(report) if task['role'] == 'builder' else None
+            if task['role'] == 'builder' and not any(
+                    line.startswith('ARTIFACT:') and line[len('ARTIFACT:'):].strip() for line in report.splitlines()):
+                raise EngineError('Builder report needs a nonempty ARTIFACT line')
             task.update(state='reported', report=report,
                         report_artifact=self.artifact(self._scope_of(state, [task['id']])))
             if review is not None:
@@ -1580,7 +1587,10 @@ class Engine:
     def run_secret_scan(self, actor, lease):
         return self.run_gate(actor, lease, 'secret-scan', self.policy['secret_scan'].get('argv', []))
 
-    def run_gate(self, actor, lease, name, argv, again=False):
+    def run_gate(self, actor, lease, name, argv, again=False, timeout=None):
+        if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                                    or not math.isfinite(timeout) or timeout <= 0):
+            raise EngineError('Gate timeout must be positive and finite')
         unavailable = name == 'secret-scan' and argv == [] and not self.policy['secret_scan'].get('argv')
         if unavailable and self.policy['secret_scan'].get('required'):
             raise EngineError('Required secret scanner is unavailable')
@@ -1613,7 +1623,7 @@ class Engine:
                     process = subprocess.Popen(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT,
                                                start_new_session=True)
                     try:
-                        code = process.wait(timeout=self.policy['gate_timeout_seconds'])
+                        code = process.wait(timeout=timeout or self.policy['gate_timeout_seconds'])
                     except subprocess.TimeoutExpired:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
