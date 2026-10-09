@@ -75,6 +75,7 @@ def parser():
     gate = sub.add_parser('gate')
     gate.add_argument('name')
     gate.add_argument('--again', action='store_true', help='Rerun a gate that already passed on this artifact')
+    gate.add_argument('--timeout', type=float, help='Seconds for this run; overrides gate_timeout_seconds')
     gate.add_argument('argv', nargs=argparse.REMAINDER)
     finding = sub.add_parser('finding', help='Record or list dispositions of review findings')
     findings = finding.add_subparsers(dest='finding_command', required=True)
@@ -219,11 +220,17 @@ def execute(args):
                                      review['categories'],review['tasks'],review['final'],review['findings'])
         return result,0
     if args.command=='gate':
-        argv, again = args.argv, args.again
-        if argv[:1]==['--again']:  # REMAINDER swallows a flag written after NAME
-            argv, again = argv[1:], True
+        argv, again, timeout = args.argv, args.again, args.timeout
+        while argv[:1] in (['--again'], ['--timeout']):  # REMAINDER swallows flags written after NAME
+            if argv[0]=='--again':
+                argv, again = argv[1:], True
+            else:
+                try:
+                    argv, timeout = argv[2:], float(argv[1])
+                except (IndexError, ValueError):
+                    raise EngineError('Gate timeout must be positive and finite') from None
         argv = argv[1:] if argv[:1]==['--'] else argv
-        result = engine.run_gate(args.actor,args.lease,args.name,argv,again=again)
+        result = engine.run_gate(args.actor,args.lease,args.name,argv,again=again,timeout=timeout)
         return result,0 if result['passed'] else 1
     if args.command=='finding':
         return engine.add_finding(args.actor,args.lease,args.review,args.kind,args.index,args.disposition,args.reason,args.card),0

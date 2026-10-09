@@ -44,7 +44,7 @@ def done(text='done', checks=None, criteria=None):
     """A builder report body with its single SELF_REVIEW line."""
     review = {'checks': checks if checks is not None else [{'command': 'python3 -m unittest', 'exit_code': 0}],
               'criteria': criteria if criteria is not None else [{'criterion': 'check behavior', 'met': True, 'evidence': 'checked'}]}
-    return text + '\nSELF_REVIEW: ' + json.dumps(review)
+    return text + '\nARTIFACT: fixture\nSELF_REVIEW: ' + json.dumps(review)
 
 
 class EngineFixture(unittest.TestCase):
@@ -305,6 +305,16 @@ class IntegrationRepairTests(EngineFixture):
         receipt = engine.run_gate('main', lease, 'hang', [sys.executable, '-c', 'import time; time.sleep(10)'])
         self.assertEqual(124, receipt['exit_code'])
         self.assertFalse(receipt['passed'])
+
+    def test_gate_timeout_overrides_the_policy_for_one_run(self):
+        receipt = self.engine.run_gate('main', self.lease, 'hang', [sys.executable, '-c', 'import time; time.sleep(10)'],
+                                       timeout=0.05)
+        self.assertEqual(124, receipt['exit_code'])
+        receipt = self.engine.run_gate('main', self.lease, 'quick', [sys.executable, '-c', 'pass'], timeout=30)
+        self.assertTrue(receipt['passed'])
+        for timeout in (0, -1, float('nan'), float('inf'), True, '5'):
+            with self.subTest(timeout=timeout), self.assertRaisesRegex(EngineError, 'Gate timeout must be positive and finite'):
+                self.engine.run_gate('main', self.lease, 'bad', [sys.executable, '-c', 'pass'], timeout=timeout)
 
     def test_bad_state_is_engine_error(self):
         for value in [[], {}, {'repo': str(self.repo)}, {'version': 1, 'repo': str(self.repo), 'policy': self.engine.policy_hash, 'tasks': []}]:
@@ -2664,8 +2674,43 @@ class SelfReviewTests(EngineFixture):
             with self.subTest(label), self.assertRaisesRegex(EngineError, 'Builder report needs one SELF_REVIEW line'):
                 self.engine.report('w-a', token, text)
         self.assertEqual('running', self.engine.status()['tasks']['a']['state'])
-        self.engine.report('w-a', token, 'Built a.\n' + line)
+        self.engine.report('w-a', token, 'ARTIFACT: abc123\nBuilt a.\n' + line)
         self.assertEqual(good, self.engine.status()['tasks']['a']['self_review'])
+
+    def test_builder_report_needs_a_nonempty_artifact_line(self):
+        token = self.running()
+        line = 'SELF_REVIEW: ' + json.dumps({'checks': [{'command': 'pytest', 'exit_code': 0}],
+                                             'criteria': [{'criterion': 'c', 'met': True, 'evidence': 'e'}]})
+        for label, head in {'no line': 'Built a.', 'empty': 'ARTIFACT:\nBuilt a.', 'blank': 'ARTIFACT:   \nBuilt a.'}.items():
+            with self.subTest(label), self.assertRaisesRegex(EngineError, 'Builder report needs a nonempty ARTIFACT line'):
+                self.engine.report('w-a', token, head + '\n' + line)
+        self.assertEqual('running', self.engine.status()['tasks']['a']['state'])
+        self.engine.report('w-a', token, 'ARTIFACT: abc123\n' + line)
+        self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
+
+    def test_reported_card_takes_a_replacement_report_until_accepted(self):
+        token = self.running()
+        self.engine.report('w-a', token, done('First.', checks=[{'command': 'grep -q x a', 'exit_code': 1}]))
+        with self.assertRaisesRegex(EngineError, 'Invalid assignment'):
+            self.engine.report('w-other', token, done('Not mine.'))
+        self.engine.report('w-a', token, done('Second.'))
+        task = self.engine.status()['tasks']['a']
+        self.assertEqual('reported', task['state'])
+        self.assertIn('Second.', task['report'])
+        self.assertEqual(0, task['self_review']['checks'][0]['exit_code'])
+        self.engine.accept('main', self.lease, 'a')
+        with self.assertRaisesRegex(EngineError, 'Invalid assignment'):
+            self.engine.report('w-a', token, done('Late.'))
+
+    def test_replacement_report_refused_once_a_review_covers_the_card(self):
+        token = self.running()
+        self.engine.report('w-a', token, done('First.'))
+        path = self.root / 'final-a.json'
+        self.review(path, tasks=['a'], categories=ALL_CATEGORIES, final=True)
+        self.engine.record_review('main', self.lease, 'reviewer', path, ALL_CATEGORIES, ['a'], final=True)
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('Second.'))
+        self.assertIn('First.', self.engine.status()['tasks']['a']['report'])
 
     def test_non_builder_report_needs_no_self_review(self):
         self.task('look', role='investigator', mode='code', files=[])

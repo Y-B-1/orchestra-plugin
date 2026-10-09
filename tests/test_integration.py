@@ -17,7 +17,7 @@ CLI=PLUGIN/'scripts/orchestra.py'
 HOOK=PLUGIN/'scripts/run-hook.sh'
 CATEGORIES=['requirements','correctness','security','tests','architecture','standards','cleanup']
 BASE=['requirements','correctness','tests','architecture']
-SELF_REVIEW='SELF_REVIEW: '+json.dumps(dict(checks=[dict(command='fixture check',exit_code=0)],
+SELF_REVIEW='ARTIFACT: fixture\nSELF_REVIEW: '+json.dumps(dict(checks=[dict(command='fixture check',exit_code=0)],
                                           criteria=[dict(criterion='fixture outcome',met=True,evidence='Inspected fixture.')]))
 
 
@@ -587,6 +587,19 @@ class AutonomyIntegration(unittest.TestCase):
         self.assertTrue(trailing['passed'])
         self.assertNotIn(trailing['id'],(first['id'],again['id']))
 
+    def test_cli_gate_timeout_overrides_policy_for_one_run(self):
+        hang=[sys.executable,'-c','import time; time.sleep(10)']
+        for flags in (['--timeout','0.2','slow'],['slow','--timeout','0.2','--again']):
+            with self.subTest(flags=flags):
+                result=subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--lease',self.lease,'gate',*flags,'--',*hang],
+                                      env=self.env,capture_output=True,text=True,timeout=25)
+                self.assertEqual(1,result.returncode,result.stderr)
+                self.assertEqual(124,json.loads(result.stdout)['exit_code'])
+        for bad in ('0','-1','nan','x'):
+            with self.subTest(bad=bad):
+                refused=self.cli('--lease',self.lease,'gate','slow','--timeout',bad,'--',*hang,expected=2)
+                self.assertIn('Gate timeout must be positive and finite',refused)
+
 
 FAKE_PASS = r"""
 import json, os, signal, subprocess, sys, time
@@ -601,7 +614,7 @@ steps = plan[min(n, len(plan)) - 1]
 (root / ('prompt-%d.txt' % n)).write_text(sys.stdin.read())
 state = Path(os.environ['ORCHESTRA_STATE_DIR'])
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
-SELF_REVIEW = 'SELF_REVIEW: ' + json.dumps(dict(checks=[dict(command='fixture check', exit_code=0)],
+SELF_REVIEW = 'ARTIFACT: fixture\nSELF_REVIEW: ' + json.dumps(dict(checks=[dict(command='fixture check', exit_code=0)],
                                                 criteria=[dict(criterion='fixture outcome', met=True, evidence='Inspected.')]))
 
 def run(*args, env=None, lease=True):

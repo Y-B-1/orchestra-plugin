@@ -12,7 +12,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `prepr` | Print the size check and the pre-PR reviewer: `base`, `changed_lines`, `size`, `asks`, `budget`, `over_budget`, `reviewer`, `agent`, `lenses`, `warning`. Read-only; the warning never blocks. | no |
 | `board` | Group card ids by role and state. | no |
 | `artifact [--tasks ID[,ID]]` | Print the whole-repo artifact, or with `--tasks` the artifact scoped to those cards' reserved files plus HEAD. | no |
-| `report WORKER TOKEN FILE` | Record a worker's result file against its assignment token. | no |
+| `report WORKER TOKEN FILE` | Record a worker's result file against its assignment token. The same worker may replace the report until the card is accepted or a review covers it. | no |
 | `autonomy arm [--relaunch]\|disarm\|status\|settle` | Arm, disarm or inspect the autonomous loop. `arm --relaunch` keeps autonomy armed between sessions; `settle` checks the stop conditions without counting a pass. | no |
 | `brief` | Print the newest run brief. Read-only. | no |
 | `finding list [--for-brief]` | List the findings ledger, or render a "Known findings" block for reviewer briefs. | no |
@@ -25,7 +25,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `inline TASK` | Reserve a card for the main coordinator. | yes |
 | `review REVIEW.json` | Record the independent pre-PR review (`final: true`) or the fix re-review (`repair_check: true`). | yes |
 | `accept TASK` | Accept a card whose current evidence allows it. | yes |
-| `gate [--again] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. | yes |
+| `gate [--again] [--timeout SECONDS] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. `--timeout` overrides `gate_timeout_seconds` for this run. | yes |
 | `scan` | Run the configured secret scan; an unavailable optional scanner is reported, not passed. | yes |
 | `permit REMOTE TARGET` | Create a release permit for an exact remote and target. Refused while autonomy is active. | yes |
 | `release REMOTE TARGET` | Run the release command named in policy under a current permit. Refused while autonomy is active. | yes |
@@ -56,6 +56,8 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 
 - New: `start --size`, `--asks`, `--owner-request`, `route --size`, `prepr`, the builder card `size` field, and the reviewer agent `code-reviewer-medium` (`Lens: combined`).
 - Changed: a new run needs `--size`; `start --items` is refused. A 2.4 run keeps `route --items` and its item routes.
+- New: `gate --timeout SECONDS` for one run. `report` replaces a reported card's report for the same worker and token until the card is accepted, a review lists it or a repair of it exists ("A review covers this report; route a change through a repair card").
+- Changed: a builder report needs a nonempty `ARTIFACT:` line ("Builder report needs a nonempty ARTIFACT line").
 
 ## Changes in 2.4.0
 
