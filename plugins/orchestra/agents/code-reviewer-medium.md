@@ -1,6 +1,6 @@
 ---
 name: code-reviewer-medium
-description: "Independent pre-PR review of the integrated candidate, and the fix re-review of a repair. Mode: final. Lens: combined. Pre-PR review of a diff from 51 to 400 changed lines."
+description: "Independent pre-PR review of the integrated candidate, and the fix re-review of a repair. Mode: final. Lens: combined. Pre-PR review of a diff up to 400 changed lines."
 model: claude-sonnet-5-5
 effort: medium
 skills: [orchestra-worker, orchestra-review]

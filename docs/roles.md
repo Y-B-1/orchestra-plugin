@@ -18,7 +18,7 @@ Each worker role skill lives at `plugins/orchestra/skills/<skill>/SKILL.md`. Its
 
 ## Two-skill preload
 
-Every worker agent file preloads exactly two skills: `skills: [orchestra-worker, <role skill>]`. Variant files (such as the standards-lens reviewer, `code-reviewer-standards`, Mode: final, Lens: standards, on Sonnet 5.5 medium; the size reviewers `code-reviewer-small` on Haiku 5.5 high and `code-reviewer-medium` on Sonnet 5.5 medium, Mode: final, Lens: combined, which `prepr` names for a diff up to 50 or up to 400 changed lines; and the Haiku `builder-mechanical` and `builder-cleanup`) preload the same two as their base role. `orchestra-worker` holds the shared contract: you are not alone, preserve sibling edits, never delegate or change coordinator state, the `STATUS:`/`ARTIFACT:` report shape and the `Mode:` line rule. Role skills do not restate it. The orchestrator file preloads only `orchestra`. Workers read mode files by plugin-root path.
+Every worker agent file preloads exactly two skills: `skills: [orchestra-worker, <role skill>]`. Variant files (such as the standards-lens reviewer, `code-reviewer-standards`, Mode: final, Lens: standards, on Sonnet 5.5 medium; the size reviewer `code-reviewer-medium` on Sonnet 5.5 medium, Mode: final, Lens: combined, which `prepr` names for a diff up to 400 changed lines; and the Haiku `builder-mechanical` and `builder-cleanup`) preload the same two as their base role. `orchestra-worker` holds the shared contract: you are not alone, preserve sibling edits, never delegate or change coordinator state, the `STATUS:`/`ARTIFACT:` report shape and the `Mode:` line rule. Role skills do not restate it. The orchestrator file preloads only `orchestra`. Workers read mode files by plugin-root path.
 
 ## Tool restrictions and independence
 
@@ -45,7 +45,7 @@ The pre-PR review covers the integrated candidate through derived lenses: correc
 | auditor | critic / spec, standards, ledger |
 | builder | builder / implementation, frontend, sensitive, mechanical |
 | builder-repair | builder / repair (Claude: dispatch-time model override) |
-| code-reviewer, code-reviewer-checkpoint, code-reviewer-standards, code-reviewer-small, code-reviewer-medium | code-reviewer / final, final with `Lens: standards`, final with `Lens: combined` |
+| code-reviewer, code-reviewer-checkpoint, code-reviewer-standards, code-reviewer-medium | code-reviewer / final, final with `Lens: standards`, final with `Lens: combined` |
 | gatekeeper | operator / gate |
 | janitor | operator / cleanup |
 | releaser | operator / release |

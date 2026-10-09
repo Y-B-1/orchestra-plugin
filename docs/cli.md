@@ -54,7 +54,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 
 ## Changes in 2.5.0
 
-- New: `start --size`, `--asks`, `--owner-request`, `route --size`, `prepr`, the builder card `size` field, and the reviewer agents `code-reviewer-small` and `code-reviewer-medium` (`Lens: combined`).
+- New: `start --size`, `--asks`, `--owner-request`, `route --size`, `prepr`, the builder card `size` field, and the reviewer agent `code-reviewer-medium` (`Lens: combined`).
 - Changed: a new run needs `--size`; `start --items` is refused. A 2.4 run keeps `route --items` and its item routes.
 
 ## Changes in 2.4.0

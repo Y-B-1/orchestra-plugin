@@ -848,7 +848,7 @@ class SizeCli(unittest.TestCase):
 
     def test_prepr_names_the_reviewer_agent_for_each_band(self):
         self.raw('start','--size','tiny','--asks','9')
-        for lines,agent in ((10,'orchestra:code-reviewer-small'),(100,'orchestra:code-reviewer-medium'),
+        for lines,agent in ((10,'orchestra:code-reviewer-medium'),(100,'orchestra:code-reviewer-medium'),
                             (450,'orchestra:code-reviewer')):
             self.write(lines)
             out=self.raw('prepr')

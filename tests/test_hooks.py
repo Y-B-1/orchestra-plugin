@@ -2251,7 +2251,7 @@ class PlanV24GuardTest(unittest.TestCase):
 
     def test_reviewer_test_block_covers_the_size_variants(self):
         engine = self.engine(gate_ids=['gate-1'])
-        for kind in ('orchestra:code-reviewer-small', 'orchestra:code-reviewer-medium'):
+        for kind in ('orchestra:code-reviewer-medium',):
             with self.subTest(kind=kind):
                 result = self.review_call('python3 -m unittest discover', kind, engine)
                 self.assertEqual(decision_of(result), 'deny')

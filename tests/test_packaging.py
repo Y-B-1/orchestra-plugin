@@ -28,7 +28,7 @@ class NativeTests(unittest.TestCase):
     def test_role_matrix_files_and_read_only_enforcement(self):
         claude = {p.name for p in (PLUGIN / 'agents').glob('*.md')}
         self.assertEqual(claude, {f'{n}.md' for n in [
-            'builder', 'builder-cleanup', 'builder-mechanical', 'code-reviewer', 'code-reviewer-medium', 'code-reviewer-small',
+            'builder', 'builder-cleanup', 'builder-mechanical', 'code-reviewer', 'code-reviewer-medium',
             'code-reviewer-standards', 'critic', 'designer-planner',
             'investigator', 'investigator-code', 'operator', 'orchestrator']})
         read_only = ('investigator', 'critic', 'code-reviewer')
@@ -69,7 +69,7 @@ class NativeTests(unittest.TestCase):
         self.assertIn('Lens: standards', desc)
 
     def test_reviewer_size_variants_are_generated(self):
-        for name, model, effort in (('small', 'claude-haiku-5-5', 'high'), ('medium', 'claude-sonnet-5-5', 'medium')):
+        for name, model, effort in (('medium', 'claude-sonnet-5-5', 'medium'),):
             with self.subTest(name):
                 front = (PLUGIN / f'agents/code-reviewer-{name}.md').read_text().split('---')[1]
                 self.assertIn(f'name: code-reviewer-{name}\n', front)
@@ -79,7 +79,7 @@ class NativeTests(unittest.TestCase):
                 self.assertIn('Lens: combined', desc)
 
     def test_reviewer_size_variants_keep_the_reviewer_tools(self):
-        for name in ('small', 'medium'):
+        for name in ('medium',):
             with self.subTest(name):
                 front = (PLUGIN / f'agents/code-reviewer-{name}.md').read_text().split('---')[1]
                 line = [l for l in front.splitlines() if l.startswith('tools: ')][0]

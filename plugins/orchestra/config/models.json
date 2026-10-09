@@ -69,10 +69,6 @@
           "model": "claude-sonnet-5-5",
           "effort": "medium"
         },
-        "small": {
-          "model": "claude-haiku-5-5",
-          "effort": "high"
-        },
         "medium": {
           "model": "claude-sonnet-5-5",
           "effort": "medium"
