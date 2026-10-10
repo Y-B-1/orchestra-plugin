@@ -3271,6 +3271,14 @@ class LegacyStateTests(EngineFixture):
         with self.assertRaisesRegex(EngineError, 'policy changed while a run is active'):
             Engine(state, self.repo).status()
 
+    def test_a_state_with_size_never_takes_the_2_3_binding(self):
+        state, _ = load_2_3_state(self.root, self.repo)
+        data = json.loads((state / 'state.json').read_text())
+        data['session'].update(size='tiny', asks=1, owner_request=False, route_log=[])
+        (state / 'state.json').write_text(json.dumps(data))
+        with self.assertRaisesRegex(EngineError, 'policy changed while a run is active'):
+            Engine(state, self.repo).status()
+
     def test_2_4_state_loads_and_keeps_2_4_routing(self):
         state, lease = load_2_4_state(self.root, self.repo)
         engine = Engine(state, self.repo)
