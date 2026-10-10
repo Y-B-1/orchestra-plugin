@@ -44,6 +44,7 @@ ALWAYS_LENSES = ('requirements', 'correctness', 'tests', 'architecture')
 INLINE_MAX_ITEMS = 5  # contract item 3: 1 to 5 items run inline, 6 or more go through a plan
 SIZES = ('tiny', 'medium', 'large')
 TIER_GUIDE = {'tiny': 50, 'medium': 400}  # contract item 1: changed lines per ask
+CARD_SIZES = ('tiny', 'medium')  # a card's own size; a large run sizes its cards as one of these
 REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
@@ -432,10 +433,11 @@ class Engine:
 
     def binds(self, state):
         """The state's policy hash is this engine's, or the one 2.3 computed for the same policy on a state with no
-        `items` (contract item 3). Any other policy or roles change refuses."""
+        `items` or `size` (contract item 3). Any other policy or roles change refuses."""
         session = state.get('session')
         return state.get('policy') == self.policy_hash or (
-            state.get('policy') == self._policy_hash_2_3 and not (isinstance(session, dict) and 'items' in session))
+            state.get('policy') == self._policy_hash_2_3
+            and not (isinstance(session, dict) and ('items' in session or 'size' in session)))
 
     @staticmethod
     def _route_for(items):
@@ -523,7 +525,7 @@ class Engine:
                 raise EngineError('Invalid task held_finding')
             if 'helper_reason' in task and (not isinstance(task['helper_reason'], str) or not task['helper_reason'].strip()):
                 raise EngineError('Invalid task helper_reason')
-            if 'size' in task and task['size'] not in ('tiny', 'medium'):
+            if 'size' in task and task['size'] not in CARD_SIZES:
                 raise EngineError('Invalid task size')
             if 'self_review' in task and not cls._self_review_ok(task['self_review']):
                 raise EngineError('Invalid task self_review')
@@ -923,7 +925,7 @@ class Engine:
             if (task['role'] == 'designer-planner' and task['mode'] == 'plan' and 'size' in session
                     and session['size'] != 'large' and not session['owner_request'] and task.get('owner_request') is not True):
                 raise EngineError('Plan card needs a large run or an owner request; escalate with route --size large --reason TEXT')
-            if 'size' in task and task['size'] not in ('tiny', 'medium'):
+            if 'size' in task and task['size'] not in CARD_SIZES:
                 raise EngineError('Invalid task size')
             if task['role'] == 'builder' and 'brief' in task:
                 self._check_keep_remove(task)
