@@ -63,6 +63,15 @@ Orchestra hooks are absent between uninstall and install, so run these in a plai
 
 On Claude Code the plugin also registers a function-hook module that classifies commands in process, adds `/orchestra-board` and `/orchestra-autonomy`, and shows toasts and a status band. It needs a Claude Code build with function hooks enabled (`CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1`) and the `$` APIs the module uses; it is tested on Claude Code 2.1.289 (CLI) and 2.1.286 (embedded in Desktop with that variable set). There is no version floor and no explicit API check: if a needed API is missing, session start fails, the guard stays not ready, and guarded calls fall back to the Python hooks. In that case, and with function hooks off, the Python hooks do the same guarding and the CLI does everything else. See [hook policy](docs/hooks.md).
 
+## Example instruction files
+
+Two starting points, based on the files this project runs with:
+
+- [`examples/global-CLAUDE.md`](examples/global-CLAUDE.md): a user-level `~/.claude/CLAUDE.md`. It sets coding discipline and session mechanics and routes work through Orchestra's size tiers, lanes and roles.
+- [`examples/project-AGENTS.md`](examples/project-AGENTS.md): a project charter saved as `AGENTS.md` at the repository root. Its standing orders are the rules the coordinator pastes verbatim into every worker brief.
+
+Keep global habits in the first file and project rules in the second. Do not copy rules the plugin's guard already enforces.
+
 ## Roles and models
 
 [Role contracts](docs/roles.md) describe responsibilities and the v1 to v2 mapping. [Model matrix](docs/models.md) lists model and effort settings. The coordinator runs in the main session and never as a worker. The six worker roles are investigator, designer-planner, critic, builder, code-reviewer and operator; each role has one skill and loads one mode file for its brief's `Mode:` line. The generator produces 10 Claude worker agents plus the orchestrator.

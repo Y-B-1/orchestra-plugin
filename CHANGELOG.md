@@ -2,6 +2,11 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.5.1 — 2026-10-10
+
+- **Engine:** a run state whose session carries `size` never loads under the 2.3 policy hash. Before, `binds()` refused only a session with `items`. The two task-size checks share one constant, `CARD_SIZES`.
+- **Examples:** `examples/global-CLAUDE.md` (a user-level `~/.claude/CLAUDE.md` that routes through Orchestra) and `examples/project-AGENTS.md` (a project charter whose standing orders Orchestra pastes into every brief).
+
 ## 2.5.0 — 2026-10-09
 
 Route by diff size instead of item count. The design is `docs/DESIGN-v2.5.md` (owner decisions D1 to D5), the contract is `docs/PLAN-v2.5.md` section 2.
