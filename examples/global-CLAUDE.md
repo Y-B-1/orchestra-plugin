@@ -75,8 +75,8 @@ Start a run with `start --size tiny|medium`. Escalate with `route --size large -
 
 **Independence:** the agent that built a change never approves it. One independent pre-PR review covers the frozen candidate. `prepr` picks the reviewer: Sonnet with one combined lens up to 400 changed lines, Opus with one card per lens above that. Any later edit voids earlier evidence.
 
-**Guard:** the plugin's PreToolUse hook denies force push, `reset --hard`, `clean -f`, `branch -D`, `stash`, wholesale `git add`, `commit -a` and Agent calls from subagents. Do not register these again in projects. Never route around the guard with `gh api`, an MCP tool or a terminal tool.
+**Guard:** the plugin's PreToolUse hook denies force push, `reset --hard`, `clean -f`, `branch -D` on an unmerged branch, `stash`, wholesale `git add`, `commit -a` and Agent calls from subagents. Do not register these again in projects. Never route around the guard with `gh api`, an MCP tool or a terminal tool.
 
-**Autonomy:** an unattended run needs a written ledger (`<state>/autonomy.md`): completion checks, a deadline with UTC offset, approval boundaries. `orchestra.py autonomy arm` refuses without it. While armed, release, push, merge and deletion are denied and cards park instead.
+**Autonomy:** an unattended run needs a written ledger (`<state>/autonomy.md`): completion checks, a deadline with UTC offset, approval boundaries. `orchestra.py autonomy arm` refuses without it. While armed, push, pull request merge and deletion are denied, and release is denied unless the ledger pre-authorizes that exact remote and target. Blocked cards park instead.
 
 **Human-only steps** (credentials, dashboards, one-off cutovers): generate a bash wizard script instead of numbered steps in chat.
