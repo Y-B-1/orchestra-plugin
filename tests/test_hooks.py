@@ -456,8 +456,11 @@ class HooksTest(unittest.TestCase):
                   'git config --global alias.p push', 'git config --add alias.q status',
                   'git config remote.origin.push refs/heads/x:refs/heads/main', 'git config remote.origin.pushurl git@evil:x',
                   'git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x', 'git -c ALIAS.p=push p',
-                  'git -C wt config alias.p push']
-        allowed = ['git config --get alias.ship', 'git config --list', 'git config --unset alias.ship',
+                  'git -C wt config alias.p push', 'git --config-env=alias.ship=ALIAS ship origin HEAD:main',
+                  'git --config-env alias.ship=ALIAS ship', 'git config --rename-section scratch alias',
+                  'git config --rename-section scratch remote.origin', 'git config rename-section scratch alias']
+        allowed = ['git config --rename-section scratch other', 'git --config-env=core.pager=PAGER log',
+                   'git config --get alias.ship', 'git config --list', 'git config --unset alias.ship',
                    'git config --get-regexp ^remote', 'git config user.name Me', 'git config core.editor vim',
                    'git config remote.origin.url https://example.invalid/r.git', 'git -c core.pager=cat log']
         for command in denied:

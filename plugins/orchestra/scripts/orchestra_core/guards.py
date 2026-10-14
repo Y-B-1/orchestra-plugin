@@ -538,6 +538,9 @@ def _config_write_guarded(options):
     if any(x in _GIT['config_read_flags'] for x in options):
         return False
     words = [x for x in options if not x.startswith('-')]
+    if any(x in ('--rename-section', 'rename-section') for x in options + words[:1]) and words:
+        # A section renamed into alias or remote.<name> brings its keys along.
+        return any(_config_guarded(words[-1] + tail) for tail in ('.x', '.push', '.pushurl'))
     hit = next((i for i, x in enumerate(words) if _config_guarded(x)), None)
     return hit is not None and (hit + 1 < len(words) or any(x in ('--add', '--replace-all', '-e', '--edit') for x in options))
 
@@ -551,9 +554,11 @@ def _git(words):
         if opt in _GIT['global_value_options']:
             if not args:
                 return _deny('Malformed Git global option', 'malformed')
-            if opt == '-c' and _config_guarded(args[0].split('=', 1)[0]):
+            if opt in ('-c', '--config-env') and _config_guarded(args[0].split('=', 1)[0]):
                 return _deny(_CONFIG_REASON)
             args.pop(0)
+        elif opt.startswith('--config-env=') and _config_guarded(opt[len('--config-env='):].split('=', 1)[0]):
+            return _deny(_CONFIG_REASON)
         if opt.startswith('-C') or opt.startswith(('--git-dir', '--work-tree')):
             changed_repo = True
     if not args:

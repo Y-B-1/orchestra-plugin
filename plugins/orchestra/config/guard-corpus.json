@@ -10851,6 +10851,55 @@
     "command": "git config user.name Me"
    },
    "class": "allow"
+  },
+  {
+   "id": "guard-159",
+   "input": {
+    "command": "git --config-env alias.ship=ALIAS ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-160",
+   "input": {
+    "command": "git --config-env=alias.ship=ALIAS ship origin HEAD:main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-161",
+   "input": {
+    "command": "git --config-env=core.pager=PAGER log"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-162",
+   "input": {
+    "command": "git config --rename-section scratch alias"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-163",
+   "input": {
+    "command": "git config --rename-section scratch other"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-164",
+   "input": {
+    "command": "git config --rename-section scratch remote.origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-165",
+   "input": {
+    "command": "git config rename-section scratch alias"
+   },
+   "class": "deny"
   }
  ]
 }

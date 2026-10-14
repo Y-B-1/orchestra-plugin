@@ -65,7 +65,7 @@ test('merged-delete: kind, remote, branch and argv ride the decision; stand-alon
 
 test('merged-delete: any git global option before the verb denies (R2 test_merged_delete_global_config_option_denied)', () => {
   for (const command of ['git -c core.sshCommand=/tmp/x push origin --delete x2', 'git -c remote.origin.url=https://h/r.git push origin --delete x2',
-    'git --config-env=remote.origin.pushurl=E push origin --delete x2', 'git -c x=y branch -D b', 'git --config-env=x=E branch -D b',
+    'git --config-env=core.sshCommand=E push origin --delete x2', 'git -c x=y branch -D b', 'git --config-env=x=E branch -D b',
     'git --namespace=n branch -D b', 'git --namespace n push origin -d x2', 'git --exec-path=/x branch -D b', 'git --bare branch -D b',
     'git -p push origin --delete x2', 'git --no-pager branch -D b']) {
     const d = classifyCommand(command);

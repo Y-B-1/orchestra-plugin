@@ -698,6 +698,10 @@ function configGuarded(key: string): boolean {
 function configWriteGuarded(options: string[]): boolean {
   if (options.some((x) => GIT.config_read_flags!.has(x))) return false;
   const words = options.filter((x) => !x.startsWith('-'));
+  if ((options.includes('--rename-section') || words[0] === 'rename-section') && words.length) {
+    // A section renamed into alias or remote.<name> brings its keys along.
+    return ['.x', '.push', '.pushurl'].some((tail) => configGuarded(words[words.length - 1]! + tail));
+  }
   const hit = words.findIndex((x) => configGuarded(x));
   return hit >= 0 && (hit + 1 < words.length || options.some((x) => ['--add', '--replace-all', '-e', '--edit'].includes(x)));
 }
@@ -710,8 +714,10 @@ function git(words: string[]): Decision {
     const opt = args.shift()!;
     if (GIT.global_value_options!.has(opt)) {
       if (!args.length) return denyOf('Malformed Git global option', 'malformed');
-      if (opt === '-c' && configGuarded(args[0]!.split('=')[0]!)) return denyOf(CONFIG_REASON);
+      if ((opt === '-c' || opt === '--config-env') && configGuarded(args[0]!.split('=')[0]!)) return denyOf(CONFIG_REASON);
       args.shift();
+    } else if (opt.startsWith('--config-env=') && configGuarded(opt.slice('--config-env='.length).split('=')[0]!)) {
+      return denyOf(CONFIG_REASON);
     }
     if (opt.startsWith('-C') || opt.startsWith('--git-dir') || opt.startsWith('--work-tree')) changedRepo = true;
   }
