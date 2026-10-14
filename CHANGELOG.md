@@ -2,6 +2,13 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.6.3 — 2026-10-14
+
+- **Autonomy, default branch:** `autonomy arm` now asks every remote for its current default branch, even when one is already recorded, and stores the answers in the run state (`remote_defaults`). The pull request push guard checks against those answers instead of the local `refs/remotes/<remote>/HEAD`, which could be stale after the remote changed its default. A remote that does not answer gets no pull request push until autonomy is armed again.
+- **Autonomy, arming:** the remotes are asked before the armed state is written, so an `arm` interrupted during that step leaves autonomy off.
+- **`pr URL`:** requires an http(s) URL with a host; `https:///pull/1` and similar are refused.
+- **CI:** `.github/workflows/ci.yml` runs the generator check and the test suite on Python 3.11 and 3.13, and the strict plugin and marketplace validation plus the mod tests, on every pull request and on main. It lives in the repository, not in the installed plugin, and the release archive leaves it out.
+
 ## 2.6.2 — 2026-10-14
 
 - **Pull requests in the brief:** `orchestra.py pr URL` (lease) records a pull request the run opened; every run brief lists it under Needs you as "review and merge pull request URL". The autonomy instructions record the PR this way instead of a free-form `progress.md` line.

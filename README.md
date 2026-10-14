@@ -120,7 +120,7 @@ The PreToolUse hook classifies shell, edit and agent calls, then applies the run
 | --- | --- | --- | --- |
 | Destructive Git: `stash` (every form), `reset --hard`, `clean -f`, `branch -D` (unless provably merged), `git add .`/`-A`/`--all`, `commit -a`, `--amend`, force push, wholesale restore | Denied | Denied | Denied |
 | Release actions: `git push`, `gh pr merge`, a `gh api` merge call, a `gh api graphql` mutation or body read from a file, `gh release create`, npm, pnpm or cargo publish, deploy tools, `az` deployments | Allowed | Runs when a current engine permit matches; otherwise Claude Code asks you | Denied; the coordinator parks the card. Exception: a ledger `- Release: pre-authorized <remote> <target>` line that matches `policy.release` |
-| Feature-branch push and `gh pr create` | Allowed | Push as above; `gh pr create` allowed | Allowed: exactly `git push [-u] <remote> <refspec>` with a configured remote name (no `remote.<name>.push` or `pushurl` set), a local branch as source, and one destination branch that is not the remote's default branch, `main` or `master` (case-insensitive); `HEAD` or `@` is the current branch. The remote's default branch must be known locally; `autonomy arm` records it for every remote (`git remote set-head --auto`) and reports any it cannot reach. Never the configured release target, and never under a 2.5 ledger whose Push line is `no push to any branch`. |
+| Feature-branch push and `gh pr create` | Allowed | Push as above; `gh pr create` allowed | Allowed: exactly `git push [-u] <remote> <refspec>` with a configured remote name (no `remote.<name>.push` or `pushurl` set), a local branch as source, and one destination branch that is not the remote's default branch, `main` or `master` (case-insensitive); `HEAD` or `@` is the current branch. `autonomy arm` asks every remote for its current default branch (`git remote set-head --auto`) and the push is checked against that answer, never a local cache; a remote that does not answer gets no pull request push until autonomy is armed again. Never the configured release target, and never under a 2.5 ledger whose Push line is `no push to any branch`. |
 | Merge: `gh pr merge`, a `gh api` merge, local merge, pull, rebase or cherry-pick on the default branch | Allowed | `gh pr merge` and `gh api` merges as a release; local merges allowed | Denied; the coordinator parks the card. You merge the PR after the run |
 | Push to the default branch | Allowed | As a release | Denied, except the pre-authorized release |
 | Deletion: `rm`, branch or tag deletion, `git worktree remove` | Allowed (`branch -D` and remote branch deletes only when provably merged) | Same | Denied, except merged cleanup |
@@ -220,6 +220,8 @@ To try a local checkout before it is published, use the same steps with `claude 
 End any active run first (`orchestra.py finish` or `interrupt`), then run `claude plugin uninstall orchestra@orchestra-distribution` and `claude plugin marketplace remove orchestra-distribution`. To leave no trace, also remove `${XDG_STATE_HOME:-~/.local/state}/orchestra`, which holds run state and mod markers.
 
 ## Check and distribute
+
+Every pull request and every push to main runs [CI](.github/workflows/ci.yml): the generator check and the test suite on Python 3.11 and 3.13, then the strict plugin and marketplace validation and the mod tests. To run the same checks locally:
 
 ```sh
 python3.11 -m unittest discover -s tests

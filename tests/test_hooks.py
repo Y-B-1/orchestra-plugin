@@ -1654,10 +1654,12 @@ class AutonomyHookTest(unittest.TestCase):
                 self.assertIn('approve this release action', decision['permissionDecisionReason'])
 
     def origin(self, default='main'):
-        """A configured origin whose default branch is recorded locally, as `git remote set-head` leaves it."""
-        git(self.repo, 'config', 'remote.origin.url', str(self.root / 'origin.git'))
-        git(self.repo, 'update-ref', 'refs/remotes/origin/' + default, 'HEAD')
-        git(self.repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/' + default)
+        """A real bare origin whose default branch is `default`, so arming can ask it (the hook trusts only that)."""
+        bare = self.root / 'origin.git'
+        git(self.root, 'init', '-q', '--bare', '-b', default, str(bare))
+        git(self.repo, 'remote', 'add', 'origin', str(bare))
+        git(self.repo, 'push', '-q', 'origin', 'HEAD:refs/heads/' + default)
+        git(self.repo, 'fetch', '-q', 'origin')
 
     def test_autonomy_may_push_a_feature_branch_and_open_a_pull_request(self):
         self.origin()
@@ -1696,7 +1698,7 @@ class AutonomyHookTest(unittest.TestCase):
         for name in ('feat/x', 'feat/rel'):
             git(self.repo, 'branch', name)
         engine = mock.Mock()
-        engine.status.return_value = {'autonomy': {'pull_requests': True}}
+        engine.status.return_value = {'autonomy': {'pull_requests': True, 'remote_defaults': {'origin': 'main'}}}
         engine.policy = {'release': {'enabled': True, 'remote': 'origin', 'target': 'feat/rel'}}
         push = hooks_module._pull_request_push
         self.assertIsNone(push('git push origin feat/x', str(self.repo), engine))
@@ -1725,13 +1727,26 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertIsNone(self.hook(self.repo, 'git push origin feat/x'))
 
     def test_autonomy_pull_request_push_refuses_an_unknown_default_branch(self):
-        git(self.repo, 'config', 'remote.origin.url', str(self.root / 'origin.git'))  # no refs/remotes/origin/HEAD
+        git(self.repo, 'config', 'remote.origin.url', str(self.root / 'missing.git'))  # the remote cannot answer
+        git(self.repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')
+        git(self.repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')  # a local record alone
         self.arm()
         git(self.repo, 'branch', 'develop')
         code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin develop'}})
         decision = output['hookSpecificOutput']
         self.assertEqual(decision['permissionDecision'], 'deny')
-        self.assertIn('git remote set-head origin --auto', decision['permissionDecisionReason'])
+        self.assertIn('was not confirmed when autonomy was armed', decision['permissionDecisionReason'])
+
+    def test_autonomy_pull_request_push_follows_a_changed_remote_default(self):
+        self.origin()
+        git(self.repo, 'branch', 'develop')
+        git(self.repo, 'push', '-q', 'origin', 'develop')
+        git(self.repo, 'remote', 'set-head', 'origin', 'main')  # recorded while main was the default
+        git(self.root / 'origin.git', 'symbolic-ref', 'HEAD', 'refs/heads/develop')  # the server switches its default
+        self.assertEqual(git(self.repo, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main')  # stale
+        self.arm()
+        self.assertEqual(self.engine.status()['autonomy']['remote_defaults'], {'origin': 'develop'})
+        self.assertEqual(self.hook(self.repo, 'git push origin develop'), 'deny')
 
     def test_boundary_denied_while_active_and_allowed_while_autonomy_is_off(self):
         for command in ['rm -rf build', 'rmdir empty', 'unlink link', 'git branch -d topic', 'git tag -d v1']:
