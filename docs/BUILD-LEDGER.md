@@ -204,3 +204,55 @@ Route by diff size, not item count. Design `docs/DESIGN-v2.5.md`, contract `docs
 | RV2, RV2S | code-reviewer final (correctness, standards) | 0559bcd | no blocking findings; notes only | CLEAN |
 
 Notes: a session started with its working directory in `plugins/orchestra` wrote a stray `plugins/orchestra/.claude/fast-jev-compaction/` cache (197 files); it was moved out of the tree, and fast-jev now anchors its archive at the git toplevel (fast-jev-compaction b3074e9). Deferred: `binds()` edge case; the `('tiny', 'medium')` literal appears twice in `engine.py` (RV2S note); PLAN-v2.5 history lines still name `REVIEWER_BANDS`.
+
+## 2.6.0 — 2026-10-14
+
+Autonomy loop fix and relaunch removal, from owner feedback: the transcript filled with identical Stop re-prompts while background workers ran.
+
+- **Cause:** `_stop_check` counted `running` cards as live work, so every Stop while a worker ran was blocked with the same "Autonomy pass N" line.
+- **Change:** the Stop hook continues a turn only for a ready or reported card, an open final finding or a held chain owed its final review. Running workers alone end the turn quietly (the harness wakes the session when a worker finishes). A continuation is not repeated for an unchanged progress signature; that turn ends and counts as a stall. Stop reasons are unchanged.
+- **Removed:** `orchestra.py relaunch`, `autonomy arm --relaunch`, `autonomy settle`, `scripts/orchestra_core/relaunch.py`, `config/relaunch-prompt.md`, `Engine.end_pass_session`, `Engine.settle` and the session `relaunch_pass` nonce. Passes could only use foreground workers, and the "context ceiling" rule had no signal the model can read. A 2.5 state carrying `autonomy.relaunch` or `session.relaunch_pass` still loads; the flag is ignored.
+- **Context:** `triage.md` no longer cites 40% to 60% of the window; the README recommends the user's `autoCompactWindow` setting (tokens, capped at the model's window).
+- **Guards (second commit):** interactive-run releases ask (`permissionDecision: ask`) unless a current permit exists; release-multi asks. Autonomy allows one feature-branch push for a pull request (`_pull_request_push`: explicit remote and branch, `HEAD` resolved, not `refs/remotes/<remote>/HEAD`, `main` or `master`). The Python hook never skips a release on a fresh mod marker, since a mod `tool.call` result has no ask form (checked against the 2.1.299 mod API: `ToolCallResult` is `{deny}` or `{result}`; only `classic.PreToolUse` has `ask`). Ledger Push line updated; the 2.5 line is accepted. 31 existing hook and integration assertions moved from deny to ask or to a default-branch push; new tests cover ask, the PR push, origin/HEAD and the marker shortcut.
+- **Checks:** `python3 -m unittest discover -s tests` 639 tests, one failure (changelog heading) fixed by the version bump; `tests.test_packaging` and `tests.test_build_release` then OK. `generate.py --check` 12 agent files. Live hook behavior in a real Claude Code session is not yet checked.
+
+### 2.6.0 audit and fixes (2026-10-14)
+
+Five read-only auditors (autonomy harness, guards, engine, instructions, packaging) each verified findings with repro scripts before reporting. Fixes were split by file ownership: engine and CLI, docs and skills, and guards, hooks and packaging.
+
+| Area | Finding | Fix |
+| --- | --- | --- |
+| Guards (blocker) | The autonomy PR-push exception compared names only: `heads/main`, `@`, tag pushes, `remote.<r>.push` mappings, `-c`, env and xargs prefixes, `--receive-pack`, an unset remote HEAD, a URL remote and the configured release target all got through | `_pull_request_push` accepts only `git push [-u] REMOTE REFSPEC`: a configured remote with no push mapping, a local branch source, one destination branch, compared ignoring case against the known default branch, `main`, `master` and the release target; the ledger must allow PR pushes |
+| Guards | `gh api` merges and `cargo publish` were not release actions | Release class in both classifiers (`gh_api_merge`, `package_tools`) |
+| Guards | An unhashable `tool_name` and a Python 3.11 symlink loop crashed the hook (exit 1) | Deny with exit 2 |
+| Autonomy (new) | No cleanup under autonomy | Merged-only `git branch -d/-D`, `git push --delete`, non-force `git worktree remove` of a merged linked worktree, and `git worktree prune`, as plain single commands |
+| Autonomy | An inline card idled the loop; the final phase stopped `no-ready-card`; a stall with no worker sat armed forever; held chains with a final receipt kept continuing; a reported card under a running reviewer counted as actionable; park and unpark looked like a stall; a 2.5 relaunch state re-armed on `start`; the legacy Push line was not enforced | Engine fixes B-G and 3; new stop reason `stalled`; final-phase continuation; `pull_requests` recorded at arm |
+| Engine (blocker) | Task JSON could set engine-owned keys (`repair_of` cycles hung `dispatch` under the lock; `review_since` bypassed a blocking review) | `ENGINE_TASK_KEYS` refused, link validation, cycle-safe `_walk` |
+| Engine | A stale receipt with findings read as clean | Accept and completion refuse: re-review |
+| CLI | `start --policy` wedged the run; tracebacks; `--new-run` archived before refusing | Validation before use, exit 2 with JSON |
+| Packaging | `run-hook.sh` exited 2 on every event without Python (a Stop loop) and ran broken pyenv shims | Probe each candidate; only PreToolUse fails closed |
+| Packaging | The archive shipped tests and dev tooling; the scan missed Linux paths and several token forms | Excludes and a wider scan, with tests |
+| Packaging | A relative `XDG_STATE_HOME` diverged between Python and the mod | Ignored, as XDG says |
+| Docs | parallel.md contradicted the quiet wait; PR timing and commit order unstated; fix re-review briefs read as blocked; standards reviewer misnamed; stale relaunch and push text | Rewritten (see CHANGELOG 2.6.0) |
+
+Checks: `python3 -m unittest discover -s tests` 674 OK; Python 3.11 hook, build, corpus, engine, integration, skills and packaging suites OK; `claude plugin test` 90 pass; `generate.py --check`; `claude plugin validate --strict` for the plugin and the marketplace. Left as documented limits: Git aliases, a `git -C` push from outside the run repository, and environment variables exported earlier in the session. Not yet checked live: the ask prompt, the quiet wait and wake, and the PR push in a real Claude Code session.
+
+### 2.6.0 live validation (2026-10-14)
+
+Nested Claude Code 2.1.299 sessions (Haiku 5.5) in a scratch repository with a local bare `origin` and `refs/remotes/origin/HEAD` set, state under a scratch `XDG_STATE_HOME`; interactive sessions driven through tmux.
+
+| Check | How | Result |
+| --- | --- | --- |
+| Install, use, uninstall | Isolated `CLAUDE_CONFIG_DIR`: `marketplace add` of the checkout, `install`, a `-p` session, `uninstall`, `marketplace remove`, another session | 2.6.0 installed and enabled; its hooks denied `git stash list`; after uninstall the plugin is gone and the same command runs |
+| SessionStart | `-p` session with `--plugin-dir` | One context, harness session id line present |
+| No-run guard | `git stash list` | Denied by the hook; Stop returned `{}` (unarmed) |
+| Interactive ask | TUI, run active, `git push origin main` | Approval prompt with the hook reason; No interrupts, Yes runs it |
+| Ask through the mod | Same, `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` | Mods marker written; the mod passed the ask on and the native hook prompted; mod deny of `git stash list` |
+| Autonomy guards | `-p`, armed, six commands | `git push -u origin feat/x` allowed and on the remote; `git push origin main`, `git branch -D feat/x` (unmerged), `gh pr merge`, `rm -f` denied; `git branch -d merged/y` allowed |
+| Stop loop | Same session | One `Autonomy pass 1` continuation, then `{}`; `stalled` stop with brief, passes 1, stalls 1 |
+| Quiet wait and wake | TUI, armed, a running card, one background `orchestra:investigator-code` agent | Two Stop hooks, both `{}`; no continuation or repeated prompt; the agent's completion woke the session; status band showed the armed run |
+| SessionEnd | TUI session id bound with `start --harness-session`, then `/exit` | The run ended (`active: false`, outcome `ended`) |
+
+Fixes from these runs (commit 9eea2b2): deny reasons now start with "Orchestra guard:" because the model read a guard deny as a tool failure; the ask names the missing permit plainly; an autonomy merge or release deny says it waits for the owner; a stopped run's brief lists the cards it left unfinished.
+
+Not performed live: a run reaching `complete` or `deadline`, `clear` and `resume` rebinding.

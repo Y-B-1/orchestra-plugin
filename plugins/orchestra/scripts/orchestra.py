@@ -15,7 +15,6 @@ import uuid
 from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, repository, state_location
-from orchestra_core import relaunch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -93,12 +92,7 @@ def parser():
         action.add_argument('remote')
         action.add_argument('target')
     autonomy = sub.add_parser('autonomy', help='Arm, disarm or inspect the autonomous loop; takes no lease')
-    autonomy.add_argument('action', choices=['arm','disarm','status','settle'])
-    autonomy.add_argument('--relaunch', action='store_true', help='With arm: keep autonomy armed between sessions for the relaunch harness')
-    rl = sub.add_parser('relaunch', help='Run fresh `claude -p` passes until autonomy stops; run it in your terminal with no session active')
-    rl.add_argument('--permission-mode', required=True, help='Permission mode for each pass; no default')
-    rl.add_argument('--model', help='Model id for each pass; unset by default')
-    rl.add_argument('--launcher', nargs=argparse.REMAINDER, help='Replace the claude command with this argv (prompt on stdin); must come last')
+    autonomy.add_argument('action', choices=['arm','disarm','status'])
     park = sub.add_parser('park', help='Set a card aside at an approval boundary')
     park.add_argument('task_id')
     park.add_argument('--reason', required=True)
@@ -128,7 +122,9 @@ def archive_inactive(state,engine):
         if not source.exists():
             return
         old = read_json(source)
-        if old.get('session',{}).get('active'):
+        if not isinstance(old,dict):
+            raise EngineError('Malformed run state: not a JSON object')
+        if (old.get('session') or {}).get('active'):
             if old.get('repo') != str(engine.repo) or not engine.binds(old):
                 raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives
             raise EngineError('Stop or finish the active run before starting another')
@@ -144,9 +140,12 @@ def execute(args):
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
     if args.command=='where':
         return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file()},0
-    if args.command=='relaunch':
-        return None,relaunch.run(repo,state,args.permission_mode,model=args.model,launcher=args.launcher or None)
-    policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
+    if args.command=='start' and args.policy:
+        policy = read_json(args.policy)
+        if not isinstance(policy,dict) or policy.get('schema_version') != 1:  # the rule load_policy applies later
+            raise EngineError('Invalid project policy: --policy needs a JSON object with schema_version 1')
+    else:
+        policy = load_policy(state)
     engine = Engine(state,repo,policy)
     if args.command=='start':
         if args.items is not None:
@@ -154,8 +153,9 @@ def execute(args):
         asks = parse_asks(args.asks)
         if args.new_run:  # refuse before archiving, so the ended run stays in place
             engine._check_start(args.size,asks,args.owner_request)
+            engine._check_identity(args.actor,args.harness_session)
             archive_inactive(state,engine)
-        lease = engine.open_session(args.actor,args.harness_session,relaunch_pass=os.environ.get('ORCHESTRA_RELAUNCH_PASS') or None,
+        lease = engine.open_session(args.actor,args.harness_session,
                                     size=args.size,asks=asks,owner_request=args.owner_request,require_size=True)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
@@ -171,11 +171,9 @@ def execute(args):
         text=engine.brief()
         return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
     if args.command=='autonomy':  # O8: no lease, so the ledger is armed from outside the run
-        if args.relaunch and args.action!='arm':
-            raise EngineError('--relaunch is only valid with arm')
         if args.action=='arm':
-            return engine.arm_autonomy(relaunch=args.relaunch),0
-        return {'disarm':engine.disarm_autonomy,'status':engine.autonomy_status,'settle':engine.settle}[args.action](),0
+            return engine.arm_autonomy(),0
+        return {'disarm':engine.disarm_autonomy,'status':engine.autonomy_status}[args.action](),0
     if args.command=='artifact':
         ids=[i for i in (args.tasks or '').split(',') if i]
         if args.tasks is not None and not ids:
@@ -216,6 +214,8 @@ def execute(args):
         return {'accepted':args.task_id},0
     if args.command=='review':
         review = read_json(args.report)
+        if not isinstance(review,dict):
+            raise EngineError('Review report must be a JSON object')
         result = engine.record_review(args.actor,args.lease,review['reviewer'],args.report,
                                      review['categories'],review['tasks'],review['final'],review['findings'])
         return result,0
@@ -297,7 +297,7 @@ def main(argv=None):
     args=parser().parse_args(argv)
     try:
         result,code=execute(args)
-    except (EngineError,ValueError,OSError,KeyError,subprocess.SubprocessError) as exc:
+    except (EngineError,ValueError,OSError,KeyError,TypeError,AttributeError,subprocess.SubprocessError) as exc:
         print(json.dumps({'error':str(exc)}),file=sys.stderr)
         return 2
     if result is not None:

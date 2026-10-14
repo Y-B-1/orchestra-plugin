@@ -431,24 +431,24 @@ class HooksTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.pre('Bash', {'command': command}).output, {})
 
-    def test_armed_release_needs_a_permit(self):
+    def test_armed_release_without_a_permit_asks(self):
         engine = mock.Mock()
         engine.check_release.side_effect = ValueError('No current explicit release permit')
         result = self.pre('Bash', {'command': 'git push origin feat/x'}, engine=engine)
-        self.assertEqual(decision_of(result), 'deny')
+        self.assertEqual(decision_of(result), 'ask')
         self.assertIn('No current explicit release permit', result.output['hookSpecificOutput']['permissionDecisionReason'])
 
-    def test_armed_release_multi_denies_even_with_a_permit(self):
+    def test_armed_release_multi_asks_even_with_a_permit(self):
         engine = mock.Mock()
         engine.check_release.return_value = {'id': 'permit'}
         for command in MULTI_RELEASES:
             with self.subTest(command=command):
-                self.assertEqual(decision_of(self.pre('Bash', {'command': command}, engine=engine)), 'deny')
+                self.assertEqual(decision_of(self.pre('Bash', {'command': command}, engine=engine)), 'ask')
         engine.check_release.assert_not_called()
 
-    def test_armed_without_loadable_engine_denies_release_not_ordinary_commands(self):
+    def test_armed_without_loadable_engine_asks_for_release_not_ordinary_commands(self):
         for command in ['git push origin feat/x', 'gh release create v1 --verify-tag']:
-            self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'deny')
+            self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'ask')
         self.assertEqual(self.pre('Bash', {'command': 'git status'}, armed=True).output, {})
 
     def test_update_ref_delete_denied(self):
@@ -457,7 +457,7 @@ class HooksTest(unittest.TestCase):
                 result = self.pre('Bash', {'command': command})
                 self.assertEqual(decision_of(result), 'deny')
                 self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                 'Raw ref deletion is not allowed; use git branch -d')
+                                 'Orchestra guard: Raw ref deletion is not allowed; use git branch -d')
         for command in UPDATE_REF_ALLOWED:
             with self.subTest(command=command):
                 self.assertEqual(self.pre('Bash', {'command': command}).output, {})
@@ -470,7 +470,7 @@ class HooksTest(unittest.TestCase):
                                                          'tool_input': {'file_path': 'notes.txt'}})
                     self.assertEqual(decision_of(result), 'deny')
                     self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                     'Session directory no longer exists: cd to an existing directory, then retry')
+                                     'Orchestra guard: Session directory no longer exists: cd to an existing directory, then retry')
             # An absolute path needs no cwd and keeps its ordinary verdict.
             self.assertEqual(handle_event('PreToolUse', {'cwd': '', 'tool_name': 'Edit',
                                                          'tool_input': {'file_path': '/tmp/notes.txt'}}).output, {})
@@ -605,7 +605,7 @@ class HooksTest(unittest.TestCase):
         engine.check_release.assert_called_once_with('origin', 'main', argv=['git', 'push', 'origin', 'HEAD:main'])
         engine.check_release.side_effect = ValueError('stale')
         self.assertIn('stale', self.pre('Bash', {'command': command}, engine=engine).output['hookSpecificOutput']['permissionDecisionReason'])
-        self.assertEqual(self.pre('Bash', {'command': 'git -C other push origin main'}, engine=engine).output['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertEqual(self.pre('Bash', {'command': 'git -C other push origin main'}, engine=engine).output['hookSpecificOutput']['permissionDecision'], 'ask')
 
     def test_interrupt_and_bounded_adapter(self):
         engine = mock.Mock()
@@ -876,18 +876,57 @@ class MergedDeleteHookTest(unittest.TestCase):
         git(self.repo, 'push', '-q', 'origin', 'main')
         self.assertAllowed('git branch -D x', engine=engine, armed=True)
 
-    def test_merged_delete_denied_under_autonomy(self):
+    def autonomy(self):
+        engine = mock.Mock()
+        engine.autonomy_active.return_value = True
+        return dict(engine=engine, armed=True)
+
+    def test_autonomy_deletes_only_merged_branches(self):
         self.side('x', 'x.txt', 'x\n')
         git(self.repo, 'merge', '-q', '--ff-only', 'x')
         git(self.repo, 'push', '-q', 'origin', 'main')
-        self.assertAllowed('git branch -D x')  # merged: the autonomy-off verdict
-        engine = mock.Mock()
-        engine.autonomy_active.return_value = True
-        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', engine=engine, armed=True)
-        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', armed=True, autonomy=True)
+        self.side('y', 'y.txt', 'y\n')  # never merged
+        for kw in (self.autonomy(), dict(armed=True, autonomy=True)):
+            self.assertAllowed('git branch -D x', **kw)
+            self.assertAllowed('git branch -d x', **kw)
+            self.assertAllowed('git branch --delete x', **kw)
+            self.assertDenied('git branch -D y', 'is not merged', **kw)
+            self.assertDenied('git branch -d y', 'is not merged', **kw)
+            self.assertDenied('git branch -d main', 'default branch', **kw)
         flaky = mock.Mock()
         flaky.autonomy_active.side_effect = RuntimeError('state changed')  # O29: an unreadable status counts as active
-        self.assertDenied('git branch -D x', 'Approval boundary under autonomy', engine=flaky, armed=True)
+        self.assertDenied('git branch -d y', 'is not merged', engine=flaky, armed=True)
+
+    def test_autonomy_cleanup_refuses_other_shapes(self):
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        for command in ['git branch -d x && git status', 'git branch -d "x"', 'git -C . branch -d x',
+                        'rm -rf build', 'git worktree remove --force ../wt', 'git branch -d x y']:
+            with self.subTest(command=command):
+                self.assertEqual(decision_of(self.run_hook(command, **self.autonomy())), 'deny')
+        self.assertAllowed('git worktree prune', **self.autonomy())
+        self.assertAllowed('git worktree prune -v', **self.autonomy())
+
+    def test_autonomy_removes_only_a_merged_linked_worktree(self):
+        self.side('x', 'x.txt', 'x\n')
+        git(self.repo, 'merge', '-q', '--ff-only', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.side('y', 'y.txt', 'y\n')
+        root = self.repo.parent
+        git(self.repo, 'worktree', 'add', '-q', str(root / 'wt-x'), 'x')
+        git(self.repo, 'worktree', 'add', '-q', str(root / 'wt-y'), 'y')
+        git(self.repo, 'worktree', 'add', '-q', '--detach', str(root / 'wt-d'), 'main')
+        kw = self.autonomy()
+        self.assertAllowed('git worktree remove ../wt-x', **kw)
+        self.assertAllowed('git worktree remove ' + str(root / 'wt-x'), **kw)
+        self.assertDenied('git worktree remove ../wt-y', 'is not merged', **kw)
+        self.assertDenied('git worktree remove ../wt-d', 'no branch checked out', **kw)
+        self.assertDenied('git worktree remove ../nowhere', 'not a worktree of this repository', **kw)
+        self.assertDenied('git worktree remove .', 'holds the session directory', **kw)
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': 'git worktree remove ../work'}, 'cwd': str(root / 'wt-x')}
+        self.assertIn('main worktree', handle_event('PreToolUse', payload, harness='claude', **kw)
+                      .output['hookSpecificOutput']['permissionDecisionReason'])
 
     def remote_branch(self):
         """A branch x merged into main and pushed, so origin and the tracking ref both carry it."""
@@ -1038,6 +1077,21 @@ class MarkerHandshakeTest(unittest.TestCase):
         self.marker()
         self.assertEqual(self.call(), {})
 
+    def test_fresh_marker_never_skips_a_release(self):
+        # The mod cannot ask the user, so the native hook decides every release even while the mod is live.
+        self.marker()
+        with mock.patch.object(hooks_module, 'handle_event', wraps=handle_event) as decide:
+            self.call(command='git push origin main')
+            self.assertEqual(decide.call_count, 1)
+            self.call(command='git status')
+            self.assertEqual(decide.call_count, 1)  # an ordinary command still skips
+
+    def test_unhashable_tool_name_denies_instead_of_crashing(self):
+        payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': ['Bash'], 'tool_input': {'command': 'git status'}}
+        code, output = run_main(payload, '--harness', 'claude', env=self.env)
+        self.assertEqual(code, 2)
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+
     def test_stale_marker_guards(self):
         self.marker(age_ms=20000)
         self.assertGuards(self.call())
@@ -1151,35 +1205,36 @@ class RunStateResolutionTest(unittest.TestCase):
                 self.assertIsNone(self.bash(self.repo, command))
         self.assertEqual(self.bash(self.repo, 'git push --force origin x'), 'deny')
 
-    def test_armed_main_checkout_denies_release_without_a_permit(self):
+    def test_armed_main_checkout_asks_for_release_without_a_permit(self):
         self.start(self.repo)
-        self.assertEqual(self.bash(self.repo, 'git push origin side'), 'deny')
-        self.assertEqual(self.bash(self.repo, 'git push origin x && git status'), 'deny')
+        self.assertEqual(self.bash(self.repo, 'git push origin side'), 'ask')
+        self.assertEqual(self.bash(self.repo, 'git push origin x && git status'), 'ask')
         self.assertIsNone(self.bash(self.repo, 'git status'))
         self.assertIsNone(self.bash(self.repo, 'rm -rf build'))
 
     def test_interrupted_run_is_unarmed_again(self):
         lease = self.start(self.repo)
-        self.assertEqual(self.bash(self.repo, 'git push origin side'), 'deny')
+        self.assertEqual(self.bash(self.repo, 'git push origin side'), 'ask')
         self.interrupt(self.repo, lease)
         self.assertIsNone(self.bash(self.repo, 'git push origin side'))
 
-    def test_unloadable_state_file_denies_release(self):
+    def test_unloadable_state_file_asks_for_release(self):
         from orchestra_core.paths import state_location
         state = state_location(self.repo)
         state.mkdir(parents=True)
         for text in ['{not json', '{}', '[]', '{"version": 1, "session": {"active": "yes"}}']:
             (state / 'state.json').write_text(text)
             with self.subTest(text=text):
-                self.assertEqual(self.bash(self.repo, 'git push origin side'), 'deny')
-                self.assertEqual(self.bash(self.repo, 'gh release create v1 --verify-tag'), 'deny')
+                # Never silently allowed: an unparseable file may be armed autonomy (deny), else the user is asked.
+                self.assertIn(self.bash(self.repo, 'git push origin main'), ('ask', 'deny'))
+                self.assertIn(self.bash(self.repo, 'gh release create v1 --verify-tag'), ('ask', 'deny'))
                 self.assertIsNone(self.bash(self.repo, 'git status'))
 
-    def test_a15_linked_worktree_of_an_armed_repository_denies_release(self):
+    def test_a15_linked_worktree_of_an_armed_repository_asks_for_release(self):
         self.start(self.repo)
         for command in LINKED_WORKTREE_COMMANDS:
             with self.subTest(command=command):
-                self.assertEqual(self.bash(self.linked, command), 'deny')
+                self.assertEqual(self.bash(self.linked, command), 'ask')
         self.assertIsNone(self.bash(self.linked, 'git status'))
 
     def test_a15_linked_worktree_of_an_unarmed_repository_allows_release(self):
@@ -1193,7 +1248,7 @@ class RunStateResolutionTest(unittest.TestCase):
     def test_a15_state_of_the_linked_worktree_itself_wins(self):
         # Its own armed run is found first; the main worktree's inactive state is never consulted.
         self.start(self.linked)
-        self.assertEqual(self.bash(self.linked, 'git push origin side'), 'deny')
+        self.assertEqual(self.bash(self.linked, 'git push origin side'), 'ask')
         self.assertIsNone(self.bash(self.repo, 'git push origin side'))
 
     def test_a15_protected_state_follows_the_main_worktree(self):
@@ -1479,17 +1534,52 @@ class RunHookScriptTest(unittest.TestCase):
         cmd = ['/bin/sh'] + (['-x'] if trace else []) + [str(RUN_HOOK), *args]
         return subprocess.run(cmd, input=stdin, text=True, capture_output=True, timeout=60)
 
-    def test_hook_runs_python_once_without_a_probe(self):
-        if not any(shutil.which(name) for name in ['python3.14', 'python3.13', 'python3.12', 'python3.11']):
-            self.skipTest('no versioned Python on PATH; the probing fallback is the only path')
+    def test_hook_launches_python_once_after_one_probe(self):
         result = self.run_hook('PreToolUse', '--harness', 'claude', trace=True,
                                stdin=json.dumps({'tool_name': 'Read', 'tool_input': {}}))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {})
-        self.assertNotIn('sys.version_info', result.stderr)
         launches = [l for l in result.stderr.splitlines() if l.startswith('+ exec ')]
         self.assertEqual(len(launches), 1, result.stderr)
-        self.assertTrue(launches[0].startswith('+ exec python3.'), launches)
+
+    def stub_path(self, pythons):
+        """A PATH holding only the shell tools the script needs and the given fake interpreters (name -> sh body)."""
+        if any(any(Path(d).glob('python3*')) for d in ('/opt/homebrew/bin', '/usr/local/bin') if Path(d).is_dir()):
+            self.skipTest('the script searches /opt/homebrew/bin and /usr/local/bin first')
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        bin_dir = Path(temp.name)
+        for tool in ('dirname', 'cat', 'printf'):
+            found = shutil.which(tool)
+            if found:
+                (bin_dir / tool).symlink_to(found)
+        for name, body in pythons.items():
+            (bin_dir / name).write_text('#!/bin/sh\n' + body + '\n')
+            (bin_dir / name).chmod(0o755)
+        return str(bin_dir)
+
+    def run_with_path(self, path, event):
+        return subprocess.run(['/bin/sh', str(RUN_HOOK), event, '--harness', 'claude'], input='{}', text=True,
+                              capture_output=True, timeout=60, env={'PATH': path})
+
+    def test_a_broken_versioned_shim_is_skipped(self):
+        path = self.stub_path({'python3.12': 'echo "pyenv: python3.12: command not found" >&2; exit 127',
+                               'python3': 'exec %s "$@"' % sys.executable})
+        result = self.run_with_path(path, 'SubagentStart')  # the real interpreter ran: an empty hook answer
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
+
+    def test_without_python_pretooluse_fails_closed_and_other_events_warn(self):
+        for pythons in ({}, {'python3': 'exit 1'}):  # none, or only an old Python
+            path = self.stub_path(pythons)
+            with self.subTest(pythons=sorted(pythons)):
+                blocked = self.run_with_path(path, 'PreToolUse')
+                self.assertEqual(blocked.returncode, 2)
+                self.assertIn('needs Python 3.11', blocked.stderr)
+                for event in ('Stop', 'SessionStart', 'SubagentStart', 'SessionEnd'):
+                    warned = self.run_with_path(path, event)
+                    self.assertEqual(warned.returncode, 0, event)
+                    self.assertIn('needs Python 3.11', json.loads(warned.stdout)['systemMessage'])
 
     def test_cli_first_argument_execs_the_orchestra_cli(self):
         result = self.run_hook('--cli', 'classify', 'git reset --hard')
@@ -1554,6 +1644,95 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(code, 0)
         return output.get('hookSpecificOutput', {}).get('permissionDecision')
 
+    def test_interactive_run_asks_for_release_actions(self):
+        for command in ['git push origin main', 'gh pr merge 3 --squash', 'npm publish', 'git push origin a && git push origin b',
+                        'gh api graphql --input payload.json']:
+            with self.subTest(command=command):
+                code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
+                decision = output['hookSpecificOutput']
+                self.assertEqual(decision['permissionDecision'], 'ask')
+                self.assertIn('approve this release action', decision['permissionDecisionReason'])
+
+    def origin(self, default='main'):
+        """A configured origin whose default branch is recorded locally, as `git remote set-head` leaves it."""
+        git(self.repo, 'config', 'remote.origin.url', str(self.root / 'origin.git'))
+        git(self.repo, 'update-ref', 'refs/remotes/origin/' + default, 'HEAD')
+        git(self.repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/' + default)
+
+    def test_autonomy_may_push_a_feature_branch_and_open_a_pull_request(self):
+        self.origin()
+        git(self.repo, 'branch', 'feat/x')
+        git(self.repo, 'tag', 'v1.0')
+        self.arm()
+        for command in ['git push origin feat/x', 'git push -u origin feat/x', 'git push --set-upstream origin feat/x',
+                        'git push origin HEAD:feat/x', 'git push origin feat/x:refs/heads/feat/z', 'gh pr create --fill']:
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(self.repo, command))
+        self.assertIsNone(self.hook(self.repo, "gh api graphql -f query='query{viewer{login}}'"))  # a read stays allowed
+        git(self.repo, 'checkout', '-q', '-b', 'feat/y')
+        self.assertIsNone(self.hook(self.repo, 'git push -u origin HEAD'))  # HEAD names the current feature branch
+        self.assertIsNone(self.hook(self.repo, 'git push -u origin @'))
+        git(self.repo, 'checkout', '-q', 'main')
+        refused = ['git push origin HEAD', 'git push origin @', 'git push origin main', 'git push origin master',
+                   'git push origin HEAD:Main', 'git push origin HEAD:heads/main', 'git push origin heads/main',
+                   'git push origin HEAD:refs/heads/main', 'git push origin feat/x:main',
+                   'git push origin v1.0', 'git push origin refs/tags/v1.0', 'git push origin HEAD:refs/tags/v2',
+                   'git push origin HEAD:tags/v2', 'git push origin nosuch', 'git push origin', 'git push',
+                   'gh pr merge 3 --squash', 'gh api -X PUT repos/o/r/pulls/1/merge',
+                   'gh api graphql --input payload.json', 'gh api graphql -F query=@q.graphql',
+                   "gh api graphql -f query='mutation{addComment}'",
+                   'git push origin feat/x && gh pr create', 'git push https://example.invalid/x.git feat/x',
+                   'git push other feat/x', 'GIT_DIR=../x/.git git push origin HEAD', 'xargs -a refs git push origin feat/x',
+                   'git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x',
+                   'git push --receive-pack=evil origin feat/x', 'git push origin +feat/x', 'git push "origin" feat/x']
+        for command in refused:
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(self.repo, command), 'deny')
+        git(self.repo, 'config', 'remote.origin.push', 'refs/heads/feat/x:refs/heads/main')
+        self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')  # a configured push mapping
+
+    def test_autonomy_pull_request_push_needs_the_ledger_flag_and_spares_the_release_target(self):
+        self.origin()
+        for name in ('feat/x', 'feat/rel'):
+            git(self.repo, 'branch', name)
+        engine = mock.Mock()
+        engine.status.return_value = {'autonomy': {'pull_requests': True}}
+        engine.policy = {'release': {'enabled': True, 'remote': 'origin', 'target': 'feat/rel'}}
+        push = hooks_module._pull_request_push
+        self.assertIsNone(push('git push origin feat/x', str(self.repo), engine))
+        self.assertIn('release target', push('git push origin feat/rel', str(self.repo), engine))
+        self.assertIn('release target', push('git push origin feat/x:Feat/Rel', str(self.repo), engine))
+        for autonomy in ({'pull_requests': False}, {}):  # a 2.5 Push line, or a state armed before the flag existed
+            engine.status.return_value = {'autonomy': autonomy}
+            self.assertIn('does not allow pull request pushes', push('git push origin feat/x', str(self.repo), engine))
+        engine.status.side_effect = RuntimeError('state changed')
+        self.assertIn('cannot be read', push('git push origin feat/x', str(self.repo), engine))
+
+    def test_legacy_push_line_arms_without_pull_requests(self):
+        self.origin()
+        git(self.repo, 'branch', 'feat/x')
+        self.fixed = [('- Push: no push to any branch.' if line.startswith('- Push:') else line) for line in self.fixed]
+        self.arm()
+        self.assertIs(self.engine.status()['autonomy']['pull_requests'], False)
+        self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')
+
+    def test_autonomy_pull_request_push_follows_the_remote_default_branch(self):
+        self.origin('trunk')
+        git(self.repo, 'branch', 'feat/x')
+        self.arm()
+        self.assertEqual(self.hook(self.repo, 'git push origin trunk'), 'deny')
+        self.assertEqual(self.hook(self.repo, 'git push origin HEAD:Trunk'), 'deny')
+        self.assertIsNone(self.hook(self.repo, 'git push origin feat/x'))
+
+    def test_autonomy_pull_request_push_refuses_an_unknown_default_branch(self):
+        git(self.repo, 'config', 'remote.origin.url', str(self.root / 'origin.git'))  # no refs/remotes/origin/HEAD
+        self.arm()
+        git(self.repo, 'branch', 'develop')
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin develop'}})
+        decision = output['hookSpecificOutput']
+        self.assertEqual(decision['permissionDecision'], 'deny')
+        self.assertIn('git remote set-head origin --auto', decision['permissionDecisionReason'])
+
     def test_boundary_denied_while_active_and_allowed_while_autonomy_is_off(self):
         for command in ['rm -rf build', 'rmdir empty', 'unlink link', 'git branch -d topic', 'git tag -d v1']:
             with self.subTest(command=command):
@@ -1573,41 +1752,20 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertIn('park', reason)
         self.assertIn('--reason', reason)
 
-    def test_pretooluse_armed_without_session_under_relaunch(self):
-        self.ledger()
-        self.engine.arm_autonomy(relaunch=True)
-        self.engine.interrupt('main', self.lease)  # between passes: no active session, relaunch autonomy stays armed
-        self.assertFalse(self.engine.status()['session']['active'])
-        for command in ['git worktree remove x', 'rm -rf build']:
-            with self.subTest(command=command):
-                code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
-                decision = output['hookSpecificOutput']
-                self.assertEqual(decision['permissionDecision'], 'deny')
-                self.assertIn('Approval boundary under autonomy', decision['permissionDecisionReason'])
-        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
-        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')  # no session: no release, fail closed
-        self.assertIsNone(self.hook(self.repo, 'git status'))
-
-    def test_pretooluse_without_session_and_without_relaunch_stays_unarmed(self):
+    def test_pretooluse_without_session_stays_unarmed(self):
         self.ledger()
         self.engine.arm_autonomy()
         self.engine.interrupt('main', self.lease)  # 2.1: a session end clears in-session autonomy
         self.assertIsNone(self.hook(self.repo, 'git worktree remove x'))
 
-    def test_pretooluse_relaunch_armed_with_an_unloadable_state_is_active_without_a_session(self):
+    def test_legacy_relaunch_flag_without_session_is_unarmed(self):
         self.ledger()
-        self.engine.arm_autonomy(relaunch=True)
-        self.engine.interrupt('main', self.lease)
+        self.engine.arm_autonomy()
         data = json.loads((self.state / 'state.json').read_text())
-        data['policy'] = 'changed'  # the engine cannot load this state any more
+        data['autonomy']['relaunch'] = True  # a 2.5 relaunch arm: no longer keeps autonomy between sessions
+        data['session']['active'] = False
         (self.state / 'state.json').write_text(json.dumps(data))
-        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git worktree remove x'}})
-        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
-
-    def test_stop_without_session_under_relaunch_changes_nothing(self):
-        self.ledger()
-        self.engine.arm_autonomy(relaunch=True)
-        self.engine.interrupt('main', self.lease)
+        self.assertIsNone(self.hook(self.repo, 'git worktree remove x'))
         before = (self.state / 'state.json').read_bytes()
         with mock.patch('sys.stdin', io.StringIO(json.dumps({'cwd': str(self.repo), 'session_id': 'other'}))), \
                 mock.patch('sys.stdout', new_callable=io.StringIO) as output:
@@ -1619,8 +1777,8 @@ class AutonomyHookTest(unittest.TestCase):
         from orchestra_core.engine import Engine
         unit = [sys.executable, '-c', 'print("passed")']
         policy = {'schema_version': 1, 'required_checks': [{'name': 'unit', 'argv': unit}],
-                  'release': {'enabled': True, 'authorization': 'user request', 'remote': 'origin', 'target': 'side',
-                              'argv': ['git', 'push', 'origin', 'side']}}
+                  'release': {'enabled': True, 'authorization': 'user request', 'remote': 'origin', 'target': 'main',
+                              'argv': ['git', 'push', 'origin', 'main']}}
         (self.state / 'state.json').unlink()
         (self.state / 'policy.json').write_text(json.dumps(policy))
         self.engine = Engine(self.state, self.repo, policy=policy, clock=lambda: self.now[0])
@@ -1632,29 +1790,29 @@ class AutonomyHookTest(unittest.TestCase):
                                           summary='Behavior checked against acceptance criteria.')))
         self.engine.record_review('main', self.lease, 'reviewer', report, categories, final=True)
         self.engine.run_gate('main', self.lease, 'unit', unit)
-        push = ['git', 'push', 'origin', 'side']
-        self.fixed = [('- Release: pre-authorized origin side' if line.startswith('- Release:') else line) for line in self.fixed]
+        push = ['git', 'push', 'origin', 'main']
+        self.fixed = [('- Release: pre-authorized origin main' if line.startswith('- Release:') else line) for line in self.fixed]
         self.arm()
-        self.assertEqual(self.engine.status()['autonomy']['release'], {'remote': 'origin', 'target': 'side'})
-        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'deny')  # exact pair, no permit yet: the permit check
-        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
+        self.assertEqual(self.engine.status()['autonomy']['release'], {'remote': 'origin', 'target': 'main'})
+        self.assertEqual(self.hook(self.repo, 'git push origin main'), 'deny')  # exact pair, no permit yet: the permit check
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin main'}})
         self.assertIn('No current explicit release permit', output['hookSpecificOutput']['permissionDecisionReason'])
-        self.engine.release_permit('main', self.lease, 'origin', 'side')
+        self.engine.release_permit('main', self.lease, 'origin', 'main')
         self.assertIsNone(self.hook(self.repo, ' '.join(push)))  # exact pair with a permit: allowed
-        for command in ['git push origin other', 'git push origin side && git status', 'rm -rf build']:
+        for command in ['gh pr merge 3', 'git push origin main && git status', 'rm -rf build']:
             with self.subTest(command=command):
                 code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
                 decision = output['hookSpecificOutput']
                 self.assertEqual(decision['permissionDecision'], 'deny')
-                self.assertTrue(decision['permissionDecisionReason'].startswith(('Autonomy is active: ', 'Approval boundary under autonomy')),
+                self.assertTrue(decision['permissionDecisionReason'].startswith(('Orchestra guard: Autonomy is active: ', 'Orchestra guard: Approval boundary under autonomy')),
                                 decision['permissionDecisionReason'])
 
     def test_release_is_denied_while_active_even_with_a_permit(self):
         from orchestra_core.engine import Engine
         unit = [sys.executable, '-c', 'print("passed")']
         policy = {'schema_version': 1, 'required_checks': [{'name': 'unit', 'argv': unit}],
-                  'release': {'enabled': True, 'authorization': 'user request', 'remote': 'origin', 'target': 'side',
-                              'argv': ['git', 'push', 'origin', 'side']}}
+                  'release': {'enabled': True, 'authorization': 'user request', 'remote': 'origin', 'target': 'main',
+                              'argv': ['git', 'push', 'origin', 'main']}}
         (self.state / 'state.json').unlink()  # a fresh run under the release policy the hook loads
         (self.state / 'policy.json').write_text(json.dumps(policy))
         self.engine = Engine(self.state, self.repo, policy=policy, clock=lambda: self.now[0])
@@ -1666,15 +1824,15 @@ class AutonomyHookTest(unittest.TestCase):
                                           summary='Behavior checked against acceptance criteria.')))
         self.engine.record_review('main', self.lease, 'reviewer', report, categories, final=True)
         self.engine.run_gate('main', self.lease, 'unit', unit)
-        self.engine.release_permit('main', self.lease, 'origin', 'side')
-        self.assertIsNone(self.hook(self.repo, 'git push origin side'))  # the permit is real and current
+        self.engine.release_permit('main', self.lease, 'origin', 'main')
+        self.assertIsNone(self.hook(self.repo, 'git push origin main'))  # the permit is real and current
         self.arm()
-        for command in ['git push origin side', 'git push origin side && git status', 'gh release create v1 --verify-tag']:
+        for command in ['git push origin main', 'git push origin main && git status', 'gh release create v1 --verify-tag']:
             with self.subTest(command=command):
                 code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
                 decision = output['hookSpecificOutput']
                 self.assertEqual(decision['permissionDecision'], 'deny')
-                self.assertTrue(decision['permissionDecisionReason'].startswith('Autonomy is active: '),
+                self.assertTrue(decision['permissionDecisionReason'].startswith('Orchestra guard: Autonomy is active: '),
                                 decision['permissionDecisionReason'])
 
     def break_policy(self):
@@ -1698,7 +1856,7 @@ class AutonomyHookTest(unittest.TestCase):
         for cwd in (self.repo, self.linked):
             with self.subTest(cwd=cwd.name):
                 self.assertEqual(self.hook(cwd, 'rm -rf build'), 'deny')
-                self.assertEqual(self.hook(cwd, 'git push origin side'), 'deny')
+                self.assertEqual(self.hook(cwd, 'git push origin main'), 'deny')
                 self.assertIsNone(self.hook(cwd, 'git status'))
                 self.assertEqual(self.stop_main(cwd), {})
         self.assertEqual(self.hook(self.repo, 'git merge topic'), 'deny')  # main checkout on the default branch
@@ -1724,7 +1882,7 @@ class AutonomyHookTest(unittest.TestCase):
         for cwd in (self.repo, self.linked):
             with self.subTest(cwd=cwd.name):
                 self.assertIsNone(self.hook(cwd, 'rm -rf build'))
-                self.assertEqual(self.hook(cwd, 'git push origin side'), 'deny')  # A1: armed, no permit
+                self.assertEqual(self.hook(cwd, 'git push origin side'), 'ask')  # A1: armed, no permit
                 self.assertEqual(self.stop_main(cwd), {})
         self.assertIsNone(self.hook(self.repo, 'git merge topic'))
         never_armed = json.loads((self.state / 'state.json').read_text())
@@ -1753,7 +1911,7 @@ class AutonomyHookTest(unittest.TestCase):
         self.set_raw_session_active(True)
         for cwd in (self.repo, self.linked):
             with self.subTest(cwd=cwd.name):
-                self.assertEqual(self.hook(cwd, 'git push origin main'), 'deny')
+                self.assertEqual(self.hook(cwd, 'git push origin main'), 'ask')
                 self.assertEqual(self.hook(cwd, 'git reset --hard'), 'deny')
 
     def test_o35_unparseable_state_stays_armed(self):
@@ -1793,7 +1951,7 @@ class AutonomyHookTest(unittest.TestCase):
 
     def test_a15_push_and_rm_denied_in_a_linked_worktree_of_the_armed_repository(self):
         self.arm()
-        for command in ['git push origin side', 'git -C ../linked push origin side', 'rm -rf build', 'rm file.txt']:
+        for command in ['git push origin main', 'git -C ../linked push origin side', 'rm -rf build', 'rm file.txt']:
             with self.subTest(command=command):
                 self.assertEqual(self.hook(self.linked, command), 'deny')
         self.assertIsNone(self.hook(self.linked, 'git status'))
@@ -1835,6 +1993,7 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(passes(), 0)
         self.assertEqual(self.stop_as(self.linked, 'S-main')['decision'], 'block')
         self.assertEqual(passes(), 1)
+        self.add_card('c2')  # the board changed, so a continuation is due again
         self.assertEqual(self.stop_as(self.repo, None)['decision'], 'block')  # no session id: as before
         self.assertEqual(passes(), 2)
 
@@ -1851,10 +2010,20 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(first['decision'], 'block')
         self.assertIn('Autonomy pass 1', first['reason'])
         self.assertNotIn('Autonomy pass 1 of', first['reason'])
+        self.engine.dispatch('main', self.lease, 'c1', 'w1')
+        self.assertEqual(self.stop(), {})  # only a worker running: the turn ends quietly, the worker wakes it
+        self.add_card('c2')
         self.assertEqual(self.stop()['decision'], 'block')  # the old cap of 1 no longer stops the loop
         self.now[0] += 7200
         self.assertEqual(self.stop(), {})
         self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'deadline')
+
+    def test_stop_after_an_unchanged_continued_turn_with_nothing_running_stops_stalled(self):
+        self.arm()
+        self.add_card('c1')
+        self.assertEqual(self.stop()['decision'], 'block')
+        self.assertEqual(self.stop(), {})  # no repeat, and nothing would wake the session
+        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'stalled')
 
     def test_stop_stops_at_the_deadline(self):
         self.arm()
@@ -1989,13 +2158,13 @@ class RunBriefHookTest(unittest.TestCase):
                 decision = output['hookSpecificOutput']
                 self.assertEqual(decision['permissionDecision'], 'deny')
                 self.assertEqual(decision['permissionDecisionReason'],
-                                 'Session directory no longer exists: cd to an existing directory, then retry')
+                                 'Orchestra guard: Session directory no longer exists: cd to an existing directory, then retry')
 
     def test_pretooluse_missing_cwd_allows_nothing_new(self):
         gone = self.root / 'gone'
         self.assertEqual(self.hook(gone, 'git status'), None)  # an allowed class stays allowed
         self.assertEqual(self.hook(gone, 'git reset --hard'), 'deny')  # a plain deny stays denied
-        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'deny')  # existing cwd: unchanged
+        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'ask')  # existing cwd: armed run, no permit
 
     def test_hook_state_read_fails_closed_after_lock_wait(self):
         self.arm()
@@ -2016,12 +2185,12 @@ class RunBriefHookTest(unittest.TestCase):
     def test_ended_run_busy_lock_does_not_deny_non_delegated(self):
         from orchestra_core.engine import Engine, StateBusy
         self.engine.interrupt('main', self.lease)  # the run's session has ended
-        # The first read (status) succeeds; the second read (autonomy_active) meets a busy lock.
+        # An ended session is unarmed from its status alone: no second read that a busy lock could fail.
         with mock.patch.object(Engine, 'autonomy_active', side_effect=StateBusy('Orchestra state is busy; retry')) as second:
             self.assertIsNone(self.hook(self.repo, 'git status'))
             self.assertIsNone(self.hook(self.repo, 'git commit -m done'))
             self.assertEqual(self.hook(self.repo, 'git reset --hard'), 'deny')  # a plain deny keeps its verdict
-        self.assertTrue(second.called)
+        self.assertFalse(second.called)
 
     def test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout(self):
         self.arm()
@@ -2078,7 +2247,7 @@ class RunBriefHookTest(unittest.TestCase):
                     decision = json.loads(result.stdout)['hookSpecificOutput']
                     self.assertEqual(decision['permissionDecision'], 'deny')
                     self.assertEqual(decision['permissionDecisionReason'],
-                                     'Session directory no longer exists: cd to an existing directory, then retry')
+                                     'Orchestra guard: Session directory no longer exists: cd to an existing directory, then retry')
             with self.subTest(label=label, command='git status'):
                 result = self.run_hook_from_deleted_cwd(lambda gone: make(gone, 'git status'))
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -2090,7 +2259,7 @@ class RunBriefHookTest(unittest.TestCase):
             decision = json.loads(result.stdout)['hookSpecificOutput']
             self.assertEqual(decision['permissionDecision'], 'deny')
             self.assertEqual(decision['permissionDecisionReason'],
-                             'Session directory no longer exists: cd to an existing directory, then retry')
+                             'Orchestra guard: Session directory no longer exists: cd to an existing directory, then retry')
 
     def hold_lock_in_process(self, seconds):
         """Hold the state lock exclusively from another process for `seconds`."""
@@ -2247,7 +2416,7 @@ class PlanV24GuardTest(unittest.TestCase):
                     result = self.review_call(text, kind, engine)
                     self.assertEqual(decision_of(result), 'deny')
                     self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                     'Cite gate receipt gate-1, gate-2; reviewers do not rerun suites')
+                                     'Orchestra guard: Cite gate receipt gate-1, gate-2; reviewers do not rerun suites')
 
     def test_reviewer_test_block_covers_the_size_variants(self):
         engine = self.engine(gate_ids=['gate-1'])
@@ -2256,7 +2425,7 @@ class PlanV24GuardTest(unittest.TestCase):
                 result = self.review_call('python3 -m unittest discover', kind, engine)
                 self.assertEqual(decision_of(result), 'deny')
                 self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                 'Cite gate receipt gate-1; reviewers do not rerun suites')
+                                 'Orchestra guard: Cite gate receipt gate-1; reviewers do not rerun suites')
 
     def test_suite_allowed_without_receipts_engine_or_method(self):
         for engine in (self.engine(gate_ids=[]), None, self.engine()):

@@ -81,7 +81,7 @@ test('tool.call: release and boundary commands delegate to Python and honor its 
   r.runAnswer = () => ({ exitCode: 0, stdout: deny('needs authorization') });
   await $.session.start(start);
   const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
-  expect(res).toEqual({ deny: 'needs authorization' } as never);
+  expect(res).toEqual({ deny: 'Orchestra guard: needs authorization' } as never);
   expect(b.calls.length).toBe(0);
   const run = r.runs.at(-1)!;
   expect(run.argv.slice(0, 1)).toEqual(['/bin/sh']);
@@ -108,7 +108,7 @@ test('merged-delete is delegated', async ($, on) => {
   r.runAnswer = () => ({ exitCode: 0, stdout: deny('Branch x is not merged into origin/main (no ancestor, tree or covering-branch evidence)') });
   await $.session.start(start);
   const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git branch -D x' });
-  expect(res).toEqual({ deny: 'Branch x is not merged into origin/main (no ancestor, tree or covering-branch evidence)' } as never);
+  expect(res).toEqual({ deny: 'Orchestra guard: Branch x is not merged into origin/main (no ancestor, tree or covering-branch evidence)' } as never);
   expect(b.calls.length).toBe(0);
   const stdin = JSON.parse(r.runs.at(-1)!.init!.stdin!);
   expect(stdin.tool_input.command).toBe('git branch -D x');
@@ -261,7 +261,7 @@ function pythonDenies(r: Rig): void {
 }
 
 function expectDelegated(r: Rig, b: { calls: unknown[] }, res: unknown, tool: string, key: string, value: string): void {
-  expect(res).toEqual({ deny: PY_DENY } as never);
+  expect(res).toEqual({ deny: 'Orchestra guard: ' + PY_DENY } as never);
   expect(b.calls.length).toBe(0);
   const run = r.runs.filter((x) => x.argv.includes('--from-mod')).at(-1);
   expect(run === undefined).toBe(false);
@@ -628,9 +628,20 @@ test('delegate surfaces the reason of an exit-2 deny', async ($, on) => {
   await $.session.start(start);
   r.runAnswer = () => ({ exitCode: 2, stdout: deny('Missing shell command') });
   const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
-  expect(res).toEqual({ deny: 'Missing shell command' } as never);
+  expect(res).toEqual({ deny: 'Orchestra guard: Missing shell command' } as never);
   r.runAnswer = () => ({ exitCode: 2, stdout: '' });
   const bare = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
   expect(bare).toEqual({ deny: 'Orchestra guard error (exit 2); failing closed' } as never);
   expect(b.calls.length).toBe(0);
+});
+
+test('delegate passes an ask on to the native hook instead of deciding it', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  await $.session.start(start);
+  const ask = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'approve?' } });
+  r.runAnswer = () => ({ exitCode: 0, stdout: ask });
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
+  expect((res as { deny?: string }).deny).toBeUndefined();
+  expect(b.calls.length).toBe(1);
 });

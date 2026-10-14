@@ -145,7 +145,7 @@ class NativeTests(unittest.TestCase):
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
         versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
         self.assertEqual(len(set(versions.values())), 1, versions)
-        self.assertEqual(set(versions.values()), {'2.5.1'})
+        self.assertEqual(set(versions.values()), {'2.6.0'})
 
     def test_prepr_reviewer_agents_exist(self):
         sys.path.insert(0, str(PLUGIN / 'scripts'))
@@ -168,14 +168,9 @@ class NativeTests(unittest.TestCase):
         for name in ['hooks/mod/orchestra.ts', 'hooks/mod/marker.ts', 'types/index.d.ts']:
             self.assertTrue((PLUGIN / name).is_file(), name)
 
-    def test_relaunch_prompt_ships_and_forbids_background_work(self):
-        text = (PLUGIN / 'config/relaunch-prompt.md').read_text()
-        for phrase in ['orchestra` skill', 'start --harness-session', 'progress.md', 'orchestra.py status', 'Park a card',
-                       'Never end your turn to wait', 'context nears its ceiling', 'foreground (blocking) Agent calls only',
-                       'Never run background Bash', 'Workflow is allowed in the foreground']:
-            self.assertIn(phrase, text)
-        self.assertNotIn('Do not use the Workflow tool', text)
-        self.assertNotRegex(text, r'/Users/')
+    def test_relaunch_harness_is_removed(self):
+        self.assertFalse((PLUGIN / 'config/relaunch-prompt.md').exists())
+        self.assertFalse((PLUGIN / 'scripts/orchestra_core/relaunch.py').exists())
 
 
 if __name__ == '__main__':

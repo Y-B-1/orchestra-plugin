@@ -76,6 +76,11 @@ type Where = { repo: string; state: string; standingOrders: boolean };
 
 type Run = Awaited<ReturnType<Dollar['process']['run']>>;
 
+/** A deny that names its source, so the model reads a policy decision, not a tool failure. */
+export function blocked(reason: string): { deny: string } {
+  return { deny: reason.startsWith('Orchestra') ? reason : `Orchestra guard: ${reason}` };
+}
+
 /** SPEC 5.16 item 4: the reason names the one failure class. `detail` is the spawn code or the exit status. */
 export function failClosed(kind: 'spawn' | 'exit' | 'timeout' | 'bad output', detail: string): string {
   const named = kind === 'spawn' ? `spawn: ${detail}` : kind === 'exit' ? `exit ${detail}` : kind;
@@ -115,6 +120,7 @@ async function delegate($: Dollar, tool: string, toolInput: Json, sessionId: str
   const spec = asJson(JSON.stringify(hso));
   if (spec === null) return failClosed('bad output', '');
   if (spec['permissionDecision'] === 'deny') return String(spec['permissionDecisionReason'] ?? failClosed('bad output', ''));
+  // `ask` passes on: a tool.call hook cannot prompt, so the native PreToolUse hook, which never skips a release, asks.
   return run.exitCode === 0 ? null : failClosed('exit', String(run.exitCode));
 }
 
@@ -400,20 +406,20 @@ export const register: Register = (on: On) => {
       delete toolInput['tool_use_id'];
       delete toolInput['consent'];
       const reason = await delegate($, tool, toolInput, lastSeen ?? '');
-      if (reason !== null) return { deny: reason };
+      if (reason !== null) return blocked(reason);
       return next(e);
     }
     if (shellTools().includes(tool)) {
       const raw = input['command'] !== undefined ? input['command'] : input['cmd'];
-      if (raw === undefined || Object(raw).constructor !== String) return { deny: 'Missing shell command' };
+      if (raw === undefined || Object(raw).constructor !== String) return blocked('Missing shell command');
       const command = String(raw);
       const d = classifyCommand(command);
       const klass = klassOf(d);
-      if (klass === 'deny') return { deny: d.reason !== '' ? d.reason : FAIL_CLOSED };
+      if (klass === 'deny') return blocked(d.reason !== '' ? d.reason : FAIL_CLOSED);
       if (DELEGATED.includes(klass)) {
         const sid = lastSeen ?? '';
         const reason = await delegate($, tool, { command }, sid);
-        if (reason !== null) return { deny: reason };
+        if (reason !== null) return blocked(reason);
       }
       const result = await next(e);
       try {
@@ -442,12 +448,12 @@ export const register: Register = (on: On) => {
       const sd = stateDir ? stateDir : null;
       // Both the base Python reads (XDG_STATE_HOME as given) and the marker base are protected.
       const denied = editDenied(path, cwd, { stateDir: sd, xdg: rawXdg, home }) || (rawXdg !== xdg && editDenied(path, cwd, { stateDir: sd, xdg, home }));
-      if (denied) return { deny: STATE_DENY };
+      if (denied) return blocked(STATE_DENY);
     }
     return next(e);
   }).catch(async (_$, e, next) => {
     if (next.called) return next(e);
-    return { deny: FAIL_CLOSED };
+    return blocked(FAIL_CLOSED);
   });
 
   on('agent.offer', async (_$, e, next) => {

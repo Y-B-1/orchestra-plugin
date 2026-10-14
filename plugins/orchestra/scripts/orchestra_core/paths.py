@@ -11,11 +11,17 @@ def repository(cwd):
     return Path(subprocess.check_output(['git','-C',str(cwd),'rev-parse','--show-toplevel'],stderr=subprocess.PIPE).decode().strip()).resolve()
 
 
+def state_home():
+    """XDG_STATE_HOME when it is absolute (the XDG rule, as the mod reads it), else ~/.local/state."""
+    value = os.environ.get('XDG_STATE_HOME', '')
+    return Path(value) if os.path.isabs(value) else Path.home() / '.local/state'
+
+
 def state_location(repo):
     override = os.environ.get('ORCHESTRA_STATE_DIR')
     if override:
         return Path(override).expanduser().resolve()
-    base = Path(os.environ.get('XDG_STATE_HOME', str(Path.home()/'.local/state')))
+    base = state_home()
     identity = hashlib.sha256(str(Path(repo).resolve()).encode()).hexdigest()[:24]
     return base / 'orchestra' / identity
 

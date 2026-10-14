@@ -13,11 +13,10 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `board` | Group card ids by role and state. | no |
 | `artifact [--tasks ID[,ID]]` | Print the whole-repo artifact, or with `--tasks` the artifact scoped to those cards' reserved files plus HEAD. | no |
 | `report WORKER TOKEN FILE` | Record a worker's result file against its assignment token. The same worker may replace the report until the card is accepted or a review covers it. | no |
-| `autonomy arm [--relaunch]\|disarm\|status\|settle` | Arm, disarm or inspect the autonomous loop. `arm --relaunch` keeps autonomy armed between sessions; `settle` checks the stop conditions without counting a pass. | no |
+| `autonomy arm\|disarm\|status` | Arm, disarm or inspect the autonomous loop. | no |
 | `brief` | Print the newest run brief. Read-only. | no |
 | `finding list [--for-brief]` | List the findings ledger, or render a "Known findings" block for reviewer briefs. | no |
-| `relaunch --permission-mode MODE [--model ID] [--launcher ARGV...]` | Run fresh `claude -p` passes from a terminal until a stop. `--launcher ARGV...` must come last; every later word goes to the launcher. | no |
-| `classify "SHELL COMMAND"` | Print the guard verdict for a command string without running it. | no |
+| `classify "SHELL COMMAND"` | Print the classifier's decision for a command string without running it. The hook then applies the run state: a `releasemulti` category is the release-multi class, so its result depends on whether a run or autonomy is active. | no |
 | `ready` | List cards that can be dispatched now. | yes |
 | `route --size TIER [--asks N] --reason TEXT` | Change the tier after `start`, either way; the reason is logged in `route_log`. A 2.4 run uses `route --items N --reason TEXT` instead. | yes |
 | `add TASK.json` | Add a card. A builder card may carry `size` (`tiny` or `medium`). On a size run a designer-planner plan card needs a large run or an owner request. On a 2.4 workflow route, the plan card must be accepted first. | yes |
@@ -36,6 +35,14 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |
 | `finish` | Close the run after completion checks. A parked card blocks it. | yes |
 
+## Changes in 2.6.0
+
+- Removed: the relaunch harness, `orchestra.py relaunch`, `autonomy arm --relaunch` and `autonomy settle`. A 2.5 state armed with `--relaunch` does not re-arm on `start`; re-arm in a live session.
+- Changed: during an interactive run, a release action without a current permit asks the user instead of being denied.
+- Changed: under autonomy the pull request push has one exact shape, and merged branches and worktrees may be cleaned up ([hook policy](hooks.md#autonomy-boundaries)).
+- Changed: the Stop loop continues a turn only on actionable work: a ready or reported card, an open final finding, or a held chain owed its final review.
+- Changed: `start --policy` validates the policy file, and CLI errors exit 2 with a JSON error.
+
 ## Changes in 2.0.0
 
 - Removed: the three advisory commands for lane routing, review grouping and audit-axis selection. The coordinator now chooses lanes, groups reported cards and picks audit axes by hand, following the skill's coordination and audit-axes references. Calling a removed command exits with an unknown-command error.
@@ -47,7 +54,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 
 ## Changes in 2.2.0
 
-- New: `hold`, `brief`, `finding add|list`, `gate --again`, `autonomy arm --relaunch`, `autonomy settle` and `relaunch`. The 2.2 wave field and `supersede` are removed in 2.4.
+- New: `hold`, `brief`, `finding add|list`, `gate --again`, `autonomy arm --relaunch`, `autonomy settle` and `relaunch`. The 2.2 wave field and `supersede` are removed in 2.4; the relaunch harness, `--relaunch` and `settle` are removed in 2.6.
 - Changed: autonomy has no pass or stall cap. Caps in a 2.1 ledger are recorded, not enforced. The run brief replaces the autonomy report.
 - Changed: `gate` refuses boundary commands, and a repeat of a passed gate needs `--again`.
 - Every 2.1 command keeps working. A run started under 2.1 loads under 2.2; see the README upgrade note before mixing versions on one run.
@@ -85,23 +92,7 @@ Every end of a run, armed or not, appends a run brief to `<state>/progress.md` a
 
 ## Autonomy
 
-`autonomy arm` needs an active run. If `<state>/autonomy.md` does not exist, `arm` writes the ledger from a template, prints its path and refuses; fill it in and arm again. The ledger holds a goal, completion checks, a deadline and the fixed approval boundaries. `max_passes` and `max_stalls` are optional: a ledger that still carries them (as 2.1 ledgers do) records and shows them, and never enforces them. Any change to the ledger after `arm` stops the loop. While armed, the Stop hook keeps the run going until the deadline, completion, only parked cards, no ready card, a tampered ledger or `disarm`. No count of passes or stalls stops it. A stall is a pass that leaves the progress signature unchanged; it is counted and reported, and the band shows "pass N". Each stop writes a run brief to `<state>/progress.md`, shown at the next session start.
+`autonomy arm` needs an active run. If `<state>/autonomy.md` does not exist, `arm` writes the ledger from a template, prints its path and refuses; fill it in and arm again. The ledger holds a goal, completion checks, a deadline and the fixed approval boundaries. `max_passes` and `max_stalls` are optional: a ledger that still carries them (as 2.1 ledgers do) records and shows them, and never enforces them. Any change to the ledger after `arm` stops the loop. While armed, the Stop hook keeps the run going until the deadline, completion, only parked cards, no live card, a tampered ledger, a stall with no worker running (`stalled`) or `disarm`. It continues a turn only when the coordinator can act now: a ready or reported card, an open final finding, a held chain owed its final review, or, with every card accepted, the final review, gates and pull request still owed. When only workers are running, the turn ends and the harness wakes the session as each one finishes. A continuation is never sent twice for the same progress signature: a continued turn that changes nothing ends and counts as a stall. No count of passes or stalls stops the run; the band shows "pass N". Ending the session ends autonomy when the run was started with `--harness-session`; arm only such a run. Each stop writes a run brief to `<state>/progress.md`, shown at the next session start.
 
-The ledger holds exactly one `- Release:` line: `- Release: no release, permit or deploy.` by default, or `- Release: pre-authorized <remote> <target>`, which must equal `policy.release` (enabled, same remote and target) or `arm` refuses. The pre-authorization lets `permit` and `release` through for that exact remote and target only, and overrides the Push and Engine-gated actions lines for them. Everything else stays denied while autonomy is active: every other push and permit, release inside a multi-command line, deletions and local merges on the default branch. The coordinator parks the card and continues with others. `arm` reports the permission mode and a keep-awake reminder and changes neither. Credential entry is a prose rule only and is not detected.
+The ledger holds exactly one `- Release:` line: `- Release: no release, permit or deploy.` by default, or `- Release: pre-authorized <remote> <target>`, which must equal `policy.release` (enabled, same remote and target) or `arm` refuses. The pre-authorization lets `permit` and `release` through for that exact remote and target only, and overrides the Push and Engine-gated actions lines for them. Autonomy may push one feature branch and open a pull request with `gh pr create`; the owner merges it. The push must be exactly `git push [-u|--set-upstream] <remote> <refspec>` with a configured remote name, a local branch as source and one destination branch other than the remote's default branch, `main` or `master` ([hook policy](hooks.md#autonomy-boundaries)). Autonomy may also clean up merged work: `git branch -d|-D`, `git push <remote> --delete`, `git worktree remove` without `--force` and `git worktree prune`, each as a plain single command and only for branches provably merged into the default branch. A 2.5 ledger with `- Push: no push to any branch.` still arms. Everything else stays denied while autonomy is active: every other push and permit, release inside a multi-command line, `rm` and every other deletion, and local merges on the default branch. The coordinator parks the card and continues with others. `arm` reports the permission mode and a keep-awake reminder and changes neither. Credential entry is a prose rule only and is not detected.
 
-`arm --relaunch` also sets `relaunch`: ending a session (`interrupt`, harness end) leaves autonomy armed, `finish` stops it with `complete`, and the guard applies the boundaries even with no active session. `autonomy settle` is lease-free; it evaluates the stop conditions without counting a pass, stops autonomy and writes the brief when one holds, and prints `{armed, stopped, reason, signature, passes, stalls}`. `autonomy status` prints the signature too.
-
-## Relaunch
-
-`relaunch --permission-mode MODE [--model ID] [--launcher ARGV...]` runs from the repository in the user's terminal and replaces the downstream shell harness. `--permission-mode` is required and has no default. It needs an active run, autonomy armed with `--relaunch` and no active session; otherwise it prints "End the interactive session first" and exits 2. It calls `settle`, launches one `claude -p` pass with the shipped pass prompt, waits for it to exit, ends that pass's session when its nonce matches, records `{pass, signature, stalled_streak}` in `<state>/relaunch/harness.json` and repeats. Pass output goes to `<state>/relaunch/pass-N.log`. After a stalled pass it waits `min(60 * 2^(streak-1), 900)` seconds and never stops for stalls; the deadline is the only limit. `--launcher ARGV...` replaces the `claude` command and receives the prompt on stdin; it must come last, and every later word goes to the launcher. Each pass gets `ORCHESTRA_RELAUNCH_PASS` and `ORCHESTRA_STATE_DIR` in its environment. SIGINT or SIGTERM disarms first, forwards the signal to the pass, waits up to 10 seconds for it and exits 130.
-
-Exit codes: 0 `complete`; 3 idle (`parked-only`, `no-ready-card`); 4 `deadline`; 5 `disarmed` or `ledger-tampered`; 2 usage or precondition (not armed with `--relaunch`, an active session, or a session not started by this pass); 127 launcher not found; 130 interrupted. If autonomy already stopped, `relaunch` exits with that stop's code.
-
-| Downstream option | In 2.2 |
-| --- | --- |
-| `-n` max passes, `-N` stall streak | Removed; stall count, report and back-off; the deadline is the only limit |
-| `-p` prompt file | The shipped pass prompt; no per-run override |
-| `-m` model | `--model`, unset by default |
-| `--permission-mode` default | Required, no default |
-| `--` alternative CLI | `--launcher` |
-| `-v` verify | The ledger's completion checks on the current artifact |
