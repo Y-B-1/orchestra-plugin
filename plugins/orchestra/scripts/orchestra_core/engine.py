@@ -238,6 +238,39 @@ def autonomy_preconditions(repo, home=None):
     return dict(permission_mode=mode, keep_awake=AUTONOMY_KEEP_AWAKE)
 
 
+def ensure_remote_heads(repo, timeout=20):
+    """Record each remote's default branch locally where it is missing (`git remote set-head R --auto`), so the
+    autonomy pull request push can tell the default branch from a feature branch. One line per remote; a remote
+    that cannot be reached is reported, never a refusal."""
+    def git(*args, limit=10):
+        try:
+            done = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True, timeout=limit,
+                                  stdin=subprocess.DEVNULL, env=dict(os.environ, GIT_TERMINAL_PROMPT='0'))
+            return done.returncode, done.stdout.strip(), done.stderr.strip()
+        except (OSError, subprocess.SubprocessError) as exc:
+            return 1, '', str(exc) or type(exc).__name__
+
+    def head(remote):
+        code, out, _ = git('symbolic-ref', '--short', '-q', 'refs/remotes/%s/HEAD' % remote)
+        return out[len(remote) + 1:] if code == 0 and out.startswith(remote + '/') else None
+
+    remotes = git('remote')[1].split()
+    if not remotes:
+        return 'no remote configured: pull request pushes are refused'
+    lines = []
+    for remote in remotes:
+        known = head(remote)
+        if known:
+            lines.append('%s: default branch %s' % (remote, known))
+            continue
+        _, _, err = git('remote', 'set-head', remote, '--auto', limit=timeout)
+        known = head(remote)
+        lines.append('%s: default branch %s (recorded now)' % (remote, known) if known else
+                     '%s: default branch unknown (%s); pull request pushes to %s are refused until '
+                     '`git remote set-head %s --auto` succeeds' % (remote, (err.splitlines() or ['no answer'])[-1], remote, remote))
+    return '; '.join(lines)
+
+
 def _hash(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -1822,7 +1855,9 @@ class Engine:
                 active=True, ledger=snapshot, passes=0, stalls=0, armed_at=self._clock(),
                 armed_gates=len(state['gates']), armed_reviews=len(state['reviews']),
                 accepted=self._accepted(state), **fields)
-        return dict(active=True, ledger=str(path), preconditions=autonomy_preconditions(self.repo, home))
+        preconditions = autonomy_preconditions(self.repo, home)
+        preconditions['remote_heads'] = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
+        return dict(active=True, ledger=str(path), preconditions=preconditions)
 
     def disarm_autonomy(self):
         """Safe at any time; a no-op never rewrites state.json."""
