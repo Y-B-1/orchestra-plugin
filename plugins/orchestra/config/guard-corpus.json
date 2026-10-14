@@ -11131,6 +11131,13 @@
     "command": "git config set core.editor vim"
    },
    "class": "allow"
+  },
+  {
+   "id": "guard-199",
+   "input": {
+    "command": "git config push.pushOption merge_request.merge_when_pipeline_succeeds"
+   },
+   "class": "deny"
   }
  ]
 }

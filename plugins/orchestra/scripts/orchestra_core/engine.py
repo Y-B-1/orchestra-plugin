@@ -1686,7 +1686,7 @@ class Engine:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
                         raise
-                    try:  # anything the gate left running in its own process group could still change the tree
+                    try:  # anything the gate left running in its own process group could still change the tree (a new session escapes this)
                         os.killpg(process.pid, 0)
                     except OSError:
                         pass

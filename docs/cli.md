@@ -24,7 +24,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `inline TASK` | Reserve a card for the main coordinator. | yes |
 | `review REVIEW.json` | Record the independent pre-PR review (`final: true`) or the fix re-review (`repair_check: true`). | yes |
 | `accept TASK` | Accept a card whose current evidence allows it. | yes |
-| `gate [--again] [--timeout SECONDS] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. `--timeout` overrides `gate_timeout_seconds` for this run. Processes the check leaves running in the background are stopped when it exits, so they cannot change the tree after the receipt is read. | yes |
+| `gate [--again] [--timeout SECONDS] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. `--timeout` overrides `gate_timeout_seconds` for this run. Processes the check leaves running in its own process group are stopped when it exits; one that starts a new session or group is not tracked. | yes |
 | `scan` | Run the configured secret scan; an unavailable optional scanner is reported, not passed. | yes |
 | `permit REMOTE TARGET` | Create a release permit for an exact remote and target. It stays valid until the artifact changes or the session ends, and is not used up by a release. Refused while autonomy is active. | yes |
 | `release REMOTE TARGET` | Run the release command named in policy under a current permit. Refused while autonomy is active. | yes |

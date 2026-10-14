@@ -464,7 +464,7 @@ class HooksTest(unittest.TestCase):
                   'git config includeIf.gitdir:/x/.path /tmp/run.cfg', 'git config remote.origin.url /other/repo',
                   'git remote set-url origin /other/repo', 'git remote add evil /other/repo', 'git remote rename origin up',
                   'git remote remove origin', 'git -c remote.origin.url=/other/repo push origin x', 'git config --rename-section scratch alias',
-                  'git config --rename-section scratch remote.origin', 'git config --edit', 'git config -e', 'git config edit', 'git config set alias.ship push', 'git config push.followTags true',
+                  'git config --rename-section scratch remote.origin', 'git config --edit', 'git config -e', 'git config edit', 'git config set alias.ship push', 'git config push.followTags true', 'git config push.pushOption merge_request.merge_when_pipeline_succeeds',
                   'git config --rename-section scratch other', 'git config --add core.x y',
                   '''git config alias.ship "-c alias.x='!git push origin HEAD:main' x"''', "git config -- alias.ship 'push origin HEAD:main'",
                   'git remote -v set-url origin /other/repo', 'git remote --verbose add evil /other/repo', 'git config --global --edit',
