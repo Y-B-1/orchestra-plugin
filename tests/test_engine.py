@@ -1496,6 +1496,18 @@ class AutonomyArmTests(AutonomyFixture):
 
 
 class AutonomyLoopTests(AutonomyFixture):
+    def test_a_recorded_pull_request_is_listed_for_the_owner(self):
+        self.arm()
+        with self.assertRaisesRegex(EngineError, 'http'):
+            self.engine.record_pr('main', self.lease, 'not a url')
+        with self.assertRaisesRegex(EngineError, 'lease|Lease|coordinator'):
+            self.engine.record_pr('main', 'wrong', 'https://example.invalid/pull/1')
+        url = 'https://example.invalid/pull/1'
+        self.assertEqual(self.engine.record_pr('main', self.lease, url), dict(pull_requests=[url]))
+        self.assertEqual(self.engine.record_pr('main', self.lease, url + ' '), dict(pull_requests=[url]))  # once
+        self.engine.disarm_autonomy()
+        self.assertIn('  - review and merge pull request ' + url, self.engine.status()['last_brief']['text'])
+
     def test_a_stalled_stop_lists_the_unfinished_cards(self):
         self.arm()
         self.task('x')

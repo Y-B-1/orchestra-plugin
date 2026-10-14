@@ -2,6 +2,11 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.6.2 — 2026-10-14
+
+- **Pull requests in the brief:** `orchestra.py pr URL` (lease) records a pull request the run opened; every run brief lists it under Needs you as "review and merge pull request URL". The autonomy instructions record the PR this way instead of a free-form `progress.md` line.
+- **Validation:** a full unattended autonomy run, from the first message to `complete`, is recorded in BUILD-LEDGER.md and VALIDATION.md.
+
 ## 2.6.1 — 2026-10-14
 
 - **Autonomy:** `autonomy arm` records each remote's default branch where it is missing (`git remote set-head <remote> --auto`, outside the state lock, 20 s per remote) and reports it as `remote_heads` in the preconditions. A remote it cannot reach is reported and arming still succeeds; pull request pushes to that remote stay refused until its default branch is known. No manual `set-head` step before arming.
