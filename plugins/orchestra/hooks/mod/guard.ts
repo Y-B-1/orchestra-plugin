@@ -693,17 +693,26 @@ function configGuarded(key: string): boolean {
   return [...GIT.config_guarded!].some((pattern) => new RegExp(pattern).test(lower));
 }
 
-/** A `git config` call that sets a guarded key: a guarded word followed by a value, or --add/--replace-all/--edit.
- * A read (--get, --list, ...) or an unset is allowed. Doubt about a guarded key reads as a write. */
+const CONFIG_RENAME_TAILS = ['.x', '.push', '.pushurl', '.url', '.path', '.insteadof', '.pushinsteadof'];
+
+/** True when an option is `name` or a prefix of it, as Git accepts (at least `--x`). */
+function longOption(options: string[], name: string): boolean {
+  return options.some((x) => x.startsWith('--') && x.length > 2 && name.startsWith(x.split('=')[0]!));
+}
+
+/** A `git config` call that sets a guarded key: a guarded word followed by a value, or --add/--replace-all, or one
+ * that opens an editor, or renames a section into a guarded one. A read (--get, --list, ...) or an unset is allowed.
+ * Doubt about a guarded key reads as a write. */
 function configWriteGuarded(options: string[]): boolean {
   if (options.some((x) => GIT.config_read_flags!.has(x))) return false;
+  if (options.includes('-e') || longOption(options, '--edit')) return true; // An editor can save any key.
   const words = options.filter((x) => !x.startsWith('-'));
-  if ((options.includes('--rename-section') || words[0] === 'rename-section') && words.length) {
-    // A section renamed into alias or remote.<name> brings its keys along.
-    return ['.x', '.push', '.pushurl'].some((tail) => configGuarded(words[words.length - 1]! + tail));
+  if (longOption(options, '--rename-section') || words[0] === 'rename-section') {
+    // A section renamed into alias, remote.<name>, url.<base> or include brings its keys along.
+    return words.length > 0 && CONFIG_RENAME_TAILS.some((tail) => configGuarded(words[words.length - 1]! + tail));
   }
   const hit = words.findIndex((x) => configGuarded(x));
-  return hit >= 0 && (hit + 1 < words.length || options.some((x) => ['--add', '--replace-all', '-e', '--edit'].includes(x)));
+  return hit >= 0 && (hit + 1 < words.length || longOption(options, '--add') || longOption(options, '--replace-all'));
 }
 
 function git(words: string[]): Decision {

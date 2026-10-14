@@ -11005,6 +11005,55 @@
     "command": "git remote set-url origin /other/repo"
    },
    "class": "deny"
+  },
+  {
+   "id": "guard-181",
+   "input": {
+    "command": "git config --edit"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-182",
+   "input": {
+    "command": "git config --global --edit"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-183",
+   "input": {
+    "command": "git config --rename-sec scratch alias"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-184",
+   "input": {
+    "command": "git config --rename-section scratch include"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-185",
+   "input": {
+    "command": "git config --rename-section scratch includeIf.gitdir:/x/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-186",
+   "input": {
+    "command": "git config --rename-section scratch url.https://h/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-187",
+   "input": {
+    "command": "git config -e"
+   },
+   "class": "deny"
   }
  ]
 }
