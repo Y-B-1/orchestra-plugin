@@ -85,6 +85,12 @@ def _protected(path, cwd, state_dir):
     return False
 
 
+def _ask(reason):
+    return HookResult({'hookSpecificOutput': {'hookEventName': 'PreToolUse',
+                        'permissionDecision': 'ask',
+                        'permissionDecisionReason': reason}})
+
+
 def _patch_paths(command):
     if not isinstance(command, str) or not command.startswith('*** Begin Patch\n') or not command.rstrip().endswith('*** End Patch'):
         raise ValueError('Malformed patch payload')
@@ -248,6 +254,8 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             return HookResult(denied)
     if active:
         # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
+        if klass == 'release' and _pull_request_push(decision, cwd):
+            return HookResult({})  # A feature branch for a pull request; the owner merges it after the run
         if klass in {'release', 'release-multi'} and not (klass == 'release' and _preauthorized(engine, decision)):
             return _deny('Autonomy is active: ' + _PARK_HINT)
         if decision.boundary == 'delete':
@@ -255,17 +263,34 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
             return _deny('Approval boundary under autonomy: no merge on the default branch. ' + _PARK_HINT)
     if klass in {'release', 'release-multi'} and (engine is not None or armed):
-        if klass == 'release-multi':
-            return _deny(decision.reason)
-        if engine is None or not decision.remote or not decision.target:
-            return _deny('Release needs a configured exact structured command and current permit')
-        try:
-            permit = engine.check_release(decision.remote, decision.target, argv=list(decision.argv))
-            if not permit:
-                raise ValueError('No current release permit')
-        except (OSError, ValueError, KeyError, RuntimeError, AttributeError) as exc:
-            return _deny('Release denied: ' + str(exc))
+        # A current permit lets the release run. Otherwise the user is present: ask, unless autonomy is active.
+        problem = decision.reason
+        if klass == 'release' and engine is not None and decision.remote and decision.target:
+            try:
+                if engine.check_release(decision.remote, decision.target, argv=list(decision.argv)):
+                    return HookResult({})
+                problem = 'No current release permit'
+            except (OSError, ValueError, KeyError, RuntimeError, AttributeError) as exc:
+                problem = str(exc)
+        if active:
+            return _deny('Release denied: ' + problem)
+        return _ask('Orchestra run active: approve this release action? (' + problem + ')')
     return HookResult({})  # allow, boundary (autonomy off) and unarmed release classes
+
+
+def _pull_request_push(decision, cwd):
+    """Autonomy may push one feature branch for a pull request: a plain push with an explicit remote and branch that
+    is not the remote's default branch. HEAD resolves to the current branch. Any doubt is no (fail closed)."""
+    if decision.category != 'gitpush' or not decision.remote or not decision.target or cwd is None:
+        return False
+    target = decision.target
+    if target == 'HEAD':
+        code, target = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'HEAD')
+        if code != 0 or not target:
+            return False  # Detached HEAD: no branch to name
+    code, head = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'refs/remotes/%s/HEAD' % decision.remote)
+    default = head.split('/', 1)[1] if code == 0 and '/' in head else None
+    return target not in {default, 'main', 'master'}
 
 
 _PARK_HINT = 'park this card with `orchestra.py park TASK --reason ...` and continue with other cards.'
@@ -552,6 +577,19 @@ def _run_location(cwd):
     return repo, state_dir
 
 
+def _release_call(payload):
+    """A shell call of class release or release-multi. A mod `tool.call` hook cannot ask the user, so it passes an
+    `ask` on and this native hook raises the prompt even while the mod is live."""
+    data = payload.get('tool_input')
+    command = data.get('command', data.get('cmd')) if isinstance(data, dict) else None
+    if payload.get('tool_name') not in _SHELL_TOOLS or not isinstance(command, str):
+        return False
+    try:
+        return classify_command(command).klass in {'release', 'release-multi'}
+    except Exception:
+        return True  # Unclassifiable: let the full hook decide
+
+
 def _mod_is_live(payload):
     """A12: a fresh marker carrying this copy's rules hash means the mod already guarded."""
     session = payload.get('session_id')
@@ -581,6 +619,7 @@ def main(argv=None):
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
             and isinstance(payload, dict) and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
             and not _foreign_subagent(payload)
+            and not _release_call(payload)
             and _mod_is_live(payload)):
         print('{}')
         return 0

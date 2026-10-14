@@ -91,11 +91,12 @@ AUTONOMY_TEMPLATE = PACKAGE_ROOT / 'config' / 'autonomy-template.md'
 AUTONOMY_FIXED = (
     '- Release: no release, permit or deploy.',
     '- Merge: no pull request merge, and no local merge on the default branch.',
-    '- Push: no push to any branch.',
+    '- Push: push only a feature branch for a pull request; never the default branch.',
     '- Deletion: no deletion of files, branches or tags.',
     '- Credential entry: never enter credentials.',
     '- Engine-gated actions: nothing that needs a permit.',
 )
+AUTONOMY_LEGACY_PUSH = '- Push: no push to any branch.'  # a 2.5 ledger's line; stricter, so still accepted
 AUTONOMY_KEEP_AWAKE = 'User step: enable keep-awake in Claude Desktop (or keep the machine awake) for an overnight run.'
 CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
 PARKABLE = ('queued', 'running', 'reported')
@@ -199,7 +200,7 @@ def parse_ledger(text, now):
     if len(releases) != 1 or (releases[0] != AUTONOMY_FIXED[0] and not pair):
         raise EngineError('Approval boundaries need exactly one Release line')
     for line in AUTONOMY_FIXED[1:]:
-        if line not in boundaries:
+        if line not in boundaries and not (line.startswith('- Push:') and AUTONOMY_LEGACY_PUSH in boundaries):
             raise EngineError('Approval boundaries must keep the fixed line: ' + line)
     caps = {k: fields[k] for k in ('max_passes', 'max_stalls') if k in fields}
     release = dict(release=dict(remote=pair.group(1), target=pair.group(2))) if pair else {}

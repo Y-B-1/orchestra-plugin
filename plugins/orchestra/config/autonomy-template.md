@@ -16,10 +16,12 @@ deadline: <ISO 8601 time with a UTC offset, in the future>
 > Fixed. Do not remove a line. Add your own lines below them.
 >
 > <!-- Release: replace the Release line with `- Release: pre-authorized <remote> <target>` to pre-authorize the one release that policy.release configures. The Release line overrides Push and Engine-gated actions for that remote and target only. -->
+>
+> Autonomy may push a feature branch and open a pull request with `gh pr create`; the owner merges it after the run.
 
 - Release: no release, permit or deploy.
 - Merge: no pull request merge, and no local merge on the default branch.
-- Push: no push to any branch.
+- Push: push only a feature branch for a pull request; never the default branch.
 - Deletion: no deletion of files, branches or tags.
 - Credential entry: never enter credentials.
 - Engine-gated actions: nothing that needs a permit.

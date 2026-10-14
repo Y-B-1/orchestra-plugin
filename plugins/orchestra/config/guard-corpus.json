@@ -10446,6 +10446,62 @@
     "command": "git update-ref -m dated refs/heads/x HEAD"
    },
    "class": "allow"
+  },
+  {
+   "id": "pull-request-1",
+   "input": {
+    "command": "gh pr create --fill"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "pull-request-2",
+   "input": {
+    "command": "gh pr merge 3 --squash"
+   },
+   "class": "release"
+  },
+  {
+   "id": "pull-request-3",
+   "input": {
+    "command": "git push"
+   },
+   "class": "release"
+  },
+  {
+   "id": "pull-request-4",
+   "input": {
+    "command": "git push -u origin feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "pull-request-5",
+   "input": {
+    "command": "git push origin HEAD"
+   },
+   "class": "release"
+  },
+  {
+   "id": "pull-request-6",
+   "input": {
+    "command": "git push origin HEAD:feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "pull-request-7",
+   "input": {
+    "command": "git push origin feat/x && gh pr create"
+   },
+   "class": "release-multi"
+  },
+  {
+   "id": "pull-request-8",
+   "input": {
+    "command": "git push origin master"
+   },
+   "class": "release"
   }
  ]
 }

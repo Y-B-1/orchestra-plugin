@@ -346,8 +346,8 @@ class LinkedWorktreeHook(unittest.TestCase):
         self.assertIsNone(self.hook(self.linked,command))
         lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--size','medium'],env=self.env,
                                         capture_output=True,text=True,check=True).stdout)['lease']
-        self.assertEqual(self.hook(self.linked,command),'deny')
-        self.assertEqual(self.hook(self.repo,command),'deny')
+        self.assertEqual(self.hook(self.linked,command),'ask')
+        self.assertEqual(self.hook(self.repo,command),'ask')
         self.assertIsNone(self.hook(self.linked,'git status'))
         subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--lease',lease,'interrupt'],env=self.env,
                        capture_output=True,text=True,check=True)
@@ -460,7 +460,7 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.assertNotIn('Stop or finish',refused)
         self.assertFalse((self.state/'history').exists())
         push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
-        self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'deny')
+        self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'ask')  # the run stays armed; the user is asked
 
     def test_new_run_refuses_an_active_run_under_the_current_policy(self):
         self.cli('start')

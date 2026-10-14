@@ -32,7 +32,9 @@ Long runs rely on Claude Code's auto-compaction, set by the user, not by Orchest
 
 ## Approval boundaries
 
-Hard by default; the ledger may pre-authorize the one configured release. Hold exactly one Release line: `- Release: no release, permit or deploy.` by default, or `- Release: pre-authorized <remote> <target>`, which must equal the configured policy release. The Release line overrides Push and Engine-gated actions for that remote and target only. Every other boundary stays hard and not configurable: merge, push, deletion, credential entry and any other engine-gated action. Credential entry is prose only here, so never type one.
+Hard by default; the ledger may pre-authorize the one configured release. Hold exactly one Release line: `- Release: no release, permit or deploy.` by default, or `- Release: pre-authorized <remote> <target>`, which must equal the configured policy release. The Release line overrides Push and Engine-gated actions for that remote and target only. Every other boundary stays hard and not configurable: merge, push to the default branch, deletion, credential entry and any other engine-gated action. Credential entry is prose only here, so never type one.
+
+Pull requests are the way out of an autonomous run. Push the work's feature branch with `git push -u <remote> <branch>` as a command of its own, never the default branch, then open the pull request with `gh pr create`. Never merge it: the owner merges after the run. Append each pull request's URL to `progress.md`.
 
 At a boundary run `orchestra.py park TASK --reason TEXT` for that card and continue with the other cards. Parked work blocks `finish`. Held work blocks no other card; the owner must settle it before `finish`. `unpark` is the user's morning step. Without pre-authorization an armed run adds no release card; the brief says "ready to release" (references/finishing.md).
 

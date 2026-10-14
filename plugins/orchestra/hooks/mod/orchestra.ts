@@ -115,6 +115,7 @@ async function delegate($: Dollar, tool: string, toolInput: Json, sessionId: str
   const spec = asJson(JSON.stringify(hso));
   if (spec === null) return failClosed('bad output', '');
   if (spec['permissionDecision'] === 'deny') return String(spec['permissionDecisionReason'] ?? failClosed('bad output', ''));
+  // `ask` passes on: a tool.call hook cannot prompt, so the native PreToolUse hook, which never skips a release, asks.
   return run.exitCode === 0 ? null : failClosed('exit', String(run.exitCode));
 }
 
