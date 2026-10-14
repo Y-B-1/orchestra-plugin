@@ -252,4 +252,6 @@ Nested Claude Code 2.1.299 sessions (Haiku 5.5) in a scratch repository with a l
 | Stop loop | Same session | One `Autonomy pass 1` continuation, then `{}`; `stalled` stop with brief, passes 1, stalls 1 |
 | Quiet wait and wake | TUI, armed, a running card, one background `orchestra:investigator-code` agent | Two Stop hooks, both `{}`; no continuation or repeated prompt; the agent's completion woke the session; status band showed the armed run |
 
-Fixes from these runs (commit 9eea2b2): deny reasons now start with "Orchestra guard:" because the model read a guard deny as a tool failure; the ask names the missing permit plainly; an autonomy merge or release deny says it waits for the owner; a stopped run's brief lists the cards it left unfinished. Not performed live: a run reaching `complete` or `deadline`, SessionEnd after `/exit`, `clear` and `resume` rebinding.
+Fixes from these runs (commit 9eea2b2): deny reasons now start with "Orchestra guard:" because the model read a guard deny as a tool failure; the ask names the missing permit plainly; an autonomy merge or release deny says it waits for the owner; a stopped run's brief lists the cards it left unfinished. | SessionEnd | TUI session id bound with `start --harness-session`, then `/exit` | The run ended (`active: false`, outcome `ended`) |
+
+Not performed live: a run reaching `complete` or `deadline`, `clear` and `resume` rebinding.
