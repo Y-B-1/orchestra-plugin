@@ -457,7 +457,7 @@ class HooksTest(unittest.TestCase):
                 result = self.pre('Bash', {'command': command})
                 self.assertEqual(decision_of(result), 'deny')
                 self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                 'Raw ref deletion is not allowed; use git branch -d')
+                                 'Orchestra guard: Raw ref deletion is not allowed; use git branch -d')
         for command in UPDATE_REF_ALLOWED:
             with self.subTest(command=command):
                 self.assertEqual(self.pre('Bash', {'command': command}).output, {})
@@ -470,7 +470,7 @@ class HooksTest(unittest.TestCase):
                                                          'tool_input': {'file_path': 'notes.txt'}})
                     self.assertEqual(decision_of(result), 'deny')
                     self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                     'Session directory no longer exists: cd to an existing directory, then retry')
+                                     'Orchestra guard: Session directory no longer exists: cd to an existing directory, then retry')
             # An absolute path needs no cwd and keeps its ordinary verdict.
             self.assertEqual(handle_event('PreToolUse', {'cwd': '', 'tool_name': 'Edit',
                                                          'tool_input': {'file_path': '/tmp/notes.txt'}}).output, {})
@@ -1800,7 +1800,7 @@ class AutonomyHookTest(unittest.TestCase):
                 code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
                 decision = output['hookSpecificOutput']
                 self.assertEqual(decision['permissionDecision'], 'deny')
-                self.assertTrue(decision['permissionDecisionReason'].startswith(('Autonomy is active: ', 'Approval boundary under autonomy')),
+                self.assertTrue(decision['permissionDecisionReason'].startswith(('Orchestra guard: Autonomy is active: ', 'Orchestra guard: Approval boundary under autonomy')),
                                 decision['permissionDecisionReason'])
 
     def test_release_is_denied_while_active_even_with_a_permit(self):
@@ -1828,7 +1828,7 @@ class AutonomyHookTest(unittest.TestCase):
                 code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
                 decision = output['hookSpecificOutput']
                 self.assertEqual(decision['permissionDecision'], 'deny')
-                self.assertTrue(decision['permissionDecisionReason'].startswith('Autonomy is active: '),
+                self.assertTrue(decision['permissionDecisionReason'].startswith('Orchestra guard: Autonomy is active: '),
                                 decision['permissionDecisionReason'])
 
     def break_policy(self):
@@ -2154,7 +2154,7 @@ class RunBriefHookTest(unittest.TestCase):
                 decision = output['hookSpecificOutput']
                 self.assertEqual(decision['permissionDecision'], 'deny')
                 self.assertEqual(decision['permissionDecisionReason'],
-                                 'Session directory no longer exists: cd to an existing directory, then retry')
+                                 'Orchestra guard: Session directory no longer exists: cd to an existing directory, then retry')
 
     def test_pretooluse_missing_cwd_allows_nothing_new(self):
         gone = self.root / 'gone'
@@ -2243,7 +2243,7 @@ class RunBriefHookTest(unittest.TestCase):
                     decision = json.loads(result.stdout)['hookSpecificOutput']
                     self.assertEqual(decision['permissionDecision'], 'deny')
                     self.assertEqual(decision['permissionDecisionReason'],
-                                     'Session directory no longer exists: cd to an existing directory, then retry')
+                                     'Orchestra guard: Session directory no longer exists: cd to an existing directory, then retry')
             with self.subTest(label=label, command='git status'):
                 result = self.run_hook_from_deleted_cwd(lambda gone: make(gone, 'git status'))
                 self.assertEqual(result.returncode, 0, result.stderr)
@@ -2255,7 +2255,7 @@ class RunBriefHookTest(unittest.TestCase):
             decision = json.loads(result.stdout)['hookSpecificOutput']
             self.assertEqual(decision['permissionDecision'], 'deny')
             self.assertEqual(decision['permissionDecisionReason'],
-                             'Session directory no longer exists: cd to an existing directory, then retry')
+                             'Orchestra guard: Session directory no longer exists: cd to an existing directory, then retry')
 
     def hold_lock_in_process(self, seconds):
         """Hold the state lock exclusively from another process for `seconds`."""
@@ -2412,7 +2412,7 @@ class PlanV24GuardTest(unittest.TestCase):
                     result = self.review_call(text, kind, engine)
                     self.assertEqual(decision_of(result), 'deny')
                     self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                     'Cite gate receipt gate-1, gate-2; reviewers do not rerun suites')
+                                     'Orchestra guard: Cite gate receipt gate-1, gate-2; reviewers do not rerun suites')
 
     def test_reviewer_test_block_covers_the_size_variants(self):
         engine = self.engine(gate_ids=['gate-1'])
@@ -2421,7 +2421,7 @@ class PlanV24GuardTest(unittest.TestCase):
                 result = self.review_call('python3 -m unittest discover', kind, engine)
                 self.assertEqual(decision_of(result), 'deny')
                 self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                 'Cite gate receipt gate-1; reviewers do not rerun suites')
+                                 'Orchestra guard: Cite gate receipt gate-1; reviewers do not rerun suites')
 
     def test_suite_allowed_without_receipts_engine_or_method(self):
         for engine in (self.engine(gate_ids=[]), None, self.engine()):

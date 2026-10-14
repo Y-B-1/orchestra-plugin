@@ -1464,6 +1464,16 @@ class AutonomyArmTests(AutonomyFixture):
 
 
 class AutonomyLoopTests(AutonomyFixture):
+    def test_a_stalled_stop_lists_the_unfinished_cards(self):
+        self.arm()
+        self.task('x')
+        self.assertIsInstance(self.engine.hook_stop(), str)
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.auto()['last_stop_reason'], 'stalled')
+        brief = self.engine.status()['last_brief']['text']
+        self.assertIn('- stop reason: stalled', brief)
+        self.assertIn('x (builder/implementation): queued, not finished', brief)
+
     def test_stop_continues_inside_the_bounds_and_counts_passes(self):
         self.arm(passes='3')
         self.task('x')

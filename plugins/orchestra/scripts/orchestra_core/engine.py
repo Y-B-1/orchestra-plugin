@@ -1946,6 +1946,8 @@ class Engine:
             rounds = [t['final_round'] for t in tasks.values() if t.get('final_round') and t.get('repair_of') in chain_of(tip['id'])]
             failing.append('%s (chain %s): %s; final round: %s' % (
                 tip['id'], ', '.join(chain_of(tip['id'])), tip['held_finding'], max(rounds) if rounds else 'none'))
+        failing += ['%s (%s/%s): %s, not finished' % (t['id'], t['role'], t['mode'], t['state']) for t in tasks.values()
+                    if t['state'] in ('queued', 'running', 'reported', 'repairing')]  # what a stopped run left undone
         held_log = []
         for tip in held_tips:
             if tip.get('repaired_by'):

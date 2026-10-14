@@ -51,7 +51,13 @@ class HookResult:
     exit_code: int = 0
 
 
+def _guarded(reason):
+    """Name the source, so the model reads a policy decision, not a tool failure."""
+    return reason if reason.startswith('Orchestra') else 'Orchestra guard: ' + reason
+
+
 def _deny(reason, malformed=False):
+    reason = _guarded(reason)
     return HookResult({'hookSpecificOutput': {'hookEventName': 'PreToolUse',
                         'permissionDecision': 'deny',
                         'permissionDecisionReason': reason}}, 2 if malformed else 0)
@@ -267,7 +273,7 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             if not _preauthorized(engine, decision):
                 return _deny('Autonomy is active: ' + refused + ' ' + _PARK_HINT)
         if klass in {'release', 'release-multi'} and not (klass == 'release' and _preauthorized(engine, decision)):
-            return _deny('Autonomy is active: ' + _PARK_HINT)
+            return _deny('Autonomy is active: merges and releases wait for the owner. ' + _PARK_HINT)
         if decision.boundary == 'delete':
             return _deny('Approval boundary under autonomy: ' + _PARK_HINT)
         if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
@@ -284,7 +290,7 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
                 problem = str(exc)
         if active:
             return _deny('Release denied: ' + problem)
-        return _ask('Orchestra run active: approve this release action? (' + problem + ')')
+        return _ask('Orchestra run active: approve this release action? No current release permit covers it: ' + problem)
     return HookResult({})  # allow, boundary (autonomy off) and unarmed release classes
 
 
