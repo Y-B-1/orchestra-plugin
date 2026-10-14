@@ -532,28 +532,26 @@ def _config_guarded(key):
     return any(re.search(pattern, key.lower()) for pattern in _GIT['config_guarded'])
 
 
-_CONFIG_RENAME_TAILS = ('.x', '.push', '.pushurl', '.url', '.path', '.insteadof', '.pushinsteadof')
-
-
-def _long_option(options, name):
-    """True when an option is `name` or a prefix of it, as Git accepts (at least `--x`)."""
-    return any(x.startswith('--') and len(x) > 2 and name.startswith(x.split('=', 1)[0]) for x in options)
+_CONFIG_SCOPE_FLAGS = ('--global', '--local', '--system', '--worktree')
+_CONFIG_WRITE_WORDS = ('edit', 'rename-section', 'remove-section')
 
 
 def _config_write_guarded(options):
-    """A `git config` call that sets a guarded key: a guarded word followed by a value, or --add/--replace-all, or one
-    that opens an editor, or renames a section into a guarded one. A read (--get, --list, ...) or an unset is allowed.
-    Doubt about a guarded key reads as a write."""
+    """A `git config` call that may set a guarded key. A read (--get, --list, get, list, ...) or an unset is allowed.
+    Besides a scope flag, any option is an unknown form (--add, --edit, --rename-section or an abbreviation, a file,
+    a value that starts with a dash) and reads as a write; so do the edit and rename subcommands. What remains is
+    `[set] key value`, written when a guarded key is followed by a value."""
     if any(x in _GIT['config_read_flags'] for x in options):
         return False
-    if '-e' in options or _long_option(options, '--edit'):
-        return True  # An editor can save any key.
     words = [x for x in options if not x.startswith('-')]
-    if _long_option(options, '--rename-section') or words[:1] == ['rename-section']:
-        # A section renamed into alias, remote.<name>, url.<base> or include brings its keys along.
-        return bool(words) and any(_config_guarded(words[-1] + tail) for tail in _CONFIG_RENAME_TAILS)
+    if words[:1] in (['get'], ['list'], ['unset']):
+        return False
+    if any(x.startswith('-') and x not in _CONFIG_SCOPE_FLAGS for x in options) or words[:1] and words[0] in _CONFIG_WRITE_WORDS:
+        return True
+    if words[:1] == ['set']:
+        words = words[1:]
     hit = next((i for i, x in enumerate(words) if _config_guarded(x)), None)
-    return hit is not None and (hit + 1 < len(words) or '-e' in options or _long_option(options, '--add') or _long_option(options, '--replace-all'))
+    return hit is not None and hit + 1 < len(words)
 
 
 def _git(words):

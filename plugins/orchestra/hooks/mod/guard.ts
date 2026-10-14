@@ -693,26 +693,21 @@ function configGuarded(key: string): boolean {
   return [...GIT.config_guarded!].some((pattern) => new RegExp(pattern).test(lower));
 }
 
-const CONFIG_RENAME_TAILS = ['.x', '.push', '.pushurl', '.url', '.path', '.insteadof', '.pushinsteadof'];
+const CONFIG_SCOPE_FLAGS = ['--global', '--local', '--system', '--worktree'];
+const CONFIG_WRITE_WORDS = ['edit', 'rename-section', 'remove-section'];
 
-/** True when an option is `name` or a prefix of it, as Git accepts (at least `--x`). */
-function longOption(options: string[], name: string): boolean {
-  return options.some((x) => x.startsWith('--') && x.length > 2 && name.startsWith(x.split('=')[0]!));
-}
-
-/** A `git config` call that sets a guarded key: a guarded word followed by a value, or --add/--replace-all, or one
- * that opens an editor, or renames a section into a guarded one. A read (--get, --list, ...) or an unset is allowed.
- * Doubt about a guarded key reads as a write. */
+/** A `git config` call that may set a guarded key. A read (--get, --list, get, list, ...) or an unset is allowed.
+ * Besides a scope flag, any option is an unknown form (--add, --edit, --rename-section or an abbreviation, a file,
+ * a value that starts with a dash) and reads as a write; so do the edit and rename subcommands. What remains is
+ * `[set] key value`, written when a guarded key is followed by a value. */
 function configWriteGuarded(options: string[]): boolean {
   if (options.some((x) => GIT.config_read_flags!.has(x))) return false;
-  if (options.includes('-e') || longOption(options, '--edit')) return true; // An editor can save any key.
-  const words = options.filter((x) => !x.startsWith('-'));
-  if (longOption(options, '--rename-section') || words[0] === 'rename-section') {
-    // A section renamed into alias, remote.<name>, url.<base> or include brings its keys along.
-    return words.length > 0 && CONFIG_RENAME_TAILS.some((tail) => configGuarded(words[words.length - 1]! + tail));
-  }
+  let words = options.filter((x) => !x.startsWith('-'));
+  if (['get', 'list', 'unset'].includes(words[0] ?? '')) return false;
+  if (options.some((x) => x.startsWith('-') && !CONFIG_SCOPE_FLAGS.includes(x)) || CONFIG_WRITE_WORDS.includes(words[0] ?? '')) return true;
+  if (words[0] === 'set') words = words.slice(1);
   const hit = words.findIndex((x) => configGuarded(x));
-  return hit >= 0 && (hit + 1 < words.length || longOption(options, '--add') || longOption(options, '--replace-all'));
+  return hit >= 0 && hit + 1 < words.length;
 }
 
 function git(words: string[]): Decision {
