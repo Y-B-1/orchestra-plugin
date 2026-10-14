@@ -11059,5 +11059,26 @@ export const CORPUS: CorpusCase[] = [
    "command": "git config -e"
   },
   "class": "deny"
+ },
+ {
+  "id": "guard-188",
+  "input": {
+   "command": "git config -- alias.ship 'push origin HEAD:main'"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-189",
+  "input": {
+   "command": "git remote --verbose add evil /other/repo"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-190",
+  "input": {
+   "command": "git remote -v set-url origin /other/repo"
+  },
+  "class": "deny"
  }
 ];

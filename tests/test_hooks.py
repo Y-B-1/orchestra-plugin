@@ -464,7 +464,8 @@ class HooksTest(unittest.TestCase):
                   'git config includeIf.gitdir:/x/.path /tmp/run.cfg', 'git config remote.origin.url /other/repo',
                   'git remote set-url origin /other/repo', 'git remote add evil /other/repo', 'git remote rename origin up',
                   'git remote remove origin', 'git -c remote.origin.url=/other/repo push origin x', 'git config --rename-section scratch alias',
-                  'git config --rename-section scratch remote.origin', 'git config --edit', 'git config -e', 'git config --global --edit',
+                  'git config --rename-section scratch remote.origin', 'git config --edit', 'git config -e', "git config -- alias.ship 'push origin HEAD:main'",
+                  'git remote -v set-url origin /other/repo', 'git remote --verbose add evil /other/repo', 'git config --global --edit',
                   'git config --rename-sec scratch alias', 'git config --rename-section scratch include',
                   'git config --rename-section scratch includeIf.gitdir:/x/', 'git config --rename-section scratch url.https://h/', 'git config rename-section scratch alias']
         allowed = ['git config --rename-section scratch other', 'git --config-env=core.pager=PAGER log',

@@ -741,8 +741,8 @@ function git(words: string[]): Decision {
   if (verb === 'stash') {
     return denyOf('Git stash shares state across worktrees', 'stash');
   }
-  if (verb === 'config' && configWriteGuarded(options)) return denyOf(CONFIG_REASON);
-  if (verb === 'remote' && args.length && GIT.remote_write_verbs!.has(args[0]!)) return denyOf('Remotes are set by the owner, not during a run');
+  if (verb === 'config' && configWriteGuarded(args.filter((x) => x !== '--'))) return denyOf(CONFIG_REASON); // Operands after -- are still keys.
+  if (verb === 'remote' && GIT.remote_write_verbs!.has(args.find((x) => !x.startsWith('-')) ?? '')) return denyOf('Remotes are set by the owner, not during a run');
   if (verb === 'update-ref' && rawRefDelete(args)) return denyOf('Raw ref deletion is not allowed; use git branch -d');
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
   if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');
