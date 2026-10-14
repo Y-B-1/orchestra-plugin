@@ -10711,6 +10711,27 @@
     "command": "xargs -a refs git push origin feat/x"
    },
    "class": "release"
+  },
+  {
+   "id": "guard-139",
+   "input": {
+    "command": "gh api graphql --input payload.json"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-140",
+   "input": {
+    "command": "gh api graphql -F query=@q.graphql"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-141",
+   "input": {
+    "command": "gh api graphql -f query='mutation{addComment}'"
+   },
+   "class": "release"
   }
  ]
 }

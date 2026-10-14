@@ -607,9 +607,16 @@ def _git(words):
     return Decision()
 
 
+def _opaque_graphql(word):
+    """A `gh api graphql` word whose request body the guard cannot read, or that names a mutation."""
+    lower = word.lower()
+    return any(lower.startswith(x) if x.startswith('--') else x in lower for x in _RELEASE['gh_api_graphql_opaque'])
+
+
 def _is_release(name, words):
     return ((name == 'gh' and words[1:3] in _RELEASE['gh']) or
             (name == 'gh' and words[1:2] == ['api'] and any(_RELEASE['gh_api_merge'] in x.lower() for x in words[2:])) or
+            (name == 'gh' and words[1:2] == ['api'] and 'graphql' in words[2:] and any(_opaque_graphql(x) for x in words[2:])) or
             (name == 'az' and (all(x in words for x in _RELEASE['az_requires']) or
                                (words[1:4] == _RELEASE['az_pr_update']['prefix'] and _RELEASE['az_pr_update']['word'] in words))) or
             (name in _RELEASE['package_tools'] and _RELEASE['package_verb'] in words[1:]) or

@@ -1645,7 +1645,8 @@ class AutonomyHookTest(unittest.TestCase):
         return output.get('hookSpecificOutput', {}).get('permissionDecision')
 
     def test_interactive_run_asks_for_release_actions(self):
-        for command in ['git push origin main', 'gh pr merge 3 --squash', 'npm publish', 'git push origin a && git push origin b']:
+        for command in ['git push origin main', 'gh pr merge 3 --squash', 'npm publish', 'git push origin a && git push origin b',
+                        'gh api graphql --input payload.json']:
             with self.subTest(command=command):
                 code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
                 decision = output['hookSpecificOutput']
@@ -1667,6 +1668,7 @@ class AutonomyHookTest(unittest.TestCase):
                         'git push origin HEAD:feat/x', 'git push origin feat/x:refs/heads/feat/z', 'gh pr create --fill']:
             with self.subTest(command=command):
                 self.assertIsNone(self.hook(self.repo, command))
+        self.assertIsNone(self.hook(self.repo, "gh api graphql -f query='query{viewer{login}}'"))  # a read stays allowed
         git(self.repo, 'checkout', '-q', '-b', 'feat/y')
         self.assertIsNone(self.hook(self.repo, 'git push -u origin HEAD'))  # HEAD names the current feature branch
         self.assertIsNone(self.hook(self.repo, 'git push -u origin @'))
@@ -1677,6 +1679,8 @@ class AutonomyHookTest(unittest.TestCase):
                    'git push origin v1.0', 'git push origin refs/tags/v1.0', 'git push origin HEAD:refs/tags/v2',
                    'git push origin HEAD:tags/v2', 'git push origin nosuch', 'git push origin', 'git push',
                    'gh pr merge 3 --squash', 'gh api -X PUT repos/o/r/pulls/1/merge',
+                   'gh api graphql --input payload.json', 'gh api graphql -F query=@q.graphql',
+                   "gh api graphql -f query='mutation{addComment}'",
                    'git push origin feat/x && gh pr create', 'git push https://example.invalid/x.git feat/x',
                    'git push other feat/x', 'GIT_DIR=../x/.git git push origin HEAD', 'xargs -a refs git push origin feat/x',
                    'git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x',

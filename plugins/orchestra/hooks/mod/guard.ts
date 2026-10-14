@@ -44,6 +44,7 @@ type Rules = {
     deploy_tools: string[];
     deploy_words: string[];
     gh_api_merge: string;
+    gh_api_graphql_opaque: string[];
   };
   boundary: { delete_commands: string[]; find_delete_flag: string; gh: string[][] };
   protected: { harness_dirs: string[]; files: string[]; agents_prefixes: string[]; component: string; state_root_exceptions: string[] };
@@ -112,6 +113,7 @@ export function loadRules(json: string): void {
   strings(release.package_tools, 'release.package_tools');
   strings(release.deploy_tools, 'release.deploy_tools');
   strings(release.deploy_words, 'release.deploy_words');
+  strings(release.gh_api_graphql_opaque, 'release.gh_api_graphql_opaque');
   if (typeof release.gh_api_merge !== 'string' || release.gh_api_merge === '') throw new ValueError('Invalid guard rules: release.gh_api_merge');
   strings(release.az_pr_update.prefix, 'release.az_pr_update');
   strings(boundary.delete_commands, 'boundary.delete_commands');
@@ -773,11 +775,18 @@ function sameWords(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((x, i) => x === b[i]);
 }
 
+/** A `gh api graphql` word whose request body the guard cannot read, or that names a mutation. */
+function opaqueGraphql(word: string): boolean {
+  const lower = word.toLowerCase();
+  return RELEASE.gh_api_graphql_opaque.some((x) => (x.startsWith('--') ? lower.startsWith(x) : lower.includes(x)));
+}
+
 function isRelease(name: string, words: string[]): boolean {
   const pair = words.slice(1, 3);
   return (
     (name === 'gh' && RELEASE.gh.some((p) => sameWords(p, pair))) ||
     (name === 'gh' && words[1] === 'api' && words.slice(2).some((x) => x.toLowerCase().includes(RELEASE.gh_api_merge))) ||
+    (name === 'gh' && words[1] === 'api' && words.slice(2).includes('graphql') && words.slice(2).some(opaqueGraphql)) ||
     (name === 'az' &&
       (RELEASE.az_requires.every((x) => words.includes(x)) ||
         (sameWords(words.slice(1, 4), RELEASE.az_pr_update.prefix) && words.includes(RELEASE.az_pr_update.word)))) ||

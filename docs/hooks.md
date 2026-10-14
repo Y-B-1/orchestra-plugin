@@ -26,7 +26,7 @@ The guard sorts every shell command into one class. Classification does not depe
 | --- | --- | --- | --- | --- |
 | `allow` | No rule applies | allow | allow | allow |
 | `deny` | Always-deny rule, malformed command or protected path | deny | deny | deny |
-| `release` | One release-class command alone (non-force `git push`, `gh pr merge`, a `gh api` call that mentions merge such as `gh api -X PUT repos/o/r/pulls/1/merge` or a `mergePullRequest` mutation, `gh release create`, package publish including `cargo publish`, provider deploy) | allow | allow with a current permit, else ask the user | deny, except the pull request push and the pre-authorized release |
+| `release` | One release-class command alone (non-force `git push`, `gh pr merge`, a `gh api graphql` mutation or body from `--input` or a `=@file` field, a `gh api` call that mentions merge such as `gh api -X PUT repos/o/r/pulls/1/merge` or a `mergePullRequest` mutation, `gh release create`, package publish including `cargo publish`, provider deploy) | allow | allow with a current permit, else ask the user | deny, except the pull request push and the pre-authorized release |
 | `release-multi` | A release-class command inside a multi-command line | allow | ask the user | deny |
 | `boundary` | Deletion (`rm`, `git branch -d`, `git worktree remove` and similar) or local merge, pull, rebase, cherry-pick | allow | allow | deny, except merged cleanup (below); a local merge is allowed on a non-default branch |
 
