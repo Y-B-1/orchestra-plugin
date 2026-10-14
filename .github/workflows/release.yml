@@ -1,0 +1,39 @@
+# Publishes a GitHub release when a version tag (v<version>) is pushed. Runs in this repository only;
+# it is not part of the installed plugin (plugins/orchestra).
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish the release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: The tag matches the plugin version and has release notes
+        run: |
+          version=$(python -c "import json;print(json.load(open('plugins/orchestra/plugin.json'))['version'])")
+          test "$GITHUB_REF_NAME" = "v$version" || { echo "Tag $GITHUB_REF_NAME does not match plugin version $version"; exit 1; }
+          test -s "docs/release-notes/$GITHUB_REF_NAME.md" || { echo "Missing docs/release-notes/$GITHUB_REF_NAME.md"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build the archives
+        run: python scripts/build_release.py --out dist
+      - name: Release notes with checksums
+        run: |
+          cp "docs/release-notes/$GITHUB_REF_NAME.md" notes.md
+          printf '\nSHA-256:\n' >> notes.md
+          while read -r sum name; do printf -- '- `%s` %s\n' "$name" "$sum" >> notes.md; done < dist/SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" "dist/orchestra-$VERSION.tar.gz" "dist/orchestra-$VERSION.zip" \
+            --title "Orchestra $VERSION" --notes-file notes.md --verify-tag
