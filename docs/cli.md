@@ -30,6 +30,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `release REMOTE TARGET` | Run the release command named in policy under a current permit. Refused while autonomy is active. | yes |
 | `finding add --review ID --kind finding\|out_of_scope --index N --disposition D --reason TEXT [--card ID]` | Record what happened to a review finding. | yes |
 | `hold TASK --finding TEXT` | End the repair ladder: move a blocked repair chain to `held` and log the finding. | yes |
+| `pr URL` | Record a pull request the run opened (an http(s) URL, once each); the run brief lists it under Needs you as "review and merge pull request URL". | yes |
 | `park TASK --reason TEXT` | Set a card aside at an approval boundary. | yes |
 | `unpark TASK` | Return a parked card to the queue. | yes |
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |

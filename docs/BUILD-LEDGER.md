@@ -256,3 +256,19 @@ Nested Claude Code 2.1.299 sessions (Haiku 5.5) in a scratch repository with a l
 Fixes from these runs (commit 9eea2b2): deny reasons now start with "Orchestra guard:" because the model read a guard deny as a tool failure; the ask names the missing permit plainly; an autonomy merge or release deny says it waits for the owner; a stopped run's brief lists the cards it left unfinished.
 
 Not performed live: a run reaching `complete` or `deadline`, `clear` and `resume` rebinding.
+
+### 2.6.1 full live autonomy run (2026-10-14)
+
+One interactive Claude Code 2.1.299 session (Sonnet 5.5 coordinator, permission prompts bypassed with `IS_SANDBOX=1`, function hooks on), driven through tmux, with the plugin exported from `main` at 5b6de06. The sandbox: a Python project with one test, a local bare `origin` whose `refs/remotes/origin/HEAD` was deleted, and a stub `gh` on PATH that logs calls and answers `gh pr create` with a fake URL. One user message asked for `slugify` with tests, a session-bound run, a ledger (90-minute deadline, completion check `tests: python3 -m unittest -q`), armed autonomy, a pull request and no merge. Nothing was typed after it.
+
+| Time (UTC) | Event |
+| --- | --- |
+| 16:51 | `start --harness-session`, ledger written, `autonomy arm`; arm recorded `origin/HEAD` (`origin/main`) |
+| 16:52 | Tiny route (27 changed lines): feature branch, inline builder card B1, commit, `gate tests` passed (6 tests) |
+| 16:52:40 | Pre-PR review card R1 on `orchestra:code-reviewer-medium`, as a background agent |
+| 16:52:45 | The turn ended; the Stop hook returned `{}` (worker running): no continuation |
+| 16:53:11 | The reviewer's completion woke the session; CLEAN review recorded, B1 and R1 accepted |
+| 16:53 | `git push` of `feature/slugify` reached the remote; `gh pr create --base main --head feature/slugify` ran; the remote `main` was unchanged |
+| 16:53:45 | The turn ended; the Stop hook stopped autonomy with `complete` and wrote the brief (passes 0, stalls 0, Needs you: ready to release, plus the reviewer's non-ASCII note) |
+
+Follow-ups taken in 2.6.2: the coordinator had recorded the PR as a free-form `progress.md` line the brief does not read, so `orchestra.py pr URL` now records it and the brief lists it under Needs you. Noted, not changed: the coordinator's final message cannot report the `complete` stop, because the Stop hook runs after it; the brief records it.

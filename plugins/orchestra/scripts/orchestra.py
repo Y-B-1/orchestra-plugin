@@ -101,6 +101,8 @@ def parser():
     hold = sub.add_parser('hold', help='End the repair ladder: move a blocked repair chain to held and log the finding')
     hold.add_argument('task_id')
     hold.add_argument('--finding', required=True)
+    pr = sub.add_parser('pr', help='Record a pull request the run opened; the run brief lists it for the owner')
+    pr.add_argument('url')
     classify = sub.add_parser('classify')
     classify.add_argument('shell_command')
     return p
@@ -286,6 +288,8 @@ def execute(args):
     if args.command=='unpark':
         engine.unpark(args.actor,args.lease,args.task_id)
         return {'unparked':args.task_id},0
+    if args.command=='pr':
+        return engine.record_pr(args.actor,args.lease,args.url),0
     if args.command=='hold':
         return engine.hold(args.actor,args.lease,args.task_id,args.finding),0
     if args.command=='route':

@@ -582,6 +582,9 @@ class Engine:
         for task in state['tasks'].values():  # a hand-edited cycle fails here instead of hanging a walk
             cls._walk(state['tasks'], task, 'repair_of')
             cls._walk(state['tasks'], task, 'repaired_by')
+        prs = state.get('pull_requests', [])
+        if not isinstance(prs, list) or any(not isinstance(u, str) or not u for u in prs):
+            raise EngineError('Invalid pull_requests state')
         findings = state.get('findings', [])
         if not isinstance(findings, list) or any(
                 not isinstance(f, dict) or any(not isinstance(f.get(k), str) for k in ('id', 'fingerprint', 'text', 'reason', 'at'))
@@ -1061,6 +1064,18 @@ class Engine:
         """The card's current blocking verdict comes from a repair-diff check (`repair_check: true`, SPEC 5.2 item 2b)."""
         verdicts = self._review_verdicts(state, {}, task_id=task_id)
         return any(r.get('repair_check') and self._task_findings(r, task_id) for r in verdicts.values())
+
+    def record_pr(self, actor, lease, url):
+        """Record a pull request the run opened, so the run brief asks the owner to review and merge it."""
+        if not isinstance(url, str) or not re.fullmatch(r'https?://\S+', url.strip()):
+            raise EngineError('A pull request is recorded by its http(s) URL')
+        url = url.strip()
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            prs = state.setdefault('pull_requests', [])
+            if url not in prs:
+                prs.append(url)
+            return dict(pull_requests=list(prs))
 
     def hold(self, actor, lease, task_id, finding):
         """End the repair ladder: move the whole chain to `held` and log it (SPEC 5.2 item 2)."""
@@ -1952,6 +1967,7 @@ class Engine:
         needs = list(parked)
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
+        needs += ['review and merge pull request ' + url for url in state.get('pull_requests', [])]
         if (reason in ('closed', 'complete') and not any(self._is_release(t) for t in tasks.values())
                 and not (auto or {}).get('release')):
             needs.append('ready to release')

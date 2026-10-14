@@ -572,6 +572,14 @@ class AutonomyIntegration(unittest.TestCase):
         self.cli('autonomy','settle',expected=2)
         self.cli('autonomy','arm','--relaunch',expected=2)
 
+    def test_cli_pr_records_the_pull_request_for_the_brief(self):
+        url='https://example.invalid/sandbox/pull/1'
+        self.assertEqual(self.cli('--lease',self.lease,'pr',url),{'pull_requests':[url]})
+        self.assertIn('http(s) URL',self.cli('--lease',self.lease,'pr','nope',expected=2))
+        self.cli('pr',url,expected=2)  # the lease is required
+        self.cli('--lease',self.lease,'interrupt')
+        self.assertIn('review and merge pull request '+url,self.cli('brief')['brief'])
+
     def test_cli_gate_again_reruns(self):
         first=self.cli('--lease',self.lease,'gate','ok','--',sys.executable,'-c','pass')
         self.assertTrue(first['passed'])
