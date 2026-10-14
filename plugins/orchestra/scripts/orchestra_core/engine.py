@@ -1855,33 +1855,20 @@ class Engine:
             return self._autonomy_on(state)
 
     def arm_autonomy(self, home=None):
-        """Arm the loop from `<state>/autonomy.md` (SPEC 12.1). Takes no lease, by design (O8). The remotes are asked
-        for their default branches before anything is written, so an arm interrupted then leaves autonomy off."""
+        """Arm the loop from `<state>/autonomy.md` (SPEC 12.1). Takes no lease, by design (O8). The ledger and the
+        release pre-authorization are checked first, then the remotes are asked for their default branches with no
+        lock held, and only then is the armed state written: an arm interrupted or refused before that changes
+        nothing. The write requires the very session the arm began with, so a session that replaced it meanwhile is
+        never armed by the stale request."""
         path = self.state_dir / 'autonomy.md'
         with self._state(False) as state:
-            if not state['session'] or not state['session']['active']:
-                raise EngineError('Autonomy needs an armed run (an active session)')
-            if not path.is_file():
-                shutil.copyfile(AUTONOMY_TEMPLATE, path)
-                raise EngineError('Ledger template written to %s: fill the ledger, then arm again' % path)
-            parse_ledger(path.read_bytes().decode(errors='replace'), self._clock())  # refuse a bad ledger before the network
+            self._armable(state, path, snapshot=False)  # read-only: no ledger copy yet
+            lease = state['session']['lease']
         remote_heads, remote_defaults = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
         with self._state(activity=False) as state:
-            if not state['session'] or not state['session']['active']:
-                raise EngineError('Autonomy needs an armed run (an active session)')
-            if not path.is_file():
-                shutil.copyfile(AUTONOMY_TEMPLATE, path)
-                raise EngineError('Ledger template written to %s: fill the ledger, then arm again' % path)
-            data = path.read_bytes()
-            fields = parse_ledger(data.decode(errors='replace'), self._clock())
-            snapshot = self._snapshot(path, 'ledger')
-            if snapshot['sha256'] != _hash(data):
-                raise EngineError('Ledger changed while arming; arm again')
-            release = fields.get('release')
-            policy = self.policy['release']
-            if release and not (policy.get('enabled') is True and policy.get('remote') == release['remote']
-                                and policy.get('target') == release['target']):
-                raise EngineError('Release pre-authorization must match policy.release')
+            fields, snapshot = self._armable(state, path)
+            if state['session']['lease'] != lease:
+                raise EngineError('The coordinator session changed while arming; arm again')
             state['autonomy'] = dict(
                 active=True, ledger=snapshot, passes=0, stalls=0, armed_at=self._clock(),
                 armed_gates=len(state['gates']), armed_reviews=len(state['reviews']),
@@ -1889,6 +1876,28 @@ class Engine:
         preconditions = autonomy_preconditions(self.repo, home)
         preconditions['remote_heads'] = remote_heads
         return dict(active=True, ledger=str(path), preconditions=preconditions)
+
+    def _armable(self, state, path, snapshot=True):
+        """The checks arming needs before any change: an active session, a filled ledger that parses, and a release
+        pre-authorization equal to policy.release. Returns the ledger fields and its snapshot."""
+        if not state['session'] or not state['session']['active']:
+            raise EngineError('Autonomy needs an armed run (an active session)')
+        if not path.is_file():
+            shutil.copyfile(AUTONOMY_TEMPLATE, path)
+            raise EngineError('Ledger template written to %s: fill the ledger, then arm again' % path)
+        data = path.read_bytes()
+        fields = parse_ledger(data.decode(errors='replace'), self._clock())
+        release = fields.get('release')
+        policy = self.policy['release']
+        if release and not (policy.get('enabled') is True and policy.get('remote') == release['remote']
+                            and policy.get('target') == release['target']):
+            raise EngineError('Release pre-authorization must match policy.release')
+        if not snapshot:
+            return fields, None
+        copy_ = self._snapshot(path, 'ledger')
+        if copy_['sha256'] != _hash(data):
+            raise EngineError('Ledger changed while arming; arm again')
+        return fields, copy_
 
     def disarm_autonomy(self):
         """Safe at any time; a no-op never rewrites state.json."""

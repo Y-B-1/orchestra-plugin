@@ -1452,6 +1452,29 @@ class AutonomyArmTests(AutonomyFixture):
         self.assertIn('pull request pushes to gone are refused', receipt['preconditions']['remote_heads'])
         self.assertEqual(self.auto()['remote_defaults'], {})
 
+    def test_an_arm_whose_session_changed_while_asking_the_remotes_is_refused(self):
+        self.ledger()
+
+        def replace_session(repo):  # another coordinator takes over the run during the network step
+            self.engine.interrupt('main', self.lease)
+            self.engine.open_session('main')
+            return 'no remote configured: pull request pushes are refused', {}
+
+        with mock.patch('orchestra_core.engine.ensure_remote_heads', side_effect=replace_session):
+            with self.assertRaisesRegex(EngineError, 'session changed while arming'):
+                self.engine.arm_autonomy()
+        self.assertFalse(self.engine.autonomy_active())
+
+    def test_a_mismatched_release_pre_authorization_is_refused_before_the_remotes_are_asked(self):
+        self.ledger(boundaries=[('- Release: pre-authorized origin elsewhere' if line.startswith('- Release:') else line)
+                                for line in AUTONOMY_FIXED])
+        before = sorted(p.name for p in self.state.iterdir())
+        with mock.patch('orchestra_core.engine.ensure_remote_heads') as ask:
+            with self.assertRaisesRegex(EngineError, 'must match policy.release'):
+                self.engine.arm_autonomy()
+        ask.assert_not_called()
+        self.assertEqual(sorted(p.name for p in self.state.iterdir()), before)  # nothing written, no ledger copy
+
     def test_an_arm_interrupted_while_asking_the_remotes_leaves_autonomy_off(self):
         self.ledger()
         with mock.patch('orchestra_core.engine.ensure_remote_heads', side_effect=KeyboardInterrupt):
