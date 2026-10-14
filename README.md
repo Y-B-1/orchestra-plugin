@@ -15,7 +15,19 @@ claude plugin install orchestra@orchestra-distribution
 
 Restart the client after installation. Enable the plugin and review its hook definition in the native trust interface; installation does not grant trust. Once enabled and trusted, startup supplies the main coordinator contract. The plugin's default main agent follows your model and effort picker. Explicit user or managed settings can override defaults.
 
+Orchestra sets no context limit of its own. For long runs, set Claude Code's auto-compaction in `~/.claude/settings.json`:
+
+```json
+{ "autoCompactWindow": 400000 }
+```
+
+The value is in tokens (100000 to 1000000). Claude Code caps it at the model's window, so it has no effect on a 200K model. Run state lives on disk and survives compaction.
+
 No installer changes application instructions, restores symlinks, resumes old work, grants release rights or writes hook trust. Existing project rules remain applicable. Port a project's old Orchestra enforcement separately to avoid competing coordinators.
+
+### Upgrade from 2.5 to 2.6
+
+The relaunch harness is removed: `orchestra.py relaunch`, `autonomy arm --relaunch` and `autonomy settle` are gone, along with `config/relaunch-prompt.md`. Autonomy runs in the interactive session and ends with it. A 2.5 state armed with `--relaunch` loads, but the flag no longer keeps autonomy armed between sessions; re-arm in a live session.
 
 ### Upgrade from 2.4 to 2.5
 
@@ -29,7 +41,7 @@ A run started under 2.3 loads under 2.4 when its policy is unchanged: `status`, 
 
 A run started under 2.1 loads under 2.2: its cards, reviews, gates and armed autonomy carry over, `max_passes` and `max_stalls` in its ledger are recorded and no longer enforced, and queued builder cards dispatch without Keep and Remove headings. Do not mix versions on one active run. A 2.1 engine rejects a `held` card and an armed autonomy without `max_passes`, and the 2.1 hooks then fail closed for that run. End every 2.1 session before the first `hold` or before arming under 2.2.
 
-The downstream shell relaunch harness no longer works against 2.x. `orchestra.py relaunch` replaces it (see Autonomous mode).
+The downstream shell relaunch harness no longer works against 2.x.
 
 ### Upgrade from 1.0.1
 
@@ -107,9 +119,9 @@ Release is disabled by default. Explicit project policy names authorization, exa
 
 ### Autonomous mode
 
-`orchestra.py autonomy arm|disarm|status|settle` (on Claude, `/orchestra-autonomy on|off|status`) lets the run continue unattended within a written ledger of goal, completion checks and a deadline. The deadline is the only limit: no count of passes or stalls stops the run. Release, push, merge, deletion and credential entry are hard boundaries: the coordinator parks the card and continues with other cards. The one exception is a `- Release: pre-authorized <remote> <target>` line that matches the configured policy release. A run brief lands in the run's `progress.md` at every end of a run, shows at the next session start and prints with `orchestra.py brief`. See the [CLI guide](docs/cli.md).
+`orchestra.py autonomy arm|disarm|status` (on Claude, `/orchestra-autonomy on|off|status`) lets the run continue unattended within a written ledger of goal, completion checks and a deadline. The deadline is the only limit: no count of passes or stalls stops the run. Release, push, merge, deletion and credential entry are hard boundaries: the coordinator parks the card and continues with other cards. The one exception is a `- Release: pre-authorized <remote> <target>` line that matches the configured policy release. A run brief lands in the run's `progress.md` at every end of a run, shows at the next session start and prints with `orchestra.py brief`. See the [CLI guide](docs/cli.md).
 
-For fresh context on every pass, arm with `autonomy arm --relaunch`, end the interactive session, and run `orchestra.py relaunch --permission-mode MODE [--model ID]` in a terminal. It runs one `claude -p` pass at a time, ends each pass's session, backs off after a stalled pass and never stops for stalls. It replaces the downstream shell harness.
+The Stop hook continues a turn only when the coordinator can act now: a ready or reported card, an open final finding, or a held chain owed its final review. While only background workers run, the turn ends and the harness wakes the session as each finishes. A continuation never repeats for an unchanged board, so the transcript does not fill with the same re-prompt. Long runs rely on the auto-compaction setting above.
 
 ### Routing, repair and hold
 

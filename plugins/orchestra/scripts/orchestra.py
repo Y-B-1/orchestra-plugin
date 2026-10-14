@@ -15,7 +15,6 @@ import uuid
 from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, repository, state_location
-from orchestra_core import relaunch
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -93,12 +92,7 @@ def parser():
         action.add_argument('remote')
         action.add_argument('target')
     autonomy = sub.add_parser('autonomy', help='Arm, disarm or inspect the autonomous loop; takes no lease')
-    autonomy.add_argument('action', choices=['arm','disarm','status','settle'])
-    autonomy.add_argument('--relaunch', action='store_true', help='With arm: keep autonomy armed between sessions for the relaunch harness')
-    rl = sub.add_parser('relaunch', help='Run fresh `claude -p` passes until autonomy stops; run it in your terminal with no session active')
-    rl.add_argument('--permission-mode', required=True, help='Permission mode for each pass; no default')
-    rl.add_argument('--model', help='Model id for each pass; unset by default')
-    rl.add_argument('--launcher', nargs=argparse.REMAINDER, help='Replace the claude command with this argv (prompt on stdin); must come last')
+    autonomy.add_argument('action', choices=['arm','disarm','status'])
     park = sub.add_parser('park', help='Set a card aside at an approval boundary')
     park.add_argument('task_id')
     park.add_argument('--reason', required=True)
@@ -144,8 +138,6 @@ def execute(args):
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
     if args.command=='where':
         return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file()},0
-    if args.command=='relaunch':
-        return None,relaunch.run(repo,state,args.permission_mode,model=args.model,launcher=args.launcher or None)
     policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
     engine = Engine(state,repo,policy)
     if args.command=='start':
@@ -155,7 +147,7 @@ def execute(args):
         if args.new_run:  # refuse before archiving, so the ended run stays in place
             engine._check_start(args.size,asks,args.owner_request)
             archive_inactive(state,engine)
-        lease = engine.open_session(args.actor,args.harness_session,relaunch_pass=os.environ.get('ORCHESTRA_RELAUNCH_PASS') or None,
+        lease = engine.open_session(args.actor,args.harness_session,
                                     size=args.size,asks=asks,owner_request=args.owner_request,require_size=True)
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
@@ -171,11 +163,9 @@ def execute(args):
         text=engine.brief()
         return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
     if args.command=='autonomy':  # O8: no lease, so the ledger is armed from outside the run
-        if args.relaunch and args.action!='arm':
-            raise EngineError('--relaunch is only valid with arm')
         if args.action=='arm':
-            return engine.arm_autonomy(relaunch=args.relaunch),0
-        return {'disarm':engine.disarm_autonomy,'status':engine.autonomy_status,'settle':engine.settle}[args.action](),0
+            return engine.arm_autonomy(),0
+        return {'disarm':engine.disarm_autonomy,'status':engine.autonomy_status}[args.action](),0
     if args.command=='artifact':
         ids=[i for i in (args.tasks or '').split(',') if i]
         if args.tasks is not None and not ids:

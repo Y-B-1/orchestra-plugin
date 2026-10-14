@@ -1573,41 +1573,20 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertIn('park', reason)
         self.assertIn('--reason', reason)
 
-    def test_pretooluse_armed_without_session_under_relaunch(self):
-        self.ledger()
-        self.engine.arm_autonomy(relaunch=True)
-        self.engine.interrupt('main', self.lease)  # between passes: no active session, relaunch autonomy stays armed
-        self.assertFalse(self.engine.status()['session']['active'])
-        for command in ['git worktree remove x', 'rm -rf build']:
-            with self.subTest(command=command):
-                code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
-                decision = output['hookSpecificOutput']
-                self.assertEqual(decision['permissionDecision'], 'deny')
-                self.assertIn('Approval boundary under autonomy', decision['permissionDecisionReason'])
-        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git push origin side'}})
-        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')  # no session: no release, fail closed
-        self.assertIsNone(self.hook(self.repo, 'git status'))
-
-    def test_pretooluse_without_session_and_without_relaunch_stays_unarmed(self):
+    def test_pretooluse_without_session_stays_unarmed(self):
         self.ledger()
         self.engine.arm_autonomy()
         self.engine.interrupt('main', self.lease)  # 2.1: a session end clears in-session autonomy
         self.assertIsNone(self.hook(self.repo, 'git worktree remove x'))
 
-    def test_pretooluse_relaunch_armed_with_an_unloadable_state_is_active_without_a_session(self):
+    def test_legacy_relaunch_flag_without_session_is_unarmed(self):
         self.ledger()
-        self.engine.arm_autonomy(relaunch=True)
-        self.engine.interrupt('main', self.lease)
+        self.engine.arm_autonomy()
         data = json.loads((self.state / 'state.json').read_text())
-        data['policy'] = 'changed'  # the engine cannot load this state any more
+        data['autonomy']['relaunch'] = True  # a 2.5 relaunch arm: no longer keeps autonomy between sessions
+        data['session']['active'] = False
         (self.state / 'state.json').write_text(json.dumps(data))
-        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': 'git worktree remove x'}})
-        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
-
-    def test_stop_without_session_under_relaunch_changes_nothing(self):
-        self.ledger()
-        self.engine.arm_autonomy(relaunch=True)
-        self.engine.interrupt('main', self.lease)
+        self.assertIsNone(self.hook(self.repo, 'git worktree remove x'))
         before = (self.state / 'state.json').read_bytes()
         with mock.patch('sys.stdin', io.StringIO(json.dumps({'cwd': str(self.repo), 'session_id': 'other'}))), \
                 mock.patch('sys.stdout', new_callable=io.StringIO) as output:
@@ -1835,6 +1814,7 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(passes(), 0)
         self.assertEqual(self.stop_as(self.linked, 'S-main')['decision'], 'block')
         self.assertEqual(passes(), 1)
+        self.add_card('c2')  # the board changed, so a continuation is due again
         self.assertEqual(self.stop_as(self.repo, None)['decision'], 'block')  # no session id: as before
         self.assertEqual(passes(), 2)
 
@@ -1851,6 +1831,9 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(first['decision'], 'block')
         self.assertIn('Autonomy pass 1', first['reason'])
         self.assertNotIn('Autonomy pass 1 of', first['reason'])
+        self.assertEqual(self.stop(), {})  # nothing changed since the continuation: the turn ends, no repeat
+        self.assertEqual(self.engine.status()['autonomy']['stalls'], 1)
+        self.add_card('c2')
         self.assertEqual(self.stop()['decision'], 'block')  # the old cap of 1 no longer stops the loop
         self.now[0] += 7200
         self.assertEqual(self.stop(), {})
@@ -2016,12 +1999,12 @@ class RunBriefHookTest(unittest.TestCase):
     def test_ended_run_busy_lock_does_not_deny_non_delegated(self):
         from orchestra_core.engine import Engine, StateBusy
         self.engine.interrupt('main', self.lease)  # the run's session has ended
-        # The first read (status) succeeds; the second read (autonomy_active) meets a busy lock.
+        # An ended session is unarmed from its status alone: no second read that a busy lock could fail.
         with mock.patch.object(Engine, 'autonomy_active', side_effect=StateBusy('Orchestra state is busy; retry')) as second:
             self.assertIsNone(self.hook(self.repo, 'git status'))
             self.assertIsNone(self.hook(self.repo, 'git commit -m done'))
             self.assertEqual(self.hook(self.repo, 'git reset --hard'), 'deny')  # a plain deny keeps its verdict
-        self.assertTrue(second.called)
+        self.assertFalse(second.called)
 
     def test_hook_stop_allows_stop_and_writes_state_busy_brief_on_lock_timeout(self):
         self.arm()

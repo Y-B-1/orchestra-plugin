@@ -7,7 +7,7 @@ One classifier and two native adapters replace duplicated provider guards. Comma
 | SessionStart | Supply main or worker contract and skill path; add the session id for `start --harness-session`; show a pending autonomy morning report | Seed state, repair files, resume, arm autonomy |
 | SubagentStart | Supply worker boundaries to agents whose type starts with `orchestra:`; during an active run, tell any other agent to stop (advisory); otherwise return nothing | Veto native startup or authenticate identity |
 | PreToolUse | Classify the call and deny covered destructive Git, stash, wholesale staging, protected state/config patches; check recognizable releases and, under autonomy, approval boundaries | Interpret arbitrary scripts, aliases, stdin or all provider tools |
-| Stop | Continue only an existing explicitly armed intact ledger until the deadline, completion, only parked cards, no ready card or disarm; no pass or stall count stops it. Under `relaunch` with no active session it does nothing | Start an unrequested loop or continue corrupt state |
+| Stop | Continue only when the coordinator can act now: a ready or reported card, an open final finding, or a held chain owed its final review. Running workers alone let the turn end (the harness wakes the session when one finishes), and a continuation is never repeated for an unchanged progress signature. Autonomy stops at the deadline, completion, only parked cards, no live card or disarm; no pass or stall count stops it | Start an unrequested loop or continue corrupt state |
 | SessionEnd | Release the run bound to the ending session (see below) | Release on `clear` or `resume`; release a run started without `--harness-session` |
 
 The PreToolUse matcher is `Bash|Edit|Write|MultiEdit|Agent|Task`; an Agent or Task call carrying `agent_id` (made inside a subagent) is denied with "Workers do not delegate", and a fresh mod marker never skips the Python hook for those two tools.
@@ -55,12 +55,8 @@ The Python hook then allows it only when the branch is merged, whatever the run 
 ## Hook failures and the session directory
 
 - **Missing cwd.** A PreToolUse payload whose session directory no longer exists denies the delegated classes (release, release-multi, boundary) with "Session directory no longer exists: cd to an existing directory, then retry". Other classes behave as before. The mod spawns the Python hook from the plugin root and passes the session directory in the payload.
-- **State busy.** Hook state reads wait up to 2 seconds for the state lock instead of blocking. When the lock is still held, PreToolUse denies the delegated classes with "Orchestra state is busy; retry"; every other class keeps the raw-state fallback. On Stop with autonomy armed in the raw state, the hook waits up to 8 seconds for the lock; if it stays held, the stop is allowed, one brief with reason `state busy` is appended to `progress.md`, and `state.json` is not changed, so the next Stop or `settle` resumes the run. An unarmed Stop returns at once and writes nothing.
+- **State busy.** Hook state reads wait up to 2 seconds for the state lock instead of blocking. When the lock is still held, PreToolUse denies the delegated classes with "Orchestra state is busy; retry"; every other class keeps the raw-state fallback. On Stop with autonomy armed in the raw state, the hook waits up to 8 seconds for the lock; if it stays held, the stop is allowed, one brief with reason `state busy` is appended to `progress.md`, and `state.json` is not changed, so the next Stop resumes the run. An unarmed Stop returns at once and writes nothing.
 - **Guard errors name their class.** The mod's fail-closed reason reads "Orchestra guard error (spawn: CODE | exit N | timeout | bad output); failing closed"; an exit-2 deny shows its own reason.
-
-## Relaunch without a session
-
-With `autonomy arm --relaunch`, autonomy stays armed when a session ends, so PreToolUse applies the autonomy boundaries before a pass calls `start`: with no active session, `git worktree remove x` is denied with the autonomy boundary reason. The Stop hook with no active session counts nothing and stops nothing, so a stray Stop between passes changes no state. Inside a pass the Stop hook returns no continuation; `orchestra.py relaunch` is the loop. See the [CLI guide](cli.md).
 
 ## Autonomy boundaries
 

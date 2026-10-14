@@ -461,8 +461,7 @@ class Engine:
         auto = state['autonomy']
         if auto is not None:
             release = auto.get('release')
-            if (('relaunch' in auto and not isinstance(auto['relaunch'], bool))
-                    or ('release' in auto and (not isinstance(release, dict) or any(
+            if (('release' in auto and (not isinstance(release, dict) or any(
                         not isinstance(release.get(k), str) or not release[k] for k in ('remote', 'target'))))):
                 raise EngineError('Invalid autonomy state')
             ints = ('passes', 'stalls', 'armed_gates', 'armed_reviews')
@@ -482,8 +481,6 @@ class Engine:
             bound = session.get('harness_session')
             if 'harness_session' in session and (not isinstance(bound, str) or not bound):
                 raise EngineError('Invalid harness session')
-            if 'relaunch_pass' in session and (not isinstance(session['relaunch_pass'], str) or not session['relaunch_pass']):
-                raise EngineError('Invalid relaunch pass')
             if 'size' in session or 'asks' in session or 'owner_request' in session:
                 log = session.get('route_log', [])
                 if ('items' in session or session.get('size') not in SIZES or not cls._asks_ok(session.get('asks'))
@@ -696,12 +693,6 @@ class Engine:
         with self._state(False) as state:
             self._lease(state, actor, lease)
 
-    def _marker_nonce(self):
-        """SPEC 5.10 item 5.3: the nonce of the single `<state>/relaunch/pass-<nonce>.marker`; none, or several, is None."""
-        names = [p.name for p in (self.state_dir / 'relaunch').glob('pass-*.marker')]
-        nonce = names[0][len('pass-'):-len('.marker')] if len(names) == 1 else None
-        return nonce if nonce and re.fullmatch(r'[A-Za-z0-9_-]+', nonce) else None
-
     @staticmethod
     def _asks_ok(asks):
         return type(asks) is int and asks >= 1
@@ -724,7 +715,7 @@ class Engine:
         if isinstance(items, bool) or not isinstance(items, int) or items < 1:
             raise EngineError('Items must be an integer of 1 or more')
 
-    def open_session(self, actor, harness_session=None, relaunch_pass=None, items=None, size=None, asks=None,
+    def open_session(self, actor, harness_session=None, items=None, size=None, asks=None,
                      owner_request=False, require_size=False):
         """Open the coordinator session. A new run (no earlier session record) stores `size`, `asks`, `owner_request` and
         `base` (a 2.4 test run stores `items` and `route`); a resumed run keeps them. `require_size` is the CLI's rule that
@@ -737,8 +728,6 @@ class Engine:
                 raise EngineError('Invalid session size')
         if harness_session is not None and (not isinstance(harness_session, str) or not harness_session.strip()):
             raise EngineError('Invalid harness session id')
-        if relaunch_pass is not None and (not isinstance(relaunch_pass, str) or not relaunch_pass.strip()):
-            raise EngineError('Invalid relaunch pass nonce')
         with self._state() as state:
             if state['session'] and state['session']['active']:
                 raise EngineError('A coordinator session is already active')
@@ -765,11 +754,6 @@ class Engine:
                         state['session'][key] = prior[key]
             if harness_session is not None:
                 state['session']['harness_session'] = harness_session
-            auto = state['autonomy']
-            if relaunch_pass is None and auto and auto['active'] and auto.get('relaunch'):
-                relaunch_pass = self._marker_nonce()  # the environment may not reach the pass's tool calls (K11)
-            if relaunch_pass is not None and re.fullmatch(r'[A-Za-z0-9_-]+', relaunch_pass):
-                state['session']['relaunch_pass'] = relaunch_pass
             for task in state['tasks'].values():
                 if task['state'] == 'running':
                     task['state'] = 'queued'
@@ -838,12 +822,8 @@ class Engine:
 
     @staticmethod
     def _kept_autonomy(state):
-        """Clear autonomy as today, except a stopped run's morning report stays until the next arm or disarm, and
-        armed `relaunch` autonomy survives the end of a session (SPEC 5.10 item 2)."""
-        auto = state['autonomy']
-        if auto and auto['active'] and auto.get('relaunch'):
-            return auto
-        return auto if Engine._stopped_report_kept(state) else None
+        """Clear autonomy as today, except a stopped run's morning report stays until the next arm or disarm."""
+        return state['autonomy'] if Engine._stopped_report_kept(state) else None
 
     @staticmethod
     def _bound_to(state, session_id):
@@ -864,22 +844,6 @@ class Engine:
             self._write_brief(state, 'ended')
             state['autonomy'] = self._kept_autonomy(state)
             return True
-
-    def end_pass_session(self, nonce):
-        """SPEC 5.10 item 5.4: the relaunch harness ends the pass's session. No lease, no harness id; refused unless the
-        session carries this nonce, which is a cooperative marker and not authentication. Relaunch autonomy stays armed."""
-        with self._state() as state:
-            session = state['session']
-            if not session or not session['active']:
-                raise EngineError('No active session to end')
-            if not isinstance(nonce, str) or not nonce or session.get('relaunch_pass') != nonce:
-                raise EngineError('The active session was not started by this pass: nonce mismatch')
-            session.update(active=False, outcome='pass-exited')
-            session.pop('pending_rebind', None)
-            state['permits'] = []
-            self._write_brief(state, 'ended')  # `pass-exited` maps to `ended`; a stopped autonomy brief stays last_brief
-            state['autonomy'] = self._kept_autonomy(state)
-            return dict(ended=True, reason='ended', relaunch=bool(state['autonomy'] and state['autonomy'].get('relaunch')))
 
     def mark_harness_rebind(self, session_id):
         """/clear or /resume: the process continues under a new id; record the pending hand-over."""
@@ -1748,11 +1712,7 @@ class Engine:
             artifact = self._completion_evidence(state)
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []
-            auto = state['autonomy']
-            if auto and auto['active'] and auto.get('relaunch'):
-                self._stop_autonomy(state, 'complete')  # SPEC 5.10 item 2: completion ends the relaunch loop
-            else:
-                self._write_brief(state, 'closed')
+            self._write_brief(state, 'closed')
             state['autonomy'] = self._kept_autonomy(state)
             return artifact
 
@@ -1781,11 +1741,9 @@ class Engine:
 
     @staticmethod
     def _autonomy_on(state):
-        """Armed autonomy with an active session, or armed `relaunch` autonomy between passes (SPEC 5.10 item 3)."""
+        """Armed autonomy with an active session. A 2.5 `relaunch` flag left in the state no longer counts."""
         auto = state['autonomy']
-        if not (auto and auto['active']):
-            return False
-        return bool(auto.get('relaunch') or (state['session'] and state['session']['active']))
+        return bool(auto and auto['active'] and state['session'] and state['session']['active'])
 
     def _refuse_under_autonomy(self, state, action, remote=None, target=None):
         """A permit or its check passes only for the exact pair the ledger pre-authorized (SPEC 5.8 item 8.3)."""
@@ -1801,7 +1759,7 @@ class Engine:
         with self._state(False) as state:
             return self._autonomy_on(state)
 
-    def arm_autonomy(self, home=None, relaunch=False):
+    def arm_autonomy(self, home=None):
         """Arm the loop from `<state>/autonomy.md` (SPEC 12.1). Takes no lease, by design (O8)."""
         path = self.state_dir / 'autonomy.md'
         with self._state() as state:
@@ -1820,8 +1778,6 @@ class Engine:
             if release and not (policy.get('enabled') is True and policy.get('remote') == release['remote']
                                 and policy.get('target') == release['target']):
                 raise EngineError('Release pre-authorization must match policy.release')
-            if relaunch:
-                fields['relaunch'] = True
             state['autonomy'] = dict(
                 active=True, ledger=snapshot, passes=0, stalls=0, armed_at=self._clock(),
                 armed_gates=len(state['gates']), armed_reviews=len(state['reviews']),
@@ -2026,9 +1982,14 @@ class Engine:
             return False
         return True
 
-    def _stop_check(self, state, count):
-        """The stop conditions shared by `hook_stop` and `settle`: (reason, message). `count` records the pass,
-        signature and stall bookkeeping; `settle` never counts."""
+    def _stop_check(self, state):
+        """The Stop decision: (reason, message). A reason stops autonomy; a message continues the turn; neither lets
+        the turn end with autonomy still armed.
+
+        The turn continues only when the coordinator has work it can do now: a ready card, a reported card, an open
+        final finding or a held chain owed its final review. Running workers alone end the turn quietly, since the
+        harness wakes the session when a background worker finishes. A message is never sent twice for the same
+        progress signature: a turn that changed nothing since the last continuation ends, counted as a stall."""
         auto = state['autonomy']
         tasks = state['tasks'].values()
         if not self._intact(auto['ledger']):
@@ -2037,69 +1998,45 @@ class Engine:
             return 'deadline', None
         if self._complete(state):
             return 'complete', None
-        signature = self._signature(state)
-        if count:
-            if auto['passes'] > 0:  # the arming turn is not a pass
-                auto['stalls'] = auto['stalls'] + 1 if signature == auto.get('signature') else 0
-            auto['signature'] = signature
-            auto['accepted'] = self._accepted(state)
         parked = any(t['state'] == 'parked' for t in tasks)
         held = (any(t['state'] == 'held' for t in tasks)
                 and not any(t['state'] == 'parked' and not self._is_release(t) for t in tasks))
-        live = any(t['state'] in ('running', 'reported') for t in tasks) or bool(self._ready(state))
-        final_open = not live and any(t['role'] == 'builder' and t['state'] == 'accepted' and not t.get('repaired_by')
-                                      and self._final_blocks(state, t['id']) for t in tasks)
-        if not live and not held and not final_open:
+        running = any(t['state'] == 'running' for t in tasks)
+        actionable = any(t['state'] == 'reported' for t in tasks) or bool(self._ready(state))
+        final_open = not (running or actionable) and any(
+            t['role'] == 'builder' and t['state'] == 'accepted' and not t.get('repaired_by')
+            and self._final_blocks(state, t['id']) for t in tasks)
+        if not (running or actionable or held or final_open):
             return ('parked-only' if parked else 'no-ready-card'), None
-        if not count:
+        auto['accepted'] = self._accepted(state)
+        if actionable:
+            message = 'continue with the next ready or reported card; park any card that reaches an approval boundary.'
+        elif running:
+            return None, None  # Waiting on workers: the harness wakes the session when one finishes
+        elif final_open:
+            message = 'start the final repair round; a current final finding is still open.'
+        else:
+            message = 'start or continue the final phase; held work is still owed a final review.'
+        signature = self._signature(state)
+        if signature == auto.get('signature'):
+            auto['stalls'] += 1  # The last continuation changed nothing: end the turn instead of repeating it
             return None, None
+        auto['signature'] = signature
+        auto['stalls'] = 0
         auto['passes'] += 1
-        if live:
-            return None, ('Autonomy pass %d: continue with the next ready card; park any card that '
-                          'reaches an approval boundary.' % auto['passes'])
-        if final_open:
-            return None, ('Autonomy pass %d: start the final repair round; a current final finding is still '
-                          'open.' % auto['passes'])
-        return None, ('Autonomy pass %d: start or continue the final phase; held work is still owed a '
-                      'final review.' % auto['passes'])
+        return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
 
     def hook_stop(self):
         """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm and
-        an idle run. Caller identifiers do not authenticate. Under `relaunch` (SPEC 5.10 items 5.6, 5.8.7) it is a
-        no-op without an active session, and inside a pass it counts but continues nothing: the harness is the loop."""
-        def runnable(state):
-            session = state['session']
-            return bool(session and session['active'] and self._autonomy_on(state))
-
+        an idle run. Caller identifiers do not authenticate."""
         with self._state(False) as state:
-            if not runnable(state):
+            if not self._autonomy_on(state):
                 return None  # Read-only unless autonomy is active in a session
         with self._state() as state:
-            if not runnable(state):
+            if not self._autonomy_on(state):
                 return None
-            reason, message = self._stop_check(state, True)
+            reason, message = self._stop_check(state)
             if reason is None:
-                return None if state['autonomy'].get('relaunch') else message
+                return message
             self._stop_autonomy(state, reason)
             return None
-
-    def settle(self):
-        """SPEC 5.10 item 4: lease-free; evaluates the stop conditions of an armed autonomy, with or without a
-        session, without counting a pass, and stops autonomy (brief written) when one holds."""
-        with self._state(False) as state:
-            if not (state['autonomy'] and state['autonomy']['active']):
-                return self._settled(state)  # not armed: read-only
-        with self._state() as state:
-            auto = state['autonomy']
-            if auto and auto['active']:
-                reason, _ = self._stop_check(state, False)
-                if reason is not None:
-                    self._stop_autonomy(state, reason)
-            return self._settled(state)
-
-    def _settled(self, state):
-        auto = state['autonomy'] or {}
-        stopped = bool(auto) and not auto['active'] and bool(auto.get('last_stop_reason'))
-        return dict(armed=bool(auto.get('active')), stopped=stopped,
-                    reason=auto.get('last_stop_reason') if stopped else None,
-                    signature=self._signature(state), passes=auto.get('passes'), stalls=auto.get('stalls'))

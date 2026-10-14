@@ -2,6 +2,12 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.6.0 — 2026-10-14
+
+- **Autonomy loop:** the Stop hook continues a turn only when the coordinator can act now (a ready or reported card, an open final finding, a held chain owed its final review). Running workers alone let the turn end; the harness wakes the session when one finishes. A continuation is never sent twice for an unchanged progress signature: that turn ends and counts as a stall. Before, every Stop while workers ran re-sent the same prompt.
+- **Relaunch removed:** `orchestra.py relaunch`, `autonomy arm --relaunch`, `autonomy settle` and `config/relaunch-prompt.md`. Passes could only run foreground workers, and the context-ceiling rule had no signal. A 2.5 state carrying the flag loads and is treated as plain autonomy.
+- **Context:** the triage escalation no longer cites a percentage of the window. The README recommends `autoCompactWindow` in the user's Claude Code settings.
+
 ## 2.5.1 — 2026-10-10
 
 - **Engine:** a run state whose session carries `size` never loads under the 2.3 policy hash. Before, `binds()` refused only a session with `items`. The two task-size checks share one constant, `CARD_SIZES`.

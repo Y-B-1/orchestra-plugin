@@ -204,3 +204,14 @@ Route by diff size, not item count. Design `docs/DESIGN-v2.5.md`, contract `docs
 | RV2, RV2S | code-reviewer final (correctness, standards) | 0559bcd | no blocking findings; notes only | CLEAN |
 
 Notes: a session started with its working directory in `plugins/orchestra` wrote a stray `plugins/orchestra/.claude/fast-jev-compaction/` cache (197 files); it was moved out of the tree, and fast-jev now anchors its archive at the git toplevel (fast-jev-compaction b3074e9). Deferred: `binds()` edge case; the `('tiny', 'medium')` literal appears twice in `engine.py` (RV2S note); PLAN-v2.5 history lines still name `REVIEWER_BANDS`.
+
+## 2.6.0 — 2026-10-14
+
+Autonomy loop fix and relaunch removal, from owner feedback: the transcript filled with identical Stop re-prompts while background workers ran.
+
+- **Cause:** `_stop_check` counted `running` cards as live work, so every Stop while a worker ran was blocked with the same "Autonomy pass N" line.
+- **Change:** the Stop hook continues a turn only for a ready or reported card, an open final finding or a held chain owed its final review. Running workers alone end the turn quietly (the harness wakes the session when a worker finishes). A continuation is not repeated for an unchanged progress signature; that turn ends and counts as a stall. Stop reasons are unchanged.
+- **Removed:** `orchestra.py relaunch`, `autonomy arm --relaunch`, `autonomy settle`, `scripts/orchestra_core/relaunch.py`, `config/relaunch-prompt.md`, `Engine.end_pass_session`, `Engine.settle` and the session `relaunch_pass` nonce. Passes could only use foreground workers, and the "context ceiling" rule had no signal the model can read. A 2.5 state carrying `autonomy.relaunch` or `session.relaunch_pass` still loads; the flag is ignored.
+- **Context:** `triage.md` no longer cites 40% to 60% of the window; the README recommends the user's `autoCompactWindow` setting (tokens, capped at the model's window).
+- **Guards:** unchanged in this release.
+- **Checks:** `python3 -m unittest discover -s tests` 639 tests, one failure (changelog heading) fixed by the version bump; `tests.test_packaging` and `tests.test_build_release` then OK. `generate.py --check` 12 agent files. Live hook behavior in a real Claude Code session is not yet checked.
