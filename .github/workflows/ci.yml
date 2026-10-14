@@ -1,0 +1,55 @@
+# Checks the Orchestra plugin on every pull request and on main. Runs in this repository only;
+# it is not part of the installed plugin (plugins/orchestra).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }} tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.11', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Git identity for the test repositories
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.invalid
+          git config --global init.defaultBranch main
+      - name: Agent files match the generator
+        run: python plugins/orchestra/scripts/generate.py --check
+      - name: Unit and integration tests
+        run: python -m unittest discover -s tests
+
+  plugin:
+    name: Plugin validation and mod tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code@2.1.299
+      - name: Validate the plugin and the marketplace
+        run: |
+          claude plugin validate --strict plugins/orchestra
+          claude plugin validate --strict .claude-plugin/marketplace.json
+      - name: Mod tests
+        run: claude plugin test plugins/orchestra

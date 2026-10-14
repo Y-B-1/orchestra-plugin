@@ -16,6 +16,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+import urllib.parse
 import uuid
 from datetime import datetime, timezone
 
@@ -239,9 +240,10 @@ def autonomy_preconditions(repo, home=None):
 
 
 def ensure_remote_heads(repo, timeout=20):
-    """Record each remote's default branch locally where it is missing (`git remote set-head R --auto`), so the
-    autonomy pull request push can tell the default branch from a feature branch. One line per remote; a remote
-    that cannot be reached is reported, never a refusal."""
+    """Ask each remote for its default branch (`git remote set-head R --auto`) and record it locally. Returns
+    (report, verified): one report line per remote, and {remote: default branch} for the remotes that answered.
+    A recorded ref is never trusted on its own, since the remote may have changed its default since; a remote that
+    cannot be reached is reported and left out of `verified`, so pull request pushes to it are refused."""
     def git(*args, limit=10):
         try:
             done = subprocess.run(['git', '-C', str(repo), *args], capture_output=True, text=True, timeout=limit,
@@ -256,19 +258,20 @@ def ensure_remote_heads(repo, timeout=20):
 
     remotes = git('remote')[1].split()
     if not remotes:
-        return 'no remote configured: pull request pushes are refused'
-    lines = []
+        return 'no remote configured: pull request pushes are refused', {}
+    lines, verified = [], {}
     for remote in remotes:
-        known = head(remote)
-        if known:
-            lines.append('%s: default branch %s' % (remote, known))
-            continue
-        _, _, err = git('remote', 'set-head', remote, '--auto', limit=timeout)
-        known = head(remote)
-        lines.append('%s: default branch %s (recorded now)' % (remote, known) if known else
-                     '%s: default branch unknown (%s); pull request pushes to %s are refused until '
-                     '`git remote set-head %s --auto` succeeds' % (remote, (err.splitlines() or ['no answer'])[-1], remote, remote))
-    return '; '.join(lines)
+        before = head(remote)
+        code, _, err = git('remote', 'set-head', remote, '--auto', limit=timeout)
+        after = head(remote) if code == 0 else None
+        if after:
+            verified[remote] = after
+            note = 'recorded now' if before is None else 'confirmed' if before == after else 'was %s, updated' % before
+            lines.append('%s: default branch %s (%s)' % (remote, after, note))
+        else:
+            lines.append('%s: default branch not confirmed (%s); pull request pushes to %s are refused until it '
+                         'answers and autonomy is armed again' % (remote, (err.splitlines() or ['no answer'])[-1], remote))
+    return '; '.join(lines), verified
 
 
 def _hash(data):
@@ -516,6 +519,9 @@ class Engine:
                     or any(k in auto and (isinstance(auto[k], bool) or not isinstance(auto[k], int))
                            for k in ('max_passes', 'max_stalls')) or ('report' in auto and not isinstance(auto['report'], dict))
                     or ('pull_requests' in auto and not isinstance(auto['pull_requests'], bool))
+                    or ('remote_defaults' in auto and (not isinstance(auto['remote_defaults'], dict) or any(
+                        not isinstance(k, str) or not isinstance(v, str) or not k or not v
+                        for k, v in auto['remote_defaults'].items())))
                     or (auto['active'] and (any(isinstance(auto.get(k), bool) or not isinstance(auto.get(k), int) for k in ints)
                                             or any(not isinstance(auto.get(k), str) for k in ('goal', 'deadline'))
                                             or any(not isinstance(auto.get(k), list) for k in ('checks', 'accepted'))
@@ -1067,9 +1073,10 @@ class Engine:
 
     def record_pr(self, actor, lease, url):
         """Record a pull request the run opened, so the run brief asks the owner to review and merge it."""
-        if not isinstance(url, str) or not re.fullmatch(r'https?://\S+', url.strip()):
-            raise EngineError('A pull request is recorded by its http(s) URL')
-        url = url.strip()
+        url = url.strip() if isinstance(url, str) else ''
+        parts = urllib.parse.urlsplit(url) if url and not any(c.isspace() for c in url) else None
+        if not parts or parts.scheme not in ('http', 'https') or not parts.hostname:
+            raise EngineError('A pull request is recorded by its http(s) URL with a host')
         with self._state() as state:
             self._lease(state, actor, lease)
             prs = state.setdefault('pull_requests', [])
@@ -1848,8 +1855,17 @@ class Engine:
             return self._autonomy_on(state)
 
     def arm_autonomy(self, home=None):
-        """Arm the loop from `<state>/autonomy.md` (SPEC 12.1). Takes no lease, by design (O8)."""
+        """Arm the loop from `<state>/autonomy.md` (SPEC 12.1). Takes no lease, by design (O8). The remotes are asked
+        for their default branches before anything is written, so an arm interrupted then leaves autonomy off."""
         path = self.state_dir / 'autonomy.md'
+        with self._state(False) as state:
+            if not state['session'] or not state['session']['active']:
+                raise EngineError('Autonomy needs an armed run (an active session)')
+            if not path.is_file():
+                shutil.copyfile(AUTONOMY_TEMPLATE, path)
+                raise EngineError('Ledger template written to %s: fill the ledger, then arm again' % path)
+            parse_ledger(path.read_bytes().decode(errors='replace'), self._clock())  # refuse a bad ledger before the network
+        remote_heads, remote_defaults = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
         with self._state(activity=False) as state:
             if not state['session'] or not state['session']['active']:
                 raise EngineError('Autonomy needs an armed run (an active session)')
@@ -1869,9 +1885,9 @@ class Engine:
             state['autonomy'] = dict(
                 active=True, ledger=snapshot, passes=0, stalls=0, armed_at=self._clock(),
                 armed_gates=len(state['gates']), armed_reviews=len(state['reviews']),
-                accepted=self._accepted(state), **fields)
+                accepted=self._accepted(state), remote_defaults=remote_defaults, **fields)
         preconditions = autonomy_preconditions(self.repo, home)
-        preconditions['remote_heads'] = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
+        preconditions['remote_heads'] = remote_heads
         return dict(active=True, ledger=str(path), preconditions=preconditions)
 
     def disarm_autonomy(self):

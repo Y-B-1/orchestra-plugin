@@ -304,7 +304,7 @@ def _pull_request_push(command, cwd, engine):
     option, a configured remote by name with no push mapping, and a refspec whose destination is one branch that is
     not the remote's default branch, `main` or `master` (compared ignoring case). REFSPEC is BRANCH, HEAD or @
     (the current branch), or SRC:DST where DST is BRANCH or refs/heads/BRANCH. None allows; otherwise the reason.
-    Any doubt refuses, including a remote whose default branch is not recorded locally. The ledger must allow pull
+    Any doubt refuses, including a remote whose default branch the remote itself did not confirm at arm. The ledger must allow pull
     request pushes (the 2.6 Push line), and the configured release branch is never a pull request push."""
     shape = 'A pull request push is exactly `git push -u <remote> <branch>`, run as a command of its own.'
     if cwd is None or not re.fullmatch(r'[A-Za-z0-9_./:@+-]+( [A-Za-z0-9_./:@+-]+)*', command.strip()):
@@ -330,19 +330,20 @@ def _pull_request_push(command, cwd, engine):
     target = target[len('refs/heads/'):] if target.startswith('refs/heads/') else target
     if not _BRANCH.fullmatch(target) or target.startswith(_NOT_A_BRANCH) or '..' in target or target.endswith(('/', '.lock')):
         return 'The destination must be one branch name.'
-    code, head = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'refs/remotes/%s/HEAD' % remote)
-    if code != 0 or not head.startswith(remote + '/'):
-        return ('The default branch of %s is unknown; `autonomy arm` records it, or run `git remote set-head %s --auto`.'
-                % (remote, remote))
-    if target.casefold() in {head[len(remote) + 1:].casefold(), 'main', 'master'}:
-        return 'Never push the default branch; push a feature branch and open a pull request.'
     try:
-        allowed = engine.status()['autonomy'].get('pull_requests') is True
+        auto = engine.status()['autonomy']
+        allowed = auto.get('pull_requests') is True
+        default = (auto.get('remote_defaults') or {}).get(remote)  # what the remote answered at arm, not a local cache
         release = engine.policy.get('release') or {}
     except Exception:
         return 'The run state cannot be read; push by hand.'
     if not allowed:
         return 'This ledger does not allow pull request pushes; the owner re-arms with the current Push line.'
+    if not isinstance(default, str) or not default:
+        return ('The default branch of %s was not confirmed when autonomy was armed; arm again once the remote answers.'
+                % remote)
+    if target.casefold() in {default.casefold(), 'main', 'master'}:
+        return 'Never push the default branch; push a feature branch and open a pull request.'
     if release.get('remote') == remote and str(release.get('target', '')).casefold() == target.casefold():
         return 'That branch is the configured release target; a release needs the pre-authorized permit.'
     return None

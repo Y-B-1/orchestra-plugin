@@ -1428,20 +1428,43 @@ class AutonomyArmTests(AutonomyFixture):
         heads = self.engine.arm_autonomy()['preconditions']['remote_heads']
         self.assertEqual(heads, 'origin: default branch main (recorded now)')
         self.assertEqual(self.git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main')
-        self.assertEqual(ensure_remote_heads(self.repo), 'origin: default branch main')  # already recorded: no change
+        self.assertEqual(self.auto()['remote_defaults'], {'origin': 'main'})
+        self.assertEqual(ensure_remote_heads(self.repo), ('origin: default branch main (confirmed)', {'origin': 'main'}))
+
+    def test_arm_refreshes_a_stale_recorded_default_branch(self):
+        self.remote()
+        self.git('push', '-q', 'origin', 'HEAD:refs/heads/develop')
+        subprocess.run(['git', '-C', str(self.root / 'origin.git'), 'symbolic-ref', 'HEAD', 'refs/heads/develop'], check=True)
+        self.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')  # the local record is stale
+        self.ledger()
+        heads = self.engine.arm_autonomy()['preconditions']['remote_heads']
+        self.assertEqual(heads, 'origin: default branch develop (was main, updated)')
+        self.assertEqual(self.auto()['remote_defaults'], {'origin': 'develop'})
 
     def test_arm_reports_an_unreachable_remote_and_still_arms(self):
         self.git('remote', 'add', 'gone', str(self.root / 'missing.git'))
+        self.git('update-ref', 'refs/remotes/gone/main', 'HEAD')
+        self.git('symbolic-ref', 'refs/remotes/gone/HEAD', 'refs/remotes/gone/main')  # recorded, but never trusted alone
         self.ledger()
         receipt = self.engine.arm_autonomy()
         self.assertTrue(receipt['active'])
-        self.assertIn('gone: default branch unknown', receipt['preconditions']['remote_heads'])
-        self.assertIn('`git remote set-head gone --auto`', receipt['preconditions']['remote_heads'])
+        self.assertIn('gone: default branch not confirmed', receipt['preconditions']['remote_heads'])
+        self.assertIn('pull request pushes to gone are refused', receipt['preconditions']['remote_heads'])
+        self.assertEqual(self.auto()['remote_defaults'], {})
+
+    def test_an_arm_interrupted_while_asking_the_remotes_leaves_autonomy_off(self):
+        self.ledger()
+        with mock.patch('orchestra_core.engine.ensure_remote_heads', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt):
+                self.engine.arm_autonomy()
+        self.assertFalse(self.engine.autonomy_active())
+        self.assertIsNone(self.engine.status()['autonomy'])
 
     def test_arm_without_a_remote_says_pull_requests_are_refused(self):
         self.ledger()
         self.assertEqual(self.engine.arm_autonomy()['preconditions']['remote_heads'],
                          'no remote configured: pull request pushes are refused')
+        self.assertEqual(self.auto()['remote_defaults'], {})
 
     def test_arm_snapshots_stores_fields_and_prints_preconditions(self):
         receipt = self.arm(passes='5', stalls='1')
@@ -1498,8 +1521,9 @@ class AutonomyArmTests(AutonomyFixture):
 class AutonomyLoopTests(AutonomyFixture):
     def test_a_recorded_pull_request_is_listed_for_the_owner(self):
         self.arm()
-        with self.assertRaisesRegex(EngineError, 'http'):
-            self.engine.record_pr('main', self.lease, 'not a url')
+        for bad in ('not a url', 'https:///pull/1', 'https://?', 'ftp://example.invalid/pull/1', 'https://host/a b', ''):
+            with self.subTest(url=bad), self.assertRaisesRegex(EngineError, 'http'):
+                self.engine.record_pr('main', self.lease, bad)
         with self.assertRaisesRegex(EngineError, 'lease|Lease|coordinator'):
             self.engine.record_pr('main', 'wrong', 'https://example.invalid/pull/1')
         url = 'https://example.invalid/pull/1'
