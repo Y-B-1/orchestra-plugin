@@ -701,9 +701,11 @@ const CONFIG_WRITE_WORDS = ['edit', 'rename-section', 'remove-section'];
  * a value that starts with a dash) and reads as a write; so do the edit and rename subcommands. What remains is
  * `[set] key value`, written when a guarded key is followed by a value. */
 function configWriteGuarded(options: string[]): boolean {
-  if (options.some((x) => GIT.config_read_flags!.has(x))) return false;
   let words = options.filter((x) => !x.startsWith('-'));
-  if (['get', 'list', 'unset'].includes(words[0] ?? '')) return false;
+  if (options.some((x) => x === '--unset' || x === '--unset-all') || words[0] === 'unset') {
+    return words.some((x) => configGuarded(x)); // Removing a mapping can retarget Git as much as setting one.
+  }
+  if (options.some((x) => GIT.config_read_flags!.has(x)) || ['get', 'list'].includes(words[0] ?? '')) return false;
   if (options.some((x) => x.startsWith('-') && !CONFIG_SCOPE_FLAGS.includes(x)) || CONFIG_WRITE_WORDS.includes(words[0] ?? '')) return true;
   if (words[0] === 'set') words = words.slice(1);
   const hit = words.findIndex((x) => configGuarded(x));

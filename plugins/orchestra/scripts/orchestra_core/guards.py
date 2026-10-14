@@ -541,10 +541,10 @@ def _config_write_guarded(options):
     Besides a scope flag, any option is an unknown form (--add, --edit, --rename-section or an abbreviation, a file,
     a value that starts with a dash) and reads as a write; so do the edit and rename subcommands. What remains is
     `[set] key value`, written when a guarded key is followed by a value."""
-    if any(x in _GIT['config_read_flags'] for x in options):
-        return False
     words = [x for x in options if not x.startswith('-')]
-    if words[:1] in (['get'], ['list'], ['unset']):
+    if any(x in ('--unset', '--unset-all') for x in options) or words[:1] == ['unset']:
+        return any(_config_guarded(x) for x in words)  # Removing a mapping can retarget Git as much as setting one.
+    if any(x in _GIT['config_read_flags'] for x in options) or words[:1] in (['get'], ['list']):
         return False
     if any(x.startswith('-') and x not in _CONFIG_SCOPE_FLAGS for x in options) or words[:1] and words[0] in _CONFIG_WRITE_WORDS:
         return True

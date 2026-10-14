@@ -10808,7 +10808,7 @@
    "input": {
     "command": "git config --unset alias.ship"
    },
-   "class": "allow"
+   "class": "deny"
   },
   {
    "id": "guard-153",
@@ -11136,6 +11136,48 @@
    "id": "guard-199",
    "input": {
     "command": "git config push.pushOption merge_request.merge_when_pipeline_succeeds"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-200",
+   "input": {
+    "command": "git config --unset core.editor"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-201",
+   "input": {
+    "command": "git config --unset url.https://long/.insteadOf"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-202",
+   "input": {
+    "command": "git config --unset-all alias.ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-203",
+   "input": {
+    "command": "git config push.recurseSubmodules only"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-204",
+   "input": {
+    "command": "git config remote.origin.receivepack /tmp/redirect"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-205",
+   "input": {
+    "command": "git config unset remote.origin.url"
    },
    "class": "deny"
   }
