@@ -49,6 +49,11 @@ REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
+STALE_REVIEW = 'Review with findings is stale; re-review'
+# Keys the engine writes on a card; a task file never supplies them (repair_of only on a builder repair card).
+ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
+                    'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
+                    'final_findings', 'helper_reason')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -204,7 +209,10 @@ def parse_ledger(text, now):
             raise EngineError('Approval boundaries must keep the fixed line: ' + line)
     caps = {k: fields[k] for k in ('max_passes', 'max_stalls') if k in fields}
     release = dict(release=dict(remote=pair.group(1), target=pair.group(2))) if pair else {}
-    return dict(goal=fields['goal'], deadline=fields['deadline'], checks=checks, **caps, **release)
+    # The 2.5 Push line forbids every push, so only the current line allows a feature-branch pull request.
+    pull_requests = AUTONOMY_FIXED[2] in boundaries and AUTONOMY_LEGACY_PUSH not in boundaries
+    return dict(goal=fields['goal'], deadline=fields['deadline'], checks=checks, pull_requests=pull_requests,
+                **caps, **release)
 
 
 def autonomy_preconditions(repo, home=None):
@@ -275,7 +283,6 @@ class Engine:
         self.modes, self.contract_hash = _contracts()
         self.policy_hash = _digest(dict(policy=self.policy, contracts=self.contract_hash))
         self._policy_hash_2_3 = _digest(dict(policy=legacy, contracts=CONTRACT_HASH_2_3))
-        self._git('rev-parse', '--show-toplevel')
         if Path(self._git('rev-parse', '--show-toplevel').decode().strip()).resolve() != self.repo:
             raise EngineError('repo must name repository root')
         self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -379,8 +386,10 @@ class Engine:
         return _digest(entries)
 
     @contextlib.contextmanager
-    def _state(self, write=True, block=False):
-        """`block` makes a read wait for the lock even when `lock_wait` is set (records that must not be dropped)."""
+    def _state(self, write=True, block=False, activity=True):
+        """`block` makes a read wait for the lock even when `lock_wait` is set (records that must not be dropped).
+        A write bumps the `activity` counter the Stop signature reads, unless `activity` is False (the Stop hook's own
+        bookkeeping, arming and harness rebinds are not progress)."""
         if _contracts()[1] != self.contract_hash:
             raise EngineError('Role or method instructions changed; start a new run')
         with (self.state_dir / 'state.lock').open('a+') as lock:
@@ -416,6 +425,8 @@ class Engine:
             except (KeyError, TypeError, AttributeError, IndexError) as exc:
                 raise EngineError('Malformed run state or request: ' + str(exc)) from exc
             if write:
+                if activity:
+                    state['activity'] = state.get('activity', 0) + 1
                 fd, name = tempfile.mkstemp(dir=self.state_dir, prefix='.state-')
                 try:
                     with os.fdopen(fd, 'w') as out:
@@ -452,6 +463,8 @@ class Engine:
                           ('reviews', list), ('gates', list), ('permits', list)]:
             if not isinstance(state.get(key), kind):
                 raise EngineError('Invalid run state ' + key)
+        if 'activity' in state and (type(state['activity']) is not int or state['activity'] < 0):
+            raise EngineError('Invalid run state activity')
         brief = state.get('last_brief')
         if brief is not None and (not isinstance(brief, dict)
                                   or any(not isinstance(brief.get(k), str) for k in ('reason', 'at', 'text', 'path'))):
@@ -469,6 +482,7 @@ class Engine:
             if (not isinstance(auto.get('active'), bool)
                     or any(k in auto and (isinstance(auto[k], bool) or not isinstance(auto[k], int))
                            for k in ('max_passes', 'max_stalls')) or ('report' in auto and not isinstance(auto['report'], dict))
+                    or ('pull_requests' in auto and not isinstance(auto['pull_requests'], bool))
                     or (auto['active'] and (any(isinstance(auto.get(k), bool) or not isinstance(auto.get(k), int) for k in ints)
                                             or any(not isinstance(auto.get(k), str) for k in ('goal', 'deadline'))
                                             or any(not isinstance(auto.get(k), list) for k in ('checks', 'accepted'))
@@ -527,6 +541,14 @@ class Engine:
                 raise EngineError('Invalid task size')
             if 'self_review' in task and not cls._self_review_ok(task['self_review']):
                 raise EngineError('Invalid task self_review')
+            for key in ('repair_of', 'repaired_by'):
+                if task.get(key) and (not isinstance(task[key], str) or task[key] not in state['tasks']):
+                    raise EngineError('Invalid task ' + key)
+            if 'review_since' in task and (type(task['review_since']) is not int or task['review_since'] < 0):
+                raise EngineError('Invalid task review_since')
+        for task in state['tasks'].values():  # a hand-edited cycle fails here instead of hanging a walk
+            cls._walk(state['tasks'], task, 'repair_of')
+            cls._walk(state['tasks'], task, 'repaired_by')
         findings = state.get('findings', [])
         if not isinstance(findings, list) or any(
                 not isinstance(f, dict) or any(not isinstance(f.get(k), str) for k in ('id', 'fingerprint', 'text', 'reason', 'at'))
@@ -716,19 +738,25 @@ class Engine:
         if isinstance(items, bool) or not isinstance(items, int) or items < 1:
             raise EngineError('Items must be an integer of 1 or more')
 
+    @staticmethod
+    def _check_identity(actor, harness_session):
+        """What open_session needs of the caller's names. The CLI runs it before archiving an ended run."""
+        if not isinstance(actor, str) or not actor.strip():
+            raise EngineError('Missing coordinator')
+        if harness_session is not None and (not isinstance(harness_session, str) or not harness_session.strip()):
+            raise EngineError('Invalid harness session id')
+
     def open_session(self, actor, harness_session=None, items=None, size=None, asks=None,
                      owner_request=False, require_size=False):
         """Open the coordinator session. A new run (no earlier session record) stores `size`, `asks`, `owner_request` and
         `base` (a 2.4 test run stores `items` and `route`); a resumed run keeps them. `require_size` is the CLI's rule that
-        a new run states its size (contract items 2 and 3)."""
-        if not isinstance(actor, str) or not actor.strip():
-            raise EngineError('Missing coordinator')
+        a new run states its size (contract items 2 and 3). Autonomy is never armed by opening: only a stopped run's
+        report is kept, so a 2.5 state saved between relaunch passes is not re-armed."""
+        self._check_identity(actor, harness_session)
         if items is not None:
             self._check_items(items)
             if size is not None:
                 raise EngineError('Invalid session size')
-        if harness_session is not None and (not isinstance(harness_session, str) or not harness_session.strip()):
-            raise EngineError('Invalid harness session id')
         with self._state() as state:
             if state['session'] and state['session']['active']:
                 raise EngineError('A coordinator session is already active')
@@ -755,6 +783,7 @@ class Engine:
                         state['session'][key] = prior[key]
             if harness_session is not None:
                 state['session']['harness_session'] = harness_session
+            state['autonomy'] = self._kept_autonomy(state)
             for task in state['tasks'].values():
                 if task['state'] == 'running':
                     task['state'] = 'queued'
@@ -851,7 +880,7 @@ class Engine:
         with self._state(False) as state:
             if not self._bound_to(state, session_id):
                 return False  # A no-op never rewrites state.json
-        with self._state() as state:
+        with self._state(activity=False) as state:
             if not self._bound_to(state, session_id):
                 return False
             state['session']['pending_rebind'] = {'from': session_id, 'at': self._clock()}
@@ -862,7 +891,7 @@ class Engine:
         with self._state(False) as state:
             if not state['session'] or 'pending_rebind' not in state['session']:
                 return False  # Read-only unless a rebind is pending (SPEC 12.6)
-        with self._state() as state:
+        with self._state(activity=False) as state:
             session = state['session']
             pending = session.pop('pending_rebind', None) if session else None
             if pending is None:
@@ -873,9 +902,16 @@ class Engine:
             return True
 
     def add_task(self, actor, lease, task):
+        if not isinstance(task, dict):
+            raise EngineError('Task must be a JSON object')
         task = copy.deepcopy(task)
         with self._state() as state:
             self._lease(state, actor, lease)
+            owned = [key for key in ENGINE_TASK_KEYS if key in task]
+            if owned:
+                raise EngineError('Task sets engine-owned keys: ' + ', '.join(owned))
+            if 'repair_of' in task and (task.get('role'), task.get('mode')) != ('builder', 'repair'):
+                raise EngineError('Only a builder repair card names repair_of')
             for key in ('id', 'role', 'mode'):
                 if not isinstance(task.get(key), str) or not task[key].strip():
                     raise EngineError('Missing task ' + key)
@@ -946,13 +982,9 @@ class Engine:
                 # Suspend the whole chain atomically. Reports and workers remain as history,
                 # but none of those old assignments reserve capacity or writable files.
                 original['repaired_by'] = task['id']
-                ancestor = original
-                while True:
+                for ancestor in [original, *self._walk(state['tasks'], original, 'repair_of')]:
                     ancestor['state'] = 'repairing'
                     ancestor['review_since'] = len(state['reviews'])
-                    if not ancestor.get('repair_of'):
-                        break
-                    ancestor = state['tasks'][ancestor['repair_of']]
             # Dependencies refer only to existing immutable cards, making cycles impossible.
             task['state'] = 'queued'
             task['rev'] = '2.2'
@@ -1012,9 +1044,7 @@ class Engine:
                     or (task['mode'] != 'repair' and self._blocked_by_repair_check(state, task_id))):
                 raise EngineError('Hold needs a repair card with current blocking findings, '
                                   'or a card blocked by a repair-diff check')
-            chain = [task_id]
-            while state['tasks'][chain[-1]].get('repair_of'):
-                chain.append(state['tasks'][chain[-1]]['repair_of'])
+            chain = [task_id, *(t['id'] for t in self._walk(state['tasks'], task, 'repair_of'))]
             for ident in chain:
                 state['tasks'][ident]['state'] = 'held'
             task['held_finding'] = finding
@@ -1062,18 +1092,26 @@ class Engine:
             task.update(state='parked', parked_reason=reason.strip())
             for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact'):
                 task.pop(key, None)
-            ancestor = task
-            while ancestor.get('repair_of'):  # the repair's report is dropped: its chain is under repair again
-                ancestor = state['tasks'][ancestor['repair_of']]
+            for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair's report is dropped: its chain is under repair again
                 ancestor['state'] = 'repairing'
                 ancestor['review_since'] = len(state['reviews'])
 
     @staticmethod
+    def _walk(tasks, task, key):
+        """The cards reached from `task` along `key` (repair_of or repaired_by), nearest first. A cycle refuses."""
+        seen, chain = {task['id']}, []
+        while task.get(key):
+            task = tasks[task[key]]
+            if task['id'] in seen:
+                raise EngineError('Repair chain cycles at ' + task['id'])
+            seen.add(task['id'])
+            chain.append(task)
+        return chain
+
+    @staticmethod
     def _open_repair(state, task):
         """The last card of a repair chain: the one without `repaired_by`."""
-        while task.get('repaired_by'):
-            task = state['tasks'][task['repaired_by']]
-        return task
+        return ([task] + Engine._walk(state['tasks'], task, 'repaired_by'))[-1]
 
     def unpark(self, actor, lease, task_id):
         with self._state() as state:
@@ -1087,8 +1125,7 @@ class Engine:
     @staticmethod
     def _reservation(task, state):
         files, resources = set(task['files']), set(task['resources'])
-        while task.get('repair_of'):
-            task = state['tasks'][task['repair_of']]
+        for task in Engine._walk(state['tasks'], task, 'repair_of'):
             files.update(task['files'])
             resources.update(task['resources'])
         return dict(files=list(files), resources=list(resources))
@@ -1225,9 +1262,7 @@ class Engine:
                         report_artifact=self.artifact(self._scope_of(state, [task['id']])))
             if review is not None:
                 task['self_review'] = review
-            ancestor = task
-            while ancestor.get('repair_of'):
-                ancestor = state['tasks'][ancestor['repair_of']]
+            for ancestor in self._walk(state['tasks'], task, 'repair_of'):
                 ancestor['state'] = 'reported'
                 ancestor['report_artifact'] = self.artifact(self._scope_of(state, [ancestor['id']]))  # the repair changed its files
 
@@ -1344,9 +1379,7 @@ class Engine:
         repairs = [t for t in covered if t['role'] == 'builder' and t['mode'] == 'repair']
         allowed, fixes = set(), 0
         for repair in repairs:
-            chain = [repair]
-            while chain[-1].get('repair_of'):
-                chain.append(state['tasks'][chain[-1]['repair_of']])
+            chain = [repair, *Engine._walk(state['tasks'], repair, 'repair_of')]
             if any(t.get('final_findings') for t in chain):
                 fixes += 1
                 allowed.update(t['id'] for t in chain)
@@ -1450,9 +1483,10 @@ class Engine:
             return None
         return {i for r in later for i in r['tasks']}
 
-    def _review_verdicts(self, state, cache, task_id=None, final=False, keep=False):
+    def _review_verdicts(self, state, cache, task_id=None, final=False, keep=False, strict=False):
         """Newest relevant verdict wins; altered evidence cannot restore an older verdict. With `keep`, a stale final
-        review that a CLEAN fix re-review keeps current counts as current (`cache['resolved']` records the ids)."""
+        review that a CLEAN fix re-review keeps current counts as current (`cache['resolved']` records the ids).
+        With `strict`, verdicts voided by a stale receipt with findings return None instead of {} (no verdicts)."""
         verdicts = {}
         since = state['tasks'][task_id].get('review_since', 0) if task_id is not None else 0
         for review in state['reviews'][since:]:
@@ -1478,7 +1512,7 @@ class Engine:
         # Per task, the receipt voids only when its findings for that task are non-empty (SPEC 5.1 item 4).
         if any(not current and (self._task_findings(review, task_id) if task_id is not None else review['findings'])
                for review, current in verdicts.values()):
-            return {}
+            return None if strict else {}
         verdicts = {category: review for category, (review, current) in verdicts.items() if current}
         if any(not self._intact(review) for review in verdicts.values()):
             kind = 'final' if final else 'task'
@@ -1490,7 +1524,9 @@ class Engine:
         task = state['tasks'].get(task_id)
         if not task or task['state'] not in ('reported', 'held'):
             return 'Task has no reported result'
-        verdicts = self._review_verdicts(state, cache, task_id=task_id)
+        verdicts = self._review_verdicts(state, cache, task_id=task_id, strict=True)
+        if verdicts is None:
+            return STALE_REVIEW
         if any(self._task_findings(r, task_id) for r in verdicts.values()):
             return 'Task has current review findings'
         if task.get('repaired_by') and state['tasks'][task['repaired_by']]['state'] != 'accepted':
@@ -1672,7 +1708,10 @@ class Engine:
         if any(open_findings(review) for review in verdicts.values()):
             raise EngineError('Current final review has findings')
         for task_id in state['tasks']:
-            if any(self._task_findings(r, task_id) for r in self._review_verdicts(state, cache, task_id=task_id).values()):
+            task_verdicts = self._review_verdicts(state, cache, task_id=task_id, strict=True)
+            if task_verdicts is None:
+                raise EngineError(STALE_REVIEW + ': ' + task_id)
+            if any(self._task_findings(r, task_id) for r in task_verdicts.values()):
                 raise EngineError('Current task review has findings: ' + task_id)
         required_categories = set(self._required_lenses(state))
         if (require_review or state['tasks']) and not required_categories <= categories:
@@ -1763,7 +1802,7 @@ class Engine:
     def arm_autonomy(self, home=None):
         """Arm the loop from `<state>/autonomy.md` (SPEC 12.1). Takes no lease, by design (O8)."""
         path = self.state_dir / 'autonomy.md'
-        with self._state() as state:
+        with self._state(activity=False) as state:
             if not state['session'] or not state['session']['active']:
                 raise EngineError('Autonomy needs an armed run (an active session)')
             if not path.is_file():
@@ -1791,7 +1830,7 @@ class Engine:
             auto = state['autonomy']
             if not auto or (not auto['active'] and 'report' not in auto):
                 return dict(was_active=False)
-        with self._state() as state:
+        with self._state(activity=False) as state:
             auto = state['autonomy']
             if not auto:
                 return dict(was_active=False)
@@ -1807,16 +1846,18 @@ class Engine:
                       for t in state['tasks'].values() if t['state'] == 'parked']
             keys = ('passes', 'max_passes', 'stalls', 'max_stalls', 'deadline')
             return dict(active=self._autonomy_on(state), parked=parked, signature=self._signature(state),
-                        last_stop_reason=auto.get('last_stop_reason'), **{k: auto.get(k) for k in keys})
+                        last_stop_reason=auto.get('last_stop_reason'), pull_requests=auto.get('pull_requests') is True,
+                        **{k: auto.get(k) for k in keys})
 
     @staticmethod
     def _signature(state):
         """SPEC 5.10 item 7: SHA-256 of canonical JSON of the sorted (id, state, report fingerprint, repaired_by)
-        tuples and the counts of reviews, gates and findings. A pass that leaves it unchanged is a stall."""
+        tuples, the counts of reviews, gates and findings, and the `activity` write counter (a park then unpark in
+        one turn is progress). A pass that leaves it unchanged is a stall."""
         tasks = sorted([t['id'], t['state'], (t.get('report_artifact') or {}).get('fingerprint'), t.get('repaired_by')]
                        for t in state['tasks'].values())
         return _digest(dict(tasks=tasks, reviews=len(state['reviews']), gates=len(state['gates']),
-                            findings=len(state.get('findings', []))))
+                            findings=len(state.get('findings', [])), activity=state.get('activity', 0)))
 
     def autonomy_report(self):
         """The morning report shown at SessionStart, or None. Read-only."""
@@ -1953,15 +1994,11 @@ class Engine:
     @staticmethod
     def _brief_chain(tasks, tip, full=False):
         """Card ids of a repair chain: tip first (as `hold` logs it), or oldest first from the whole chain of `tip`."""
-        chain = [tip]
-        while tasks[chain[-1]].get('repair_of'):
-            chain.append(tasks[chain[-1]]['repair_of'])
+        chain = [tip, *(t['id'] for t in Engine._walk(tasks, tasks[tip], 'repair_of'))]
         if not full:
             return chain
         chain.reverse()
-        while tasks[chain[-1]].get('repaired_by'):
-            chain.append(tasks[chain[-1]]['repaired_by'])
-        return chain
+        return chain + [t['id'] for t in Engine._walk(tasks, tasks[tip], 'repaired_by')]
 
     def _complete(self, state):
         """SPEC 5.8 item 3: the cheap all-accepted check first, then the ledger checks, then the completion evidence."""
@@ -1987,12 +2024,14 @@ class Engine:
         """The Stop decision: (reason, message). A reason stops autonomy; a message continues the turn; neither lets
         the turn end with autonomy still armed.
 
-        The turn continues only when the coordinator has work it can do now: a ready card, a reported card, an open
-        final finding or a held chain owed its final review. Running workers alone end the turn quietly, since the
-        harness wakes the session when a background worker finishes. A message is never sent twice for the same
-        progress signature: a turn that changed nothing since the last continuation ends, counted as a stall."""
+        The turn continues only when the coordinator has work it can do now: a ready card, a reported card no running
+        reviewer is judging, its own inline card, an open final finding, a held chain no current final receipt covers,
+        or the final phase once every card is accepted. Running workers alone end the turn quietly, since the harness
+        wakes the session when a background worker finishes. A message is never sent twice for the same progress
+        signature: a turn that changed nothing since the last continuation ends, counted as a stall, and with no
+        worker running to wake the session the run stops as `stalled`."""
         auto = state['autonomy']
-        tasks = state['tasks'].values()
+        tasks = list(state['tasks'].values())
         if not self._intact(auto['ledger']):
             return 'ledger-tampered', None
         if self._clock() >= datetime.fromisoformat(auto['deadline']).timestamp():
@@ -2000,14 +2039,21 @@ class Engine:
         if self._complete(state):
             return 'complete', None
         parked = any(t['state'] == 'parked' for t in tasks)
-        held = (any(t['state'] == 'held' for t in tasks)
-                and not any(t['state'] == 'parked' and not self._is_release(t) for t in tasks))
-        running = any(t['state'] == 'running' for t in tasks)
-        actionable = any(t['state'] == 'reported' for t in tasks) or bool(self._ready(state))
+        held = (not any(t['state'] == 'parked' and not self._is_release(t) for t in tasks)
+                and any(t['state'] == 'held' and not t.get('repaired_by') and not self._final_receipts(state, t['id'])
+                        for t in tasks))
+        running = any(t['state'] == 'running' and not t.get('inline') for t in tasks)
+        judged = {i for t in tasks if t['state'] == 'running' for i in t.get('review_of', [])}
+        actionable = (any(t['state'] == 'reported' and t['id'] not in judged for t in tasks)
+                      or any(t['state'] == 'running' and t.get('inline') for t in tasks) or bool(self._ready(state)))
         final_open = not (running or actionable) and any(
             t['role'] == 'builder' and t['state'] == 'accepted' and not t.get('repaired_by')
             and self._final_blocks(state, t['id']) for t in tasks)
-        if not (running or actionable or held or final_open):
+        base = (state['session'] or {}).get('base')
+        final_owed = (not (running or actionable or held or final_open or parked)
+                      and all(t['state'] == 'accepted' for t in tasks)
+                      and bool(tasks or (base is not None and self._changed(base)[0])))
+        if not (running or actionable or held or final_open or final_owed):
             return ('parked-only' if parked else 'no-ready-card'), None
         auto['accepted'] = self._accepted(state)
         if actionable:
@@ -2016,24 +2062,27 @@ class Engine:
             return None, None  # Waiting on workers: the harness wakes the session when one finishes
         elif final_open:
             message = 'start the final repair round; a current final finding is still open.'
-        else:
+        elif held:
             message = 'start or continue the final phase; held work is still owed a final review.'
+        else:
+            message = ('every card is accepted; commit the work, run the final review and the completion gates, '
+                       'then push the branch and open the pull request.')
         signature = self._signature(state)
         if signature == auto.get('signature'):
             auto['stalls'] += 1  # The last continuation changed nothing: end the turn instead of repeating it
-            return None, None
+            return (None if running else 'stalled'), None  # with no worker to wake the session, stop and brief
         auto['signature'] = signature
         auto['stalls'] = 0
         auto['passes'] += 1
         return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
 
     def hook_stop(self):
-        """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm and
-        an idle run. Caller identifiers do not authenticate."""
+        """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm, an
+        idle run and a stall with no worker running (`stalled`). Caller identifiers do not authenticate."""
         with self._state(False) as state:
             if not self._autonomy_on(state):
                 return None  # Read-only unless autonomy is active in a session
-        with self._state() as state:
+        with self._state(activity=False) as state:
             if not self._autonomy_on(state):
                 return None
             reason, message = self._stop_check(state)

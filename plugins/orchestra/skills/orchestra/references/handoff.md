@@ -5,7 +5,7 @@ Sentinel: orchestra/references/handoff.md
 
 ## Ledger
 
-`<state>/progress.md` is the run ledger. It survives compaction where conversation memory does not. The first line names the plan or run it belongs to; a ledger naming another plan is left alone. Append one line per event with six fields: time, card, action, artifact SHA, round and decision. The action is dispatched, reported, accepted, repair, hold or ruling; the round is the repair round (0 or 1). The decision records what was decided, why, and the cost if it is wrong. Never rewrite earlier lines; the engine's hold lines and run briefs append to the same file.
+`<state>/progress.md` is the run ledger. It survives compaction where conversation memory does not. The first line names the plan or run it belongs to; a ledger naming another plan is left alone. Append one line per event with six fields: time, card, action, artifact SHA, round and decision. The action is dispatched, reported, accepted, repair, hold, ruling or pr (the decision holds the pull request URL); the round is the repair round (0 or 1). The decision records what was decided, why, and the cost if it is wrong. Never rewrite earlier lines; the engine's hold lines and run briefs append to the same file.
 
 ## Resume
 

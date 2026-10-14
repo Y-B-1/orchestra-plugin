@@ -4,7 +4,7 @@ Reference wire contracts: https://learn.chatgpt.com/docs/hooks and
 https://code.claude.com/docs/en/hooks (checked 2026-09-30).
 """
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import fcntl
 import json
@@ -58,8 +58,8 @@ def _deny(reason, malformed=False):
 
 
 def _marker_dir():
-    base = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state')
-    return (base.expanduser() / 'orchestra' / 'mods').resolve()
+    from .paths import state_home
+    return (state_home() / 'orchestra' / 'mods').resolve()
 
 
 def _protected(path, cwd, state_dir):
@@ -226,7 +226,7 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
                 return _deny(MISSING_CWD)
             if any(_protected(path, cwd or '/', state_dir) for path in paths):
                 return _deny('Use the structured coordinator API for state; protect installed runtime configuration')
-        except (ValueError, OSError) as exc:
+        except (ValueError, OSError, RuntimeError) as exc:  # RuntimeError: a symlink loop on Python 3.11
             return _deny(str(exc), True)
     if name not in _SHELL_TOOLS:
         return HookResult({})
@@ -248,14 +248,24 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             return _deny('Cite gate receipt ' + ', '.join(gates) + '; reviewers do not rerun suites')
     active = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
     if decision.category == 'merged-delete':
-        # SPEC 5.14 item 4: before the autonomy-off allow, and with or without an engine.
-        denied = _merged_delete_check(decision, cwd, active)
+        # SPEC 5.14 item 4: with or without an engine and autonomy. Only a provably merged branch is deleted.
+        denied = _merged_delete_check(decision, cwd)
         if denied:
             return HookResult(denied)
+        if active:
+            return HookResult({})  # Cleanup of merged work is allowed under autonomy
+    if active and decision.boundary == 'delete':
+        cleanup = _autonomy_cleanup(command, decision, cwd)
+        if cleanup is not None:
+            return cleanup
     if active:
         # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
-        if klass == 'release' and _pull_request_push(decision, cwd):
-            return HookResult({})  # A feature branch for a pull request; the owner merges it after the run
+        if klass == 'release' and decision.category == 'gitpush':
+            refused = _pull_request_push(command, cwd, engine)
+            if refused is None:
+                return HookResult({})  # A feature branch for a pull request; the owner merges it after the run
+            if not _preauthorized(engine, decision):
+                return _deny('Autonomy is active: ' + refused + ' ' + _PARK_HINT)
         if klass in {'release', 'release-multi'} and not (klass == 'release' and _preauthorized(engine, decision)):
             return _deny('Autonomy is active: ' + _PARK_HINT)
         if decision.boundary == 'delete':
@@ -278,19 +288,58 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     return HookResult({})  # allow, boundary (autonomy off) and unarmed release classes
 
 
-def _pull_request_push(decision, cwd):
-    """Autonomy may push one feature branch for a pull request: a plain push with an explicit remote and branch that
-    is not the remote's default branch. HEAD resolves to the current branch. Any doubt is no (fail closed)."""
-    if decision.category != 'gitpush' or not decision.remote or not decision.target or cwd is None:
-        return False
-    target = decision.target
-    if target == 'HEAD':
-        code, target = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'HEAD')
-        if code != 0 or not target:
-            return False  # Detached HEAD: no branch to name
-    code, head = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'refs/remotes/%s/HEAD' % decision.remote)
-    default = head.split('/', 1)[1] if code == 0 and '/' in head else None
-    return target not in {default, 'main', 'master'}
+_BRANCH = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._/-]*')
+_NOT_A_BRANCH = ('refs/', 'heads/', 'tags/', 'remotes/')
+
+
+def _pull_request_push(command, cwd, engine):
+    """Autonomy may push one feature branch for a pull request. Only the exact shape
+    `git push [-u|--set-upstream] REMOTE REFSPEC` qualifies: no environment prefix, wrapper, Git option or other push
+    option, a configured remote by name with no push mapping, and a refspec whose destination is one branch that is
+    not the remote's default branch, `main` or `master` (compared ignoring case). REFSPEC is BRANCH, HEAD or @
+    (the current branch), or SRC:DST where DST is BRANCH or refs/heads/BRANCH. None allows; otherwise the reason.
+    Any doubt refuses, including a remote whose default branch is not recorded locally. The ledger must allow pull
+    request pushes (the 2.6 Push line), and the configured release branch is never a pull request push."""
+    shape = 'A pull request push is exactly `git push -u <remote> <branch>`, run as a command of its own.'
+    if cwd is None or not re.fullmatch(r'[A-Za-z0-9_./:@+-]+( [A-Za-z0-9_./:@+-]+)*', command.strip()):
+        return shape
+    words = command.split()
+    rest = [w for w in words[2:] if w not in ('-u', '--set-upstream')]
+    if words[:2] != ['git', 'push'] or len(rest) != 2 or any(w.startswith(('-', '+')) for w in rest):
+        return shape
+    remote, refspec = rest
+    if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._-]*', remote) or not _git_out(cwd, 'config', '--get', 'remote.%s.url' % remote)[1]:
+        return 'Push to a configured remote by name, not a URL.'
+    if _git_out(cwd, 'config', '--get-all', 'remote.%s.push' % remote)[1] or _git_out(cwd, 'config', '--get-all', 'remote.%s.pushurl' % remote)[1]:
+        return 'Remote %s has a push mapping or push URL; push it by hand.' % remote
+    source, _, target = refspec.partition(':')
+    if source in ('HEAD', '@'):
+        code, current = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'HEAD')
+        if code != 0 or not current:
+            return 'HEAD is detached; push a named branch.'
+        source = current
+    elif _git_out(cwd, 'show-ref', '--verify', '--quiet', 'refs/heads/' + source)[0] != 0:
+        return 'Push a local branch; %s is not one.' % source
+    target = target or source
+    target = target[len('refs/heads/'):] if target.startswith('refs/heads/') else target
+    if not _BRANCH.fullmatch(target) or target.startswith(_NOT_A_BRANCH) or '..' in target or target.endswith(('/', '.lock')):
+        return 'The destination must be one branch name.'
+    code, head = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'refs/remotes/%s/HEAD' % remote)
+    if code != 0 or not head.startswith(remote + '/'):
+        return ('The default branch of %s is unknown; the owner runs `git remote set-head %s --auto` before arming.'
+                % (remote, remote))
+    if target.casefold() in {head[len(remote) + 1:].casefold(), 'main', 'master'}:
+        return 'Never push the default branch; push a feature branch and open a pull request.'
+    try:
+        allowed = engine.status()['autonomy'].get('pull_requests') is True
+        release = engine.policy.get('release') or {}
+    except Exception:
+        return 'The run state cannot be read; push by hand.'
+    if not allowed:
+        return 'This ledger does not allow pull request pushes; the owner re-arms with the current Push line.'
+    if release.get('remote') == remote and str(release.get('target', '')).casefold() == target.casefold():
+        return 'That branch is the configured release target; a release needs the pre-authorized permit.'
+    return None
 
 
 _PARK_HINT = 'park this card with `orchestra.py park TASK --reason ...` and continue with other cards.'
@@ -477,10 +526,8 @@ def _remote_tip_matches(repo, remote, branch):
     return len(rows) == 1 and len(rows[0]) == 2 and rows[0][0] == tracking and rows[0][1] == 'refs/heads/' + branch
 
 
-def _merged_delete_check(decision, cwd, autonomy):
+def _merged_delete_check(decision, cwd):
     """SPEC 5.14 item 4: a deny payload for a merged-delete that is not safe, else None."""
-    if autonomy:
-        return _deny('Approval boundary under autonomy: ' + _PARK_HINT).output
     branch, remote = decision.branch, decision.remote if decision.kind == 'remote' else None
     if not branch:
         return _deny('Branch deletion must run plainly in the session repository').output
@@ -541,6 +588,57 @@ def _merged_delete_check(decision, cwd, autonomy):
     return None
 
 
+_CLEANUP_PLAIN = re.compile(r'[A-Za-z0-9_./+=-]+( [A-Za-z0-9_./+=-]+)*')
+
+
+def _autonomy_cleanup(command, decision, cwd):
+    """Cleanup of merged work under autonomy, for three plain one-command shapes; None for any other command.
+    `git branch -d B` and `git worktree remove PATH` (no force) need the merged-delete proof for the branch; the
+    worktree must be a linked worktree of this repository, not the session's own. `git worktree prune` only drops
+    records of worktrees already gone from disk. Git itself refuses to remove a worktree with uncommitted work."""
+    if cwd is None or not _CLEANUP_PLAIN.fullmatch(command.strip()):
+        return None  # Quoting, wrappers, chaining or substitution: not a plain cleanup command
+    words = command.split()
+    if words[:3] == ['git', 'worktree', 'prune'] and set(words[3:]) <= {'-n', '-v', '--dry-run', '--verbose'}:
+        return HookResult({})
+    if len(words) == 4 and words[:3] in (['git', 'branch', '-d'], ['git', 'branch', '--delete']):
+        branch = words[3]
+    elif len(words) == 4 and words[:3] == ['git', 'worktree', 'remove'] and not words[3].startswith('-'):
+        branch = _worktree_branch(cwd, words[3])
+        if isinstance(branch, HookResult):
+            return branch
+    else:
+        return None
+    if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._/+-]*', branch):
+        return _deny('Branch %s is not a plain branch name' % branch)
+    merged = replace(decision, category='merged-delete', kind='local', branch=branch, remote=None)
+    denied = _merged_delete_check(merged, cwd)
+    return HookResult(denied) if denied else HookResult({})
+
+
+def _worktree_branch(cwd, path):
+    """The branch of the linked worktree at `path`, or a deny when it is not one this cleanup may remove."""
+    target = (Path(cwd) / path).resolve()
+    here = Path(cwd).resolve()
+    if target == here or target in here.parents:
+        return _deny('Worktree %s holds the session directory' % path)
+    code, out = _git_out(cwd, 'worktree', 'list', '--porcelain')
+    if code != 0:
+        return _deny('Worktrees cannot be listed; refusing to remove %s' % path)
+    entries = [block.splitlines() for block in out.split('\n\n') if block.strip()]
+    for index, lines in enumerate(entries):
+        fields = dict(line.split(' ', 1) if ' ' in line else (line, '') for line in lines)
+        if Path(fields.get('worktree', '')).resolve() != target:
+            continue
+        if index == 0:
+            return _deny('Worktree %s is the main worktree' % path)
+        ref = fields.get('branch', '')
+        if not ref.startswith('refs/heads/'):
+            return _deny('Worktree %s has no branch checked out; its work cannot be proven merged' % path)
+        return ref[len('refs/heads/'):]
+    return _deny('%s is not a worktree of this repository' % path)
+
+
 def _on_default_branch(cwd):
     """SPEC 5.1: the branch is read from the payload cwd's own worktree; any doubt counts as the default branch."""
     try:
@@ -582,7 +680,7 @@ def _release_call(payload):
     `ask` on and this native hook raises the prompt even while the mod is live."""
     data = payload.get('tool_input')
     command = data.get('command', data.get('cmd')) if isinstance(data, dict) else None
-    if payload.get('tool_name') not in _SHELL_TOOLS or not isinstance(command, str):
+    if not isinstance(payload.get('tool_name'), str) or payload['tool_name'] not in _SHELL_TOOLS or not isinstance(command, str):
         return False
     try:
         return classify_command(command).klass in {'release', 'release-multi'}
@@ -617,7 +715,8 @@ def main(argv=None):
     except (ValueError, UnicodeError):
         payload = None
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
-            and isinstance(payload, dict) and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
+            and isinstance(payload, dict) and isinstance(payload.get('tool_name'), str)
+            and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
             and not _foreign_subagent(payload)
             and not _release_call(payload)
             and _mod_is_live(payload)):

@@ -13,7 +13,7 @@ SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scrip
 sys.path.insert(0, str(SCRIPTS))
 from pathlib import Path
 
-from orchestra_core.engine import AUTONOMY_FIXED, Engine, EngineError, autonomy_preconditions
+from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions
 
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
 STATE_2_4 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.4.json'
@@ -1215,7 +1215,7 @@ class ScopedEvidenceTests(EngineFixture):
         with self.assertRaisesRegex(EngineError, 'findings'):
             self.engine.accept('main', self.lease, 'a')
         (self.repo / 'b').write_text('edit inside the blocking scope only')
-        with self.assertRaisesRegex(EngineError, 'needs current independent review'):
+        with self.assertRaisesRegex(EngineError, 'Review with findings is stale; re-review'):
             self.engine.accept('main', self.lease, 'a')
         self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
 
@@ -1225,7 +1225,7 @@ class ScopedEvidenceTests(EngineFixture):
         self.receipt('r1', ['a'], ['security'])
         self.receipt('r2', ['a', 'b'], ['correctness'], findings=['bug in a'])
         (self.repo / 'b').write_text('edit inside the blocking scope only')
-        with self.assertRaisesRegex(EngineError, 'needs current independent review'):
+        with self.assertRaisesRegex(EngineError, 'Review with findings is stale; re-review'):
             self.engine.accept('main', self.lease, 'a')
         self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
 
@@ -1330,6 +1330,11 @@ class AutonomyFixture(EngineFixture):
 
     def auto(self):
         return self.engine.status()['autonomy']
+
+    def worker_running(self, name='busy'):
+        """A dispatched card: while it runs, an unchanged turn ends quietly instead of stopping as stalled."""
+        self.task(name, files=[name])
+        self.engine.dispatch('main', self.lease, name, 'w-' + name)
 
     def accept_card(self, name):
         self.task(name, role='investigator', mode='code')
@@ -1436,13 +1441,13 @@ class AutonomyArmTests(AutonomyFixture):
         idle = self.engine.autonomy_status()
         self.assertRegex(idle.pop('signature'), r'^[0-9a-f]{64}$')
         self.assertEqual(idle, dict(active=False, passes=None, max_passes=None, stalls=None,
-                         max_stalls=None, deadline=None, parked=[], last_stop_reason=None))
+                         max_stalls=None, deadline=None, parked=[], last_stop_reason=None, pull_requests=False))
         self.arm(passes='4')
         self.task('p')
         self.engine.park('main', self.lease, 'p', 'needs a push')
         status = self.engine.autonomy_status()
         self.assertEqual(set(status), {'active', 'passes', 'max_passes', 'stalls', 'max_stalls', 'deadline', 'parked',
-                                       'last_stop_reason', 'signature'})
+                                       'last_stop_reason', 'signature', 'pull_requests'})
         self.assertEqual((status['active'], status['max_passes'], status['parked']), (True, 4, [{'id': 'p', 'reason': 'needs a push'}]))
         self.assertNotIn(self.lease, json.dumps(status))
 
@@ -1477,6 +1482,7 @@ class AutonomyLoopTests(AutonomyFixture):
     def test_a_newly_accepted_card_resets_the_stall_count(self):
         self.arm(passes='9', stalls='2')
         self.task('x')
+        self.worker_running()
         self.engine.hook_stop()
         self.engine.hook_stop()  # stalls 1
         self.assertEqual(self.auto()['stalls'], 1)
@@ -1493,10 +1499,9 @@ class AutonomyLoopTests(AutonomyFixture):
         self.assertEqual(self.auto()['last_stop_reason'], 'deadline')
 
     def test_completion_stops_only_with_a_passed_intact_gate_on_the_current_artifact(self):
-        def not_complete():  # nothing is live, so the run stops, but not as complete; arm again for the next step
-            self.assertIsNone(self.engine.hook_stop())
-            self.assertEqual(self.auto()['last_stop_reason'], 'no-ready-card')
-            self.engine.arm_autonomy()
+        def not_complete():  # every card accepted but not complete: the final phase continues the turn
+            self.assertIn('every card is accepted', self.engine.hook_stop())
+            self.assertEqual((self.auto()['active'], self.auto().get('last_stop_reason')), (True, None))
 
         self.arm(passes='9')
         self.accept_card('x')  # SPEC 5.8 item 3: every card accepted and a final review, so only the gate decides
@@ -1546,10 +1551,50 @@ class AutonomyLoopTests(AutonomyFixture):
         self.assertEqual(self.auto()['last_stop_reason'], 'parked-only')
 
     def test_no_ready_card_stops(self):
-        self.arm(passes='9')
-        self.accept_card('done')
+        self.arm(passes='9')  # an empty board and no change since the base: nothing to do
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.auto()['last_stop_reason'], 'no-ready-card')
+
+    def test_every_card_accepted_continues_into_the_final_phase_then_stalls(self):
+        self.arm(passes='9')
+        self.accept_card('done')
+        reason = self.engine.hook_stop()
+        self.assertIn('Autonomy pass 1: every card is accepted; commit the work, run the final review', reason)
+        self.assertIn('open the pull request', reason)
+        self.assertIsNone(self.engine.hook_stop())  # nothing changed and no worker runs: stop with a brief
+        self.assertEqual((self.auto()['active'], self.auto()['last_stop_reason']), (False, 'stalled'))
+        self.assertIn('- stop reason: stalled', self.engine.brief())
+
+    def test_empty_board_with_changed_files_owes_the_final_phase(self):
+        self.arm(passes='9')
+        (self.repo / 'a').write_text('inline work without a card')
+        self.assertIn('every card is accepted', self.engine.hook_stop())
+
+    def test_inline_card_is_actionable_not_running(self):
+        self.arm()
+        self.task('x')
+        self.engine.start_inline('main', self.lease, 'x')
+        self.assertIn('Autonomy pass 1: continue', self.engine.hook_stop())
+
+    def test_reported_card_under_a_running_reviewer_waits_quietly(self):
+        self.arm()
+        self.task('B1')
+        self.engine.report('w', self.engine.dispatch('main', self.lease, 'B1', 'w'), done())
+        self.task('crit', role='critic', mode='judge', files=[], review_of=['B1'])
+        self.engine.dispatch('main', self.lease, 'crit', 'critic-w')
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['passes'], self.auto()['stalls'], self.auto()['active']), (0, 0, True))
+
+    def test_park_then_unpark_in_one_turn_is_progress(self):
+        self.arm()
+        self.task('x')
+        self.task('y')
+        self.assertIn('Autonomy pass 1:', self.engine.hook_stop())
+        self.engine.park('main', self.lease, 'x', 'boundary')
+        self.engine.unpark('main', self.lease, 'x')
+        self.assertIn('Autonomy pass 2:', self.engine.hook_stop())
+        self.assertEqual(self.auto()['stalls'], 0)
 
     def test_running_cards_end_the_turn_and_reported_cards_continue_it(self):
         self.arm(passes='9')
@@ -1563,6 +1608,7 @@ class AutonomyLoopTests(AutonomyFixture):
     def test_a_continuation_is_not_repeated_for_an_unchanged_board(self):
         self.arm()
         self.task('x')
+        self.worker_running()
         self.assertIn('Autonomy pass 1:', self.engine.hook_stop())
         self.assertIsNone(self.engine.hook_stop())  # nothing changed: the turn ends instead of the same re-prompt
         self.assertIsNone(self.engine.hook_stop())
@@ -3591,6 +3637,7 @@ class RunBriefTests(AutonomyFixture, HoldFixture):
         self.allow_review('rev-1')
         self.engine.record_review('main', self.lease, 'rev-1', report, ['correctness'], ['b'], findings=['off by one'])
         self.engine.run_gate('main', self.lease, 'unit', [sys.executable, '-c', 'raise SystemExit(3)'])
+        self.worker_running()
         self.engine.hook_stop()
         self.engine.hook_stop()
         self.now[0] = T0 + 61
@@ -3785,6 +3832,7 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
     def test_hook_stop_never_stops_on_stalls(self):
         self.arm()
         self.task('x')
+        self.worker_running()
         self.assertIsInstance(self.engine.hook_stop(), str)
         for _ in range(10):  # each unchanged turn ends quietly and counts a stall
             self.assertIsNone(self.engine.hook_stop())
@@ -3827,9 +3875,9 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.engine.report('w', self.engine.dispatch('main', self.lease, 'x', 'w'), done('Inspected x.'))
         self.engine.accept('main', self.lease, 'x')
         with mock.patch.object(Engine, 'artifact', counting):
-            self.assertIsNone(self.engine.hook_stop())  # nothing live and no final review: not complete
+            self.assertIn('every card is accepted', self.engine.hook_stop())  # no final review: not complete
         self.assertGreater(len(calls), 0)
-        self.assertEqual(self.last_stop(), 'no-ready-card')
+        self.assertIsNone(self.last_stop())
 
     def test_hook_stop_not_complete_while_held(self):
         self.arm()
@@ -3837,8 +3885,8 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.engine.hold('main', self.lease, 'R1', 'g')
         self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL, cleared={'R1': 'no defect'})
         self.passing_gate()
-        self.assertIsInstance(self.engine.hook_stop(), str)
-        self.assertEqual((self.auto()['active'], self.last_stop()), (True, None))
+        self.assertIsNone(self.engine.hook_stop())  # a current final receipt covers the held chain: the owner decides
+        self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'no-ready-card'))
 
     def test_hook_stop_not_complete_while_final_finding_open(self):
         self.arm()
@@ -3879,6 +3927,7 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
     def test_2_1_ledger_with_caps_still_arms_and_caps_are_ignored(self):
         self.arm(passes='1', stalls='1')
         self.task('x')
+        self.worker_running()
         for n in range(4):
             self.task('y%d' % n)
             self.assertIsInstance(self.engine.hook_stop(), str)
@@ -4060,3 +4109,149 @@ class ReleasePreauthTests(AutonomyFixture, HoldFixture):
                 self.ledger(boundaries=[l for l in self.boundaries(PREAUTH) if l != line])
                 with self.assertRaisesRegex(EngineError, 'Approval boundaries must keep the fixed line'):
                     self.engine.arm_autonomy()
+
+
+class EngineOwnedKeyTests(AutonomyFixture):
+    """A task file cannot set what the engine owns; a hand-edited state with broken links fails loudly."""
+
+    def edit(self, change):
+        path = self.state / 'state.json'
+        data = json.loads(path.read_text())
+        change(data)
+        path.write_text(json.dumps(data))
+
+    def test_add_refuses_every_engine_owned_key(self):
+        self.task('B1')
+        for key in ENGINE_TASK_KEYS:
+            with self.subTest(key=key), self.assertRaisesRegex(EngineError, 'engine-owned keys: ' + key):
+                self.task('X', **{key: 'B1' if key == 'repaired_by' else 1})
+        self.assertEqual(sorted(self.engine.status()['tasks']), ['B1'])
+
+    def test_repair_of_only_on_a_builder_repair_card(self):
+        self.task('B1')
+        self.engine.report('w', self.engine.dispatch('main', self.lease, 'B1', 'w'), done())
+        self.engine.accept('main', self.lease, 'B1')
+        for name, kw in (('self', dict(repair_of='self')), ('ghost', dict(repair_of='ghost')), ('foreign', dict(repair_of='B1')),
+                         ('critic', dict(role='critic', mode='judge', repair_of='B1'))):
+            with self.subTest(name=name), self.assertRaisesRegex(EngineError, 'Only a builder repair card names repair_of'):
+                self.task(name, **kw)
+        with self.assertRaisesRegex(EngineError, 'Repair needs a specific earlier builder task'):
+            self.task('R0', mode='repair', repair_of='R0')
+        self.assertEqual(self.engine.status()['tasks']['B1']['state'], 'accepted')
+        self.assertEqual(self.engine.ready('main', self.lease), [])
+
+    def test_hand_edited_repair_links_and_review_since_fail_loudly(self):
+        self.task('B1')
+        self.task('B2', files=['B2'])
+        edits = dict(
+            self_cycle=lambda d: d['tasks']['B1'].update(repair_of='B1'),
+            ghost_repair_of=lambda d: d['tasks']['B1'].update(repair_of='ghost'),
+            ghost_repaired_by=lambda d: d['tasks']['B1'].update(repaired_by='ghost'),
+            two_card_cycle=lambda d: (d['tasks']['B1'].update(repair_of='B2'), d['tasks']['B2'].update(repair_of='B1')),
+            repaired_by_cycle=lambda d: (d['tasks']['B1'].update(repaired_by='B2'), d['tasks']['B2'].update(repaired_by='B1')),
+            since_text=lambda d: d['tasks']['B1'].update(review_since='5'),
+            since_negative=lambda d: d['tasks']['B1'].update(review_since=-1),
+            since_bool=lambda d: d['tasks']['B1'].update(review_since=True))
+        good = (self.state / 'state.json').read_text()
+        for name, change in edits.items():
+            with self.subTest(name=name):
+                (self.state / 'state.json').write_text(good)
+                self.edit(change)
+                with self.assertRaisesRegex(EngineError, 'Malformed run state'):
+                    self.engine.ready('main', self.lease)
+
+    def test_repair_chain_walk_refuses_a_cycle(self):
+        tasks = dict(a=dict(id='a', repair_of='b'), b=dict(id='b', repair_of='a'))
+        with self.assertRaisesRegex(EngineError, 'cycles'):
+            Engine._walk(tasks, tasks['a'], 'repair_of')
+        tasks['b'].pop('repair_of')
+        self.assertEqual([t['id'] for t in Engine._walk(tasks, dict(id='c', repair_of='a'), 'repair_of')], ['a', 'b'])
+
+    def stale_blocked(self):
+        """B1 blocked by a receipt that also covers B2; an edit to B2 alone makes the receipt stale."""
+        self.allow_review()
+        for name in ('B1', 'B2'):
+            self.task(name)
+            (self.repo / name).write_text(name + ' v1')
+            self.engine.report('w-' + name, self.engine.dispatch('main', self.lease, name, 'w-' + name), done())
+        report = self.root / 'stale.json'
+        self.review(report, tasks=['B1', 'B2'], findings=['B1 is wrong'], task_findings={'B1': ['B1 is wrong'], 'B2': []})
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['B1', 'B2'], findings=['B1 is wrong'])
+
+    def test_stale_blocking_receipt_refuses_accept(self):
+        self.stale_blocked()
+        with self.assertRaisesRegex(EngineError, 'current review findings'):
+            self.engine.accept('main', self.lease, 'B1')
+        (self.repo / 'B2').write_text('B2 v2')
+        with self.assertRaisesRegex(EngineError, 'Review with findings is stale; re-review'):
+            self.engine.accept('main', self.lease, 'B1')
+        self.assertEqual(self.engine.status()['tasks']['B1']['state'], 'reported')
+
+    def test_stale_blocking_receipt_refuses_completion(self):
+        self.allow_review()
+        for name in ('B1', 'B2'):
+            self.task(name)
+            (self.repo / name).write_text(name + ' v1')
+            self.engine.report('w-' + name, self.engine.dispatch('main', self.lease, name, 'w-' + name), done())
+            self.engine.accept('main', self.lease, name)
+        report = self.root / 'late.json'
+        self.review(report, tasks=['B1', 'B2'], findings=['B1 is wrong'], task_findings={'B1': ['B1 is wrong'], 'B2': []})
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['B1', 'B2'], findings=['B1 is wrong'])
+        (self.repo / 'B2').write_text('B2 v2')
+        with self.assertRaisesRegex(EngineError, 'Review with findings is stale; re-review: B1'):
+            self.engine.check_completion('main', self.lease)
+
+    def test_start_over_a_2_5_relaunch_state_does_not_rearm_autonomy(self):
+        self.arm()
+        self.edit(lambda d: (d['autonomy'].update(relaunch=True), d['session'].update(active=False, outcome='pass-exited')))
+        self.assertFalse(self.engine.autonomy_active())
+        self.lease = self.engine.open_session('main')
+        self.assertFalse(self.engine.autonomy_active())
+        self.assertIsNone(self.auto())
+        self.task('x', role='investigator', mode='code', files=[])
+        self.assertIsNone(self.engine.hook_stop())
+
+    def test_start_after_a_stopped_run_keeps_only_its_report(self):
+        self.arm()
+        self.engine.disarm_autonomy()
+        self.engine.interrupt('main', self.lease)
+        self.lease = self.engine.open_session('main')
+        auto = self.auto()
+        self.assertFalse(auto['active'])
+        self.assertIn('report', auto)
+        self.assertFalse(self.engine.autonomy_active())
+
+
+class AutonomyHarnessTests(AutonomyFixture, HoldFixture):
+    """Pull-request permission from the Push line, and the held continuation only while no final receipt covers it."""
+
+    def test_push_line_records_pull_requests(self):
+        self.arm()
+        self.assertIs(self.auto()['pull_requests'], True)
+        self.assertIs(self.engine.autonomy_status()['pull_requests'], True)
+        legacy = [l for l in AUTONOMY_FIXED if not l.startswith('- Push:')] + ['- Push: no push to any branch.']
+        self.arm(boundaries=legacy)
+        self.assertIs(self.auto()['pull_requests'], False)
+        self.assertIs(self.engine.autonomy_status()['pull_requests'], False)
+        self.arm(boundaries=list(AUTONOMY_FIXED) + ['- Push: no push to any branch.'])  # the stricter line wins
+        self.assertIs(self.auto()['pull_requests'], False)
+
+    def test_state_armed_before_pull_requests_reads_false(self):
+        self.arm()
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['autonomy'].pop('pull_requests')
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertIs(self.engine.autonomy_status()['pull_requests'], False)
+        raw['autonomy']['pull_requests'] = 'yes'
+        self.engine.state_path.write_text(json.dumps(raw))
+        with self.assertRaisesRegex(EngineError, 'Invalid autonomy state'):
+            self.engine.status()
+
+    def test_held_chain_without_a_covering_final_receipt_continues(self):
+        self.arm()
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g')
+        self.assertIn('held work is still owed a final review', self.engine.hook_stop())
+        self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL, findings=['g'], task_findings={'R1': ['g'], 'B1': []})
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['active'], self.auto().get('last_stop_reason')), (False, 'no-ready-card'))

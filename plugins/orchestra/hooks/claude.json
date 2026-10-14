@@ -17,7 +17,7 @@
           {
             "type": "command",
             "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.sh\" PreToolUse --harness claude",
-            "timeout": 10
+            "timeout": 30
           }
         ],
         "matcher": "Bash|Edit|Write|MultiEdit|Agent|Task"

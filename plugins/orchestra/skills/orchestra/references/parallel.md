@@ -11,7 +11,7 @@ Each brief is focused and self-contained, names one output and its constraints, 
 
 ## Worth a worker
 
-A worker costs about 100 seconds before it saves any: setup, brief, then the worktree check, merge and removal. In the 2.5 benchmark a 320-line unit took 48 s inline and 85 s in a builder, and two medium units ran faster in sequence than split. Split units across workers only in a large run. After you launch a Workflow or a background Agent, start your inline card in the same turn; never end the turn to wait for workers.
+A worker costs about 100 seconds before it saves any: setup, brief, then the worktree check, merge and removal. In the 2.5 benchmark a 320-line unit took 48 s inline and 85 s in a builder, and two medium units ran faster in sequence than split. Split units across workers only in a large run. Launch Agent workers with `run_in_background: true` when you will keep working or end the turn. After you launch a Workflow or a background Agent, start your inline card in the same turn. When nothing is left but waiting, end the turn: the harness wakes the session when a background worker finishes. Never poll or sleep.
 
 ## Workflow script
 

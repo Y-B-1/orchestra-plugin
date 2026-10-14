@@ -12,6 +12,11 @@ import tarfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+# Development files stay out of the archive: tests, agent and editor tooling, the e2e scaffold and mod test files.
+EXCLUDE = re.compile(r'(tests/|\.agents/|\.claude/|\.cursor/|\.mcp\.json$|package(-lock)?\.json$|e2e\.config\.ts$'
+                     r'|plugins/orchestra/hooks/mod/(fixtures/|testkit\.ts$|[^/]+\.test\.ts$))')
+PRIVATE = re.compile(rb'/' + rb'(Users|home)/[^/\s]+/|gh[op]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}'
+                     rb'|AKIA[0-9A-Z]{16}|sk-ant-api[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----')
 
 
 def build(out, root=ROOT):
@@ -25,13 +30,15 @@ def build(out, root=ROOT):
     name = 'orchestra-' + version
     paths = []
     for relative in filter(None, files):
+        if EXCLUDE.match(relative):
+            continue
         path = root / relative
         if path.is_symlink():
             if path.resolve().is_relative_to(root):
                 continue
             raise ValueError(f'Distribution symlinks are unsupported: {relative}')
         data = path.read_bytes()
-        if re.search(rb'/' + rb'Users/[^/\s]+/|gh[op]_[A-Za-z0-9]{20,}|sk-ant-api[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----', data):
+        if PRIVATE.search(data):
             raise ValueError(f'Private content candidate: {relative}')
         paths.append((relative,data))
     tar_path = out / (name + '.tar.gz')

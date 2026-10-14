@@ -10502,6 +10502,215 @@
     "command": "git push origin master"
    },
    "class": "release"
+  },
+  {
+   "id": "cleanup-1",
+   "input": {
+    "command": "git -C . branch -d x"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "cleanup-2",
+   "input": {
+    "command": "git branch -d \"x\""
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "cleanup-3",
+   "input": {
+    "command": "git branch -d x && git status"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "cleanup-4",
+   "input": {
+    "command": "git branch -d x y"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "cleanup-5",
+   "input": {
+    "command": "git worktree remove --force ../wt"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "cleanup-6",
+   "input": {
+    "command": "git worktree remove ../work"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
+   "id": "guard-116",
+   "input": {
+    "command": "GIT_DIR=../x/.git git push origin HEAD"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-117",
+   "input": {
+    "command": "gh api -X PUT repos/o/r/pulls/1/merge"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-118",
+   "input": {
+    "command": "git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-119",
+   "input": {
+    "command": "git push \"origin\" feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-120",
+   "input": {
+    "command": "git push --receive-pack=evil origin feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-121",
+   "input": {
+    "command": "git push --set-upstream origin feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-122",
+   "input": {
+    "command": "git push https://example.invalid/x.git feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-123",
+   "input": {
+    "command": "git push origin +feat/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-124",
+   "input": {
+    "command": "git push origin @"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-125",
+   "input": {
+    "command": "git push origin HEAD:Main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-126",
+   "input": {
+    "command": "git push origin HEAD:heads/main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-127",
+   "input": {
+    "command": "git push origin HEAD:refs/heads/main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-128",
+   "input": {
+    "command": "git push origin HEAD:refs/tags/v2"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-129",
+   "input": {
+    "command": "git push origin HEAD:tags/v2"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-130",
+   "input": {
+    "command": "git push origin develop"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-131",
+   "input": {
+    "command": "git push origin feat/x:main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-132",
+   "input": {
+    "command": "git push origin feat/x:refs/heads/feat/z"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-133",
+   "input": {
+    "command": "git push origin heads/main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-134",
+   "input": {
+    "command": "git push origin nosuch"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-135",
+   "input": {
+    "command": "git push origin refs/tags/v1.0"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-136",
+   "input": {
+    "command": "git push origin v1.0"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-137",
+   "input": {
+    "command": "git push other feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "guard-138",
+   "input": {
+    "command": "xargs -a refs git push origin feat/x"
+   },
+   "class": "release"
   }
  ]
 }

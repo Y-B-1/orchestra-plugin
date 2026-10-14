@@ -6,7 +6,7 @@ The role count does not limit concurrency. Several instances of one role can run
 
 ## Install
 
-Prerequisites: Python 3.11 or later, Git and Claude Code. Native checks used Claude Code 2.1.289. Windows is not supported by the POSIX locking core; use WSL.
+Prerequisites: Python 3.11 or later, Git and Claude Code. Without Python 3.11 or later, the PreToolUse hook fails closed and every other hook only shows a warning. Native checks used Claude Code 2.1.289. Windows is not supported by the POSIX locking core; use WSL.
 
 ```sh
 claude plugin marketplace add Y-B-1/orchestra-plugin
@@ -51,7 +51,7 @@ From your first message to a finished branch:
 8. **Inline work.** The coordinator reserves its own card with `inline TASK` and works beside disjoint workers under the same ownership and capacity checks. After it launches a Workflow or background agent, it starts its inline card in the same turn.
 9. **Builders self-review.** A builder writes the failing test first, then the code. It ends its report with one `SELF_REVIEW:` line listing its checks and criteria, and a nonempty `ARTIFACT:` line. The engine refuses a builder report without them and accepts the card only on a clean line on the current artifact.
 10. **Gates.** Checks run only through `orchestra.py gate NAME -- COMMAND...`, which records the actual exit and log hashes against the artifact. A passed gate on an unchanged artifact refuses a repeat unless `--again`. When the PR candidate is frozen, the operator gates the impact set and e2e; the full suite runs only on the owner's request.
-11. **Size check and reviewer pick.** `orchestra.py prepr` compares the diff with the budget and warns when it is over; the warning never blocks. It also names the pre-PR reviewer: up to 400 changed lines, one Sonnet card (`code-reviewer-medium`, `Lens: combined`); above 400, one Opus card per lens in parallel.
+11. **Size check and reviewer pick.** `orchestra.py prepr` compares the diff with the budget and warns when it is over; the warning never blocks. It also names the pre-PR reviewer: up to 400 changed lines, one Sonnet card (`code-reviewer-medium`, `Lens: combined`); above 400, one card per lens in parallel (Opus; Sonnet `code-reviewer-standards` for the standards lens).
 12. **One pre-PR review.** This is the only independent code review. Lenses come from the diff: correctness always; security when a changed file matches policy `sensitive_paths`; standards and cleanup above `standards_min_lines` (default 200). Reviewers read the review packages and cite gate receipts instead of rerunning suites. A reviewer never fixes code or approves their own work.
 13. **Repair, then hold.** A chain with a current finding gets one Opus builder `repair` card, then one fix re-review of the fix diff only (`repair_check: true`). CLEAN accepts the chain. BLOCKED holds it with `orchestra.py hold TASK --finding TEXT`: the work stays in place, the held log records it, and the run continues.
 14. **Findings ledger.** The coordinator tries to refute each finding against the source and records what happened with `finding add`: rejected, deferred, inline, card or brief. Out-of-scope defects never change a verdict; each is fixed inline, made a card or left in the brief. `finding list --for-brief` gives reviewers the items not to re-raise.
@@ -92,7 +92,7 @@ For unattended work, the same flow runs inside a ledger:
 2. `arm` snapshots the ledger and prints a preconditions report, including a keep-awake step only you can take.
 3. The Stop hook drives the loop. It continues a turn only when the coordinator can act now (see [Autonomous mode](#autonomous-mode)).
 4. At an approval boundary the coordinator parks the card with `park TASK --reason TEXT` and moves on to other cards.
-5. The coordinator may push a feature branch and open a pull request with `gh pr create`. You merge it after the run.
+5. When every card is accepted, the coordinator commits, runs the final review and the completion gates on that commit, then pushes a feature branch and opens a pull request with `gh pr create` in the same turn. You merge it after the run. It may also delete branches and worktrees already merged into the default branch.
 6. The run ends at the deadline, at completion or at another stop, and writes the run brief. You read it at the next session start.
 7. In the morning, `unpark TASK` returns parked cards to the queue, and you settle any held chain before `finish`.
 
@@ -119,17 +119,18 @@ The PreToolUse hook classifies shell, edit and agent calls, then applies the run
 | | No run active | Run active (interactive) | Autonomy armed |
 | --- | --- | --- | --- |
 | Destructive Git: `stash` (every form), `reset --hard`, `clean -f`, `branch -D` (unless provably merged), `git add .`/`-A`/`--all`, `commit -a`, `--amend`, force push, wholesale restore | Denied | Denied | Denied |
-| Release actions: `git push`, `gh pr merge`, `gh release create`, npm or pnpm publish, deploy tools, `az` deployments | Allowed | Runs when a current engine permit matches; otherwise Claude Code asks you | Denied, card parked. Exception: a ledger `- Release: pre-authorized <remote> <target>` line that matches `policy.release` |
-| Feature-branch push and `gh pr create` | Allowed | Push as above; `gh pr create` allowed | Allowed: explicit remote and branch, not the remote's default branch, `main` or `master`; `HEAD` resolves to the current branch |
-| Merge: `gh pr merge`, local merge, pull, rebase or cherry-pick on the default branch | Allowed | `gh pr merge` as a release; local merges allowed | Denied, card parked; you merge the PR after the run |
-| Push to the default branch | Allowed | As a release | Denied |
-| Deletion: `rm`, branch or tag deletion, `git worktree remove` | Allowed | Allowed | Denied |
+| Release actions: `git push`, `gh pr merge`, a `gh api` merge call, `gh release create`, npm, pnpm or cargo publish, deploy tools, `az` deployments | Allowed | Runs when a current engine permit matches; otherwise Claude Code asks you | Denied; the coordinator parks the card. Exception: a ledger `- Release: pre-authorized <remote> <target>` line that matches `policy.release` |
+| Feature-branch push and `gh pr create` | Allowed | Push as above; `gh pr create` allowed | Allowed: exactly `git push [-u] <remote> <refspec>` with a configured remote name (no `remote.<name>.push` or `pushurl` set), a local branch as source, and one destination branch that is not the remote's default branch, `main` or `master` (case-insensitive); `HEAD` or `@` is the current branch. The remote's default branch must be known locally (`git remote set-head <remote> --auto`). Never the configured release target, and never under a 2.5 ledger whose Push line is `no push to any branch`. |
+| Merge: `gh pr merge`, a `gh api` merge, local merge, pull, rebase or cherry-pick on the default branch | Allowed | `gh pr merge` and `gh api` merges as a release; local merges allowed | Denied; the coordinator parks the card. You merge the PR after the run |
+| Push to the default branch | Allowed | As a release | Denied, except the pre-authorized release |
+| Deletion: `rm`, branch or tag deletion, `git worktree remove` | Allowed (`branch -D` and remote branch deletes only when provably merged) | Same | Denied, except merged cleanup |
+| Merged cleanup: `git branch -d\|-D <b>`, `git push <remote> --delete <b>`, `git worktree remove <path>` without `--force`, `git worktree prune`, each as a plain single command | As deletion | As deletion | Allowed when the branch is provably merged into the default branch; a removed worktree must be a linked worktree of this repository, not the session's directory or the main worktree. `rm` stays denied |
 | Credential entry | Not detected | Not detected | Forbidden by procedure, not detected |
 | Agent types | Any; workers cannot delegate | Only `orchestra:*` agents may be started; workers cannot delegate | Same |
 | Reviewer and critic test runs | Not checked | Denied while a gate receipt is current: they cite it instead | Same |
 | Run state and installed config files | Protected | Protected | Protected |
 
-Guards are best effort, not a sandbox. Native hooks cover supported tool calls and recognizable commands. They do not stop encoded payloads, alias or variable indirection, interpreter one-liners, `gh api` calls, or MCP and terminal tools that push or merge; using those to get around the guard is forbidden by procedure, not enforced. Agent types are routing hints, not authentication. Use host sandboxing, branch protection and tool policy for stronger isolation. Details: [hook policy](docs/hooks.md).
+Guards are best effort, not a sandbox. Native hooks cover supported tool calls and recognizable commands. They do not stop encoded payloads, alias or variable indirection, interpreter one-liners, `gh api` calls other than recognizable merges, or MCP and terminal tools that push or merge; using those to get around the guard is forbidden by procedure, not enforced. Git aliases and `git -c alias.*` can run a push or merge under another name; the guard does not resolve aliases. The run is found from the session directory, so a `git -C <run repo> push` issued from outside that repository is not seen as part of the run. Agent types are routing hints, not authentication. Use host sandboxing, branch protection and tool policy for stronger isolation. Details: [hook policy](docs/hooks.md).
 
 ## Autonomous mode
 
@@ -148,11 +149,11 @@ Guards are best effort, not a sandbox. Native hooks cover supported tool calls a
 
 You may replace the Release line with `- Release: pre-authorized <remote> <target>`, which must equal the configured `policy.release`. It overrides Push and Engine-gated actions for that remote and target only. A placeholder left in the ledger, or a field that does not parse, refuses `arm` and names the field. Any edit after `arm` stops the loop. Old `max_passes` and `max_stalls` fields are recorded and shown, never enforced.
 
-**Loop.** The Stop hook continues a turn only when the coordinator can act now: a ready card, a reported card waiting for review, an open final finding, or a held chain owed its final review. Then it sends one line, `Autonomy pass N: ...`. While only background workers are running, the turn ends quietly and Claude Code wakes the session when a worker finishes. A continuation is never repeated for an unchanged board; that turn counts as a stall, never a stop.
+**Loop.** The Stop hook continues a turn only when the coordinator can act now: a ready card, a reported card waiting for review, an open final finding, a held chain owed its final review, or, with every card accepted, the final review, gates and pull request still owed. Then it sends one line, `Autonomy pass N: ...`. While only background workers are running, the turn ends quietly and Claude Code wakes the session when a worker finishes. A continuation is never repeated for an unchanged board; that turn counts as a stall. A stall with workers running just ends the turn; a stall with none running stops the run `stalled`, since nothing would wake it.
 
-**Stops.** `deadline`, `complete`, `ledger-tampered`, `disarmed`, `parked-only` and `no-ready-card`. The deadline is the only limit; no count of passes or stalls stops the run. `complete` needs every card accepted, no open finding, full review coverage, the gates and the triage. A stop is final for that arm; you re-arm. Ending the session ends autonomy.
+**Stops.** `deadline`, `complete`, `ledger-tampered`, `disarmed`, `stalled`, `parked-only` and `no-ready-card`. No count of passes or stalls stops the run. `complete` needs every card accepted, no open finding, full review coverage, the gates and the triage. A stop is final for that arm; you re-arm. Arm only a run started with `start --harness-session`: then ending the session ends autonomy. A run started without it stays active and armed after the session ends.
 
-**Boundaries.** Merge, pushes to the default branch, any other release, deletion and credential entry are hard. The coordinator parks the card and continues. `permit` and `release` are refused while autonomy is active, except for the one pre-authorized pair. Without pre-authorization an armed run adds no release card; the brief says "ready to release". `arm` reports the permission mode and a keep-awake reminder and changes neither.
+**Boundaries.** Merge, pushes to the default branch, any other release, deletion and credential entry are hard; the coordinator parks the card and continues. Two exceptions: the pull request push in the table above, and cleanup of branches and worktrees provably merged into the default branch. Open the pull request in the same turn as the last accept: once `complete` holds, the loop sends no further turn. `permit` and `release` are refused while autonomy is active, except for the one pre-authorized pair. Without pre-authorization an armed run adds no release card; the brief says "ready to release". `arm` reports the permission mode and a keep-awake reminder and changes neither.
 
 ## Commands
 
@@ -195,7 +196,7 @@ Keep global habits in the first file and project rules in the second. Do not cop
 
 See the [changelog](CHANGELOG.md) for full entries. Do not mix versions on one active run.
 
-- **2.5 to 2.6.** The relaunch harness is gone: `orchestra.py relaunch`, `autonomy arm --relaunch`, `autonomy settle` and `config/relaunch-prompt.md`. Autonomy runs in the interactive session and ends with it. A 2.5 state armed with `--relaunch` loads as plain autonomy; re-arm in a live session to keep going. A 2.5 ledger with `- Push: no push to any branch.` still arms.
+- **2.5 to 2.6.** The relaunch harness is gone: `orchestra.py relaunch`, `autonomy arm --relaunch`, `autonomy settle` and `config/relaunch-prompt.md`. Autonomy runs in the interactive session. A 2.5 state armed with `--relaunch` does not re-arm on `start`: its autonomy is dropped when a new session opens over the inactive run. Re-arm in a live session to keep going. A 2.5 ledger with `- Push: no push to any branch.` still arms.
 - **2.4 to 2.5.** A 2.4 run loads and keeps item routing; new runs use `--size`, and `start --items` is refused. Do not resume a 2.5 run with a 2.4 engine.
 - **2.3 to 2.4.** A 2.3 run loads when its policy is unchanged, keeps 2.3 routing and is rebound to 2.4 on its first write. Its gate and review receipts go stale: rerun the gate and the pre-PR review before `finish`. A queued `code-reviewer` checkpoint card no longer dispatches. A policy or role change during an active run is refused: end that run with the version that started it, or move its `state.json` out of the state directory.
 - **2.1 to 2.2.** A 2.1 run loads; its `max_passes` and `max_stalls` are recorded, not enforced. End every 2.1 session before the first `hold` or before arming under 2.2, or the 2.1 hooks fail closed.
@@ -212,6 +213,10 @@ claude plugin list
 ```
 
 To try a local checkout before it is published, use the same steps with `claude plugin marketplace add /path/to/orchestra-plugin`. A marketplace name can exist only once, so remove the installed one first. Orchestra hooks are absent between uninstall and install, so run these in a plain terminal, not from an Orchestra-guarded session. `claude plugin list` must show exactly one `orchestra@orchestra-distribution`.
+
+## Uninstall
+
+End any active run first (`orchestra.py finish` or `interrupt`), then run `claude plugin uninstall orchestra@orchestra-distribution` and `claude plugin marketplace remove orchestra-distribution`. To leave no trace, also remove `${XDG_STATE_HOME:-~/.local/state}/orchestra`, which holds run state and mod markers.
 
 ## Check and distribute
 

@@ -53,5 +53,35 @@ class BuildSymlinkTests(unittest.TestCase):
             build_release.build(self.out, root=self.repo)
 
 
+    def test_development_files_are_left_out(self):
+        keep = ['plugins/orchestra/hooks/mod/guard.ts', 'docs/real.txt']
+        drop = ['tests/test_x.py', '.agents/skills/a.md', 'package.json', 'package-lock.json', 'e2e.config.ts', '.mcp.json',
+                'plugins/orchestra/hooks/mod/guard.test.ts', 'plugins/orchestra/hooks/mod/testkit.ts',
+                'plugins/orchestra/hooks/mod/fixtures/guard-fixtures.ts']
+        for name in keep + drop:
+            (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / name).write_text('x\n')
+        git(self.repo, 'add', '-A')
+        git(self.repo, 'commit', '-q', '-m', 'x')
+        build_release.build(self.out, root=self.repo)
+        with tarfile.open(self.out / 'orchestra-9.9.9.tar.gz') as tar:
+            names = set(tar.getnames())
+        for name in keep:
+            self.assertIn('orchestra-9.9.9/' + name, names)
+        for name in drop:
+            self.assertNotIn('orchestra-9.9.9/' + name, names)
+
+    def test_private_content_is_refused(self):
+        samples = ['/' + 'home/someone/notes', '/' + 'Users/someone/notes', 'github_pat_' + 'A' * 22, 'xoxb-' + '1' * 12,
+                   'AKIA' + 'A' * 16, 'ghp_' + 'a' * 24]
+        for sample in samples:
+            with self.subTest(sample=sample[:8]):
+                (self.repo / 'docs/real.txt').write_text(sample + '\n')
+                git(self.repo, 'add', '-A')
+                git(self.repo, 'commit', '-q', '-m', 'x')
+                with self.assertRaisesRegex(ValueError, 'Private content candidate'):
+                    build_release.build(self.out, root=self.repo)
+
+
 if __name__ == '__main__':
     unittest.main()

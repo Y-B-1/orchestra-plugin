@@ -634,3 +634,14 @@ test('delegate surfaces the reason of an exit-2 deny', async ($, on) => {
   expect(bare).toEqual({ deny: 'Orchestra guard error (exit 2); failing closed' } as never);
   expect(b.calls.length).toBe(0);
 });
+
+test('delegate passes an ask on to the native hook instead of deciding it', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  await $.session.start(start);
+  const ask = JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'ask', permissionDecisionReason: 'approve?' } });
+  r.runAnswer = () => ({ exitCode: 0, stdout: ask });
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
+  expect((res as { deny?: string }).deny).toBeUndefined();
+  expect(b.calls.length).toBe(1);
+});

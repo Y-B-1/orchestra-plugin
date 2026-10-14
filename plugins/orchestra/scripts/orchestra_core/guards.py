@@ -609,6 +609,7 @@ def _git(words):
 
 def _is_release(name, words):
     return ((name == 'gh' and words[1:3] in _RELEASE['gh']) or
+            (name == 'gh' and words[1:2] == ['api'] and any(_RELEASE['gh_api_merge'] in x.lower() for x in words[2:])) or
             (name == 'az' and (all(x in words for x in _RELEASE['az_requires']) or
                                (words[1:4] == _RELEASE['az_pr_update']['prefix'] and _RELEASE['az_pr_update']['word'] in words))) or
             (name in _RELEASE['package_tools'] and _RELEASE['package_verb'] in words[1:]) or

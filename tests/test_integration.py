@@ -780,5 +780,40 @@ class SizeCli(unittest.TestCase):
         self.assertEqual(result.stderr,'')
 
 
+    def test_start_policy_needs_an_object_with_schema_version_1(self):
+        for body in ({'max_workers':3},[1,2],'"x"'):
+            path=self.root/'bad-policy.json'
+            path.write_text(body if isinstance(body,str) else json.dumps(body))
+            self.assertIn('schema_version 1',json.loads(self.raw('start','--size','tiny','--policy',str(path),expected=2))['error'])
+            self.assertFalse((self.state/'policy.json').exists())
+            self.assertFalse((self.state/'state.json').exists())
+        self.assertTrue(self.raw('start','--size','tiny')['lease'])
+
+    def test_malformed_review_and_task_json_exit_2_with_a_json_error(self):
+        lease=self.raw('start','--size','tiny')['lease']
+        for body in ('[]','"x"','3'):
+            path=self.root/'body.json'
+            path.write_text(body)
+            self.assertIn('JSON object',json.loads(self.raw('--lease',lease,'review',str(path),expected=2))['error'])
+            self.assertIn('JSON object',json.loads(self.raw('--lease',lease,'add',str(path),expected=2))['error'])
+
+    def test_new_run_over_a_null_session_archives_and_starts(self):
+        lease=self.raw('start','--size','tiny')['lease']
+        self.raw('--lease',lease,'interrupt')
+        data=json.loads((self.state/'state.json').read_text())
+        data['session']=None
+        (self.state/'state.json').write_text(json.dumps(data))
+        self.assertTrue(self.raw('start','--new-run','--size','tiny')['lease'])
+        self.assertEqual(len(list((self.state/'history').iterdir())),1)
+
+    def test_new_run_with_blank_actor_or_harness_session_leaves_the_ended_run_in_place(self):
+        lease=self.raw('start','--size','tiny')['lease']
+        self.raw('--lease',lease,'interrupt')
+        self.assertIn('Missing coordinator',self.raw('--actor',' ','start','--new-run','--size','tiny',expected=2))
+        self.assertIn('harness session',self.raw('start','--new-run','--size','tiny','--harness-session',' ',expected=2))
+        self.assertFalse((self.state/'history').exists())
+        self.assertFalse(self.raw('status')['session']['active'])
+
+
 if __name__=='__main__':
     unittest.main()

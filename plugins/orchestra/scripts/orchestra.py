@@ -122,7 +122,9 @@ def archive_inactive(state,engine):
         if not source.exists():
             return
         old = read_json(source)
-        if old.get('session',{}).get('active'):
+        if not isinstance(old,dict):
+            raise EngineError('Malformed run state: not a JSON object')
+        if (old.get('session') or {}).get('active'):
             if old.get('repo') != str(engine.repo) or not engine.binds(old):
                 raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives
             raise EngineError('Stop or finish the active run before starting another')
@@ -138,7 +140,12 @@ def execute(args):
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
     if args.command=='where':
         return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file()},0
-    policy = read_json(args.policy) if args.command=='start' and args.policy else load_policy(state)
+    if args.command=='start' and args.policy:
+        policy = read_json(args.policy)
+        if not isinstance(policy,dict) or policy.get('schema_version') != 1:  # the rule load_policy applies later
+            raise EngineError('Invalid project policy: --policy needs a JSON object with schema_version 1')
+    else:
+        policy = load_policy(state)
     engine = Engine(state,repo,policy)
     if args.command=='start':
         if args.items is not None:
@@ -146,6 +153,7 @@ def execute(args):
         asks = parse_asks(args.asks)
         if args.new_run:  # refuse before archiving, so the ended run stays in place
             engine._check_start(args.size,asks,args.owner_request)
+            engine._check_identity(args.actor,args.harness_session)
             archive_inactive(state,engine)
         lease = engine.open_session(args.actor,args.harness_session,
                                     size=args.size,asks=asks,owner_request=args.owner_request,require_size=True)
@@ -206,6 +214,8 @@ def execute(args):
         return {'accepted':args.task_id},0
     if args.command=='review':
         review = read_json(args.report)
+        if not isinstance(review,dict):
+            raise EngineError('Review report must be a JSON object')
         result = engine.record_review(args.actor,args.lease,review['reviewer'],args.report,
                                      review['categories'],review['tasks'],review['final'],review['findings'])
         return result,0
@@ -287,7 +297,7 @@ def main(argv=None):
     args=parser().parse_args(argv)
     try:
         result,code=execute(args)
-    except (EngineError,ValueError,OSError,KeyError,subprocess.SubprocessError) as exc:
+    except (EngineError,ValueError,OSError,KeyError,TypeError,AttributeError,subprocess.SubprocessError) as exc:
         print(json.dumps({'error':str(exc)}),file=sys.stderr)
         return 2
     if result is not None:
