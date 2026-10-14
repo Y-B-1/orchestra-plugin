@@ -573,6 +573,8 @@ def _git(words):
         return _deny('Git stash shares state across worktrees', 'stash')
     if verb == 'config' and _config_write_guarded(options):
         return _deny(_CONFIG_REASON)
+    if verb == 'remote' and args and args[0] in _GIT['remote_write_verbs']:
+        return _deny('Remotes are set by the owner, not during a run')
     if verb == 'update-ref' and _raw_ref_delete(args):
         return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):

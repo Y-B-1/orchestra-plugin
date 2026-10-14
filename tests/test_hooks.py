@@ -461,12 +461,15 @@ class HooksTest(unittest.TestCase):
                   'git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/',
                   'git -c url.https://evil.invalid/.insteadOf=https://good.invalid/ fetch',
                   'git config include.path /tmp/run.cfg', 'git -c include.path=/tmp/run.cfg ship',
-                  'git config includeIf.gitdir:/x/.path /tmp/run.cfg', 'git config --rename-section scratch alias',
+                  'git config includeIf.gitdir:/x/.path /tmp/run.cfg', 'git config remote.origin.url /other/repo',
+                  'git remote set-url origin /other/repo', 'git remote add evil /other/repo', 'git remote rename origin up',
+                  'git remote remove origin', 'git -c remote.origin.url=/other/repo push origin x', 'git config --rename-section scratch alias',
                   'git config --rename-section scratch remote.origin', 'git config rename-section scratch alias']
         allowed = ['git config --rename-section scratch other', 'git --config-env=core.pager=PAGER log',
                    'git config --get alias.ship', 'git config --list', 'git config --unset alias.ship',
                    'git config --get-regexp ^remote', 'git config user.name Me', 'git config core.editor vim',
-                   'git config remote.origin.url https://example.invalid/r.git', 'git -c core.pager=cat log']
+                   'git remote -v', 'git remote get-url origin', 'git remote set-head origin --auto', 'git config --get remote.origin.url',
+                   'git -c core.pager=cat log']
         for command in denied:
             with self.subTest(command=command):
                 result = self.pre('Bash', {'command': command})

@@ -95,7 +95,7 @@ export function loadRules(json: string): void {
   for (const key of Object.keys(need(runners.attached_value_flags, 'runners.attached'))) attached.set(key, new Set(strings(runners.attached_value_flags[key], 'attached')));
   const gitSets: Record<string, Set<string>> = {};
   for (const key of Object.keys(git)) gitSets[key] = new Set(strings(git[key], 'git.' + key));
-  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags', 'config_guarded', 'config_read_flags']) need(gitSets[key], 'git.' + key);
+  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags', 'config_guarded', 'config_read_flags', 'remote_write_verbs']) need(gitSets[key], 'git.' + key);
   // SPEC 5.15: per verb, the guarded long options, most restrictive first. An exemption (clean --dry-run, restore --staged) is absent: it counts only in full.
   const longGuarded: Record<string, string[]> = {
     add: git.wholesale_add_flags!,
@@ -733,6 +733,7 @@ function git(words: string[]): Decision {
     return denyOf('Git stash shares state across worktrees', 'stash');
   }
   if (verb === 'config' && configWriteGuarded(options)) return denyOf(CONFIG_REASON);
+  if (verb === 'remote' && args.length && GIT.remote_write_verbs!.has(args[0]!)) return denyOf('Remotes are set by the owner, not during a run');
   if (verb === 'update-ref' && rawRefDelete(args)) return denyOf('Raw ref deletion is not allowed; use git branch -d');
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
   if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');

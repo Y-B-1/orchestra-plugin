@@ -10843,7 +10843,7 @@
    "input": {
     "command": "git config remote.origin.url https://example.invalid/r.git"
    },
-   "class": "allow"
+   "class": "deny"
   },
   {
    "id": "guard-158",
@@ -10933,6 +10933,76 @@
    "id": "guard-170",
    "input": {
     "command": "git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-171",
+   "input": {
+    "command": "git -c remote.origin.url=/other/repo push origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-172",
+   "input": {
+    "command": "git config --get remote.origin.url"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-173",
+   "input": {
+    "command": "git config remote.origin.url /other/repo"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-174",
+   "input": {
+    "command": "git remote -v"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-175",
+   "input": {
+    "command": "git remote add evil /other/repo"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-176",
+   "input": {
+    "command": "git remote get-url origin"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-177",
+   "input": {
+    "command": "git remote remove origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-178",
+   "input": {
+    "command": "git remote rename origin up"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-179",
+   "input": {
+    "command": "git remote set-head origin --auto"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-180",
+   "input": {
+    "command": "git remote set-url origin /other/repo"
    },
    "class": "deny"
   }
