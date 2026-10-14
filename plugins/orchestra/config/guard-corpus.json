@@ -10570,7 +10570,7 @@
    "input": {
     "command": "git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x"
    },
-   "class": "release"
+   "class": "deny"
   },
   {
    "id": "guard-119",
@@ -10732,6 +10732,125 @@
     "command": "gh api graphql -f query='mutation{addComment}'"
    },
    "class": "release"
+  },
+  {
+   "id": "guard-142",
+   "input": {
+    "command": "git -C wt config alias.p push"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-143",
+   "input": {
+    "command": "git -c ALIAS.p=push p"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-144",
+   "input": {
+    "command": "git -c alias.ship='push origin HEAD:main' ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-145",
+   "input": {
+    "command": "git -c core.pager=cat log"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-146",
+   "input": {
+    "command": "git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-147",
+   "input": {
+    "command": "git config --add alias.q status"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-148",
+   "input": {
+    "command": "git config --get alias.ship"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-149",
+   "input": {
+    "command": "git config --get-regexp ^remote"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-150",
+   "input": {
+    "command": "git config --global alias.p push"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-151",
+   "input": {
+    "command": "git config --list"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-152",
+   "input": {
+    "command": "git config --unset alias.ship"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-153",
+   "input": {
+    "command": "git config alias.ship 'push origin HEAD:main'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-154",
+   "input": {
+    "command": "git config core.editor vim"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-155",
+   "input": {
+    "command": "git config remote.origin.push refs/heads/x:refs/heads/main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-156",
+   "input": {
+    "command": "git config remote.origin.pushurl git@evil:x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-157",
+   "input": {
+    "command": "git config remote.origin.url https://example.invalid/r.git"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-158",
+   "input": {
+    "command": "git config user.name Me"
+   },
+   "class": "allow"
   }
  ]
 }

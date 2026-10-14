@@ -95,7 +95,7 @@ export function loadRules(json: string): void {
   for (const key of Object.keys(need(runners.attached_value_flags, 'runners.attached'))) attached.set(key, new Set(strings(runners.attached_value_flags[key], 'attached')));
   const gitSets: Record<string, Set<string>> = {};
   for (const key of Object.keys(git)) gitSets[key] = new Set(strings(git[key], 'git.' + key));
-  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags']) need(gitSets[key], 'git.' + key);
+  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags', 'config_guarded', 'config_read_flags']) need(gitSets[key], 'git.' + key);
   // SPEC 5.15: per verb, the guarded long options, most restrictive first. An exemption (clean --dry-run, restore --staged) is absent: it counts only in full.
   const longGuarded: Record<string, string[]> = {
     add: git.wholesale_add_flags!,
@@ -686,6 +686,22 @@ function rawRefDelete(args: string[]): boolean {
   return false;
 }
 
+const CONFIG_REASON = 'Git aliases and push mappings are set by the owner, not during a run';
+
+function configGuarded(key: string): boolean {
+  const lower = key.toLowerCase();
+  return [...GIT.config_guarded!].some((pattern) => new RegExp(pattern).test(lower));
+}
+
+/** A `git config` call that sets a guarded key: a guarded word followed by a value, or --add/--replace-all/--edit.
+ * A read (--get, --list, ...) or an unset is allowed. Doubt about a guarded key reads as a write. */
+function configWriteGuarded(options: string[]): boolean {
+  if (options.some((x) => GIT.config_read_flags!.has(x))) return false;
+  const words = options.filter((x) => !x.startsWith('-'));
+  const hit = words.findIndex((x) => configGuarded(x));
+  return hit >= 0 && (hit + 1 < words.length || options.some((x) => ['--add', '--replace-all', '-e', '--edit'].includes(x)));
+}
+
 function git(words: string[]): Decision {
   let args = words.slice(1);
   let changedRepo = false;
@@ -694,6 +710,7 @@ function git(words: string[]): Decision {
     const opt = args.shift()!;
     if (GIT.global_value_options!.has(opt)) {
       if (!args.length) return denyOf('Malformed Git global option', 'malformed');
+      if (opt === '-c' && configGuarded(args[0]!.split('=')[0]!)) return denyOf(CONFIG_REASON);
       args.shift();
     }
     if (opt.startsWith('-C') || opt.startsWith('--git-dir') || opt.startsWith('--work-tree')) changedRepo = true;
@@ -709,6 +726,7 @@ function git(words: string[]): Decision {
   if (verb === 'stash') {
     return denyOf('Git stash shares state across worktrees', 'stash');
   }
+  if (verb === 'config' && configWriteGuarded(options)) return denyOf(CONFIG_REASON);
   if (verb === 'update-ref' && rawRefDelete(args)) return denyOf('Raw ref deletion is not allowed; use git branch -d');
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
   if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');

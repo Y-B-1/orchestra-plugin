@@ -525,6 +525,23 @@ def _raw_ref_delete(args):
     return False
 
 
+_CONFIG_REASON = 'Git aliases and push mappings are set by the owner, not during a run'
+
+
+def _config_guarded(key):
+    return any(re.search(pattern, key.lower()) for pattern in _GIT['config_guarded'])
+
+
+def _config_write_guarded(options):
+    """A `git config` call that sets a guarded key: a guarded word followed by a value, or --add/--replace-all/--edit.
+    A read (--get, --list, ...) or an unset is allowed. Doubt about a guarded key reads as a write."""
+    if any(x in _GIT['config_read_flags'] for x in options):
+        return False
+    words = [x for x in options if not x.startswith('-')]
+    hit = next((i for i, x in enumerate(words) if _config_guarded(x)), None)
+    return hit is not None and (hit + 1 < len(words) or any(x in ('--add', '--replace-all', '-e', '--edit') for x in options))
+
+
 def _git(words):
     args = words[1:]
     changed_repo = False
@@ -534,6 +551,8 @@ def _git(words):
         if opt in _GIT['global_value_options']:
             if not args:
                 return _deny('Malformed Git global option', 'malformed')
+            if opt == '-c' and _config_guarded(args[0].split('=', 1)[0]):
+                return _deny(_CONFIG_REASON)
             args.pop(0)
         if opt.startswith('-C') or opt.startswith(('--git-dir', '--work-tree')):
             changed_repo = True
@@ -547,6 +566,8 @@ def _git(words):
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
         return _deny('Git stash shares state across worktrees', 'stash')
+    if verb == 'config' and _config_write_guarded(options):
+        return _deny(_CONFIG_REASON)
     if verb == 'update-ref' and _raw_ref_delete(args):
         return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):

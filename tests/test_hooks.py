@@ -451,6 +451,24 @@ class HooksTest(unittest.TestCase):
             self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'ask')
         self.assertEqual(self.pre('Bash', {'command': 'git status'}, armed=True).output, {})
 
+    def test_git_aliases_and_push_mappings_cannot_be_set(self):
+        denied = ["git -c alias.ship='push origin HEAD:main' ship", "git config alias.ship 'push origin HEAD:main'",
+                  'git config --global alias.p push', 'git config --add alias.q status',
+                  'git config remote.origin.push refs/heads/x:refs/heads/main', 'git config remote.origin.pushurl git@evil:x',
+                  'git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x', 'git -c ALIAS.p=push p',
+                  'git -C wt config alias.p push']
+        allowed = ['git config --get alias.ship', 'git config --list', 'git config --unset alias.ship',
+                   'git config --get-regexp ^remote', 'git config user.name Me', 'git config core.editor vim',
+                   'git config remote.origin.url https://example.invalid/r.git', 'git -c core.pager=cat log']
+        for command in denied:
+            with self.subTest(command=command):
+                result = self.pre('Bash', {'command': command})
+                self.assertEqual(decision_of(result), 'deny')
+                self.assertIn('set by the owner', result.output['hookSpecificOutput']['permissionDecisionReason'])
+        for command in allowed:
+            with self.subTest(command=command):
+                self.assertEqual(self.pre('Bash', {'command': command}).output, {})
+
     def test_update_ref_delete_denied(self):
         for command in UPDATE_REF_DENIED:
             with self.subTest(command=command):
@@ -1091,6 +1109,24 @@ class MarkerHandshakeTest(unittest.TestCase):
         code, output = run_main(payload, '--harness', 'claude', env=self.env)
         self.assertEqual(code, 2)
         self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_session_start_prunes_the_markers_of_ended_sessions(self):
+        day = 24 * 3600
+        self.marker('old-a')
+        self.marker('old-b')
+        self.marker('recent')
+        self.marker('current')
+        for name in ('old-a', 'old-b', 'current'):
+            os.utime(self.mods / (name + '.json'), (time.time() - 3 * day,) * 2)
+        (self.mods / 'notes.txt').write_text('keep')
+        (self.mods / 'bad name.json').write_text('{}')
+        os.utime(self.mods / 'bad name.json', (time.time() - 3 * day,) * 2)
+        payload = {'cwd': str(self.cwd), 'session_id': 'current', 'source': 'startup'}
+        with mock.patch.dict(os.environ, self.env), mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO):
+            self.assertEqual(main(['SessionStart', '--harness', 'claude']), 0)
+        left = sorted(p.name for p in self.mods.iterdir())
+        self.assertEqual(left, ['bad name.json', 'current.json', 'notes.txt', 'recent.json'])  # only ended sessions go
 
     def test_stale_marker_guards(self):
         self.marker(age_ms=20000)

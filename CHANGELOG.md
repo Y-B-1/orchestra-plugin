@@ -7,6 +7,11 @@ Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 - **Autonomy, default branch:** `autonomy arm` now asks every remote for its current default branch, even when one is already recorded, and stores the answers in the run state (`remote_defaults`). The pull request push guard checks against those answers instead of the local `refs/remotes/<remote>/HEAD`, which could be stale after the remote changed its default. A remote that does not answer gets no pull request push until autonomy is armed again.
 - **Autonomy, arming:** the remotes are asked before the armed state is written, so an `arm` interrupted during that step leaves autonomy off.
 - **`pr URL`:** requires an http(s) URL with a host; `https:///pull/1` and similar are refused.
+- **Releases:** `.github/workflows/release.yml` publishes a GitHub release for the plugin version, with the archives and their checksums. Push the tag `v<version>`, or run the workflow by hand from main, which creates the tag itself. It refuses a commit that is not on main, a tag that does not match `plugin.json` and a missing `docs/release-notes/v<version>.md`.
+- **Gates:** processes a gate leaves running in the background are stopped when it exits, so they cannot change the tree after the receipt is read.
+- **Guards:** `git -c alias.*=…`, `git config alias.*` and the `remote.<name>.push` and `pushurl` settings cannot be set from a run; reading them, listing config and unsetting them still work.
+- **Mod markers:** a session start deletes the heartbeat markers of sessions that ended more than a day ago.
+- **Permits:** documented that a release permit stays valid until the artifact changes or the session ends.
 - **CI:** `.github/workflows/ci.yml` runs the generator check and the test suite on Python 3.11 and 3.13, and the strict plugin and marketplace validation plus the mod tests, on every pull request and on main. It lives in the repository, not in the installed plugin, and the release archive leaves it out.
 
 ## 2.6.2 — 2026-10-14

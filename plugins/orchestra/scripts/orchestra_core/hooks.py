@@ -63,6 +63,23 @@ def _deny(reason, malformed=False):
                         'permissionDecisionReason': reason}}, 2 if malformed else 0)
 
 
+MARKER_KEEP_SECONDS = 24 * 3600  # a live session rewrites its marker every few seconds; older ones belong to ended sessions
+
+
+def _prune_markers(current=None, now=None):
+    """Delete the mod heartbeat markers of ended sessions (untouched for a day), so they do not pile up. Only
+    `<session id>.json` files are touched, never the current session's; any error is ignored."""
+    try:
+        directory = _marker_dir()
+        now = time.time() if now is None else now
+        for path in directory.glob('*.json'):
+            if (path.stem != current and re.fullmatch(_MARKER['session_id_pattern'], path.stem)
+                    and path.is_file() and not path.is_symlink() and now - path.stat().st_mtime > MARKER_KEEP_SECONDS):
+                path.unlink()
+    except OSError:
+        pass
+
+
 def _marker_dir():
     from .paths import state_home
     return (state_home() / 'orchestra' / 'mods').resolve()
@@ -762,6 +779,8 @@ def main(argv=None):
                     engine = None  # An inactive session is an unarmed run.
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
+    if args.event == 'SessionStart' and isinstance(payload, dict):
+        _prune_markers(payload.get('session_id'))
     if (args.event in {'SessionStart', 'SessionEnd'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str)
             and (args.event == 'SessionStart' or args.event == 'SessionEnd')):
         try:

@@ -1686,6 +1686,14 @@ class Engine:
                         os.killpg(process.pid, signal.SIGKILL)
                         process.wait()
                         raise
+                    try:  # anything the gate left running in its own process group could still change the tree
+                        os.killpg(process.pid, 0)
+                    except OSError:
+                        pass
+                    else:
+                        with contextlib.suppress(OSError):
+                            os.killpg(process.pid, signal.SIGKILL)
+                        out.write(b'\nGate left background processes running; stopped them\n')
             except subprocess.TimeoutExpired:
                 out.write(b'Gate timed out\n')
                 code = 124
