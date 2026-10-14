@@ -236,3 +236,20 @@ Five read-only auditors (autonomy harness, guards, engine, instructions, packagi
 | Docs | parallel.md contradicted the quiet wait; PR timing and commit order unstated; fix re-review briefs read as blocked; standards reviewer misnamed; stale relaunch and push text | Rewritten (see CHANGELOG 2.6.0) |
 
 Checks: `python3 -m unittest discover -s tests` 674 OK; Python 3.11 hook, build, corpus, engine, integration, skills and packaging suites OK; `claude plugin test` 90 pass; `generate.py --check`; `claude plugin validate --strict` for the plugin and the marketplace. Left as documented limits: Git aliases, a `git -C` push from outside the run repository, and environment variables exported earlier in the session. Not yet checked live: the ask prompt, the quiet wait and wake, and the PR push in a real Claude Code session.
+
+### 2.6.0 live validation (2026-10-14)
+
+Nested Claude Code 2.1.299 sessions (Haiku 5.5) in a scratch repository with a local bare `origin` and `refs/remotes/origin/HEAD` set, state under a scratch `XDG_STATE_HOME`; interactive sessions driven through tmux.
+
+| Check | How | Result |
+| --- | --- | --- |
+| Install, use, uninstall | Isolated `CLAUDE_CONFIG_DIR`: `marketplace add` of the checkout, `install`, a `-p` session, `uninstall`, `marketplace remove`, another session | 2.6.0 installed and enabled; its hooks denied `git stash list`; after uninstall the plugin is gone and the same command runs |
+| SessionStart | `-p` session with `--plugin-dir` | One context, harness session id line present |
+| No-run guard | `git stash list` | Denied by the hook; Stop returned `{}` (unarmed) |
+| Interactive ask | TUI, run active, `git push origin main` | Approval prompt with the hook reason; No interrupts, Yes runs it |
+| Ask through the mod | Same, `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` | Mods marker written; the mod passed the ask on and the native hook prompted; mod deny of `git stash list` |
+| Autonomy guards | `-p`, armed, six commands | `git push -u origin feat/x` allowed and on the remote; `git push origin main`, `git branch -D feat/x` (unmerged), `gh pr merge`, `rm -f` denied; `git branch -d merged/y` allowed |
+| Stop loop | Same session | One `Autonomy pass 1` continuation, then `{}`; `stalled` stop with brief, passes 1, stalls 1 |
+| Quiet wait and wake | TUI, armed, a running card, one background `orchestra:investigator-code` agent | Two Stop hooks, both `{}`; no continuation or repeated prompt; the agent's completion woke the session; status band showed the armed run |
+
+Fixes from these runs (commit 9eea2b2): deny reasons now start with "Orchestra guard:" because the model read a guard deny as a tool failure; the ask names the missing permit plainly; an autonomy merge or release deny says it waits for the owner; a stopped run's brief lists the cards it left unfinished. Not performed live: a run reaching `complete` or `deadline`, SessionEnd after `/exit`, `clear` and `resume` rebinding.
