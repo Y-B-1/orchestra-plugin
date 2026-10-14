@@ -13,7 +13,7 @@ SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scrip
 sys.path.insert(0, str(SCRIPTS))
 from pathlib import Path
 
-from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions
+from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions, ensure_remote_heads
 
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
 STATE_2_4 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.4.json'
@@ -1410,6 +1410,38 @@ class AutonomyArmTests(AutonomyFixture):
                     self.engine.arm_autonomy()
         self.ledger(extra='- Never touch the billing module.')
         self.assertTrue(self.engine.arm_autonomy()['active'])
+
+    def remote(self, name='origin', head=True):
+        """A bare remote holding main, fetched, with its HEAD recorded locally or not."""
+        bare = self.root / (name + '.git')
+        self.git('init', '-q', '--bare', '-b', 'main', str(bare))
+        self.git('remote', 'add', name, str(bare))
+        self.git('push', '-q', name, 'HEAD:refs/heads/main')
+        self.git('fetch', '-q', name)
+        if not head:
+            subprocess.run(['git', '-C', str(self.repo), 'symbolic-ref', '-d', 'refs/remotes/%s/HEAD' % name],
+                           capture_output=True)
+
+    def test_arm_records_a_missing_remote_default_branch(self):
+        self.remote(head=False)
+        self.ledger()
+        heads = self.engine.arm_autonomy()['preconditions']['remote_heads']
+        self.assertEqual(heads, 'origin: default branch main (recorded now)')
+        self.assertEqual(self.git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main')
+        self.assertEqual(ensure_remote_heads(self.repo), 'origin: default branch main')  # already recorded: no change
+
+    def test_arm_reports_an_unreachable_remote_and_still_arms(self):
+        self.git('remote', 'add', 'gone', str(self.root / 'missing.git'))
+        self.ledger()
+        receipt = self.engine.arm_autonomy()
+        self.assertTrue(receipt['active'])
+        self.assertIn('gone: default branch unknown', receipt['preconditions']['remote_heads'])
+        self.assertIn('`git remote set-head gone --auto`', receipt['preconditions']['remote_heads'])
+
+    def test_arm_without_a_remote_says_pull_requests_are_refused(self):
+        self.ledger()
+        self.assertEqual(self.engine.arm_autonomy()['preconditions']['remote_heads'],
+                         'no remote configured: pull request pushes are refused')
 
     def test_arm_snapshots_stores_fields_and_prints_preconditions(self):
         receipt = self.arm(passes='5', stalls='1')

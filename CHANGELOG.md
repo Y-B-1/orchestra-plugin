@@ -2,6 +2,10 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.6.1 — 2026-10-14
+
+- **Autonomy:** `autonomy arm` records each remote's default branch where it is missing (`git remote set-head <remote> --auto`, outside the state lock, 20 s per remote) and reports it as `remote_heads` in the preconditions. A remote it cannot reach is reported and arming still succeeds; pull request pushes to that remote stay refused until its default branch is known. No manual `set-head` step before arming.
+
 ## 2.6.0 — 2026-10-14
 
 - **Autonomy loop:** the Stop hook continues a turn only when the coordinator can act now (a ready or reported card, an open final finding, a held chain owed its final review). Running workers alone let the turn end; the harness wakes the session when one finishes. Once every card is accepted it continues into the final review, gates and pull request. A continuation is never sent twice for an unchanged progress signature: that turn ends as a stall, and a stall with no worker running stops the run with the new reason `stalled` (nothing would wake it). Before, every Stop while workers ran re-sent the same prompt.

@@ -332,7 +332,7 @@ def _pull_request_push(command, cwd, engine):
         return 'The destination must be one branch name.'
     code, head = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'refs/remotes/%s/HEAD' % remote)
     if code != 0 or not head.startswith(remote + '/'):
-        return ('The default branch of %s is unknown; the owner runs `git remote set-head %s --auto` before arming.'
+        return ('The default branch of %s is unknown; `autonomy arm` records it, or run `git remote set-head %s --auto`.'
                 % (remote, remote))
     if target.casefold() in {head[len(remote) + 1:].casefold(), 'main', 'master'}:
         return 'Never push the default branch; push a feature branch and open a pull request.'
