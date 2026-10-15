@@ -343,7 +343,7 @@ function heredocAt(text: string, i: number): RegExpExecArray | null {
   HEREDOC_RE.lastIndex = i;
   return HEREDOC_RE.exec(text);
 }
-const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=[^\n]*$/;
+const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=[^\n]*$/;
 
 type Doc = [string, boolean];
 
@@ -542,7 +542,9 @@ const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'wh
  * in front of a git command comes back as a `-c` that the git rules refuse, since the assignment itself is dropped. */
 function unwrap(wordsIn: string[]): string[] {
   const patterns = [...GIT.env_guarded!].map((p) => new RegExp(p));
-  const tainted = wordsIn.some((word) => patterns.some((re) => re.test(word)));
+  const gitAt = wordsIn.findIndex((word) => posixName(word) === 'git');
+  const before = gitAt < 0 ? wordsIn : wordsIn.slice(0, gitAt); // The words ahead of the first `git`: assignments, `env` and its options.
+  const tainted = before.some((word) => ASSIGNMENT_RE.test(word) && patterns.some((re) => re.test(word)));
   const rest = unwrapWords(wordsIn);
   if (tainted && rest.length && posixName(rest[0]!) === 'git') return [rest[0]!, '-c', 'alias.env=guarded', ...rest.slice(1)];
   return rest;

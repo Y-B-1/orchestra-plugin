@@ -11213,5 +11213,33 @@ export const CORPUS: CorpusCase[] = [
    "command": "env GIT_CONFIG_COUNT=1 git push origin feat/x"
   },
   "class": "deny"
+ },
+ {
+  "id": "guard-210",
+  "input": {
+   "command": "GIT_CONFIG_COUNT+=1 GIT_CONFIG_KEY_0+=alias.ship GIT_CONFIG_VALUE_0+='!git push origin HEAD:main' git ship"
+  },
+  "class": "deny"
+ },
+ {
+  "id": "guard-211",
+  "input": {
+   "command": "git add GIT_CONFIG.md"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-212",
+  "input": {
+   "command": "git commit -m GIT_SSH_notes"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "guard-213",
+  "input": {
+   "command": "git show GIT_CONFIG_NOTES"
+  },
+  "class": "allow"
  }
 ];

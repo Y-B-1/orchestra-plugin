@@ -326,7 +326,7 @@ def _strip_heredocs(command):
     return ''.join(out), docs
 
 
-_ASSIGNMENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*=.*')
+_ASSIGNMENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\+?=.*')
 
 
 def _eat_options(wrapper, words):
@@ -374,7 +374,12 @@ _RESERVED = frozenset(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'while
 def _unwrap(words):
     """Strip wrappers and assignments. An environment assignment that reroutes Git (GIT_CONFIG_*, GIT_SSH_COMMAND, ...)
     in front of a git command comes back as a `-c` that the git rules refuse, since the assignment itself is dropped."""
-    tainted = any(re.search(pattern, word) for word in words for pattern in _GIT['env_guarded'])
+    before = []  # The words ahead of the first `git`: assignments, `env` and its options.
+    for word in words:
+        if PurePosixPath(word).name == 'git':
+            break
+        before.append(word)
+    tainted = any(_ASSIGNMENT.fullmatch(word) and re.search(pattern, word) for word in before for pattern in _GIT['env_guarded'])
     rest = _unwrap_words(words)
     if tainted and rest and PurePosixPath(rest[0]).name == 'git':
         return [rest[0], '-c', 'alias.env=guarded'] + rest[1:]
