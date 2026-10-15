@@ -95,7 +95,7 @@ export function loadRules(json: string): void {
   for (const key of Object.keys(need(runners.attached_value_flags, 'runners.attached'))) attached.set(key, new Set(strings(runners.attached_value_flags[key], 'attached')));
   const gitSets: Record<string, Set<string>> = {};
   for (const key of Object.keys(git)) gitSets[key] = new Set(strings(git[key], 'git.' + key));
-  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags', 'config_guarded', 'config_read_flags', 'remote_write_verbs']) need(gitSets[key], 'git.' + key);
+  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags', 'config_guarded', 'config_read_flags', 'remote_write_verbs', 'env_guarded']) need(gitSets[key], 'git.' + key);
   // SPEC 5.15: per verb, the guarded long options, most restrictive first. An exemption (clean --dry-run, restore --staged) is absent: it counts only in full.
   const longGuarded: Record<string, string[]> = {
     add: git.wholesale_add_flags!,
@@ -538,7 +538,17 @@ function eatOptions(wrapper: string, wordsIn: string[]): [string[], Found] {
 
 const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'esac']);
 
+/** Strip wrappers and assignments. An environment assignment that reroutes Git (GIT_CONFIG_*, GIT_SSH_COMMAND, ...)
+ * in front of a git command comes back as a `-c` that the git rules refuse, since the assignment itself is dropped. */
 function unwrap(wordsIn: string[]): string[] {
+  const patterns = [...GIT.env_guarded!].map((p) => new RegExp(p));
+  const tainted = wordsIn.some((word) => patterns.some((re) => re.test(word)));
+  const rest = unwrapWords(wordsIn);
+  if (tainted && rest.length && posixName(rest[0]!) === 'git') return [rest[0]!, '-c', 'alias.env=guarded', ...rest.slice(1)];
+  return rest;
+}
+
+function unwrapWords(wordsIn: string[]): string[] {
   let words = wordsIn;
   while (words.length) {
     const name = posixName(words[0]!);

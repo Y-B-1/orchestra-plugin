@@ -372,6 +372,16 @@ _RESERVED = frozenset(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'while
 
 
 def _unwrap(words):
+    """Strip wrappers and assignments. An environment assignment that reroutes Git (GIT_CONFIG_*, GIT_SSH_COMMAND, ...)
+    in front of a git command comes back as a `-c` that the git rules refuse, since the assignment itself is dropped."""
+    tainted = any(re.search(pattern, word) for word in words for pattern in _GIT['env_guarded'])
+    rest = _unwrap_words(words)
+    if tainted and rest and PurePosixPath(rest[0]).name == 'git':
+        return [rest[0], '-c', 'alias.env=guarded'] + rest[1:]
+    return rest
+
+
+def _unwrap_words(words):
     while words:
         name = PurePosixPath(words[0]).name
         redirect = _REDIRECT.fullmatch(words[0])

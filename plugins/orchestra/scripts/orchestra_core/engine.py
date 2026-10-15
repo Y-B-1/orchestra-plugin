@@ -1693,6 +1693,13 @@ class Engine:
                     else:
                         with contextlib.suppress(OSError):
                             os.killpg(process.pid, signal.SIGKILL)
+                        deadline = time.monotonic() + 5
+                        while time.monotonic() < deadline:  # SIGKILL is asynchronous: wait until the group is gone before `after`
+                            try:
+                                os.killpg(process.pid, 0)
+                            except OSError:
+                                break
+                            time.sleep(0.02)
                         out.write(b'\nGate left background processes running; stopped them\n')
             except subprocess.TimeoutExpired:
                 out.write(b'Gate timed out\n')
