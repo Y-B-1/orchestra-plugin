@@ -290,3 +290,17 @@ Claude Code 2.1.300 (Haiku 5.5), an isolated `CLAUDE_CONFIG_DIR`, a scratch repo
 Still not performed: a real GitHub pull request opened by an unattended run (earlier runs used a local bare remote), macOS, and a model-driven repair or hold (the repair walk above is scripted). A first launch that exited at the folder-trust dialog ended its bound run through SessionEnd, as designed.
 
 The evidence above ships as the docs-only release 2.6.4. Attempts to open a real GitHub pull request from an unattended run were not possible here: the sandbox's `gh` token is invalid.
+
+### 2.6.5 model-driven large route (2026-10-15)
+
+A headless `claude -p` coordinator (Sonnet 5.5, `--permission-mode acceptEdits` with an allow-list, no permission bypass) in a scratch repository with a local bare `origin`, using the plugin installed from the published repository (2.6.3). Task: fix `slugify` to match its docstring and extend its tests, large route with an owner request, no push.
+
+| Observed | Result |
+| --- | --- |
+| Route | `start --size large --owner-request`; planner card P1 and critic card C1 accepted before any builder started |
+| Build | Two builder cards on disjoint files ran as background agents together; B2's first report was re-sent after its self-review showed a criterion that cannot hold in a shared tree |
+| Review | The independent pre-PR reviewer ran in the background, extended its coverage to the read-only cards, and recorded a CLEAN receipt over all five cards |
+| Result | `slug.py` fixed, five tests added; the tests fail on the original `slug.py` |
+| Not exercised | Repair and hold: the review had no blocking finding, so those paths ran only in the scripted CLI walk above |
+| Finding | The reviewer's scratch probe left a `__pycache__` in a repository with no `.gitignore`; the artifact hashes every non-ignored untracked file, so the review card's report went stale and the coordinator stopped with R1 `reported`. As designed; a repository should ignore its bytecode caches |
+

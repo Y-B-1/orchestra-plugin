@@ -2,6 +2,10 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.6.5 — 2026-10-15
+
+- **Autonomy, pull request push:** `autonomy arm` records where each remote pushes to (`git remote get-url --push --all`, which applies `pushurl`, `insteadOf` and `pushInsteadOf`; a remote with more than one push URL gets no pull request push), and a pull request push is refused when that answer differs at push time. A changed remote URL or rewrite can no longer redirect an approved push, whichever setting or route caused it; this backs up the guarded-key list instead of relying on it. A state armed before this release has no record, so re-arm.
+
 ## 2.6.4 — 2026-10-15
 
 - **Docs only:** `docs/BUILD-LEDGER.md` and `docs/VALIDATION.md` record the live checks run against the published 2.6.3 release: install from GitHub, the `deadline` stop, `clear` and `resume` rebinding, and the large route with one repair ending in `hold`. No plugin code changed.
