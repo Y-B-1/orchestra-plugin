@@ -1754,7 +1754,7 @@ class AutonomyHookTest(unittest.TestCase):
         for name in ('feat/x', 'feat/rel'):
             git(self.repo, 'branch', name)
         engine = mock.Mock()
-        push_url = git(self.repo, 'remote', 'get-url', '--push', 'origin')
+        push_url = git(self.repo, 'remote', 'get-url', '--push', '--all', 'origin')
         engine.status.return_value = {'autonomy': {'pull_requests': True, 'remote_defaults': {'origin': 'main'},
                                                    'remote_push_urls': {'origin': push_url}}}
         engine.policy = {'release': {'enabled': True, 'remote': 'origin', 'target': 'feat/rel'}}
@@ -1782,6 +1782,19 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertIsNone(self.hook(self.repo, 'git push origin feat/x'))  # back where it was armed
         git(self.repo, 'config', 'url.%s.pushInsteadOf' % other, str(self.root / 'origin.git'))
         self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')  # a rewrite changes the effective URL
+
+    def test_autonomy_pull_request_push_refuses_a_remote_with_more_than_one_url(self):
+        self.origin()
+        git(self.repo, 'branch', 'feat/x')
+        git(self.repo, 'config', '--add', 'remote.origin.url', str(self.root / 'second.git'))
+        self.arm()  # armed with two URLs recorded: still no push
+        self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')
+        git(self.repo, 'config', '--unset-all', 'remote.origin.url')
+        git(self.repo, 'config', 'remote.origin.url', str(self.root / 'origin.git'))
+        self.arm()
+        self.assertIsNone(self.hook(self.repo, 'git push origin feat/x'))
+        git(self.repo, 'config', '--add', 'remote.origin.url', str(self.root / 'second.git'))  # added after arm
+        self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')
 
     def test_autonomy_pull_request_push_refuses_a_state_armed_without_the_push_url(self):
         self.origin()

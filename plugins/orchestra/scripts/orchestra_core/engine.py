@@ -275,11 +275,12 @@ def ensure_remote_heads(repo, timeout=20):
 
 
 def effective_push_url(repo, remote):
-    """Where `git push REMOTE` would go: `git remote get-url --push`, which applies pushurl, url.<base>.insteadOf and
-    pushInsteadOf. '' when Git cannot say. Recorded at arm and compared at every pull request push, so any later
-    change to the remote's URL or its rewrites refuses the push whatever setting caused it."""
+    """Where `git push REMOTE` would go: `git remote get-url --push --all`, which applies pushurl, url.<base>.insteadOf
+    and pushInsteadOf, one URL per line (a remote with several URLs pushes to every one). '' when Git cannot say.
+    Recorded at arm and compared at every pull request push, so any later change to the remote's URL or its rewrites
+    refuses the push whatever setting caused it, and a remote with more than one URL gets no pull request push."""
     try:
-        done = subprocess.run(['git', '-C', str(repo), 'remote', 'get-url', '--push', remote], capture_output=True,
+        done = subprocess.run(['git', '-C', str(repo), 'remote', 'get-url', '--push', '--all', remote], capture_output=True,
                               text=True, timeout=10, stdin=subprocess.DEVNULL)
         return done.stdout.strip() if done.returncode == 0 else ''
     except (OSError, subprocess.SubprocessError):
