@@ -95,7 +95,7 @@ export function loadRules(json: string): void {
   for (const key of Object.keys(need(runners.attached_value_flags, 'runners.attached'))) attached.set(key, new Set(strings(runners.attached_value_flags[key], 'attached')));
   const gitSets: Record<string, Set<string>> = {};
   for (const key of Object.keys(git)) gitSets[key] = new Set(strings(git[key], 'git.' + key));
-  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags']) need(gitSets[key], 'git.' + key);
+  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags', 'config_guarded', 'config_read_flags', 'remote_write_verbs', 'env_guarded']) need(gitSets[key], 'git.' + key);
   // SPEC 5.15: per verb, the guarded long options, most restrictive first. An exemption (clean --dry-run, restore --staged) is absent: it counts only in full.
   const longGuarded: Record<string, string[]> = {
     add: git.wholesale_add_flags!,
@@ -343,7 +343,7 @@ function heredocAt(text: string, i: number): RegExpExecArray | null {
   HEREDOC_RE.lastIndex = i;
   return HEREDOC_RE.exec(text);
 }
-const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*=[^\n]*$/;
+const ASSIGNMENT_RE = /^[A-Za-z_][A-Za-z0-9_]*\+?=[^\n]*$/;
 
 type Doc = [string, boolean];
 
@@ -538,7 +538,43 @@ function eatOptions(wrapper: string, wordsIn: string[]): [string[], Found] {
 
 const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'esac']);
 
+/** Strip wrappers and assignments. An environment assignment that reroutes Git (GIT_CONFIG_*, GIT_SSH_COMMAND, ...)
+ * in front of a git command comes back as a `-c` that the git rules refuse, since the assignment itself is dropped. */
+/** The words with every `env -S`/`--split-string` value split into words, so the assignments inside are visible. */
+function envSplitWords(words: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i]!;
+    let value: string | null = null;
+    if ((word === '-S' || word === '--split-string') && i + 1 < words.length) {
+      value = words[i + 1]!;
+      i += 1;
+    } else if (word.startsWith('--split-string=')) value = word.slice('--split-string='.length);
+    else if (word.startsWith('-S') && word.length > 2 && !word.startsWith('--')) value = word.slice(2);
+    if (value === null) out.push(word);
+    else {
+      try {
+        out.push(...shlexSplit(value, false));
+      } catch {
+        out.push(value);
+      }
+    }
+  }
+  return out;
+}
+
 function unwrap(wordsIn: string[]): string[] {
+  const patterns = [...GIT.env_guarded!].map((p) => new RegExp(p));
+  const expanded = envSplitWords(wordsIn);
+  const gitAt = expanded.findIndex((word) => posixName(word) === 'git');
+  const before = gitAt < 0 ? expanded : expanded.slice(0, gitAt); // The words ahead of the first `git`: assignments, `env` and its options.
+  const tainted = before.some((word) => ASSIGNMENT_RE.test(word) && patterns.some((re) => re.test(word)));
+  const rest = unwrapWords(wordsIn);
+  if (tainted && rest.length && posixName(rest[0]!) === 'git') return [rest[0]!, '-c', 'alias.env=guarded', ...rest.slice(1)];
+  return rest;
+}
+
+function unwrapWords(wordsIn: string[]): string[] {
   let words = wordsIn;
   while (words.length) {
     const name = posixName(words[0]!);
@@ -686,6 +722,32 @@ function rawRefDelete(args: string[]): boolean {
   return false;
 }
 
+const CONFIG_REASON = 'Git aliases and push mappings are set by the owner, not during a run';
+
+function configGuarded(key: string): boolean {
+  const lower = key.toLowerCase();
+  return [...GIT.config_guarded!].some((pattern) => new RegExp(pattern).test(lower));
+}
+
+const CONFIG_SCOPE_FLAGS = ['--global', '--local', '--system', '--worktree'];
+const CONFIG_WRITE_WORDS = ['edit', 'rename-section', 'remove-section'];
+
+/** A `git config` call that may set a guarded key. A read (--get, --list, get, list, ...) or an unset is allowed.
+ * Besides a scope flag, any option is an unknown form (--add, --edit, --rename-section or an abbreviation, a file,
+ * a value that starts with a dash) and reads as a write; so do the edit and rename subcommands. What remains is
+ * `[set] key value`, written when a guarded key is followed by a value. */
+function configWriteGuarded(options: string[]): boolean {
+  let words = options.filter((x) => !x.startsWith('-'));
+  if (options.some((x) => x === '--unset' || x === '--unset-all') || words[0] === 'unset') {
+    return words.some((x) => configGuarded(x)); // Removing a mapping can retarget Git as much as setting one.
+  }
+  if (options.some((x) => GIT.config_read_flags!.has(x)) || ['get', 'list'].includes(words[0] ?? '')) return false;
+  if (options.some((x) => x.startsWith('-') && !CONFIG_SCOPE_FLAGS.includes(x)) || CONFIG_WRITE_WORDS.includes(words[0] ?? '')) return true;
+  if (words[0] === 'set') words = words.slice(1);
+  const hit = words.findIndex((x) => configGuarded(x));
+  return hit >= 0 && hit + 1 < words.length;
+}
+
 function git(words: string[]): Decision {
   let args = words.slice(1);
   let changedRepo = false;
@@ -694,7 +756,10 @@ function git(words: string[]): Decision {
     const opt = args.shift()!;
     if (GIT.global_value_options!.has(opt)) {
       if (!args.length) return denyOf('Malformed Git global option', 'malformed');
+      if ((opt === '-c' || opt === '--config-env') && configGuarded(args[0]!.split('=')[0]!)) return denyOf(CONFIG_REASON);
       args.shift();
+    } else if (opt.startsWith('--config-env=') && configGuarded(opt.slice('--config-env='.length).split('=')[0]!)) {
+      return denyOf(CONFIG_REASON);
     }
     if (opt.startsWith('-C') || opt.startsWith('--git-dir') || opt.startsWith('--work-tree')) changedRepo = true;
   }
@@ -709,6 +774,8 @@ function git(words: string[]): Decision {
   if (verb === 'stash') {
     return denyOf('Git stash shares state across worktrees', 'stash');
   }
+  if (verb === 'config' && configWriteGuarded(args.filter((x) => x !== '--'))) return denyOf(CONFIG_REASON); // Operands after -- are still keys.
+  if (verb === 'remote' && GIT.remote_write_verbs!.has(args.find((x) => !x.startsWith('-')) ?? '')) return denyOf('Remotes are set by the owner, not during a run');
   if (verb === 'update-ref' && rawRefDelete(args)) return denyOf('Raw ref deletion is not allowed; use git branch -d');
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
   if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');

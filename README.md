@@ -130,7 +130,7 @@ The PreToolUse hook classifies shell, edit and agent calls, then applies the run
 | Reviewer and critic test runs | Not checked | Denied while a gate receipt is current: they cite it instead | Same |
 | Run state and installed config files | Protected | Protected | Protected |
 
-Guards are best effort, not a sandbox. Native hooks cover supported tool calls and recognizable commands. They do not stop encoded payloads, alias or variable indirection, interpreter one-liners, `gh api` calls other than recognizable merges, or MCP and terminal tools that push or merge; using those to get around the guard is forbidden by procedure, not enforced. Git aliases and `git -c alias.*` can run a push or merge under another name; the guard does not resolve aliases. The run is found from the session directory, so a `git -C <run repo> push` issued from outside that repository is not seen as part of the run. Agent types are routing hints, not authentication. Use host sandboxing, branch protection and tool policy for stronger isolation. Details: [hook policy](docs/hooks.md).
+Guards are best effort, not a sandbox. Native hooks cover supported tool calls and recognizable commands. They do not stop encoded payloads, alias or variable indirection, interpreter one-liners, `gh api` calls other than recognizable merges, or MCP and terminal tools that push or merge; using those to get around the guard is forbidden by procedure, not enforced. The guard refuses to set or unset the Git configuration that routes or rewrites a push (aliases, `remote.*`, `url.*`, `push.*`, includes, `submodule.*`, `http.*`, `credential*`, `core.sshCommand`, `core.gitProxy`, `core.hooksPath`), through `-c`, `--config-env` or `git config`, and refuses `git config` forms it does not recognize and `git remote add`, `set-url`, `rename` and `remove`. It does not resolve an alias that already exists, so one defined earlier can still run a push or merge under another name. The run is found from the session directory, so a `git -C <run repo> push` issued from outside that repository is not seen as part of the run. Agent types are routing hints, not authentication. Use host sandboxing, branch protection and tool policy for stronger isolation. Details: [hook policy](docs/hooks.md).
 
 ## Autonomous mode
 
@@ -217,9 +217,11 @@ To try a local checkout before it is published, use the same steps with `claude 
 
 ## Uninstall
 
-End any active run first (`orchestra.py finish` or `interrupt`), then run `claude plugin uninstall orchestra@orchestra-distribution` and `claude plugin marketplace remove orchestra-distribution`. To leave no trace, also remove `${XDG_STATE_HOME:-~/.local/state}/orchestra`, which holds run state and mod markers.
+End any active run first (`orchestra.py finish` or `interrupt`), then run `claude plugin uninstall orchestra@orchestra-distribution` and `claude plugin marketplace remove orchestra-distribution`. To leave no trace, also remove `${XDG_STATE_HOME:-~/.local/state}/orchestra`, which holds run state and mod markers. A session start deletes the markers of sessions that ended more than a day ago, so they do not pile up.
 
 ## Check and distribute
+
+To publish a release: raise the version in the manifests and `tests/test_packaging.py`, add `docs/release-notes/v<version>.md`, merge, then run the [Release workflow](.github/workflows/release.yml) from main (Actions, Release, Run workflow), or push the tag `v<version>`. Either way it checks that the commit is on main, that the tag matches `plugin.json` and that the notes exist, then builds the archives and publishes the release with their checksums. Run by hand, it creates the tag itself.
 
 Every pull request and every push to main runs [CI](.github/workflows/ci.yml): the generator check and the test suite on Python 3.11 and 3.13, then the strict plugin and marketplace validation and the mod tests. To run the same checks locally:
 

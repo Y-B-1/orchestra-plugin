@@ -451,6 +451,44 @@ class HooksTest(unittest.TestCase):
             self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'ask')
         self.assertEqual(self.pre('Bash', {'command': 'git status'}, armed=True).output, {})
 
+    def test_git_aliases_and_push_mappings_cannot_be_set(self):
+        denied = ["git -c alias.ship='push origin HEAD:main' ship", "git config alias.ship 'push origin HEAD:main'",
+                  'git config --global alias.p push', 'git config --add alias.q status',
+                  'git config remote.origin.push refs/heads/x:refs/heads/main', 'git config remote.origin.pushurl git@evil:x',
+                  'git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x', 'git -c ALIAS.p=push p',
+                  'git -C wt config alias.p push', 'git --config-env=alias.ship=ALIAS ship origin HEAD:main',
+                  'git --config-env alias.ship=ALIAS ship',
+                  'git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/',
+                  'git -c url.https://evil.invalid/.insteadOf=https://good.invalid/ fetch',
+                  'git config include.path /tmp/run.cfg', 'git -c include.path=/tmp/run.cfg ship',
+                  'git config includeIf.gitdir:/x/.path /tmp/run.cfg', 'git config remote.origin.url /other/repo',
+                  'git remote set-url origin /other/repo', 'git remote add evil /other/repo', 'git remote rename origin up',
+                  'git remote remove origin', 'git -c remote.origin.url=/other/repo push origin x', 'git config --rename-section scratch alias',
+                  'git config --rename-section scratch remote.origin', 'git config --edit', 'git config -e', 'git config edit', 'git config set alias.ship push', 'git config push.followTags true', 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=/other/repo git push origin feat/x',
+                  'GIT_SSH_COMMAND=/tmp/x git push origin feat/x',
+                  "env --split-string='GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ship GIT_CONFIG_VALUE_0=push git ship origin HEAD:main'",
+                  "env -S 'GIT_SSH_COMMAND=/tmp/x git push origin feat/x'",
+                  "GIT_CONFIG_COUNT+=1 GIT_CONFIG_KEY_0+=alias.ship GIT_CONFIG_VALUE_0+='!git push origin HEAD:main' git ship", 'env GIT_CONFIG_COUNT=1 git push origin feat/x', 'git config push.recurseSubmodules only', 'git config remote.origin.receivepack /tmp/redirect',
+                  'git config --unset url.https://long/.insteadOf', 'git config --unset-all alias.ship', 'git config unset remote.origin.url', 'git config push.pushOption merge_request.merge_when_pipeline_succeeds',
+                  'git config --rename-section scratch other', 'git config --add core.x y',
+                  '''git config alias.ship "-c alias.x='!git push origin HEAD:main' x"''', "git config -- alias.ship 'push origin HEAD:main'",
+                  'git remote -v set-url origin /other/repo', 'git remote --verbose add evil /other/repo', 'git config --global --edit',
+                  'git config --rename-sec scratch alias', 'git config --rename-section scratch include',
+                  'git config --rename-section scratch includeIf.gitdir:/x/', 'git config --rename-section scratch url.https://h/', 'git config rename-section scratch alias']
+        allowed = ['FOO=1 git status', 'git add GIT_CONFIG.md', 'git show GIT_CONFIG_NOTES', 'git commit -m GIT_SSH_notes', 'git config --global user.name Me', 'git config set core.editor vim', 'git config get alias.ship', 'git --config-env=core.pager=PAGER log',
+                   'git config --get alias.ship', 'git config --list', 'git config --unset core.editor',
+                   'git config --get-regexp ^remote', 'git config user.name Me', 'git config core.editor vim',
+                   'git remote -v', 'git remote get-url origin', 'git remote set-head origin --auto', 'git config --get remote.origin.url',
+                   'git -c core.pager=cat log']
+        for command in denied:
+            with self.subTest(command=command):
+                result = self.pre('Bash', {'command': command})
+                self.assertEqual(decision_of(result), 'deny')
+                self.assertIn('set by the owner', result.output['hookSpecificOutput']['permissionDecisionReason'])
+        for command in allowed:
+            with self.subTest(command=command):
+                self.assertEqual(self.pre('Bash', {'command': command}).output, {})
+
     def test_update_ref_delete_denied(self):
         for command in UPDATE_REF_DENIED:
             with self.subTest(command=command):
@@ -1091,6 +1129,24 @@ class MarkerHandshakeTest(unittest.TestCase):
         code, output = run_main(payload, '--harness', 'claude', env=self.env)
         self.assertEqual(code, 2)
         self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_session_start_prunes_the_markers_of_ended_sessions(self):
+        day = 24 * 3600
+        self.marker('old-a')
+        self.marker('old-b')
+        self.marker('recent')
+        self.marker('current')
+        for name in ('old-a', 'old-b', 'current'):
+            os.utime(self.mods / (name + '.json'), (time.time() - 3 * day,) * 2)
+        (self.mods / 'notes.txt').write_text('keep')
+        (self.mods / 'bad name.json').write_text('{}')
+        os.utime(self.mods / 'bad name.json', (time.time() - 3 * day,) * 2)
+        payload = {'cwd': str(self.cwd), 'session_id': 'current', 'source': 'startup'}
+        with mock.patch.dict(os.environ, self.env), mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO):
+            self.assertEqual(main(['SessionStart', '--harness', 'claude']), 0)
+        left = sorted(p.name for p in self.mods.iterdir())
+        self.assertEqual(left, ['bad name.json', 'current.json', 'notes.txt', 'recent.json'])  # only ended sessions go
 
     def test_stale_marker_guards(self):
         self.marker(age_ms=20000)

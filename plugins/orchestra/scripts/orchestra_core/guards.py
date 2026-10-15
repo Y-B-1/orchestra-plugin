@@ -326,7 +326,7 @@ def _strip_heredocs(command):
     return ''.join(out), docs
 
 
-_ASSIGNMENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*=.*')
+_ASSIGNMENT = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\+?=.*')
 
 
 def _eat_options(wrapper, words):
@@ -371,7 +371,45 @@ def _eat_options(wrapper, words):
 _RESERVED = frozenset(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'esac'])
 
 
+def _env_split_words(words):
+    """The words with every `env -S`/`--split-string` value split into words, so the assignments inside are visible."""
+    out, i = [], 0
+    while i < len(words):
+        word = words[i]
+        value = None
+        if word in ('-S', '--split-string') and i + 1 < len(words):
+            value, i = words[i + 1], i + 1
+        elif word.startswith('--split-string='):
+            value = word[len('--split-string='):]
+        elif word.startswith('-S') and len(word) > 2 and not word.startswith('--'):
+            value = word[2:]
+        if value is None:
+            out.append(word)
+        else:
+            try:
+                out.extend(_plain_split(value))
+            except ValueError:
+                out.append(value)
+        i += 1
+    return out
+
+
 def _unwrap(words):
+    """Strip wrappers and assignments. An environment assignment that reroutes Git (GIT_CONFIG_*, GIT_SSH_COMMAND, ...)
+    in front of a git command comes back as a `-c` that the git rules refuse, since the assignment itself is dropped."""
+    before = []  # The words ahead of the first `git`: assignments, `env` and its options.
+    for word in _env_split_words(words):
+        if PurePosixPath(word).name == 'git':
+            break
+        before.append(word)
+    tainted = any(_ASSIGNMENT.fullmatch(word) and re.search(pattern, word) for word in before for pattern in _GIT['env_guarded'])
+    rest = _unwrap_words(words)
+    if tainted and rest and PurePosixPath(rest[0]).name == 'git':
+        return [rest[0], '-c', 'alias.env=guarded'] + rest[1:]
+    return rest
+
+
+def _unwrap_words(words):
     while words:
         name = PurePosixPath(words[0]).name
         redirect = _REDIRECT.fullmatch(words[0])
@@ -525,6 +563,35 @@ def _raw_ref_delete(args):
     return False
 
 
+_CONFIG_REASON = 'Git aliases and push mappings are set by the owner, not during a run'
+
+
+def _config_guarded(key):
+    return any(re.search(pattern, key.lower()) for pattern in _GIT['config_guarded'])
+
+
+_CONFIG_SCOPE_FLAGS = ('--global', '--local', '--system', '--worktree')
+_CONFIG_WRITE_WORDS = ('edit', 'rename-section', 'remove-section')
+
+
+def _config_write_guarded(options):
+    """A `git config` call that may set a guarded key. A read (--get, --list, get, list, ...) or an unset is allowed.
+    Besides a scope flag, any option is an unknown form (--add, --edit, --rename-section or an abbreviation, a file,
+    a value that starts with a dash) and reads as a write; so do the edit and rename subcommands. What remains is
+    `[set] key value`, written when a guarded key is followed by a value."""
+    words = [x for x in options if not x.startswith('-')]
+    if any(x in ('--unset', '--unset-all') for x in options) or words[:1] == ['unset']:
+        return any(_config_guarded(x) for x in words)  # Removing a mapping can retarget Git as much as setting one.
+    if any(x in _GIT['config_read_flags'] for x in options) or words[:1] in (['get'], ['list']):
+        return False
+    if any(x.startswith('-') and x not in _CONFIG_SCOPE_FLAGS for x in options) or words[:1] and words[0] in _CONFIG_WRITE_WORDS:
+        return True
+    if words[:1] == ['set']:
+        words = words[1:]
+    hit = next((i for i, x in enumerate(words) if _config_guarded(x)), None)
+    return hit is not None and hit + 1 < len(words)
+
+
 def _git(words):
     args = words[1:]
     changed_repo = False
@@ -534,7 +601,11 @@ def _git(words):
         if opt in _GIT['global_value_options']:
             if not args:
                 return _deny('Malformed Git global option', 'malformed')
+            if opt in ('-c', '--config-env') and _config_guarded(args[0].split('=', 1)[0]):
+                return _deny(_CONFIG_REASON)
             args.pop(0)
+        elif opt.startswith('--config-env=') and _config_guarded(opt[len('--config-env='):].split('=', 1)[0]):
+            return _deny(_CONFIG_REASON)
         if opt.startswith('-C') or opt.startswith(('--git-dir', '--work-tree')):
             changed_repo = True
     if not args:
@@ -547,6 +618,10 @@ def _git(words):
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
         return _deny('Git stash shares state across worktrees', 'stash')
+    if verb == 'config' and _config_write_guarded([x for x in args if x != '--']):  # Operands after -- are still keys.
+        return _deny(_CONFIG_REASON)
+    if verb == 'remote' and next((x for x in args if not x.startswith('-')), None) in _GIT['remote_write_verbs']:
+        return _deny('Remotes are set by the owner, not during a run')
     if verb == 'update-ref' and _raw_ref_delete(args):
         return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):

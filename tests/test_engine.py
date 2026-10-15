@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -305,6 +306,31 @@ class IntegrationRepairTests(EngineFixture):
         receipt = engine.run_gate('main', lease, 'hang', [sys.executable, '-c', 'import time; time.sleep(10)'])
         self.assertEqual(124, receipt['exit_code'])
         self.assertFalse(receipt['passed'])
+
+    def test_a_gate_stops_the_background_processes_it_leaves_behind(self):
+        if not Path('/proc/self/stat').exists():
+            self.skipTest('needs /proc to see whether the process is still running')
+        code = ('import subprocess, sys\n'
+                'child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])\n'
+                'print(child.pid, flush=True)\n')
+        receipt = self.engine.run_gate('main', self.lease, 'leaves-a-child', [sys.executable, '-c', code])
+        log = Path(receipt['path']).read_text()
+        pid = int(log.split()[0])
+        self.assertIn('Gate left background processes running; stopped them', log)
+
+        def running():  # a killed orphan stays a zombie until init reaps it; that is not running
+            try:
+                return Path('/proc/%d/stat' % pid).read_text().rsplit(')', 1)[1].split()[0] != 'Z'
+            except OSError:
+                return False
+
+        deadline = time.time() + 5
+        while running() and time.time() < deadline:
+            time.sleep(0.05)
+        self.assertFalse(running())
+        self.assertTrue(receipt['passed'])  # the tree did not change, so the gate still passes
+        clean = self.engine.run_gate('main', self.lease, 'clean', [sys.executable, '-c', 'print("ok")'])
+        self.assertNotIn('background processes', Path(clean['path']).read_text())
 
     def test_gate_timeout_overrides_the_policy_for_one_run(self):
         receipt = self.engine.run_gate('main', self.lease, 'hang', [sys.executable, '-c', 'import time; time.sleep(10)'],

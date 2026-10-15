@@ -118,9 +118,9 @@ class GuardCorpusTest(unittest.TestCase):
 
     def test_merged_delete_global_config_option_denied(self):
         # R2: a global option before the verb can redirect the remote or the repository the hook checks; fail closed.
-        for command in ('git -c remote.origin.pushurl=/tmp/x push origin --delete x2',
-                        'git -c remote.origin.url=https://h/r.git push origin --delete x2',
-                        'git --config-env=remote.origin.pushurl=E push origin --delete x2',
+        for command in ('git -c core.pager=/tmp/x push origin --delete x2',
+                        'git -c core.editor=/h push origin --delete x2',
+                        'git --config-env=core.askPass=E push origin --delete x2',
                         'git -c x=y branch -D b', 'git --config-env=x=E branch -D b',
                         'git --namespace=n branch -D b', 'git --namespace n push origin -d x2',
                         'git --exec-path=/x branch -D b', 'git --bare branch -D b', 'git -p push origin --delete x2',

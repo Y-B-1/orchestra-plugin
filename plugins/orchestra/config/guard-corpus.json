@@ -10570,7 +10570,7 @@
    "input": {
     "command": "git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x"
    },
-   "class": "release"
+   "class": "deny"
   },
   {
    "id": "guard-119",
@@ -10732,6 +10732,524 @@
     "command": "gh api graphql -f query='mutation{addComment}'"
    },
    "class": "release"
+  },
+  {
+   "id": "guard-142",
+   "input": {
+    "command": "git -C wt config alias.p push"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-143",
+   "input": {
+    "command": "git -c ALIAS.p=push p"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-144",
+   "input": {
+    "command": "git -c alias.ship='push origin HEAD:main' ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-145",
+   "input": {
+    "command": "git -c core.pager=cat log"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-146",
+   "input": {
+    "command": "git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-147",
+   "input": {
+    "command": "git config --add alias.q status"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-148",
+   "input": {
+    "command": "git config --get alias.ship"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-149",
+   "input": {
+    "command": "git config --get-regexp ^remote"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-150",
+   "input": {
+    "command": "git config --global alias.p push"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-151",
+   "input": {
+    "command": "git config --list"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-152",
+   "input": {
+    "command": "git config --unset alias.ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-153",
+   "input": {
+    "command": "git config alias.ship 'push origin HEAD:main'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-154",
+   "input": {
+    "command": "git config core.editor vim"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-155",
+   "input": {
+    "command": "git config remote.origin.push refs/heads/x:refs/heads/main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-156",
+   "input": {
+    "command": "git config remote.origin.pushurl git@evil:x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-157",
+   "input": {
+    "command": "git config remote.origin.url https://example.invalid/r.git"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-158",
+   "input": {
+    "command": "git config user.name Me"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-159",
+   "input": {
+    "command": "git --config-env alias.ship=ALIAS ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-160",
+   "input": {
+    "command": "git --config-env=alias.ship=ALIAS ship origin HEAD:main"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-161",
+   "input": {
+    "command": "git --config-env=core.pager=PAGER log"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-162",
+   "input": {
+    "command": "git config --rename-section scratch alias"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-163",
+   "input": {
+    "command": "git config --rename-section scratch other"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-164",
+   "input": {
+    "command": "git config --rename-section scratch remote.origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-165",
+   "input": {
+    "command": "git config rename-section scratch alias"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-166",
+   "input": {
+    "command": "git -c include.path=/tmp/run.cfg ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-167",
+   "input": {
+    "command": "git -c url.https://evil.invalid/.insteadOf=https://good.invalid/ fetch"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-168",
+   "input": {
+    "command": "git config include.path /tmp/run.cfg"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-169",
+   "input": {
+    "command": "git config includeIf.gitdir:/x/.path /tmp/run.cfg"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-170",
+   "input": {
+    "command": "git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-171",
+   "input": {
+    "command": "git -c remote.origin.url=/other/repo push origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-172",
+   "input": {
+    "command": "git config --get remote.origin.url"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-173",
+   "input": {
+    "command": "git config remote.origin.url /other/repo"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-174",
+   "input": {
+    "command": "git remote -v"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-175",
+   "input": {
+    "command": "git remote add evil /other/repo"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-176",
+   "input": {
+    "command": "git remote get-url origin"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-177",
+   "input": {
+    "command": "git remote remove origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-178",
+   "input": {
+    "command": "git remote rename origin up"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-179",
+   "input": {
+    "command": "git remote set-head origin --auto"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-180",
+   "input": {
+    "command": "git remote set-url origin /other/repo"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-181",
+   "input": {
+    "command": "git config --edit"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-182",
+   "input": {
+    "command": "git config --global --edit"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-183",
+   "input": {
+    "command": "git config --rename-sec scratch alias"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-184",
+   "input": {
+    "command": "git config --rename-section scratch include"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-185",
+   "input": {
+    "command": "git config --rename-section scratch includeIf.gitdir:/x/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-186",
+   "input": {
+    "command": "git config --rename-section scratch url.https://h/"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-187",
+   "input": {
+    "command": "git config -e"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-188",
+   "input": {
+    "command": "git config -- alias.ship 'push origin HEAD:main'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-189",
+   "input": {
+    "command": "git remote --verbose add evil /other/repo"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-190",
+   "input": {
+    "command": "git remote -v set-url origin /other/repo"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-191",
+   "input": {
+    "command": "git config --add core.x y"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-192",
+   "input": {
+    "command": "git config --global user.name Me"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-193",
+   "input": {
+    "command": "git config alias.ship \"-c alias.x='!git push origin HEAD:main' x\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-194",
+   "input": {
+    "command": "git config edit"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-195",
+   "input": {
+    "command": "git config get alias.ship"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-196",
+   "input": {
+    "command": "git config push.followTags true"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-197",
+   "input": {
+    "command": "git config set alias.ship push"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-198",
+   "input": {
+    "command": "git config set core.editor vim"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-199",
+   "input": {
+    "command": "git config push.pushOption merge_request.merge_when_pipeline_succeeds"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-200",
+   "input": {
+    "command": "git config --unset core.editor"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-201",
+   "input": {
+    "command": "git config --unset url.https://long/.insteadOf"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-202",
+   "input": {
+    "command": "git config --unset-all alias.ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-203",
+   "input": {
+    "command": "git config push.recurseSubmodules only"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-204",
+   "input": {
+    "command": "git config remote.origin.receivepack /tmp/redirect"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-205",
+   "input": {
+    "command": "git config unset remote.origin.url"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-206",
+   "input": {
+    "command": "FOO=1 git status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-207",
+   "input": {
+    "command": "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=/other/repo git push origin feat/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-208",
+   "input": {
+    "command": "GIT_SSH_COMMAND=/tmp/x git push origin feat/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-209",
+   "input": {
+    "command": "env GIT_CONFIG_COUNT=1 git push origin feat/x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-210",
+   "input": {
+    "command": "GIT_CONFIG_COUNT+=1 GIT_CONFIG_KEY_0+=alias.ship GIT_CONFIG_VALUE_0+='!git push origin HEAD:main' git ship"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-211",
+   "input": {
+    "command": "git add GIT_CONFIG.md"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-212",
+   "input": {
+    "command": "git commit -m GIT_SSH_notes"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-213",
+   "input": {
+    "command": "git show GIT_CONFIG_NOTES"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "guard-214",
+   "input": {
+    "command": "env --split-string='GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ship GIT_CONFIG_VALUE_0=push git ship origin HEAD:main'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-215",
+   "input": {
+    "command": "env -S 'GIT_SSH_COMMAND=/tmp/x git push origin feat/x'"
+   },
+   "class": "deny"
   }
  ]
 }
