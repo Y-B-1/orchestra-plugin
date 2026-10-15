@@ -11236,6 +11236,20 @@
     "command": "git show GIT_CONFIG_NOTES"
    },
    "class": "allow"
+  },
+  {
+   "id": "guard-214",
+   "input": {
+    "command": "env --split-string='GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ship GIT_CONFIG_VALUE_0=push git ship origin HEAD:main'"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "guard-215",
+   "input": {
+    "command": "env -S 'GIT_SSH_COMMAND=/tmp/x git push origin feat/x'"
+   },
+   "class": "deny"
   }
  ]
 }

@@ -540,10 +540,34 @@ const RESERVED = new Set(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'wh
 
 /** Strip wrappers and assignments. An environment assignment that reroutes Git (GIT_CONFIG_*, GIT_SSH_COMMAND, ...)
  * in front of a git command comes back as a `-c` that the git rules refuse, since the assignment itself is dropped. */
+/** The words with every `env -S`/`--split-string` value split into words, so the assignments inside are visible. */
+function envSplitWords(words: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < words.length; i += 1) {
+    const word = words[i]!;
+    let value: string | null = null;
+    if ((word === '-S' || word === '--split-string') && i + 1 < words.length) {
+      value = words[i + 1]!;
+      i += 1;
+    } else if (word.startsWith('--split-string=')) value = word.slice('--split-string='.length);
+    else if (word.startsWith('-S') && word.length > 2 && !word.startsWith('--')) value = word.slice(2);
+    if (value === null) out.push(word);
+    else {
+      try {
+        out.push(...shlexSplit(value, false));
+      } catch {
+        out.push(value);
+      }
+    }
+  }
+  return out;
+}
+
 function unwrap(wordsIn: string[]): string[] {
   const patterns = [...GIT.env_guarded!].map((p) => new RegExp(p));
-  const gitAt = wordsIn.findIndex((word) => posixName(word) === 'git');
-  const before = gitAt < 0 ? wordsIn : wordsIn.slice(0, gitAt); // The words ahead of the first `git`: assignments, `env` and its options.
+  const expanded = envSplitWords(wordsIn);
+  const gitAt = expanded.findIndex((word) => posixName(word) === 'git');
+  const before = gitAt < 0 ? expanded : expanded.slice(0, gitAt); // The words ahead of the first `git`: assignments, `env` and its options.
   const tainted = before.some((word) => ASSIGNMENT_RE.test(word) && patterns.some((re) => re.test(word)));
   const rest = unwrapWords(wordsIn);
   if (tainted && rest.length && posixName(rest[0]!) === 'git') return [rest[0]!, '-c', 'alias.env=guarded', ...rest.slice(1)];

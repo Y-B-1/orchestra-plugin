@@ -371,11 +371,34 @@ def _eat_options(wrapper, words):
 _RESERVED = frozenset(['{', '}', '!', 'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'esac'])
 
 
+def _env_split_words(words):
+    """The words with every `env -S`/`--split-string` value split into words, so the assignments inside are visible."""
+    out, i = [], 0
+    while i < len(words):
+        word = words[i]
+        value = None
+        if word in ('-S', '--split-string') and i + 1 < len(words):
+            value, i = words[i + 1], i + 1
+        elif word.startswith('--split-string='):
+            value = word[len('--split-string='):]
+        elif word.startswith('-S') and len(word) > 2 and not word.startswith('--'):
+            value = word[2:]
+        if value is None:
+            out.append(word)
+        else:
+            try:
+                out.extend(_plain_split(value))
+            except ValueError:
+                out.append(value)
+        i += 1
+    return out
+
+
 def _unwrap(words):
     """Strip wrappers and assignments. An environment assignment that reroutes Git (GIT_CONFIG_*, GIT_SSH_COMMAND, ...)
     in front of a git command comes back as a `-c` that the git rules refuse, since the assignment itself is dropped."""
     before = []  # The words ahead of the first `git`: assignments, `env` and its options.
-    for word in words:
+    for word in _env_split_words(words):
         if PurePosixPath(word).name == 'git':
             break
         before.append(word)

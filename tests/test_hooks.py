@@ -466,6 +466,8 @@ class HooksTest(unittest.TestCase):
                   'git remote remove origin', 'git -c remote.origin.url=/other/repo push origin x', 'git config --rename-section scratch alias',
                   'git config --rename-section scratch remote.origin', 'git config --edit', 'git config -e', 'git config edit', 'git config set alias.ship push', 'git config push.followTags true', 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=/other/repo git push origin feat/x',
                   'GIT_SSH_COMMAND=/tmp/x git push origin feat/x',
+                  "env --split-string='GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ship GIT_CONFIG_VALUE_0=push git ship origin HEAD:main'",
+                  "env -S 'GIT_SSH_COMMAND=/tmp/x git push origin feat/x'",
                   "GIT_CONFIG_COUNT+=1 GIT_CONFIG_KEY_0+=alias.ship GIT_CONFIG_VALUE_0+='!git push origin HEAD:main' git ship", 'env GIT_CONFIG_COUNT=1 git push origin feat/x', 'git config push.recurseSubmodules only', 'git config remote.origin.receivepack /tmp/redirect',
                   'git config --unset url.https://long/.insteadOf', 'git config --unset-all alias.ship', 'git config unset remote.origin.url', 'git config push.pushOption merge_request.merge_when_pipeline_succeeds',
                   'git config --rename-section scratch other', 'git config --add core.x y',
