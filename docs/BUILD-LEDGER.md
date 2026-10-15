@@ -272,3 +272,19 @@ One interactive Claude Code 2.1.299 session (Sonnet 5.5 coordinator, permission 
 | 16:53:45 | The turn ended; the Stop hook stopped autonomy with `complete` and wrote the brief (passes 0, stalls 0, Needs you: ready to release, plus the reviewer's non-ASCII note) |
 
 Follow-ups taken in 2.6.2: the coordinator had recorded the PR as a free-form `progress.md` line the brief does not read, so `orchestra.py pr URL` now records it and the brief lists it under Needs you. Noted, not changed: the coordinator's final message cannot report the `complete` stop, because the Stop hook runs after it; the brief records it.
+
+### 2.6.3 release and remaining live checks (2026-10-15)
+
+Claude Code 2.1.300 (Haiku 5.5), an isolated `CLAUDE_CONFIG_DIR`, a scratch repository with a local bare `origin`, and the plugin installed from the published repository. The session ran with ordinary permissions; a nested session with permissions bypassed was refused by the host's classifier and not retried.
+
+| Check | How | Result |
+| --- | --- | --- |
+| Release | Release workflow run by hand from `main` at de5cea6 | Tag `v2.6.3` created at that commit; release has `orchestra-2.6.3.tar.gz` and `.zip`; the notes' SHA-256 lines match GitHub's digests |
+| Install from GitHub | `marketplace add Y-B-1/orchestra-plugin`, `install orchestra@orchestra-distribution` | 2.6.3 enabled; the cached copy has the 2.6.3 guard rules (`env_guarded`) and no `tests/` |
+| Deadline stop | Run bound with `--harness-session`, armed with a deadline 100 seconds out; a `claude -p` session with that id after the deadline | Stop hook stopped autonomy with `deadline`; no continuation prompt; brief written |
+| `clear` rebinding | TUI session with a bound, armed run; `/clear` | `harness_session` moved to the new id; run still active and armed |
+| `resume` rebinding | Same session; `/resume`, picking an earlier session | `harness_session` moved to the resumed id; run still active and armed |
+| Large route, repair, hold | Scripted walk through the published CLI: `start --size large --owner-request`, two builder cards, a blocking final review, one repair, a blocking fix re-review | A second repair refused ("Escalation ends at one repair; hold the chain"); `accept` refused while the finding stands; `hold` moved R1 and B1 to `held`; `finish` refused |
+| Stop loop with a held chain | Armed that state, three Stop hooks | One `Autonomy pass 1` continuation, then `{}`, then a `stalled` stop (passes 1, stalls 1); no repeated prompt |
+
+Still not performed: a real GitHub pull request opened by an unattended run (earlier runs used a local bare remote), macOS, and a model-driven repair or hold (the repair walk above is scripted). A first launch that exited at the folder-trust dialog ended its bound run through SessionEnd, as designed.
