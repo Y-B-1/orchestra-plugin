@@ -1455,6 +1455,7 @@ class AutonomyArmTests(AutonomyFixture):
         self.assertEqual(heads, 'origin: default branch main (recorded now)')
         self.assertEqual(self.git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main')
         self.assertEqual(self.auto()['remote_defaults'], {'origin': 'main'})
+        self.assertEqual(self.auto()['remote_push_urls'], {'origin': str(self.root / 'origin.git')})
         self.assertEqual(ensure_remote_heads(self.repo), ('origin: default branch main (confirmed)', {'origin': 'main'}))
 
     def test_arm_refreshes_a_stale_recorded_default_branch(self):

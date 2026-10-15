@@ -274,6 +274,18 @@ def ensure_remote_heads(repo, timeout=20):
     return '; '.join(lines), verified
 
 
+def effective_push_url(repo, remote):
+    """Where `git push REMOTE` would go: `git remote get-url --push`, which applies pushurl, url.<base>.insteadOf and
+    pushInsteadOf. '' when Git cannot say. Recorded at arm and compared at every pull request push, so any later
+    change to the remote's URL or its rewrites refuses the push whatever setting caused it."""
+    try:
+        done = subprocess.run(['git', '-C', str(repo), 'remote', 'get-url', '--push', remote], capture_output=True,
+                              text=True, timeout=10, stdin=subprocess.DEVNULL)
+        return done.stdout.strip() if done.returncode == 0 else ''
+    except (OSError, subprocess.SubprocessError):
+        return ''
+
+
 def _hash(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -519,9 +531,9 @@ class Engine:
                     or any(k in auto and (isinstance(auto[k], bool) or not isinstance(auto[k], int))
                            for k in ('max_passes', 'max_stalls')) or ('report' in auto and not isinstance(auto['report'], dict))
                     or ('pull_requests' in auto and not isinstance(auto['pull_requests'], bool))
-                    or ('remote_defaults' in auto and (not isinstance(auto['remote_defaults'], dict) or any(
+                    or any(name in auto and (not isinstance(auto[name], dict) or any(
                         not isinstance(k, str) or not isinstance(v, str) or not k or not v
-                        for k, v in auto['remote_defaults'].items())))
+                        for k, v in auto[name].items())) for name in ('remote_defaults', 'remote_push_urls'))
                     or (auto['active'] and (any(isinstance(auto.get(k), bool) or not isinstance(auto.get(k), int) for k in ints)
                                             or any(not isinstance(auto.get(k), str) for k in ('goal', 'deadline'))
                                             or any(not isinstance(auto.get(k), list) for k in ('checks', 'accepted'))
@@ -1880,6 +1892,7 @@ class Engine:
             self._armable(state, path, snapshot=False)  # read-only: no ledger copy yet
             lease = state['session']['lease']
         remote_heads, remote_defaults = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
+        remote_push_urls = {r: url for r in remote_defaults if (url := effective_push_url(self.repo, r))}
         with self._state(activity=False) as state:
             fields, snapshot = self._armable(state, path)
             if state['session']['lease'] != lease:
@@ -1887,7 +1900,8 @@ class Engine:
             state['autonomy'] = dict(
                 active=True, ledger=snapshot, passes=0, stalls=0, armed_at=self._clock(),
                 armed_gates=len(state['gates']), armed_reviews=len(state['reviews']),
-                accepted=self._accepted(state), remote_defaults=remote_defaults, **fields)
+                accepted=self._accepted(state), remote_defaults=remote_defaults,
+                remote_push_urls=remote_push_urls, **fields)
         preconditions = autonomy_preconditions(self.repo, home)
         preconditions['remote_heads'] = remote_heads
         return dict(active=True, ledger=str(path), preconditions=preconditions)

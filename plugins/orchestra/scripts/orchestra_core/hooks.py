@@ -351,6 +351,7 @@ def _pull_request_push(command, cwd, engine):
         auto = engine.status()['autonomy']
         allowed = auto.get('pull_requests') is True
         default = (auto.get('remote_defaults') or {}).get(remote)  # what the remote answered at arm, not a local cache
+        armed_url = (auto.get('remote_push_urls') or {}).get(remote)
         release = engine.policy.get('release') or {}
     except Exception:
         return 'The run state cannot be read; push by hand.'
@@ -359,6 +360,9 @@ def _pull_request_push(command, cwd, engine):
     if not isinstance(default, str) or not default:
         return ('The default branch of %s was not confirmed when autonomy was armed; arm again once the remote answers.'
                 % remote)
+    if not isinstance(armed_url, str) or not armed_url or _git_out(cwd, 'remote', 'get-url', '--push', remote)[1] != armed_url:
+        return ('Where %s pushes to differs from what it was when autonomy was armed (or was not recorded); '
+                'the owner checks the remote and arms again.' % remote)
     if target.casefold() in {default.casefold(), 'main', 'master'}:
         return 'Never push the default branch; push a feature branch and open a pull request.'
     if release.get('remote') == remote and str(release.get('target', '')).casefold() == target.casefold():

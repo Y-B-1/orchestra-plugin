@@ -1754,7 +1754,9 @@ class AutonomyHookTest(unittest.TestCase):
         for name in ('feat/x', 'feat/rel'):
             git(self.repo, 'branch', name)
         engine = mock.Mock()
-        engine.status.return_value = {'autonomy': {'pull_requests': True, 'remote_defaults': {'origin': 'main'}}}
+        push_url = git(self.repo, 'remote', 'get-url', '--push', 'origin')
+        engine.status.return_value = {'autonomy': {'pull_requests': True, 'remote_defaults': {'origin': 'main'},
+                                                   'remote_push_urls': {'origin': push_url}}}
         engine.policy = {'release': {'enabled': True, 'remote': 'origin', 'target': 'feat/rel'}}
         push = hooks_module._pull_request_push
         self.assertIsNone(push('git push origin feat/x', str(self.repo), engine))
@@ -1765,6 +1767,30 @@ class AutonomyHookTest(unittest.TestCase):
             self.assertIn('does not allow pull request pushes', push('git push origin feat/x', str(self.repo), engine))
         engine.status.side_effect = RuntimeError('state changed')
         self.assertIn('cannot be read', push('git push origin feat/x', str(self.repo), engine))
+
+    def test_autonomy_pull_request_push_follows_where_the_remote_pushed_at_arm(self):
+        self.origin()
+        git(self.repo, 'branch', 'feat/x')
+        self.arm()
+        self.assertIsNone(self.hook(self.repo, 'git push origin feat/x'))
+        other = self.root / 'other.git'
+        git(self.root, 'init', '-q', '--bare', str(other))
+        for key, value in (('remote.origin.url', str(other)),):  # set by hand: the setting itself is guarded too
+            git(self.repo, 'config', key, value)
+        self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')  # retargeted after arm
+        git(self.repo, 'config', 'remote.origin.url', str(self.root / 'origin.git'))
+        self.assertIsNone(self.hook(self.repo, 'git push origin feat/x'))  # back where it was armed
+        git(self.repo, 'config', 'url.%s.pushInsteadOf' % other, str(self.root / 'origin.git'))
+        self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')  # a rewrite changes the effective URL
+
+    def test_autonomy_pull_request_push_refuses_a_state_armed_without_the_push_url(self):
+        self.origin()
+        git(self.repo, 'branch', 'feat/x')
+        engine = mock.Mock()
+        engine.status.return_value = {'autonomy': {'pull_requests': True, 'remote_defaults': {'origin': 'main'}}}
+        engine.policy = {}
+        self.assertIn('differs from what it was when autonomy was armed',
+                      hooks_module._pull_request_push('git push origin feat/x', str(self.repo), engine))
 
     def test_legacy_push_line_arms_without_pull_requests(self):
         self.origin()
