@@ -288,3 +288,5 @@ Claude Code 2.1.300 (Haiku 5.5), an isolated `CLAUDE_CONFIG_DIR`, a scratch repo
 | Stop loop with a held chain | Armed that state, three Stop hooks | One `Autonomy pass 1` continuation, then `{}`, then a `stalled` stop (passes 1, stalls 1); no repeated prompt |
 
 Still not performed: a real GitHub pull request opened by an unattended run (earlier runs used a local bare remote), macOS, and a model-driven repair or hold (the repair walk above is scripted). A first launch that exited at the folder-trust dialog ended its bound run through SessionEnd, as designed.
+
+The evidence above ships as the docs-only release 2.6.4. Attempts to open a real GitHub pull request from an unattended run were not possible here: the sandbox's `gh` token is invalid.

@@ -2,6 +2,10 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.6.4 — 2026-10-15
+
+- **Docs only:** `docs/BUILD-LEDGER.md` and `docs/VALIDATION.md` record the live checks run against the published 2.6.3 release: install from GitHub, the `deadline` stop, `clear` and `resume` rebinding, and the large route with one repair ending in `hold`. No plugin code changed.
+
 ## 2.6.3 — 2026-10-14
 
 - **Autonomy, default branch:** `autonomy arm` now asks every remote for its current default branch, even when one is already recorded, and stores the answers in the run state (`remote_defaults`). The pull request push guard checks against those answers instead of the local `refs/remotes/<remote>/HEAD`, which could be stale after the remote changed its default. A remote that does not answer gets no pull request push until autonomy is armed again.
