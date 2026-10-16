@@ -379,7 +379,7 @@ class Engine:
                 # Gitlinks need their nested HEAD, dirty state and contents bound too.
                 value = ['directory', self._directory_hash(path)]
             else:
-                value = ['missing']
+                continue  # Deleted (tracked, not yet staged): no content, and staging the deletion must not change the fingerprint
             entries.append([os.fsdecode(raw), value])
         return entries
 

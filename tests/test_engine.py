@@ -4481,6 +4481,19 @@ class RunHygieneTests(EngineFixture):
         self.git('commit', '-qm', 'rest')
         self.assertTrue(Engine._same(before, self.engine.artifact()))  # the whole of it is in HEAD now
 
+    def test_staging_or_committing_a_deletion_keeps_whole_repo_evidence_current(self):
+        (self.repo / 'doomed').write_text('x')
+        self.git('add', 'doomed')
+        self.git('commit', '-qm', 'doomed')
+        (self.repo / 'doomed').unlink()  # reviewed with the deletion still unstaged
+        before = self.engine.artifact()
+        self.git('add', 'doomed')
+        self.assertTrue(Engine._same(before, self.engine.artifact()))
+        self.git('commit', '-qm', 'delete')
+        self.assertTrue(Engine._same(before, self.engine.artifact()))
+        (self.repo / 'doomed').write_text('back')  # bringing it back is a content change
+        self.assertFalse(Engine._same(before, self.engine.artifact()))
+
     def test_a_staged_rename_at_start_is_not_run_work_and_pre_run_edits_are_not_charged(self):
         (self.repo / 'big').write_text('line\n' * 300)
         self.git('add', 'big')
