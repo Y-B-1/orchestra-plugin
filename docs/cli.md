@@ -43,7 +43,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 - `cancel TASK --reason TEXT` drops a card that should never run.
 - A worker that cannot do its card ends its report with a line `BLOCKED: reason`. The card is parked with that reason; no `SELF_REVIEW` is needed.
 - The files already modified or untracked when a run starts are recorded as its baseline: the size warning and the review lenses count only what the run changes. Interpreter leftovers (`__pycache__`, `*.pyc`, tool caches, `.DS_Store`) are never evidence.
-- Evidence stays current when the reviewed work is committed or staged unchanged. A change to the files, the policy or the scope, or (for scoped evidence) a new commit, still makes it stale; after committing, record the independent review again, then `accept`.
+- Evidence stays strict: staging or committing after a review makes it stale. After committing, record the independent review again, then `accept` succeeds (the report needs unchanged files, not the same HEAD). Sparse-checkout paths and deletions are handled; interpreter leftovers are never evidence.
 - `review` names the keys a report file is missing.
 - `autonomy arm` records a digest of each remote's push URL, not the URL.
 

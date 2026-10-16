@@ -4449,49 +4449,13 @@ class RunHygieneTests(EngineFixture):
         (self.repo / 'real.txt').write_text('x')
         self.assertNotEqual(before, self.engine.artifact())
 
-    def test_committing_the_reviewed_work_does_not_stale_whole_repo_evidence(self):
+    def test_committing_or_staging_stales_whole_repo_evidence(self):
         (self.repo / 'a').write_text('reviewed')
         before = self.engine.artifact()
-        self.git('commit', '-qam', 'the reviewed work')
-        after = self.engine.artifact()
-        self.assertNotEqual(before['head'], after['head'])
-        self.assertTrue(Engine._same(before, after))
-        (self.repo / 'a').write_text('changed after review')
-        self.assertFalse(Engine._same(before, self.engine.artifact()))
-
-    def test_a_partial_stage_or_commit_leaves_whole_repo_evidence_stale(self):
-        (self.repo / 'a').write_text('reviewed a')
-        (self.repo / 'b.txt').write_text('reviewed b')
-        before = self.engine.artifact()
-        self.git('add', 'a')  # only part of the reviewed work is staged
-        self.assertFalse(Engine._same(before, self.engine.artifact()))
-        self.git('add', '-A')  # now all of it is staged, not yet committed
         self.assertTrue(Engine._same(before, self.engine.artifact()))
-        self.git('reset', '-q', 'b.txt')  # and one file unstaged again
-        self.assertFalse(Engine._same(before, self.engine.artifact()))
-        self.git('add', 'b.txt')
-        (self.repo / 'a').write_text('edited after staging')  # worktree differs from the index
-        self.assertFalse(Engine._same(before, self.engine.artifact()))
-        (self.repo / 'a').write_text('reviewed a')
         self.git('add', 'a')
-        self.git('reset', '-q', 'b.txt')  # back to a partial stage
-        self.git('commit', '-qm', 'part')  # and committed: b.txt is not in the commit
-        self.assertFalse(Engine._same(before, self.engine.artifact()))
-        self.git('add', 'b.txt')
-        self.git('commit', '-qm', 'rest')
-        self.assertTrue(Engine._same(before, self.engine.artifact()))  # the whole of it is in HEAD now
-
-    def test_staging_or_committing_a_deletion_keeps_whole_repo_evidence_current(self):
-        (self.repo / 'doomed').write_text('x')
-        self.git('add', 'doomed')
-        self.git('commit', '-qm', 'doomed')
-        (self.repo / 'doomed').unlink()  # reviewed with the deletion still unstaged
-        before = self.engine.artifact()
-        self.git('add', 'doomed')
-        self.assertTrue(Engine._same(before, self.engine.artifact()))
-        self.git('commit', '-qm', 'delete')
-        self.assertTrue(Engine._same(before, self.engine.artifact()))
-        (self.repo / 'doomed').write_text('back')  # bringing it back is a content change
+        self.assertFalse(Engine._same(before, self.engine.artifact()))  # staging moves the index: record the review again
+        self.git('commit', '-qm', 'reviewed')
         self.assertFalse(Engine._same(before, self.engine.artifact()))
 
     def test_a_commit_that_changes_only_a_sparse_hidden_path_stales_whole_repo_evidence(self):
@@ -4508,7 +4472,6 @@ class RunHygieneTests(EngineFixture):
         self.git('merge', '-q', '--ff-only', 'side')  # HEAD moves; only the hidden path changes; the tree stays clean
         after = self.engine.artifact()
         self.assertNotEqual(before['head'], after['head'])
-        self.assertTrue(after['settled'])
         self.assertFalse(Engine._same(before, after))
 
     def test_staged_content_unlike_the_worktree_at_start_is_baseline_work(self):
@@ -4531,15 +4494,6 @@ class RunHygieneTests(EngineFixture):
         self.git('update-index', '--chmod=+x', 'a')
         hidden_view = engine._baseline_view(['a'])['a']
         self.assertIn('100755', hidden_view)
-
-    def test_a_staged_mode_change_is_not_settled_when_filemode_is_off(self):
-        self.git('config', 'core.filemode', 'false')
-        before = self.engine.artifact()
-        self.git('update-index', '--chmod=+x', 'a')  # staged only; the worktree bit is untouched and unseen
-        after = self.engine.artifact()
-        self.assertEqual(before['fingerprint'], after['fingerprint'])
-        self.assertFalse(after['settled'])
-        self.assertFalse(Engine._same(before, after))
 
     def test_a_staged_rename_at_start_is_not_run_work_and_pre_run_edits_are_not_charged(self):
         (self.repo / 'big').write_text('line\n' * 300)
