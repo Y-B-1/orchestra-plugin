@@ -405,7 +405,7 @@ class Engine:
                       fingerprint=_digest(entries), index=_hash(index), status=_hash(status),
                       policy=self.policy_hash)
         if scope is None:
-            result['clean'] = not any(status.split(b'\0'))  # nothing staged, modified or untracked: HEAD holds this content
+            result['settled'] = self._settled(status)
         if scope is not None:
             lines = [l for l in index.split(b'\0') if l and self._in_scope(os.fsdecode(l.split(b'\t', 1)[-1]), scope)]
             changes, parts = [], status.split(b'\0')
@@ -425,9 +425,9 @@ class Engine:
     def _same(recorded, current):
         """Whether evidence recorded against `recorded` still holds for `current`. What was reviewed is the content: the
         files' bytes and modes, the policy and the scope. Whole-repo evidence also survives HEAD, the index and the status
-        moving, but only when the tree is now clean, i.e. everything reviewed has been committed and nothing else is
-        staged or pending; a partial stage or commit leaves the tree unclean and the evidence stale. Scoped evidence needs
-        the same HEAD: a commit that may carry other changes stales it."""
+        moving, but only when the tree is now settled: everything reviewed is staged or committed and nothing else is
+        modified or untracked. A partial stage or commit leaves work outside the index and the evidence stale. Scoped
+        evidence needs the same HEAD: a commit that may carry other changes stales it."""
         if not isinstance(recorded, dict) or not isinstance(current, dict):
             return False
         if any(recorded.get(k) != current.get(k) for k in ('repo', 'identity', 'policy', 'fingerprint', 'scope')):
@@ -436,7 +436,20 @@ class Engine:
             return recorded.get('head') == current.get('head')
         if all(recorded.get(k) == current.get(k) for k in ('head', 'tree', 'index', 'status')):
             return True
-        return current.get('clean') is True
+        return current.get('settled') is True
+
+    @staticmethod
+    def _settled(status):
+        """True when every change in `git status --porcelain -z` output is staged and nothing else is pending: no
+        worktree edit on top of the index and no untracked file. HEAD plus the index then hold exactly the worktree."""
+        parts = [p for p in status.split(b'\0') if p]
+        while parts:
+            entry = parts.pop(0)
+            if entry[:2] == b'??' or entry[1:2] != b' ':
+                return False
+            if entry[:1] in b'RC' and parts:
+                parts.pop(0)  # the rename or copy source path
+        return True
 
     def scope_for(self, task_ids):
         """Union of the tasks' reservation files, or None (whole repo) when any task reserves no files."""

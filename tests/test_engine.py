@@ -4465,6 +4465,16 @@ class RunHygieneTests(EngineFixture):
         before = self.engine.artifact()
         self.git('add', 'a')  # only part of the reviewed work is staged
         self.assertFalse(Engine._same(before, self.engine.artifact()))
+        self.git('add', '-A')  # now all of it is staged, not yet committed
+        self.assertTrue(Engine._same(before, self.engine.artifact()))
+        self.git('reset', '-q', 'b.txt')  # and one file unstaged again
+        self.assertFalse(Engine._same(before, self.engine.artifact()))
+        self.git('add', 'b.txt')
+        (self.repo / 'a').write_text('edited after staging')  # worktree differs from the index
+        self.assertFalse(Engine._same(before, self.engine.artifact()))
+        (self.repo / 'a').write_text('reviewed a')
+        self.git('add', 'a')
+        self.git('reset', '-q', 'b.txt')  # back to a partial stage
         self.git('commit', '-qm', 'part')  # and committed: b.txt is not in the commit
         self.assertFalse(Engine._same(before, self.engine.artifact()))
         self.git('add', 'b.txt')
