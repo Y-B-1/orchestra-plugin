@@ -4494,6 +4494,23 @@ class RunHygieneTests(EngineFixture):
         (self.repo / 'doomed').write_text('back')  # bringing it back is a content change
         self.assertFalse(Engine._same(before, self.engine.artifact()))
 
+    def test_a_commit_that_changes_only_a_sparse_hidden_path_stales_whole_repo_evidence(self):
+        (self.repo / 'b').write_text('hidden')
+        self.git('add', 'b')
+        self.git('commit', '-qm', 'b')
+        side = self.root / 'side'
+        self.git('worktree', 'add', '-q', '-b', 'side', str(side))
+        (side / 'b').write_text('changed elsewhere')
+        subprocess.check_call(['git', '-C', str(side), 'commit', '-qam', 'change b'])
+        self.git('sparse-checkout', 'set', '--no-cone', '/a')  # b leaves the worktree
+        self.assertFalse((self.repo / 'b').exists())
+        before = self.engine.artifact()
+        self.git('merge', '-q', '--ff-only', 'side')  # HEAD moves; only the hidden path changes; the tree stays clean
+        after = self.engine.artifact()
+        self.assertNotEqual(before['head'], after['head'])
+        self.assertTrue(after['settled'])
+        self.assertFalse(Engine._same(before, after))
+
     def test_a_staged_rename_at_start_is_not_run_work_and_pre_run_edits_are_not_charged(self):
         (self.repo / 'big').write_text('line\n' * 300)
         self.git('add', 'big')

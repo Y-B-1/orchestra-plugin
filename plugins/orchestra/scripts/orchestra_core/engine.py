@@ -352,6 +352,23 @@ class Engine:
     def _in_scope(path, scope):
         return any(path == s or path.startswith(s + '/') for s in scope)
 
+    def _sparse_hidden(self):
+        """{path: index object id} of tracked paths a sparse checkout leaves out of the worktree (skip-worktree). Their
+        content is not on disk, so the index's object id is what binds them: a commit that changes only a hidden path
+        must still change the fingerprint."""
+        hidden = set()
+        for row in self._git('ls-files', '-t', '-z', '--cached').split(b'\0'):
+            if row[:2] == b'S ':
+                hidden.add(row[2:])
+        if not hidden:
+            return {}
+        found = {}
+        for row in self._git('ls-files', '-s', '-z').split(b'\0'):
+            meta, _, name = row.partition(b'\t')
+            if name in hidden:
+                found[name] = meta.split(b' ')[1].decode()
+        return found
+
     _NOISE_PARTS = frozenset(('__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.DS_Store'))
 
     @classmethod
@@ -363,6 +380,7 @@ class Engine:
     def _file_entries(self, scope=None):
         """[name, value] for every tracked and untracked nonignored entry, limited to `scope` when given."""
         tracked = set(self._git('ls-files', '-z', '--cached').split(b'\0'))
+        hidden = self._sparse_hidden()
         names = self._git('ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')
         entries = []
         for raw in sorted(set(names) - {b''}):
@@ -378,6 +396,8 @@ class Engine:
             elif path.is_dir():
                 # Gitlinks need their nested HEAD, dirty state and contents bound too.
                 value = ['directory', self._directory_hash(path)]
+            elif raw in hidden:
+                value = ['sparse', hidden[raw]]  # outside the sparse checkout: bound by the index's own object id
             else:
                 continue  # Deleted (tracked, not yet staged): no content, and staging the deletion must not change the fingerprint
             entries.append([os.fsdecode(raw), value])
