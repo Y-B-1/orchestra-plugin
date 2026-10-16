@@ -2,6 +2,15 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.7.0 — 2026-10-16
+
+- **Guards, scope:** changing Git aliases, push mappings, remotes and credential settings (`git config`, `git remote add|set-url|rename|remove`, `-c`) is a `config` boundary: it is denied only while autonomy runs and is an ordinary command otherwise. 2.6.3 to 2.6.5 denied it for every user.
+- **Guards, speed:** a command with many heredocs is classified in one pass instead of one pass per heredoc.
+- **Hooks, failure:** a crash in the PreToolUse hook, or a missing home directory, now denies the call with a message that names the cause, instead of allowing it. State falls back to a per-user directory in the system temp folder when no home is found.
+- **Autonomy ledger:** while autonomy is active, edits to `autonomy.md` and `autonomy arm|disarm` run by an agent are denied, including through the TypeScript mod; `arm` refuses when autonomy is already armed. The owner disarms, edits and arms again.
+- **Sessions:** a run bound to another session no longer locks a second session in the same repository out of Agent and subagent calls; its start-of-session note says so.
+- **Unreadable state:** the denial names the state file and the way out, `start --new-run`, which now keeps the unreadable file under `history/unreadable-*.json`.
+
 ## 2.6.5 — 2026-10-15
 
 - **Autonomy, pull request push:** `autonomy arm` records where each remote pushes to (`git remote get-url --push --all`, which applies `pushurl`, `insteadOf` and `pushInsteadOf`; a remote with more than one push URL gets no pull request push), and a pull request push is refused when that answer differs at push time. A changed remote URL or rewrite can no longer redirect an approved push, whichever setting or route caused it; this backs up the guarded-key list instead of relying on it. A state armed before this release has no record, so re-arm.

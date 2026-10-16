@@ -156,6 +156,88 @@ HEREDOC_ALLOWED = ["cat <<'EOF'\nit's fine\nEOF",
                    'cat <<< "git reset --hard"',
                    'echo $((1 << 2))']
 # G2f item 4: raw ref deletion skips the branch-delete rules, so it denies; a create or move stays allowed.
+# Commands that set or unset Git configuration which routes a push. Only an armed autonomy run refuses them.
+CONFIG_TOUCHING = [
+    "git -c alias.ship='push origin HEAD:main' ship",
+    "git config alias.ship 'push origin HEAD:main'",
+    'git config --global alias.p push',
+    'git config --add alias.q status',
+    'git config remote.origin.push refs/heads/x:refs/heads/main',
+    'git config remote.origin.pushurl git@evil:x',
+    'git -c ALIAS.p=push p',
+    'git -C wt config alias.p push',
+    'git --config-env=alias.ship=ALIAS ship origin HEAD:main',
+    'git --config-env alias.ship=ALIAS ship',
+    'git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/',
+    'git -c url.https://evil.invalid/.insteadOf=https://good.invalid/ fetch',
+    'git config include.path /tmp/run.cfg',
+    'git -c include.path=/tmp/run.cfg ship',
+    'git config includeIf.gitdir:/x/.path /tmp/run.cfg',
+    'git config remote.origin.url /other/repo',
+    'git remote set-url origin /other/repo',
+    'git remote add evil /other/repo',
+    'git remote rename origin up',
+    'git remote remove origin',
+    'git config --rename-section scratch alias',
+    'git config --rename-section scratch remote.origin',
+    'git config --edit',
+    'git config -e',
+    'git config edit',
+    'git config set alias.ship push',
+    'git config push.followTags true',
+    "env --split-string='GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ship GIT_CONFIG_VALUE_0=push git ship origin HEAD:main'",
+    "GIT_CONFIG_COUNT+=1 GIT_CONFIG_KEY_0+=alias.ship GIT_CONFIG_VALUE_0+='!git push origin HEAD:main' git ship",
+    'git config push.recurseSubmodules only',
+    'git config remote.origin.receivepack /tmp/redirect',
+    'git config --unset url.https://long/.insteadOf',
+    'git config --unset-all alias.ship',
+    'git config unset remote.origin.url',
+    'git config push.pushOption merge_request.merge_when_pipeline_succeeds',
+    'git config --rename-section scratch other',
+    'git config --add core.x y',
+    'git config alias.ship "-c alias.x=\'!git push origin HEAD:main\' x"',
+    "git config -- alias.ship 'push origin HEAD:main'",
+    'git remote -v set-url origin /other/repo',
+    'git remote --verbose add evil /other/repo',
+    'git config --global --edit',
+    'git config --rename-sec scratch alias',
+    'git config --rename-section scratch include',
+    'git config --rename-section scratch includeIf.gitdir:/x/',
+    'git config --rename-section scratch url.https://h/',
+    'git config rename-section scratch alias',
+]
+# The same kind of configuration, on a push command (a release-class command in its own right).
+CONFIG_PUSHES = [
+    'git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x',
+    'git -c remote.origin.url=/other/repo push origin x',
+    'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=/other/repo git push origin feat/x',
+    'GIT_SSH_COMMAND=/tmp/x git push origin feat/x',
+    "env -S 'GIT_SSH_COMMAND=/tmp/x git push origin feat/x'",
+    'env GIT_CONFIG_COUNT=1 git push origin feat/x',
+]
+# Ordinary Git use that must never be refused, with or without autonomy.
+CONFIG_FREE = [
+    'FOO=1 git status',
+    'git add GIT_CONFIG.md',
+    'git show GIT_CONFIG_NOTES',
+    'git commit -m GIT_SSH_notes',
+    'git config --global user.name Me',
+    'git config set core.editor vim',
+    'git config get alias.ship',
+    'git --config-env=core.pager=PAGER log',
+    'git config --get alias.ship',
+    'git config --list',
+    'git config --unset core.editor',
+    'git config --get-regexp ^remote',
+    'git config user.name Me',
+    'git config core.editor vim',
+    'git remote -v',
+    'git remote get-url origin',
+    'git remote set-head origin --auto',
+    'git config --get remote.origin.url',
+    'git -c core.pager=cat log',
+]
+
 UPDATE_REF_DENIED = ['git update-ref -d refs/heads/x', 'git update-ref --delete refs/heads/x',
                      'git update-ref --stdin', 'git update-ref -z --stdin', 'git update-ref --std',
                      'git update-ref --no-deref -d refs/heads/x', 'git update-ref -m why -d refs/heads/x',
@@ -451,41 +533,12 @@ class HooksTest(unittest.TestCase):
             self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'ask')
         self.assertEqual(self.pre('Bash', {'command': 'git status'}, armed=True).output, {})
 
-    def test_git_aliases_and_push_mappings_cannot_be_set(self):
-        denied = ["git -c alias.ship='push origin HEAD:main' ship", "git config alias.ship 'push origin HEAD:main'",
-                  'git config --global alias.p push', 'git config --add alias.q status',
-                  'git config remote.origin.push refs/heads/x:refs/heads/main', 'git config remote.origin.pushurl git@evil:x',
-                  'git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x', 'git -c ALIAS.p=push p',
-                  'git -C wt config alias.p push', 'git --config-env=alias.ship=ALIAS ship origin HEAD:main',
-                  'git --config-env alias.ship=ALIAS ship',
-                  'git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/',
-                  'git -c url.https://evil.invalid/.insteadOf=https://good.invalid/ fetch',
-                  'git config include.path /tmp/run.cfg', 'git -c include.path=/tmp/run.cfg ship',
-                  'git config includeIf.gitdir:/x/.path /tmp/run.cfg', 'git config remote.origin.url /other/repo',
-                  'git remote set-url origin /other/repo', 'git remote add evil /other/repo', 'git remote rename origin up',
-                  'git remote remove origin', 'git -c remote.origin.url=/other/repo push origin x', 'git config --rename-section scratch alias',
-                  'git config --rename-section scratch remote.origin', 'git config --edit', 'git config -e', 'git config edit', 'git config set alias.ship push', 'git config push.followTags true', 'GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=/other/repo git push origin feat/x',
-                  'GIT_SSH_COMMAND=/tmp/x git push origin feat/x',
-                  "env --split-string='GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ship GIT_CONFIG_VALUE_0=push git ship origin HEAD:main'",
-                  "env -S 'GIT_SSH_COMMAND=/tmp/x git push origin feat/x'",
-                  "GIT_CONFIG_COUNT+=1 GIT_CONFIG_KEY_0+=alias.ship GIT_CONFIG_VALUE_0+='!git push origin HEAD:main' git ship", 'env GIT_CONFIG_COUNT=1 git push origin feat/x', 'git config push.recurseSubmodules only', 'git config remote.origin.receivepack /tmp/redirect',
-                  'git config --unset url.https://long/.insteadOf', 'git config --unset-all alias.ship', 'git config unset remote.origin.url', 'git config push.pushOption merge_request.merge_when_pipeline_succeeds',
-                  'git config --rename-section scratch other', 'git config --add core.x y',
-                  '''git config alias.ship "-c alias.x='!git push origin HEAD:main' x"''', "git config -- alias.ship 'push origin HEAD:main'",
-                  'git remote -v set-url origin /other/repo', 'git remote --verbose add evil /other/repo', 'git config --global --edit',
-                  'git config --rename-sec scratch alias', 'git config --rename-section scratch include',
-                  'git config --rename-section scratch includeIf.gitdir:/x/', 'git config --rename-section scratch url.https://h/', 'git config rename-section scratch alias']
-        allowed = ['FOO=1 git status', 'git add GIT_CONFIG.md', 'git show GIT_CONFIG_NOTES', 'git commit -m GIT_SSH_notes', 'git config --global user.name Me', 'git config set core.editor vim', 'git config get alias.ship', 'git --config-env=core.pager=PAGER log',
-                   'git config --get alias.ship', 'git config --list', 'git config --unset core.editor',
-                   'git config --get-regexp ^remote', 'git config user.name Me', 'git config core.editor vim',
-                   'git remote -v', 'git remote get-url origin', 'git remote set-head origin --auto', 'git config --get remote.origin.url',
-                   'git -c core.pager=cat log']
-        for command in denied:
+    def test_git_config_touching_commands_are_free_without_autonomy(self):
+        """An ordinary session may set an alias, a hooks path or a remote; only an armed autonomy run refuses them."""
+        for command in CONFIG_TOUCHING + CONFIG_PUSHES:
             with self.subTest(command=command):
-                result = self.pre('Bash', {'command': command})
-                self.assertEqual(decision_of(result), 'deny')
-                self.assertIn('set by the owner', result.output['hookSpecificOutput']['permissionDecisionReason'])
-        for command in allowed:
+                self.assertNotEqual(decision_of(self.pre('Bash', {'command': command})), 'deny')
+        for command in CONFIG_FREE:
             with self.subTest(command=command):
                 self.assertEqual(self.pre('Bash', {'command': command}).output, {})
 
@@ -733,6 +786,36 @@ class HooksTest(unittest.TestCase):
         guarded = set(re.findall(r"'([^']+)'", found.group(1)))
         self.assertTrue(guarded)
         self.assertEqual(hooks_module._MOD_TOOLS, guarded)
+
+
+class HookCrashTest(unittest.TestCase):
+    """An unexpected crash must not let a guarded call through, and must not break the session itself."""
+
+    def run_event(self, event, payload):
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), mock.patch('sys.stdout', new_callable=io.StringIO) as out, \
+                mock.patch('sys.stderr', new_callable=io.StringIO) as err:
+            code = main([event])
+            return code, json.loads(out.getvalue()), err.getvalue()
+
+    def test_a_crash_denies_shell_and_edit_calls_and_spares_everything_else(self):
+        with mock.patch.object(hooks_module, 'handle_event', side_effect=RuntimeError('boom')):
+            for tool in ('Bash', 'Edit', 'Write', 'MultiEdit'):
+                with self.subTest(tool=tool):
+                    code, output, err = self.run_event('PreToolUse', {'tool_name': tool, 'tool_input': {}, 'cwd': '/tmp'})
+                    self.assertEqual(code, 2)
+                    self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+                    self.assertIn('could not check this call', err)
+                    self.assertIn('boom', err)
+            self.assertEqual(self.run_event('PreToolUse', {'tool_name': 'Read', 'tool_input': {}, 'cwd': '/tmp'})[:2], (0, {}))
+            self.assertEqual(self.run_event('Stop', {'cwd': '/tmp'})[:2], (0, {}))
+            self.assertEqual(self.run_event('SessionStart', {'cwd': '/tmp'})[:2], (0, {}))
+
+    def test_the_state_location_survives_a_missing_home_directory(self):
+        from orchestra_core import paths
+        with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
+            location = paths.state_home()
+        self.assertTrue(location.is_absolute())
+        self.assertIn('orchestra-state', location.name)
 
 
 def run_main(payload, *args, env=None):
@@ -1124,6 +1207,20 @@ class MarkerHandshakeTest(unittest.TestCase):
             self.call(command='git status')
             self.assertEqual(decide.call_count, 1)  # an ordinary command still skips
 
+    def test_fresh_marker_never_skips_the_autonomy_ledger_or_switch(self):
+        # The mod does not know the autonomy state, so edits of autonomy.md and arm/disarm go to the native hook.
+        self.marker()
+        with mock.patch.object(hooks_module, 'handle_event', wraps=handle_event) as decide:
+            for command in ('python3 orchestra.py autonomy arm', 'python3 orchestra.py autonomy disarm'):
+                self.call(command=command)
+            self.assertEqual(decide.call_count, 2)
+            payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': 'Edit',
+                       'tool_input': {'file_path': str(self.cwd / 'autonomy.md'), 'old_string': 'a', 'new_string': 'b'}}
+            run_main(payload, '--harness', 'claude', env=self.env)
+            self.assertEqual(decide.call_count, 3)
+            self.call(command='python3 orchestra.py autonomy status')
+            self.assertEqual(decide.call_count, 3)  # reading the status still skips
+
     def test_unhashable_tool_name_denies_instead_of_crashing(self):
         payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': ['Bash'], 'tool_input': {'command': 'git status'}}
         code, output = run_main(payload, '--harness', 'claude', env=self.env)
@@ -1348,6 +1445,75 @@ class RunStateResolutionTest(unittest.TestCase):
         (parent_state / 'state.json').write_text('{}')
         self.assertIsNone(self.bash(self.root / 'bare-wt', 'git push origin main'))
         self.assertIsNone(self.bash(self.root / 'bare-wt', 'git push origin main && git status'))
+
+
+class SessionRepoFixture(unittest.TestCase):
+    """A scratch repository with an active run bound to the harness session `S`, state under a private XDG directory."""
+
+    def setUp(self):
+        from orchestra_core.engine import Engine
+        from orchestra_core.paths import state_location
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        root = Path(self.temp.name).resolve()
+        patcher = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(root / 'xdg')})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop('ORCHESTRA_STATE_DIR', None)
+        self.repo = root / 'repo'
+        self.repo.mkdir()
+        git(self.repo, 'init', '-q', '-b', 'main')
+        git(self.repo, 'config', 'user.name', 'T')
+        git(self.repo, 'config', 'user.email', 't@example.invalid')
+        (self.repo / 'f').write_text('x')
+        git(self.repo, 'add', 'f')
+        git(self.repo, 'commit', '-q', '-m', 'f')
+        self.engine = Engine(state_location(self.repo), self.repo)
+        self.engine.open_session('main', harness_session='S')
+
+
+class BystanderSessionTest(SessionRepoFixture):
+    """A session the run is not bound to must not be held to the coordinator's rules, and is told a run exists."""
+
+    def agent(self, session):
+        return run_main({'cwd': str(self.repo), 'session_id': session, 'tool_name': 'Agent',
+                         'tool_input': {'subagent_type': 'Explore', 'prompt': 'x'}})[1]
+
+    def test_only_the_bound_session_is_held_to_orchestra_agents(self):
+        self.assertEqual(self.agent('S')['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertEqual(self.agent('another-session'), {})
+
+    def test_session_start_of_another_session_names_the_run_and_the_recovery(self):
+        for session, expected in (('another-session', True), ('S', False)):
+            with self.subTest(session=session):
+                payload = {'cwd': str(self.repo), 'session_id': session, 'source': 'startup'}
+                with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+                    main(['SessionStart', '--harness', 'claude'])
+                context = json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
+                self.assertEqual('bound to another session' in context, expected)
+                if expected:
+                    self.assertIn('session.lease', context)
+
+
+class UnreadableStateTest(SessionRepoFixture):
+    """A truncated state.json must name itself in a denial and be replaceable by `start --new-run`."""
+
+    def test_the_denial_names_the_file_and_the_way_out_and_new_run_replaces_it(self):
+        state_file = self.engine.state_path
+        state_file.write_text('')
+        code, output = run_main({'cwd': str(self.repo), 'session_id': 'S', 'tool_name': 'Bash', 'tool_input': {'command': 'git merge topic'}})
+        reason = output['hookSpecificOutput']['permissionDecisionReason']
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertIn('unreadable', reason)
+        self.assertIn('start --new-run', reason)
+        self.assertNotIn('park this card', reason)
+        cli = [sys.executable, str(Path(hooks_module.__file__).resolve().parents[1] / 'orchestra.py'), '--repo', str(self.repo)]
+        plain = subprocess.run(cli + ['start', '--size', 'tiny'], capture_output=True, text=True)
+        self.assertEqual(plain.returncode, 2)
+        self.assertIn('start --new-run', plain.stdout + plain.stderr)
+        fresh = subprocess.run(cli + ['start', '--new-run', '--size', 'tiny'], capture_output=True, text=True)
+        self.assertEqual(fresh.returncode, 0, fresh.stdout + fresh.stderr)
+        self.assertTrue(list((state_file.parent / 'history').glob('unreadable-*.json')))
 
 
 class HarnessSessionHookTest(unittest.TestCase):
@@ -1789,6 +1955,7 @@ class AutonomyHookTest(unittest.TestCase):
         git(self.repo, 'config', '--add', 'remote.origin.url', str(self.root / 'second.git'))
         self.arm()  # armed with two URLs recorded: still no push
         self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')
+        self.engine.disarm_autonomy()
         git(self.repo, 'config', '--unset-all', 'remote.origin.url')
         git(self.repo, 'config', 'remote.origin.url', str(self.root / 'origin.git'))
         self.arm()
@@ -1804,6 +1971,38 @@ class AutonomyHookTest(unittest.TestCase):
         engine.policy = {}
         self.assertIn('differs from what it was when autonomy was armed',
                       hooks_module._pull_request_push('git push origin feat/x', str(self.repo), engine))
+
+    def test_git_config_touching_commands_are_refused_while_autonomy_runs(self):
+        self.origin()
+        self.arm()
+        for command in CONFIG_TOUCHING + CONFIG_PUSHES:
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(self.repo, command), 'deny')
+        for command in CONFIG_FREE:
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(self.repo, command))
+
+    def test_the_agent_cannot_rewrite_its_own_autonomy_boundaries(self):
+        self.origin()
+        self.arm()
+        ledger = str(self.state / 'autonomy.md')
+        for tool, data in (('Edit', {'file_path': ledger, 'old_string': 'a', 'new_string': 'b'}),
+                           ('Write', {'file_path': ledger, 'content': 'x'}),
+                           ('MultiEdit', {'file_path': ledger, 'edits': []})):
+            with self.subTest(tool=tool):
+                code, output = run_main({'cwd': str(self.repo), 'tool_name': tool, 'tool_input': data})
+                self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+                self.assertIn('belong to the owner', output['hookSpecificOutput']['permissionDecisionReason'])
+        for command in ('python3 orchestra.py autonomy disarm', 'python3 plugins/orchestra/scripts/orchestra.py autonomy arm',
+                        'python3 "$ORCH/scripts/orchestra.py" --repo . autonomy arm'):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(self.repo, command), 'deny')
+        self.assertIsNone(self.hook(self.repo, 'python3 orchestra.py autonomy status'))  # reading is free
+        with self.assertRaisesRegex(Exception, 'already armed'):
+            self.engine.arm_autonomy()
+        self.engine.disarm_autonomy()  # the owner's own route
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Write', 'tool_input': {'file_path': ledger, 'content': 'x'}})
+        self.assertEqual(output, {})
 
     def test_legacy_push_line_arms_without_pull_requests(self):
         self.origin()

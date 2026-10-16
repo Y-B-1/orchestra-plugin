@@ -4227,6 +4227,7 @@ class ReleasePreauthTests(AutonomyFixture, HoldFixture):
         (self.state / 'autonomy.md').write_text(filled)
         self.assertTrue(self.engine.arm_autonomy()['active'])
         self.assertNotIn('release', self.auto())
+        self.engine.disarm_autonomy()
         (self.state / 'autonomy.md').write_text(filled.replace(AUTONOMY_FIXED[0], PREAUTH))
         self.assertTrue(self.engine.arm_autonomy()['active'])
         self.assertEqual(self.auto()['release'], dict(remote='devops', target='main'))
@@ -4358,9 +4359,11 @@ class AutonomyHarnessTests(AutonomyFixture, HoldFixture):
         self.assertIs(self.auto()['pull_requests'], True)
         self.assertIs(self.engine.autonomy_status()['pull_requests'], True)
         legacy = [l for l in AUTONOMY_FIXED if not l.startswith('- Push:')] + ['- Push: no push to any branch.']
+        self.engine.disarm_autonomy()
         self.arm(boundaries=legacy)
         self.assertIs(self.auto()['pull_requests'], False)
         self.assertIs(self.engine.autonomy_status()['pull_requests'], False)
+        self.engine.disarm_autonomy()
         self.arm(boundaries=list(AUTONOMY_FIXED) + ['- Push: no push to any branch.'])  # the stricter line wins
         self.assertIs(self.auto()['pull_requests'], False)
 

@@ -4541,7 +4541,7 @@
   {
    "id": "inline-r11-46",
    "input": {
-    "command": "git push origin ma\ue001in"
+    "command": "git push origin main"
    },
    "class": "deny",
    "_doc": "R2k minor: a literal U+E001 is malformed, never stripped from a release argv."
@@ -4549,7 +4549,7 @@
   {
    "id": "inline-r11-47",
    "input": {
-    "command": "echo \ue001"
+    "command": "echo "
    },
    "class": "deny"
   },
@@ -10570,7 +10570,7 @@
    "input": {
     "command": "git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x"
    },
-   "class": "deny"
+   "class": "release"
   },
   {
    "id": "guard-119",
@@ -10738,21 +10738,24 @@
    "input": {
     "command": "git -C wt config alias.p push"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-143",
    "input": {
     "command": "git -c ALIAS.p=push p"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-144",
    "input": {
     "command": "git -c alias.ship='push origin HEAD:main' ship"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-145",
@@ -10766,14 +10769,15 @@
    "input": {
     "command": "git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x"
    },
-   "class": "deny"
+   "class": "release"
   },
   {
    "id": "guard-147",
    "input": {
     "command": "git config --add alias.q status"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-148",
@@ -10794,7 +10798,8 @@
    "input": {
     "command": "git config --global alias.p push"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-151",
@@ -10808,14 +10813,16 @@
    "input": {
     "command": "git config --unset alias.ship"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-153",
    "input": {
     "command": "git config alias.ship 'push origin HEAD:main'"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-154",
@@ -10829,21 +10836,24 @@
    "input": {
     "command": "git config remote.origin.push refs/heads/x:refs/heads/main"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-156",
    "input": {
     "command": "git config remote.origin.pushurl git@evil:x"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-157",
    "input": {
     "command": "git config remote.origin.url https://example.invalid/r.git"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-158",
@@ -10857,14 +10867,16 @@
    "input": {
     "command": "git --config-env alias.ship=ALIAS ship"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-160",
    "input": {
     "command": "git --config-env=alias.ship=ALIAS ship origin HEAD:main"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-161",
@@ -10878,70 +10890,79 @@
    "input": {
     "command": "git config --rename-section scratch alias"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-163",
    "input": {
     "command": "git config --rename-section scratch other"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-164",
    "input": {
     "command": "git config --rename-section scratch remote.origin"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-165",
    "input": {
     "command": "git config rename-section scratch alias"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-166",
    "input": {
     "command": "git -c include.path=/tmp/run.cfg ship"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-167",
    "input": {
     "command": "git -c url.https://evil.invalid/.insteadOf=https://good.invalid/ fetch"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-168",
    "input": {
     "command": "git config include.path /tmp/run.cfg"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-169",
    "input": {
     "command": "git config includeIf.gitdir:/x/.path /tmp/run.cfg"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-170",
    "input": {
     "command": "git config url.https://evil.invalid/.pushInsteadOf https://good.invalid/"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-171",
    "input": {
     "command": "git -c remote.origin.url=/other/repo push origin x"
    },
-   "class": "deny"
+   "class": "release"
   },
   {
    "id": "guard-172",
@@ -10955,7 +10976,8 @@
    "input": {
     "command": "git config remote.origin.url /other/repo"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-174",
@@ -10969,7 +10991,8 @@
    "input": {
     "command": "git remote add evil /other/repo"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-176",
@@ -10983,14 +11006,16 @@
    "input": {
     "command": "git remote remove origin"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-178",
    "input": {
     "command": "git remote rename origin up"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-179",
@@ -11004,84 +11029,96 @@
    "input": {
     "command": "git remote set-url origin /other/repo"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-181",
    "input": {
     "command": "git config --edit"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-182",
    "input": {
     "command": "git config --global --edit"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-183",
    "input": {
     "command": "git config --rename-sec scratch alias"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-184",
    "input": {
     "command": "git config --rename-section scratch include"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-185",
    "input": {
     "command": "git config --rename-section scratch includeIf.gitdir:/x/"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-186",
    "input": {
     "command": "git config --rename-section scratch url.https://h/"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-187",
    "input": {
     "command": "git config -e"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-188",
    "input": {
     "command": "git config -- alias.ship 'push origin HEAD:main'"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-189",
    "input": {
     "command": "git remote --verbose add evil /other/repo"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-190",
    "input": {
     "command": "git remote -v set-url origin /other/repo"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-191",
    "input": {
     "command": "git config --add core.x y"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-192",
@@ -11095,14 +11132,16 @@
    "input": {
     "command": "git config alias.ship \"-c alias.x='!git push origin HEAD:main' x\""
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-194",
    "input": {
     "command": "git config edit"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-195",
@@ -11116,14 +11155,16 @@
    "input": {
     "command": "git config push.followTags true"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-197",
    "input": {
     "command": "git config set alias.ship push"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-198",
@@ -11137,7 +11178,8 @@
    "input": {
     "command": "git config push.pushOption merge_request.merge_when_pipeline_succeeds"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-200",
@@ -11151,35 +11193,40 @@
    "input": {
     "command": "git config --unset url.https://long/.insteadOf"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-202",
    "input": {
     "command": "git config --unset-all alias.ship"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-203",
    "input": {
     "command": "git config push.recurseSubmodules only"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-204",
    "input": {
     "command": "git config remote.origin.receivepack /tmp/redirect"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-205",
    "input": {
     "command": "git config unset remote.origin.url"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-206",
@@ -11193,28 +11240,29 @@
    "input": {
     "command": "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=/other/repo git push origin feat/x"
    },
-   "class": "deny"
+   "class": "release"
   },
   {
    "id": "guard-208",
    "input": {
     "command": "GIT_SSH_COMMAND=/tmp/x git push origin feat/x"
    },
-   "class": "deny"
+   "class": "release"
   },
   {
    "id": "guard-209",
    "input": {
     "command": "env GIT_CONFIG_COUNT=1 git push origin feat/x"
    },
-   "class": "deny"
+   "class": "release"
   },
   {
    "id": "guard-210",
    "input": {
     "command": "GIT_CONFIG_COUNT+=1 GIT_CONFIG_KEY_0+=alias.ship GIT_CONFIG_VALUE_0+='!git push origin HEAD:main' git ship"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-211",
@@ -11242,14 +11290,50 @@
    "input": {
     "command": "env --split-string='GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.ship GIT_CONFIG_VALUE_0=push git ship origin HEAD:main'"
    },
-   "class": "deny"
+   "class": "boundary",
+   "category": "config"
   },
   {
    "id": "guard-215",
    "input": {
     "command": "env -S 'GIT_SSH_COMMAND=/tmp/x git push origin feat/x'"
    },
-   "class": "deny"
+   "class": "release"
+  },
+  {
+   "id": "autonomy-switch-0",
+   "input": {
+    "command": "python3 orchestra.py autonomy arm"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "autonomy-switch-1",
+   "input": {
+    "command": "python3 orchestra.py autonomy disarm"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "autonomy-switch-2",
+   "input": {
+    "command": "python3 orchestra.py autonomy status"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "autonomy-switch-3",
+   "input": {
+    "command": "python3 plugins/orchestra/scripts/orchestra.py autonomy arm"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "autonomy-switch-4",
+   "input": {
+    "command": "python3 \"$ORCH/scripts/orchestra.py\" --repo . autonomy arm"
+   },
+   "class": "allow"
   }
  ]
 }

@@ -14,7 +14,12 @@ def repository(cwd):
 def state_home():
     """XDG_STATE_HOME when it is absolute (the XDG rule, as the mod reads it), else ~/.local/state."""
     value = os.environ.get('XDG_STATE_HOME', '')
-    return Path(value) if os.path.isabs(value) else Path.home() / '.local/state'
+    if os.path.isabs(value):
+        return Path(value)
+    try:
+        return Path.home() / '.local/state'
+    except RuntimeError:  # No HOME and no passwd entry (a container run as an arbitrary uid): a private temp location
+        return Path(tempfile.gettempdir()) / ('orchestra-state-%d' % os.getuid())
 
 
 def state_location(repo):
