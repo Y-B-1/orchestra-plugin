@@ -11,10 +11,40 @@ def repository(cwd):
     return Path(subprocess.check_output(['git','-C',str(cwd),'rev-parse','--show-toplevel'],stderr=subprocess.PIPE).decode().strip()).resolve()
 
 
+class StateRootError(Exception):
+    """The fallback state root is unusable. Not an OSError, so run discovery cannot mistake it for 'no run'."""
+
+
+def _private_temp_root():
+    """A per-user 0700 directory owned by this uid under the system temp folder; refuses a root another user made."""
+    root = Path(tempfile.gettempdir()) / ('orchestra-state-%d' % os.getuid())
+    try:
+        root.mkdir(mode=0o700, exist_ok=True)
+        info = root.lstat()
+    except OSError as exc:
+        raise StateRootError('Fallback state directory %s cannot be created: %s' % (root, exc)) from None
+    if root.is_symlink() or info.st_uid != os.getuid():
+        raise StateRootError('Fallback state directory %s is not owned by this user' % root)
+    if info.st_mode & 0o077:
+        try:
+            root.chmod(0o700)
+            tightened = root.lstat().st_mode & 0o077
+        except OSError as exc:
+            raise StateRootError('Fallback state directory %s cannot be made private: %s' % (root, exc)) from None
+        if tightened:
+            raise StateRootError('Fallback state directory %s is not private' % root)
+    return root
+
+
 def state_home():
     """XDG_STATE_HOME when it is absolute (the XDG rule, as the mod reads it), else ~/.local/state."""
     value = os.environ.get('XDG_STATE_HOME', '')
-    return Path(value) if os.path.isabs(value) else Path.home() / '.local/state'
+    if os.path.isabs(value):
+        return Path(value)
+    try:
+        return Path.home() / '.local/state'
+    except RuntimeError:  # No HOME and no passwd entry (a container run as an arbitrary uid): a private temp location
+        return _private_temp_root()
 
 
 def state_location(repo):

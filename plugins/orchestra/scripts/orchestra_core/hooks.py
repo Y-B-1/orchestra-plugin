@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import subprocess
 import time
@@ -108,6 +109,44 @@ def _protected(path, cwd, state_dir):
     return False
 
 
+def _is_ledger(path, cwd, state_dir):
+    """True when `path` is the autonomy ledger of the run in `state_dir`."""
+    try:
+        return (Path(cwd) / path).resolve() == (Path(state_dir).expanduser() / 'autonomy.md').resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+_AUTONOMY_SWITCH = re.compile(r'\borchestra\.py\b[^|;&\n]*\bautonomy\s+(?:arm|disarm)\b')
+
+
+def _switches_autonomy(command):
+    """True when a command runs `orchestra.py autonomy arm|disarm`. Line continuations are removed and each segment is
+    split into words, so the phrase inside a quoted argument (`echo 'orchestra.py autonomy disarm'`, `rg ...`) does not
+    count; a segment run through a shell (`sh -c`, `eval`) is searched as text, since the shell will run it."""
+    joined = re.sub(r'\\\r?\n', '', command)
+    for segment in re.split(r'[;&|\n]+', joined):
+        try:
+            words = shlex.split(segment)
+        except ValueError:
+            return bool(_AUTONOMY_SWITCH.search(segment))  # Unbalanced quoting: read it as text
+        if not words:
+            continue
+        if '-c' in words or Path(words[0]).name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.'}:
+            if _AUTONOMY_SWITCH.search(' '.join(words)):
+                return True
+        for i, word in enumerate(words):
+            if Path(word).name == 'orchestra.py':
+                rest = words[i + 1:]
+                if any(a == 'autonomy' and b in {'arm', 'disarm'} for a, b in zip(rest, rest[1:])):
+                    return True
+    return False
+
+
+LEDGER_LOCKED = ('The autonomy ledger and the autonomy switch belong to the owner while autonomy is armed: '
+                 'the owner changes them with /orchestra-autonomy off, then edits and arms again.')
+
+
 def _ask(reason):
     return HookResult({'hookSpecificOutput': {'hookEventName': 'PreToolUse',
                         'permissionDecision': 'ask',
@@ -156,6 +195,11 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
                 pass  # An unloadable state or changed contract never blocks the context
         if not worker and engine is not None:
             context += _report_context(engine)
+            if _other_session(engine, session_id) and _run_active(engine):
+                context += (' An Orchestra run is active in this repository but bound to another session, so this session is not '
+                            'its coordinator and may use any agent type. If that session is gone, the owner recovers it with '
+                            '`orchestra.py --actor main --lease L interrupt`, L read from session.lease in '
+                            + str(engine.state_path) + '.')
         if not worker and isinstance(session_id, str) and session_id:
             context += ' Harness session id: ' + session_id + '. Pass --harness-session ' + session_id + ' to orchestra.py start.'
         return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': context}})
@@ -219,9 +263,10 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
         return _deny('Workers do not delegate')
     unloaded_run = engine is None and armed and (state_dir is None or _raw_session_active(Path(state_dir) / 'state.json'))
-    if role == 'subagent' and _foreign_subagent(payload) and (_run_active(engine) or unloaded_run):
+    bystander = _other_session(engine, payload.get('session_id'))  # A session the run is not bound to does not coordinate it
+    if role == 'subagent' and _foreign_subagent(payload) and not bystander and (_run_active(engine) or unloaded_run):
         return _deny(SUBAGENT_GUARD)  # item 9: a Workflow agent never passes the Agent/Task check above it
-    if name in {'Agent', 'Task'} and (_run_active(engine) or unloaded_run):  # item 9, failing closed when busy or unloadable
+    if name in {'Agent', 'Task'} and not bystander and (_run_active(engine) or unloaded_run):  # item 9, failing closed when busy or unloadable
         kind = data.get('subagent_type')
         if not (isinstance(kind, str) and kind.startswith('orchestra:')):
             return _deny(AGENT_GUARD)
@@ -236,6 +281,7 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             cwd = os.getcwd()
         except OSError:  # The process cwd was removed: a missing cwd, never a crash that lets the call run
             cwd, missing_cwd = None, True
+    auto_on = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
     if name in _EDIT_TOOLS:
         try:
             if name == 'apply_patch':
@@ -249,6 +295,8 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
                 return _deny(MISSING_CWD)
             if any(_protected(path, cwd or '/', state_dir) for path in paths):
                 return _deny('Use the structured coordinator API for state; protect installed runtime configuration')
+            if auto_on and state_dir and any(_is_ledger(path, cwd or '/', state_dir) for path in paths):
+                return _deny(LEDGER_LOCKED)
         except (ValueError, OSError, RuntimeError) as exc:  # RuntimeError: a symlink loop on Python 3.11
             return _deny(str(exc), True)
     if name not in _SHELL_TOOLS:
@@ -269,7 +317,12 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         gates = _gate_ids(engine)
         if gates:
             return _deny('Cite gate receipt ' + ', '.join(gates) + '; reviewers do not rerun suites')
-    active = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
+    active = auto_on
+    hint = _PARK_HINT if engine is not None else ('the run state is unreadable (%s); the owner starts over with '
+                                                  '`orchestra.py start --new-run ...`, which keeps the old file under history/.'
+                                                  % (Path(state_dir) / 'state.json' if state_dir else 'state.json'))
+    if active and _switches_autonomy(command):
+        return _deny(LEDGER_LOCKED)  # An agent never re-arms or disarms itself: that would rewrite its own boundaries
     if decision.category == 'merged-delete':
         # SPEC 5.14 item 4: with or without an engine and autonomy. Only a provably merged branch is deleted.
         denied = _merged_delete_check(decision, cwd)
@@ -288,13 +341,15 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             if refused is None:
                 return HookResult({})  # A feature branch for a pull request; the owner merges it after the run
             if not _preauthorized(engine, decision):
-                return _deny('Autonomy is active: ' + refused + ' ' + _PARK_HINT)
+                return _deny('Autonomy is active: ' + refused + ' ' + hint)
         if klass in {'release', 'release-multi'} and not (klass == 'release' and _preauthorized(engine, decision)):
-            return _deny('Autonomy is active: merges and releases wait for the owner. ' + _PARK_HINT)
+            return _deny('Autonomy is active: merges and releases wait for the owner. ' + hint)
         if decision.boundary == 'delete':
-            return _deny('Approval boundary under autonomy: ' + _PARK_HINT)
+            return _deny('Approval boundary under autonomy: ' + hint)
+        if decision.boundary == 'config':
+            return _deny('Autonomy is active: ' + decision.reason + '. ' + hint)
         if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
-            return _deny('Approval boundary under autonomy: no merge on the default branch. ' + _PARK_HINT)
+            return _deny('Approval boundary under autonomy: no merge on the default branch. ' + hint)
     if klass in {'release', 'release-multi'} and (engine is not None or armed):
         # A current permit lets the release run. Otherwise the user is present: ask, unless autonomy is active.
         problem = decision.reason
@@ -719,6 +774,20 @@ def _release_call(payload):
         return True  # Unclassifiable: let the full hook decide
 
 
+def _ledger_call(payload):
+    """An edit of a file named autonomy.md, or a shell command that arms or disarms autonomy. The mod does not know the
+    autonomy state, so these always go through this hook, which does."""
+    data = payload.get('tool_input')
+    if not isinstance(data, dict) or not isinstance(payload.get('tool_name'), str):
+        return False
+    name = payload['tool_name']
+    if name in _SHELL_TOOLS:
+        command = data.get('command', data.get('cmd'))
+        return isinstance(command, str) and _switches_autonomy(command)
+    paths = [data.get('file_path', data.get('path'))] if name != 'apply_patch' else [data.get('command', data.get('patch'))]
+    return any(isinstance(p, str) and 'autonomy.md' in p for p in paths)
+
+
 def _mod_is_live(payload):
     """A12: a fresh marker carrying this copy's rules hash means the mod already guarded."""
     session = payload.get('session_id')
@@ -734,7 +803,32 @@ def _mod_is_live(payload):
         return False
 
 
+_CRASH_TOOL = {'name': None}  # The tool named by the payload being handled, for the crash handler below
+
+
 def main(argv=None):
+    """Run the hook. An unexpected crash must not let a guarded call through: a shell or edit tool call is denied (exit 2)
+    with the cause, and every other event or tool gets an empty answer so the session itself keeps working."""
+    _CRASH_TOOL['name'] = None
+    event = next((a for a in (argv if argv is not None else sys.argv[1:]) if not a.startswith('-')), None)
+    try:
+        return _main(argv)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        name = _CRASH_TOOL['name']
+        if event == 'PreToolUse' and (name is None or isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
+                                                  or name in {'Agent', 'Task'})):
+            reason = 'Orchestra guard could not check this call (%s: %s); report it to the plugin owner' % (type(exc).__name__, exc)
+            print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                                     'permissionDecisionReason': reason}}))
+            print(reason, file=sys.stderr)
+            return 2
+        print('{}')
+        return 0
+
+
+def _main(argv=None):
     started = time.monotonic()
     parser = argparse.ArgumentParser()
     parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd'])
@@ -745,11 +839,14 @@ def main(argv=None):
         payload = json.load(sys.stdin)
     except (ValueError, UnicodeError):
         payload = None
+    if isinstance(payload, dict) and isinstance(payload.get('tool_name'), str):
+        _CRASH_TOOL['name'] = payload['tool_name']
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
             and isinstance(payload, dict) and isinstance(payload.get('tool_name'), str)
             and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
             and not _foreign_subagent(payload)
             and not _release_call(payload)
+            and not _ledger_call(payload)
             and _mod_is_live(payload)):
         print('{}')
         return 0
@@ -763,7 +860,7 @@ def main(argv=None):
     if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
-            from .paths import load_policy
+            from .paths import StateRootError, load_policy
             repo, state_dir = _run_location(payload['cwd'])
             # Discovery is read-only. Construct the engine only for an existing run.
             if (state_dir / 'state.json').is_file():
@@ -784,6 +881,8 @@ def main(argv=None):
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
                 if args.event in {'PreToolUse', 'SubagentStart'} and not armed:
                     engine = None  # An inactive session is an unarmed run.
+        except StateRootError:
+            raise  # An unsafe fallback root is a crash, not 'no run': the crash wrapper denies the call
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
     if args.event == 'SessionStart' and isinstance(payload, dict):

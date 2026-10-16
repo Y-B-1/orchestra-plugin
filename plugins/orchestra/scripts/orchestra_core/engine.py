@@ -218,7 +218,10 @@ def parse_ledger(text, now):
 
 def autonomy_preconditions(repo, home=None):
     """Read and report only (SPEC 12.5): never changes a setting, never refuses."""
-    home = Path(home) if home else Path.home()
+    try:
+        home = Path(home) if home else Path.home()
+    except RuntimeError:  # No home directory: only the project settings can be read
+        home = Path('/nonexistent')
     found = None
     for label, path in (('local project', Path(repo) / '.claude' / 'settings.local.json'),
                         ('project', Path(repo) / '.claude' / 'settings.json'),
@@ -1890,11 +1893,13 @@ class Engine:
         never armed by the stale request."""
         path = self.state_dir / 'autonomy.md'
         with self._state(False) as state:
+            self._refuse_rearm(state)
             self._armable(state, path, snapshot=False)  # read-only: no ledger copy yet
             lease = state['session']['lease']
         remote_heads, remote_defaults = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
         remote_push_urls = {r: url for r in remote_defaults if (url := effective_push_url(self.repo, r))}
         with self._state(activity=False) as state:
+            self._refuse_rearm(state)  # A second arm may have won while the remotes were asked
             fields, snapshot = self._armable(state, path)
             if state['session']['lease'] != lease:
                 raise EngineError('The coordinator session changed while arming; arm again')
@@ -1906,6 +1911,11 @@ class Engine:
         preconditions = autonomy_preconditions(self.repo, home)
         preconditions['remote_heads'] = remote_heads
         return dict(active=True, ledger=str(path), preconditions=preconditions)
+
+    @staticmethod
+    def _refuse_rearm(state):
+        if (state.get('autonomy') or {}).get('active') is True:
+            raise EngineError('Autonomy is already armed; disarm it first (/orchestra-autonomy off), then edit the ledger and arm again')
 
     def _armable(self, state, path, snapshot=True):
         """The checks arming needs before any change: an active session, a filled ledger that parses, and a release

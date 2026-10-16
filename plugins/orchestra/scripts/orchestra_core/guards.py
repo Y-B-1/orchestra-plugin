@@ -563,7 +563,8 @@ def _raw_ref_delete(args):
     return False
 
 
-_CONFIG_REASON = 'Git aliases and push mappings are set by the owner, not during a run'
+_ROUTED_PUSH_REASON = 'A push or release cannot set Git configuration that routes or rewrites it; set it before, as the owner'
+_CONFIG_REASON = 'Git aliases, push mappings and remotes are set by the owner while autonomy runs'
 
 
 def _config_guarded(key):
@@ -592,7 +593,41 @@ def _config_write_guarded(options):
     return hit is not None and hit + 1 < len(words)
 
 
+def _config_touch(words):
+    """True when a git command sets or unsets Git configuration that routes or rewrites a push: a guarded key through
+    -c or --config-env, a writing `git config`, or a `git remote` verb that adds, renames, removes or retargets."""
+    args = list(words[1:])
+    while args and args[0].startswith('-'):
+        opt = args.pop(0)
+        if opt in _GIT['global_value_options']:
+            if not args:
+                return False
+            if opt in ('-c', '--config-env') and _config_guarded(args[0].split('=', 1)[0]):
+                return True
+            args.pop(0)
+        elif opt.startswith('--config-env=') and _config_guarded(opt[len('--config-env='):].split('=', 1)[0]):
+            return True
+    if not args:
+        return False
+    verb, args = args[0], args[1:]
+    if verb == 'config':
+        return _config_write_guarded([x for x in args if x != '--'])  # Operands after -- are still keys.
+    return verb == 'remote' and next((x for x in args if not x.startswith('-')), None) in _GIT['remote_write_verbs']
+
+
 def _git(words):
+    """The git rules, plus a `config` boundary: touching push-routing configuration is only refused while autonomy
+    is armed (the hook decides), since an ordinary session may set an alias, a hooks path or a remote. Every other
+    rule still wins: the boundary only stands in for an otherwise allowed command."""
+    decision = _git_rules(words)
+    if decision.klass == 'allow' and _config_touch(words):
+        return _boundary('config', _CONFIG_REASON)
+    if decision.klass == 'release' and _config_touch(words):
+        return _deny(_ROUTED_PUSH_REASON)  # A push may not carry the settings that decide where it goes
+    return decision
+
+
+def _git_rules(words):
     args = words[1:]
     changed_repo = False
     plain = not (args and args[0].startswith('-'))  # Any global option can redirect a merged-delete (R2): fail closed.
@@ -601,11 +636,7 @@ def _git(words):
         if opt in _GIT['global_value_options']:
             if not args:
                 return _deny('Malformed Git global option', 'malformed')
-            if opt in ('-c', '--config-env') and _config_guarded(args[0].split('=', 1)[0]):
-                return _deny(_CONFIG_REASON)
             args.pop(0)
-        elif opt.startswith('--config-env=') and _config_guarded(opt[len('--config-env='):].split('=', 1)[0]):
-            return _deny(_CONFIG_REASON)
         if opt.startswith('-C') or opt.startswith(('--git-dir', '--work-tree')):
             changed_repo = True
     if not args:
@@ -618,10 +649,6 @@ def _git(words):
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
         return _deny('Git stash shares state across worktrees', 'stash')
-    if verb == 'config' and _config_write_guarded([x for x in args if x != '--']):  # Operands after -- are still keys.
-        return _deny(_CONFIG_REASON)
-    if verb == 'remote' and next((x for x in args if not x.startswith('-')), None) in _GIT['remote_write_verbs']:
-        return _deny('Remotes are set by the owner, not during a run')
     if verb == 'update-ref' and _raw_ref_delete(args):
         return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):
@@ -1795,16 +1822,18 @@ def _stream_items(text, ops, depth):
 def _heredoc_items(docs, pipelines, depth):
     """SPEC A5 rules (1) to (5): extra (decision, argv, counts) items for each heredoc body."""
     items = []
+    found = {}  # heredoc index -> (pipeline, segment index) of its first marker: one pass, not one scan per heredoc
+    for pipeline in pipelines:
+        for i, segment in enumerate(pipeline):
+            for mark in _MARK_RE.finditer(segment):
+                found.setdefault(mark.group()[len('<<' + _MARK):-len(_MARK)], (pipeline, i))
     for index, (body, quoted) in enumerate(docs):
-        marker = '<<' + _MARK + str(index) + _MARK
         modes, argv = set(), ()
-        for pipeline in pipelines:
-            where = next((i for i, segment in enumerate(pipeline) if marker in segment), None)
-            if where is not None:
-                argv = tuple(_MARK_RE.sub('<<HEREDOC', word) for word in _shlex_words(pipeline[where]))
-                # Rules (1) to (3): the consumer and every later command of its pipeline.
-                modes = {_consumer_mode(segment) for segment in pipeline[where:]}
-                break
+        if str(index) in found:
+            pipeline, where = found[str(index)]
+            argv = tuple(_MARK_RE.sub('<<HEREDOC', word) for word in _shlex_words(pipeline[where]))
+            # Rules (1) to (3): the consumer and every later command of its pipeline.
+            modes = {_consumer_mode(segment) for segment in pipeline[where:]}
         if 'script' in modes or 'c' in modes:
             # Under -c the body is not what the shell runs, so an unparsable body is ignored.
             items.append((_body_decision(body, modes, depth), argv, False))
@@ -2062,7 +2091,7 @@ def _classify_command(command, _depth):
             return _deny(_PLAIN_REASON if substituted else _SEPARATE_REASON)
         if not plain:
             return _deny(_PLAIN_REASON)
-    for kind in ('delete', 'merge'):
+    for kind in ('delete', 'merge', 'config'):
         for decision, _, _ in items:
             if decision.boundary == kind:
                 return decision

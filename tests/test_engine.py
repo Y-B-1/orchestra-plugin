@@ -1492,6 +1492,21 @@ class AutonomyArmTests(AutonomyFixture):
                 self.engine.arm_autonomy()
         self.assertFalse(self.engine.autonomy_active())
 
+    def test_a_second_arm_that_loses_the_race_during_the_remote_step_changes_nothing(self):
+        self.ledger()
+
+        def arm_meanwhile(repo):  # another arm completes while this one asks the remotes
+            with mock.patch('orchestra_core.engine.ensure_remote_heads', return_value=('none', {})):
+                self.engine.arm_autonomy()
+            return 'none', {}
+
+        with mock.patch('orchestra_core.engine.ensure_remote_heads', side_effect=arm_meanwhile):
+            with self.assertRaisesRegex(EngineError, 'already armed'):
+                self.engine.arm_autonomy()
+        armed_at = self.auto()['armed_at']
+        self.assertTrue(self.engine.autonomy_active())
+        self.assertEqual(self.auto()['armed_at'], armed_at)
+
     def test_a_mismatched_release_pre_authorization_is_refused_before_the_remotes_are_asked(self):
         self.ledger(boundaries=[('- Release: pre-authorized origin elsewhere' if line.startswith('- Release:') else line)
                                 for line in AUTONOMY_FIXED])
@@ -4227,6 +4242,7 @@ class ReleasePreauthTests(AutonomyFixture, HoldFixture):
         (self.state / 'autonomy.md').write_text(filled)
         self.assertTrue(self.engine.arm_autonomy()['active'])
         self.assertNotIn('release', self.auto())
+        self.engine.disarm_autonomy()
         (self.state / 'autonomy.md').write_text(filled.replace(AUTONOMY_FIXED[0], PREAUTH))
         self.assertTrue(self.engine.arm_autonomy()['active'])
         self.assertEqual(self.auto()['release'], dict(remote='devops', target='main'))
@@ -4358,9 +4374,11 @@ class AutonomyHarnessTests(AutonomyFixture, HoldFixture):
         self.assertIs(self.auto()['pull_requests'], True)
         self.assertIs(self.engine.autonomy_status()['pull_requests'], True)
         legacy = [l for l in AUTONOMY_FIXED if not l.startswith('- Push:')] + ['- Push: no push to any branch.']
+        self.engine.disarm_autonomy()
         self.arm(boundaries=legacy)
         self.assertIs(self.auto()['pull_requests'], False)
         self.assertIs(self.engine.autonomy_status()['pull_requests'], False)
+        self.engine.disarm_autonomy()
         self.arm(boundaries=list(AUTONOMY_FIXED) + ['- Push: no push to any branch.'])  # the stricter line wins
         self.assertIs(self.auto()['pull_requests'], False)
 

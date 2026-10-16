@@ -3,7 +3,7 @@
   "_doc": {
     "version": "Table format version.",
     "classes": "The five corpus classes (SPEC 5.1); a decision takes exactly one.",
-    "boundary_categories": "The two boundary categories, delete and merge; a boundary case must name one. merged-delete (SPEC 5.14) is a Decision category of a delete boundary, not a third kind; a corpus case names it with decision_category.",
+    "boundary_categories": "The boundary categories: delete, merge and config (push-routing Git configuration, refused only while autonomy runs); a boundary case must name one. merged-delete (SPEC 5.14) is a Decision category of a delete boundary, not a third kind; a corpus case names it with decision_category.",
     "tools": "shell and edit are tool names compared exactly with the payload tool_name; claude_matcher is the Claude PreToolUse matcher regex.",
     "shells": "Interpreter names compared with the basename of the first word after wrapper unwrapping; a heredoc consumed by one of them is classified as a script.",
     "shell_value_flags": "Shell options that take a value; skipped, with their value, while looking for the -c payload.",
@@ -16,7 +16,7 @@
     "marker": "fresh_ms is the heartbeat window for the mod liveness marker; session_id_pattern is the only session id form that is looked up."
   },
   "classes": ["allow", "deny", "release", "release-multi", "boundary"],
-  "boundary_categories": ["delete", "merge"],
+  "boundary_categories": ["delete", "merge", "config"],
   "tools": {
     "shell": ["Bash", "exec_command", "shell", "shell_command"],
     "edit": ["apply_patch", "Edit", "Write", "MultiEdit"],

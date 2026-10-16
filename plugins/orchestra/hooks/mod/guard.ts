@@ -722,7 +722,8 @@ function rawRefDelete(args: string[]): boolean {
   return false;
 }
 
-const CONFIG_REASON = 'Git aliases and push mappings are set by the owner, not during a run';
+const ROUTED_PUSH_REASON = 'A push or release cannot set Git configuration that routes or rewrites it; set it before, as the owner';
+const CONFIG_REASON = 'Git aliases, push mappings and remotes are set by the owner while autonomy runs';
 
 function configGuarded(key: string): boolean {
   const lower = key.toLowerCase();
@@ -748,7 +749,37 @@ function configWriteGuarded(options: string[]): boolean {
   return hit >= 0 && hit + 1 < words.length;
 }
 
+/** True when a git command sets or unsets Git configuration that routes or rewrites a push: a guarded key through -c or
+ * --config-env, a writing `git config`, or a `git remote` verb that adds, renames, removes or retargets. */
+function configTouch(words: string[]): boolean {
+  const args = words.slice(1);
+  while (args.length && args[0]!.startsWith('-')) {
+    const opt = args.shift()!;
+    if (GIT.global_value_options!.has(opt)) {
+      if (!args.length) return false;
+      if ((opt === '-c' || opt === '--config-env') && configGuarded(args[0]!.split('=')[0]!)) return true;
+      args.shift();
+    } else if (opt.startsWith('--config-env=') && configGuarded(opt.slice('--config-env='.length).split('=')[0]!)) {
+      return true;
+    }
+  }
+  if (!args.length) return false;
+  const verb = args.shift()!;
+  if (verb === 'config') return configWriteGuarded(args.filter((x) => x !== '--')); // Operands after -- are still keys.
+  return verb === 'remote' && GIT.remote_write_verbs!.has(args.find((x) => !x.startsWith('-')) ?? '');
+}
+
+/** The git rules, plus a `config` boundary: touching push-routing configuration is only refused while autonomy is armed
+ * (the native hook decides), since an ordinary session may set an alias, a hooks path or a remote. Every other rule still
+ * wins: the boundary only stands in for an otherwise allowed command. */
 function git(words: string[]): Decision {
+  const decision = gitRules(words);
+  if (klassOf(decision) === 'allow' && configTouch(words)) return boundaryOf('config', CONFIG_REASON);
+  if (klassOf(decision) === 'release' && configTouch(words)) return denyOf(ROUTED_PUSH_REASON);
+  return decision;
+}
+
+function gitRules(words: string[]): Decision {
   let args = words.slice(1);
   let changedRepo = false;
   const plain = !(args.length && args[0]!.startsWith('-')); // Any global option can redirect a merged-delete (R2): fail closed.
@@ -756,10 +787,7 @@ function git(words: string[]): Decision {
     const opt = args.shift()!;
     if (GIT.global_value_options!.has(opt)) {
       if (!args.length) return denyOf('Malformed Git global option', 'malformed');
-      if ((opt === '-c' || opt === '--config-env') && configGuarded(args[0]!.split('=')[0]!)) return denyOf(CONFIG_REASON);
       args.shift();
-    } else if (opt.startsWith('--config-env=') && configGuarded(opt.slice('--config-env='.length).split('=')[0]!)) {
-      return denyOf(CONFIG_REASON);
     }
     if (opt.startsWith('-C') || opt.startsWith('--git-dir') || opt.startsWith('--work-tree')) changedRepo = true;
   }
@@ -774,8 +802,6 @@ function git(words: string[]): Decision {
   if (verb === 'stash') {
     return denyOf('Git stash shares state across worktrees', 'stash');
   }
-  if (verb === 'config' && configWriteGuarded(args.filter((x) => x !== '--'))) return denyOf(CONFIG_REASON); // Operands after -- are still keys.
-  if (verb === 'remote' && GIT.remote_write_verbs!.has(args.find((x) => !x.startsWith('-')) ?? '')) return denyOf('Remotes are set by the owner, not during a run');
   if (verb === 'update-ref' && rawRefDelete(args)) return denyOf('Raw ref deletion is not allowed; use git branch -d');
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
   if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');
@@ -2010,17 +2036,23 @@ function streamItems(text: string, ops: Ops, depth: number): Item[] {
 
 function heredocItems(docs: Doc[], pipes: string[][], depth: number): Item[] {
   const items: Item[] = [];
+  const found = new Map<string, [string[], number]>(); // heredoc index -> its first marker's pipeline and segment: one pass
+  for (const pipeline of pipes) {
+    pipeline.forEach((segment, i) => {
+      for (const mark of segment.matchAll(MARK_RE)) {
+        const key = mark[0].slice(('<<' + MARK).length, -MARK.length);
+        if (!found.has(key)) found.set(key, [pipeline, i]);
+      }
+    });
+  }
   docs.forEach(([body, quoted], index) => {
-    const marker = '<<' + MARK + String(index) + MARK;
     let modes = new Set<string | null>();
     let argv: string[] = [];
-    for (const pipeline of pipes) {
-      const where = pipeline.findIndex((segment) => segment.includes(marker));
-      if (where >= 0) {
-        argv = shlexSplit(pipeline[where]!, true).map((word) => word.replace(MARK_RE, '<<HEREDOC'));
-        modes = new Set(pipeline.slice(where).map((segment) => consumerMode(segment)));
-        break;
-      }
+    const hit = found.get(String(index));
+    if (hit) {
+      const [pipeline, where] = hit;
+      argv = shlexSplit(pipeline[where]!, true).map((word) => word.replace(MARK_RE, '<<HEREDOC'));
+      modes = new Set(pipeline.slice(where).map((segment) => consumerMode(segment)));
     }
     if (modes.has('script') || modes.has('c')) items.push([bodyDecision(body, modes, depth), argv, false]);
     if (!quoted) {
@@ -2218,7 +2250,7 @@ function classifyInner(command: string, depth: number): Decision {
     if (items.length > 1) return denyOf(items.some((item) => item[1].some(subst)) ? PLAIN_REASON : SEPARATE_REASON);
     if (!(words[0] === 'git' && !words.some(subst))) return denyOf(PLAIN_REASON);
   }
-  for (const kind of ['delete', 'merge']) for (const [decision] of items) if (decision.boundary === kind) return decision;
+  for (const kind of ['delete', 'merge', 'config']) for (const [decision] of items) if (decision.boundary === kind) return decision;
   let result = dec();
   for (const [decision, original] of items) if (decision.category) result = { ...decision, argv: original.slice() };
   return result;

@@ -123,9 +123,15 @@ def archive_inactive(state,engine):
         source = state/'state.json'
         if not source.exists():
             return
-        old = read_json(source)
-        if not isinstance(old,dict):
-            raise EngineError('Malformed run state: not a JSON object')
+        try:
+            old = read_json(source)
+            if not isinstance(old,dict):
+                raise ValueError('not a JSON object')
+        except ValueError:  # A truncated, garbled or non-object file: keep it for inspection and let a new run start
+            kept = state/'history'/('unreadable-'+uuid.uuid4().hex+'.json')
+            kept.parent.mkdir(parents=True,exist_ok=True)
+            source.replace(kept)
+            return
         if (old.get('session') or {}).get('active'):
             if old.get('repo') != str(engine.repo) or not engine.binds(old):
                 raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives
@@ -157,8 +163,13 @@ def execute(args):
             engine._check_start(args.size,asks,args.owner_request)
             engine._check_identity(args.actor,args.harness_session)
             archive_inactive(state,engine)
-        lease = engine.open_session(args.actor,args.harness_session,
-                                    size=args.size,asks=asks,owner_request=args.owner_request,require_size=True)
+        try:
+            lease = engine.open_session(args.actor,args.harness_session,
+                                        size=args.size,asks=asks,owner_request=args.owner_request,require_size=True)
+        except EngineError as exc:
+            if str(exc).startswith('Malformed run state'):
+                raise EngineError(str(exc)+'. Start over with `start --new-run ...`; the unreadable file is kept in '+str(state/'history'))
+            raise
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo)},0
