@@ -606,6 +606,10 @@ class Engine:
             if 'baseline' in session and (not isinstance(baseline, dict) or any(
                     not isinstance(k, str) or not isinstance(v, str) for k, v in baseline.items())):
                 raise EngineError('Invalid session baseline')
+            lines = session.get('baseline_lines')
+            if 'baseline_lines' in session and (not isinstance(lines, dict) or any(
+                    not isinstance(k, str) or type(v) is not int or v < 0 for k, v in lines.items())):
+                raise EngineError('Invalid session baseline')
             pending = session.get('pending_rebind')
             if 'pending_rebind' in session and (not isinstance(pending, dict) or not isinstance(pending.get('from'), str)
                     or isinstance(pending.get('at'), bool) or not isinstance(pending.get('at'), (int, float))):
@@ -749,47 +753,44 @@ class Engine:
                 i += 1
         return re.compile(''.join(out))
 
-    def _dirty_baseline(self):
-        """{path: short digest} of the work already in the tree when a run starts: modified tracked files and untracked
-        files. The run's size and review lenses count only what changes after it, not the owner's earlier edits."""
-        names = set()
-        for row in self._git('diff', '--name-only', '-z', '--no-renames', 'HEAD', '--').split(b'\0'):
-            if row:
-                names.add(os.fsdecode(row))
-        for raw in self._git('ls-files', '-z', '--others', '--exclude-standard').split(b'\0'):
-            if raw and not self._noise(os.fsdecode(raw)):
-                names.add(os.fsdecode(raw))
-        digests = self._entry_digests()
-        return {name: digests[name] for name in sorted(names) if name in digests}
-
-    def _changed(self, base, baseline=None):
-        """(paths, changed line count) from the run's base commit to the working tree, untracked files included. Paths
-        whose content still equals the `baseline` taken at the start are not the run's work."""
-        digests = self._entry_digests() if baseline else {}
-
-        def inherited(name):
-            return bool(baseline) and baseline.get(name) is not None and baseline.get(name) == digests.get(name)
-
-        paths, lines = set(), 0
+    def _line_counts(self, base):
+        """{path: changed lines} from `base` to the working tree: tracked files by numstat, untracked files by length."""
+        counts = {}
         for row in self._git('diff', '--numstat', '-z', '--no-renames', base, '--').split(b'\0'):
             if row:
                 added, deleted, name = row.decode(errors='replace').split('\t', 2)
-                if inherited(name):
-                    continue
-                paths.add(name)
-                lines += (int(added) + int(deleted)) if added.isdigit() and deleted.isdigit() else 0
+                counts[name] = (int(added) + int(deleted)) if added.isdigit() and deleted.isdigit() else 0
         for raw in self._git('ls-files', '-z', '--others', '--exclude-standard').split(b'\0'):
-            if raw:
-                name = os.fsdecode(raw)
-                if self._noise(name) or inherited(name):
-                    continue
-                paths.add(name)
-                path = self.repo / name
-                if path.is_file() and not path.is_symlink():
-                    data = path.read_bytes()
-                    lines += len(data.splitlines())
-        for name, was in (baseline or {}).items():
-            if digests.get(name) != was:  # the run deleted, restored or rewrote work that was already in the tree
+            if raw and not self._noise(os.fsdecode(raw)):
+                path = self.repo / os.fsdecode(raw)
+                counts[os.fsdecode(raw)] = len(path.read_bytes().splitlines()) if path.is_file() and not path.is_symlink() else 0
+        return counts
+
+    def _dirty_baseline(self):
+        """(digests, line counts) of the work already in the tree when a run starts: modified tracked files and untracked
+        files, a deleted path recorded as 'missing'. The run's size and review lenses count only what it changes after."""
+        counts = self._line_counts('HEAD')
+        digests = self._entry_digests()
+        return ({name: digests.get(name, 'missing') for name in sorted(counts)},
+                {name: counts[name] for name in sorted(counts)})
+
+    def _changed(self, base, baseline=None, baseline_lines=None):
+        """(paths, changed line count) from the run's base commit to the working tree, untracked files included. A path
+        whose content still equals the `baseline` taken at the start is not the run's work, and a path already dirty then
+        is charged only for the lines added since (`baseline_lines`)."""
+        digests = self._entry_digests() if baseline else {}
+
+        def inherited(name):
+            return bool(baseline) and name in baseline and baseline[name] == digests.get(name, 'missing')
+
+        paths, lines = set(), 0
+        for name, count in self._line_counts(base).items():
+            if inherited(name):
+                continue
+            paths.add(name)
+            lines += max(0, count - (baseline_lines or {}).get(name, 0))
+        for name in (baseline or {}):
+            if not inherited(name):  # the run deleted, restored or rewrote work that was already in the tree
                 paths.add(name)
         return sorted(paths), lines
 
@@ -797,7 +798,7 @@ class Engine:
         """The run's own changes: from its base commit, less the dirty tree it started with. None when it has no base."""
         session = state['session'] or {}
         base = session.get('base')
-        return None if base is None else self._changed(base, session.get('baseline'))
+        return None if base is None else self._changed(base, session.get('baseline'), session.get('baseline_lines'))
 
     def prepr(self):
         """Contract item 7: the pre-PR size check and reviewer choice. Read-only, no lease."""
@@ -903,14 +904,14 @@ class Engine:
             state['session'] = dict(actor=actor, lease=lease, active=True)
             if prior is None:
                 state['session']['base'] = self._git('rev-parse', 'HEAD').decode().strip()
-                state['session']['baseline'] = self._dirty_baseline()
+                state['session']['baseline'], state['session']['baseline_lines'] = self._dirty_baseline()
                 if items is not None:
                     state['session'].update(items=items, route=self._route_for(items), route_log=[])
                 elif size is not None:
                     state['session'].update(size=size, asks=1 if asks is None else asks, owner_request=bool(owner_request),
                                             route_log=[])
             else:
-                for key in ('base', 'baseline', 'items', 'route', 'route_log', 'size', 'asks', 'owner_request'):
+                for key in ('base', 'baseline', 'baseline_lines', 'items', 'route', 'route_log', 'size', 'asks', 'owner_request'):
                     if key in prior:
                         state['session'][key] = prior[key]
             if harness_session is not None:

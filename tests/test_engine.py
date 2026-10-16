@@ -4471,6 +4471,19 @@ class RunHygieneTests(EngineFixture):
         self.git('commit', '-qm', 'rest')
         self.assertTrue(Engine._same(before, self.engine.artifact()))  # the whole of it is in HEAD now
 
+    def test_a_staged_rename_at_start_is_not_run_work_and_pre_run_edits_are_not_charged(self):
+        (self.repo / 'big').write_text('line\n' * 300)
+        self.git('add', 'big')
+        self.git('commit', '-qm', 'big')
+        self.git('mv', 'big', 'renamed')  # staged: a deleted source and a new path
+        (self.repo / 'a').write_text('x\n' * 300)  # tracked file rewritten before the run
+        engine, lease = self.fresh('rename')
+        self.assertEqual(engine._run_changed(engine.status()), ([], 0))
+        with (self.repo / 'a').open('a') as stream:
+            stream.write('one more\n')
+        paths, lines = engine._run_changed(engine.status())
+        self.assertEqual((paths, lines), (['a'], 1))  # only the appended line, not the earlier rewrite
+
     def test_discarding_work_that_was_in_the_tree_at_start_is_a_run_change(self):
         (self.repo / 'before.txt').write_text('owner work\n')
         (self.repo / 'a').write_text('owner edit')
