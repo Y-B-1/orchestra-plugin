@@ -816,6 +816,11 @@ class HookCrashTest(unittest.TestCase):
             location = paths.state_home()
         self.assertTrue(location.is_absolute())
         self.assertIn('orchestra-state', location.name)
+        self.assertEqual(location.stat().st_mode & 0o077, 0)  # private to the user
+        location.chmod(0o755)
+        with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
+            again = paths.state_home()
+        self.assertEqual(again.stat().st_mode & 0o077, 0)  # a loosened root is tightened again
 
 
 def run_main(payload, *args, env=None):
@@ -1994,7 +1999,8 @@ class AutonomyHookTest(unittest.TestCase):
                 self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
                 self.assertIn('belong to the owner', output['hookSpecificOutput']['permissionDecisionReason'])
         for command in ('python3 orchestra.py autonomy disarm', 'python3 plugins/orchestra/scripts/orchestra.py autonomy arm',
-                        'python3 "$ORCH/scripts/orchestra.py" --repo . autonomy arm'):
+                        'python3 "$ORCH/scripts/orchestra.py" --repo . autonomy arm',
+                        'python3 orchestra.py \\\n autonomy disarm', 'python3 orchestra.py "autonomy" \'disarm\''):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(self.repo, command), 'deny')
         self.assertIsNone(self.hook(self.repo, 'python3 orchestra.py autonomy status'))  # reading is free

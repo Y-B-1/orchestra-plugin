@@ -117,6 +117,14 @@ def _is_ledger(path, cwd, state_dir):
 
 
 _AUTONOMY_SWITCH = re.compile(r'\borchestra\.py\b[^|;&\n]*\bautonomy\s+(?:arm|disarm)\b')
+
+
+def _switches_autonomy(command):
+    """True when the shell would run `orchestra.py autonomy arm|disarm`; line continuations and quotes are removed first."""
+    joined = re.sub(r'\\\r?\n', '', command)
+    return bool(_AUTONOMY_SWITCH.search(joined) or _AUTONOMY_SWITCH.search(re.sub(r'[\'"]', '', joined)))
+
+
 LEDGER_LOCKED = ('The autonomy ledger and the autonomy switch belong to the owner while autonomy is armed: '
                  'the owner changes them with /orchestra-autonomy off, then edits and arms again.')
 
@@ -295,7 +303,7 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     hint = _PARK_HINT if engine is not None else ('the run state is unreadable (%s); the owner starts over with '
                                                   '`orchestra.py start --new-run ...`, which keeps the old file under history/.'
                                                   % (Path(state_dir) / 'state.json' if state_dir else 'state.json'))
-    if active and _AUTONOMY_SWITCH.search(command):
+    if active and _switches_autonomy(command):
         return _deny(LEDGER_LOCKED)  # An agent never re-arms or disarms itself: that would rewrite its own boundaries
     if decision.category == 'merged-delete':
         # SPEC 5.14 item 4: with or without an engine and autonomy. Only a provably merged branch is deleted.
@@ -757,7 +765,7 @@ def _ledger_call(payload):
     name = payload['tool_name']
     if name in _SHELL_TOOLS:
         command = data.get('command', data.get('cmd'))
-        return isinstance(command, str) and bool(_AUTONOMY_SWITCH.search(command))
+        return isinstance(command, str) and _switches_autonomy(command)
     paths = [data.get('file_path', data.get('path'))] if name != 'apply_patch' else [data.get('command', data.get('patch'))]
     return any(isinstance(p, str) and 'autonomy.md' in p for p in paths)
 

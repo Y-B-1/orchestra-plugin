@@ -11,6 +11,18 @@ def repository(cwd):
     return Path(subprocess.check_output(['git','-C',str(cwd),'rev-parse','--show-toplevel'],stderr=subprocess.PIPE).decode().strip()).resolve()
 
 
+def _private_temp_root():
+    """A per-user 0700 directory owned by this uid under the system temp folder; refuses a root another user made."""
+    root = Path(tempfile.gettempdir()) / ('orchestra-state-%d' % os.getuid())
+    root.mkdir(mode=0o700, exist_ok=True)
+    info = root.lstat()
+    if root.is_symlink() or info.st_uid != os.getuid():
+        raise RuntimeError('Fallback state directory %s is not owned by this user' % root)
+    if info.st_mode & 0o077:
+        root.chmod(0o700)
+    return root
+
+
 def state_home():
     """XDG_STATE_HOME when it is absolute (the XDG rule, as the mod reads it), else ~/.local/state."""
     value = os.environ.get('XDG_STATE_HOME', '')
@@ -19,7 +31,7 @@ def state_home():
     try:
         return Path.home() / '.local/state'
     except RuntimeError:  # No HOME and no passwd entry (a container run as an arbitrary uid): a private temp location
-        return Path(tempfile.gettempdir()) / ('orchestra-state-%d' % os.getuid())
+        return _private_temp_root()
 
 
 def state_location(repo):

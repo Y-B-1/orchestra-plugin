@@ -11339,5 +11339,19 @@ export const CORPUS: CorpusCase[] = [
    "command": "python3 \"$ORCH/scripts/orchestra.py\" --repo . autonomy arm"
   },
   "class": "allow"
+ },
+ {
+  "id": "autonomy-switch-obfuscated-0",
+  "input": {
+   "command": "python3 orchestra.py \\\n autonomy disarm"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "autonomy-switch-obfuscated-1",
+  "input": {
+   "command": "python3 orchestra.py \"autonomy\" 'disarm'"
+  },
+  "class": "allow"
  }
 ];
