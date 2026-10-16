@@ -767,6 +767,10 @@ class Engine:
             if row:
                 added, deleted, name = row.decode(errors='replace').split('\t', 2)
                 counts[name] = (int(added) + int(deleted)) if added.isdigit() and deleted.isdigit() else 0
+        for row in self._git('diff', '--cached', '--numstat', '-z', '--no-renames', base, '--').split(b'\0'):
+            if row:  # work that exists only in the index (staged, worktree put back) is still work
+                added, deleted, name = row.decode(errors='replace').split('\t', 2)
+                counts.setdefault(name, (int(added) + int(deleted)) if added.isdigit() and deleted.isdigit() else 0)
         for raw in self._git('ls-files', '-z', '--others', '--exclude-standard').split(b'\0'):
             if raw and not self._noise(os.fsdecode(raw)):
                 path = self.repo / os.fsdecode(raw)

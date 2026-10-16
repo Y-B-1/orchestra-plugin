@@ -4474,6 +4474,17 @@ class RunHygieneTests(EngineFixture):
         self.assertNotEqual(before['head'], after['head'])
         self.assertFalse(Engine._same(before, after))
 
+    def test_work_the_run_leaves_only_in_the_index_counts(self):
+        engine, lease = self.fresh('indexonly')
+        (self.repo / 'a').write_text('x\n' * 300)
+        self.git('add', 'a')
+        self.git('checkout', '--', 'a')  # worktree back to HEAD; the 300 lines live only in the index
+        paths, lines = engine._run_changed(engine.status())
+        self.assertEqual(paths, ['a'])
+        self.assertGreaterEqual(lines, 300)
+        with self.assertRaisesRegex(EngineError, 'final review coverage is incomplete'):
+            engine.close_session('main', lease)
+
     def test_staged_content_unlike_the_worktree_at_start_is_baseline_work(self):
         (self.repo / 'a').write_text('staged version')
         self.git('add', 'a')
