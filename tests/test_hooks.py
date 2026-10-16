@@ -822,6 +822,16 @@ class HookCrashTest(unittest.TestCase):
             again = paths.state_home()
         self.assertEqual(again.stat().st_mode & 0o077, 0)  # a loosened root is tightened again
 
+    def test_an_unsafe_fallback_root_denies_instead_of_reading_as_no_run(self):
+        from orchestra_core import paths
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), \
+                mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')), \
+                mock.patch.object(paths.tempfile, 'gettempdir', return_value=tmp):
+            Path(tmp, 'orchestra-state-%d' % os.getuid()).symlink_to(tmp)
+            code, output = run_main({'cwd': str(Path(__file__).resolve().parents[1]), 'tool_name': 'Bash', 'tool_input': {'command': 'git status'}})
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertIn('Fallback state directory', output['hookSpecificOutput']['permissionDecisionReason'])
+
 
 def run_main(payload, *args, env=None):
     """Run the real hook entry point; returns (exit code, decoded stdout)."""
@@ -1519,6 +1529,10 @@ class UnreadableStateTest(SessionRepoFixture):
         fresh = subprocess.run(cli + ['start', '--new-run', '--size', 'tiny'], capture_output=True, text=True)
         self.assertEqual(fresh.returncode, 0, fresh.stdout + fresh.stderr)
         self.assertTrue(list((state_file.parent / 'history').glob('unreadable-*.json')))
+        state_file.write_text('[]')  # Valid JSON of the wrong shape is unreadable too
+        again = subprocess.run(cli + ['start', '--new-run', '--size', 'tiny'], capture_output=True, text=True)
+        self.assertEqual(again.returncode, 0, again.stdout + again.stderr)
+        self.assertEqual(len(list((state_file.parent / 'history').glob('unreadable-*.json'))), 2)
 
 
 class HarnessSessionHookTest(unittest.TestCase):

@@ -841,7 +841,7 @@ def _main(argv=None):
     if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
-            from .paths import load_policy
+            from .paths import StateRootError, load_policy
             repo, state_dir = _run_location(payload['cwd'])
             # Discovery is read-only. Construct the engine only for an existing run.
             if (state_dir / 'state.json').is_file():
@@ -862,6 +862,8 @@ def _main(argv=None):
                     autonomy = _raw_autonomy_active(state_dir / 'state.json')
                 if args.event in {'PreToolUse', 'SubagentStart'} and not armed:
                     engine = None  # An inactive session is an unarmed run.
+        except StateRootError:
+            raise  # An unsafe fallback root is a crash, not 'no run': the crash wrapper denies the call
         except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
             pass
     if args.event == 'SessionStart' and isinstance(payload, dict):

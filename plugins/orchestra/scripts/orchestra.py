@@ -125,13 +125,13 @@ def archive_inactive(state,engine):
             return
         try:
             old = read_json(source)
-        except ValueError:  # A truncated or garbled file: keep it for inspection and let a new run start
+            if not isinstance(old,dict):
+                raise ValueError('not a JSON object')
+        except ValueError:  # A truncated, garbled or non-object file: keep it for inspection and let a new run start
             kept = state/'history'/('unreadable-'+uuid.uuid4().hex+'.json')
             kept.parent.mkdir(parents=True,exist_ok=True)
             source.replace(kept)
             return
-        if not isinstance(old,dict):
-            raise EngineError('Malformed run state: not a JSON object')
         if (old.get('session') or {}).get('active'):
             if old.get('repo') != str(engine.repo) or not engine.binds(old):
                 raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives

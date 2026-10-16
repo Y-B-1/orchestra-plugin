@@ -11,13 +11,20 @@ def repository(cwd):
     return Path(subprocess.check_output(['git','-C',str(cwd),'rev-parse','--show-toplevel'],stderr=subprocess.PIPE).decode().strip()).resolve()
 
 
+class StateRootError(Exception):
+    """The fallback state root is unusable. Not an OSError, so run discovery cannot mistake it for 'no run'."""
+
+
 def _private_temp_root():
     """A per-user 0700 directory owned by this uid under the system temp folder; refuses a root another user made."""
     root = Path(tempfile.gettempdir()) / ('orchestra-state-%d' % os.getuid())
-    root.mkdir(mode=0o700, exist_ok=True)
-    info = root.lstat()
+    try:
+        root.mkdir(mode=0o700, exist_ok=True)
+        info = root.lstat()
+    except OSError as exc:
+        raise StateRootError('Fallback state directory %s cannot be created: %s' % (root, exc)) from None
     if root.is_symlink() or info.st_uid != os.getuid():
-        raise RuntimeError('Fallback state directory %s is not owned by this user' % root)
+        raise StateRootError('Fallback state directory %s is not owned by this user' % root)
     if info.st_mode & 0o077:
         root.chmod(0o700)
     return root
