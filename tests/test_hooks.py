@@ -802,7 +802,7 @@ class HookCrashTest(unittest.TestCase):
 
     def test_a_crash_denies_shell_and_edit_calls_and_spares_everything_else(self):
         with mock.patch.object(hooks_module, 'handle_event', side_effect=RuntimeError('boom')):
-            for tool in ('Bash', 'Edit', 'Write', 'MultiEdit'):
+            for tool in ('Bash', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task'):
                 with self.subTest(tool=tool):
                     code, output, err = self.run_event('PreToolUse', {'tool_name': tool, 'tool_input': {}, 'cwd': '/tmp'})
                     self.assertEqual(code, 2)

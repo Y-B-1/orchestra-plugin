@@ -799,7 +799,8 @@ def main(argv=None):
         raise
     except Exception as exc:
         name = _CRASH_TOOL['name']
-        if event == 'PreToolUse' and isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS):
+        if event == 'PreToolUse' and isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
+                                                  or name in {'Agent', 'Task'}):
             reason = 'Orchestra guard could not check this call (%s: %s); report it to the plugin owner' % (type(exc).__name__, exc)
             print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                                                      'permissionDecisionReason': reason}}))
