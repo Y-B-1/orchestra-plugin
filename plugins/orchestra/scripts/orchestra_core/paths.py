@@ -47,6 +47,11 @@ def state_home():
         return _private_temp_root()
 
 
+def push_url_digest(url):
+    """What arm records of a push URL: a digest, since a remote URL can carry a token that `status` would print."""
+    return 'sha256:' + hashlib.sha256(url.encode()).hexdigest()
+
+
 def state_location(repo):
     override = os.environ.get('ORCHESTRA_STATE_DIR')
     if override:

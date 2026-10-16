@@ -14,6 +14,7 @@ SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scrip
 sys.path.insert(0, str(SCRIPTS))
 from pathlib import Path
 
+from orchestra_core.paths import push_url_digest
 from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions, ensure_remote_heads
 
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
@@ -1455,7 +1456,7 @@ class AutonomyArmTests(AutonomyFixture):
         self.assertEqual(heads, 'origin: default branch main (recorded now)')
         self.assertEqual(self.git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD'), 'origin/main')
         self.assertEqual(self.auto()['remote_defaults'], {'origin': 'main'})
-        self.assertEqual(self.auto()['remote_push_urls'], {'origin': str(self.root / 'origin.git')})
+        self.assertEqual(self.auto()['remote_push_urls'], {'origin': push_url_digest(str(self.root / 'origin.git'))})  # a digest: URLs may hold tokens
         self.assertEqual(ensure_remote_heads(self.repo), ('origin: default branch main (confirmed)', {'origin': 'main'}))
 
     def test_arm_refreshes_a_stale_recorded_default_branch(self):
@@ -1491,6 +1492,13 @@ class AutonomyArmTests(AutonomyFixture):
             with self.assertRaisesRegex(EngineError, 'session changed while arming'):
                 self.engine.arm_autonomy()
         self.assertFalse(self.engine.autonomy_active())
+
+    def test_a_ledger_saved_with_windows_line_ends_arms(self):
+        self.ledger()
+        path = self.state / 'autonomy.md'
+        path.write_bytes(path.read_bytes().replace(b'\n', b'\r\n'))
+        self.arm()
+        self.assertTrue(self.engine.autonomy_active())
 
     def test_a_second_arm_that_loses_the_race_during_the_remote_step_changes_nothing(self):
         self.ledger()
@@ -4401,3 +4409,113 @@ class AutonomyHarnessTests(AutonomyFixture, HoldFixture):
         self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL, findings=['g'], task_findings={'R1': ['g'], 'B1': []})
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual((self.auto()['active'], self.auto().get('last_stop_reason')), (False, 'no-ready-card'))
+
+
+class RunHygieneTests(EngineFixture):
+    """Run evidence and recovery paths from the 2.7.1 audit: unreviewed finishes, the start baseline, noise, commits
+    before accept, blocked workers, lost leases and dropped cards."""
+
+    def fresh(self, name='fresh', **kw):
+        engine = Engine(self.root / name, self.repo)
+        return engine, engine.open_session('main', **kw)
+
+    def test_finish_needs_a_review_when_the_run_changed_files_without_a_card(self):
+        (self.repo / 'new.txt').write_text('line\n' * 300)
+        with self.assertRaisesRegex(EngineError, 'final review coverage is incomplete'):
+            self.engine.check_completion('main', self.lease)
+        with self.assertRaisesRegex(EngineError, 'final review coverage is incomplete'):
+            self.engine.close_session('main', self.lease)
+
+    def test_finish_without_any_change_still_closes(self):
+        self.engine.close_session('main', self.lease)
+
+    def test_work_already_in_the_tree_at_start_is_not_the_runs_work(self):
+        (self.repo / 'before.txt').write_text('line\n' * 300)
+        (self.repo / 'a').write_text('edited before the run')
+        engine, lease = self.fresh()
+        self.assertEqual(engine.prepr()['changed_lines'], 0)
+        engine.close_session('main', lease)  # nothing of this run's own to review
+        engine, lease = self.fresh('second')
+        (self.repo / 'before.txt').write_text('line\n' * 300 + 'more\n')
+        self.assertGreater(engine.prepr()['changed_lines'], 0)  # editing it during the run counts
+
+    def test_interpreter_leftovers_do_not_change_the_evidence(self):
+        before = self.engine.artifact()
+        (self.repo / '__pycache__').mkdir()
+        (self.repo / '__pycache__' / 'x.cpython-311.pyc').write_bytes(b'\0\1')
+        (self.repo / '.DS_Store').write_bytes(b'x')
+        self.assertEqual(before, self.engine.artifact())
+        self.assertEqual(self.engine._changed(self.engine.status()['session']['base'])[0], [])
+        (self.repo / 'real.txt').write_text('x')
+        self.assertNotEqual(before, self.engine.artifact())
+
+    def test_committing_the_reviewed_work_does_not_stale_whole_repo_evidence(self):
+        (self.repo / 'a').write_text('reviewed')
+        before = self.engine.artifact()
+        self.git('commit', '-qam', 'the reviewed work')
+        after = self.engine.artifact()
+        self.assertNotEqual(before['head'], after['head'])
+        self.assertTrue(Engine._same(before, after))
+        (self.repo / 'a').write_text('changed after review')
+        self.assertFalse(Engine._same(before, self.engine.artifact()))
+
+    def test_a_card_can_be_accepted_after_the_work_is_committed_and_re_reviewed(self):
+        self.allow_review()
+        (self.repo / 'a').write_text('built')
+        self.task('a', role='investigator', mode='code', review_required=True)
+        self.engine.report('wa', self.engine.dispatch('main', self.lease, 'a', 'wa'), 'Looked.')
+        report = self.root / 'r1.json'
+        self.review(report, tasks=['a'])
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a'])
+        self.git('commit', '-qam', 'work')
+        with self.assertRaisesRegex(EngineError, 'independent review'):
+            self.engine.accept('main', self.lease, 'a')  # the review is of the old commit
+        self.review(report, tasks=['a'])
+        self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a'])
+        self.engine.accept('main', self.lease, 'a')  # re-reviewed on the committed tree: no dead end
+        self.assertEqual(self.engine.status()['tasks']['a']['state'], 'accepted')
+
+    def test_a_blocked_worker_parks_its_card_with_the_reason(self):
+        self.task('a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'wa')
+        self.engine.report('wa', token, 'Tried.\nBLOCKED: the API key is not in the environment')
+        task = self.engine.status()['tasks']['a']
+        self.assertEqual(task['state'], 'parked')
+        self.assertIn('API key', task['parked_reason'])
+        self.engine.unpark('main', self.lease, 'a')
+
+    def test_a_lost_lease_is_taken_back_by_the_owning_session_only(self):
+        engine, lease = self.fresh(harness_session='H1')
+        engine.add_task('main', lease, dict(id='a', role='builder', mode='implementation', inputs=['s'], acceptance=['x'],
+                                            files=['a'], resources=[], dependencies=[]))
+        token = engine.dispatch('main', lease, 'a', 'wa')
+        for who, session in (('main', 'H2'), ('other', 'H1'), ('main', None)):
+            with self.assertRaises(EngineError):
+                engine.recover_lease(who, session)
+        new = engine.recover_lease('main', 'H1')
+        self.assertNotEqual(new, lease)
+        with self.assertRaisesRegex(EngineError, 'lost its lease'):
+            engine.ready('main', lease)
+        engine.report('wa', token, done('built'))  # the running worker is not orphaned
+        self.assertEqual(engine.status()['tasks']['a']['state'], 'reported')
+
+    def test_a_card_that_should_never_run_can_be_dropped(self):
+        self.task('a')
+        self.task('b', dependencies=['a'])
+        with self.assertRaisesRegex(EngineError, 'depend on it'):
+            self.engine.cancel('main', self.lease, 'a', 'wrong plan')
+        self.engine.cancel('main', self.lease, 'b', 'wrong plan')
+        self.engine.dispatch('main', self.lease, 'a', 'wa')
+        with self.assertRaisesRegex(EngineError, 'queued or parked'):
+            self.engine.cancel('main', self.lease, 'a', 'too late')
+        with self.assertRaisesRegex(EngineError, 'reason'):
+            self.engine.cancel('main', self.lease, 'a', ' ')
+        state = self.engine.status()
+        self.assertNotIn('b', state['tasks'])
+        self.assertEqual([c['id'] for c in state['cancelled']], ['b'])
+
+    def test_push_urls_are_recorded_as_digests(self):
+        from orchestra_core.paths import push_url_digest
+        self.assertEqual(push_url_digest('https://user:secret@example.invalid/r.git')[:7], 'sha256:')
+        self.assertNotIn('secret', push_url_digest('https://user:secret@example.invalid/r.git'))
+

@@ -91,3 +91,5 @@ Outside a run, the guard allows a non-force push of one branch or tag, `gh pr me
 ## Other commands
 
 `classify "SHELL COMMAND"` prints the classifier's decision for a command string without running it, not the hook's final verdict. A `releasemulti` category is the release-multi class; the hook applies it by run state. `status` prints cards, session state and `required_lenses` with no lease; `board` groups card ids by role and state, `ready` lists dispatchable cards; `scan` runs the configured secret scan.
+
+**Recovery and housekeeping.** A coordinator that lost its lease runs `start --recover --harness-session ID` (the id is in the SessionStart context) and gets a new one; running cards keep their assignments. `cancel TASK --reason TEXT` drops a queued or parked card that should never run. A worker that cannot do its card ends its report with `BLOCKED: reason` and the card is parked. Work already in the tree when the run starts is not counted toward its size or lenses. After committing reviewed work, record the independent review again before `accept`. `finish` with no cards still needs a final review when the run changed files.

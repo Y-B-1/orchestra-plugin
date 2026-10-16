@@ -416,9 +416,10 @@ def _pull_request_push(command, cwd, engine):
         return ('The default branch of %s was not confirmed when autonomy was armed; arm again once the remote answers.'
                 % remote)
     now_url = _git_out(cwd, 'remote', 'get-url', '--push', '--all', remote)[1]
-    if '\n' in now_url or '\n' in (armed_url or ''):
+    if '\n' in now_url:
         return 'Remote %s has more than one push URL; push it by hand.' % remote
-    if not isinstance(armed_url, str) or not armed_url or now_url != armed_url:
+    from .paths import push_url_digest
+    if not isinstance(armed_url, str) or not armed_url or push_url_digest(now_url) != armed_url:
         return ('Where %s pushes to differs from what it was when autonomy was armed (or was not recorded); '
                 'the owner checks the remote and arms again.' % remote)
     if target.casefold() in {default.casefold(), 'main', 'master'}:

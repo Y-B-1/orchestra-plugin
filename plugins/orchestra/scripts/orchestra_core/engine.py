@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .guards import classify_command
+from .paths import push_url_digest
 
 
 ACTIVE_MISMATCH = ('Repository or policy changed while a run is active, so a new run is refused. '
@@ -152,6 +153,7 @@ def _section(text, title):
 
 def parse_ledger(text, now):
     """Parse the autonomy ledger (SPEC 12.2); every refusal names the field."""
+    text = text.replace('\r\n', '\n').replace('\r', '\n')  # a ledger saved with Windows line ends reads the same
     fields = {}
     for name in ('goal', 'max_passes', 'max_stalls', 'deadline'):
         match = re.search(r'^' + name + r':[ \t]*(.*?)[ \t]*$', text, re.M)
@@ -350,12 +352,23 @@ class Engine:
     def _in_scope(path, scope):
         return any(path == s or path.startswith(s + '/') for s in scope)
 
+    _NOISE_PARTS = frozenset(('__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.DS_Store'))
+
+    @classmethod
+    def _noise(cls, name):
+        """Interpreter and OS leftovers that a command leaves behind without changing the work: never evidence."""
+        parts = name.split('/')
+        return name.endswith('.pyc') or any(part in cls._NOISE_PARTS for part in parts)
+
     def _file_entries(self, scope=None):
         """[name, value] for every tracked and untracked nonignored entry, limited to `scope` when given."""
+        tracked = set(self._git('ls-files', '-z', '--cached').split(b'\0'))
         names = self._git('ls-files', '-z', '--cached', '--others', '--exclude-standard').split(b'\0')
         entries = []
         for raw in sorted(set(names) - {b''}):
             if scope is not None and not self._in_scope(os.fsdecode(raw), scope):
+                continue
+            if raw not in tracked and self._noise(os.fsdecode(raw)):
                 continue
             path = self.repo / os.fsdecode(raw)
             if path.is_symlink():
@@ -384,6 +397,8 @@ class Engine:
             common = self.repo / common
         index = self._git('ls-files', '--stage', '-z')
         status = self._git('status', '--porcelain=v1', '-z', '--untracked-files=all')
+        status = b'\0'.join(part for part in status.split(b'\0')
+                            if not (part[:2] == b'??' and self._noise(os.fsdecode(part[3:]))))
         result = dict(repo=str(self.repo), identity=str(common.resolve()),
                       head=self._git('rev-parse', 'HEAD').decode().strip(),
                       tree=self._git('rev-parse', 'HEAD^{tree}').decode().strip(),
@@ -403,6 +418,18 @@ class Engine:
                     changes.append(part)
             result.update(scope=scope, index=_hash(b'\0'.join(lines)), status=_hash(b'\0'.join(changes)))
         return result
+
+    @staticmethod
+    def _same(recorded, current):
+        """Whether evidence recorded against `recorded` still holds for `current`. What was reviewed is the content: the
+        files' bytes and modes, the policy and the scope. Staging or committing exactly the reviewed work changes HEAD,
+        the index and the status text but not the content, so whole-repo evidence ignores those. Scoped evidence also
+        needs the same HEAD: a commit that may carry other changes stales it, as before."""
+        if not isinstance(recorded, dict) or not isinstance(current, dict):
+            return False
+        if any(recorded.get(k) != current.get(k) for k in ('repo', 'identity', 'policy', 'fingerprint', 'scope')):
+            return False
+        return recorded.get('scope') is None or recorded.get('head') == current.get('head')
 
     def scope_for(self, task_ids):
         """Union of the tasks' reservation files, or None (whole repo) when any task reserves no files."""
@@ -568,6 +595,10 @@ class Engine:
                     raise EngineError('Invalid session route')
             if 'base' in session and (not isinstance(session['base'], str) or not session['base']):
                 raise EngineError('Invalid session base')
+            baseline = session.get('baseline')
+            if 'baseline' in session and (not isinstance(baseline, dict) or any(
+                    not isinstance(k, str) or not isinstance(v, str) for k, v in baseline.items())):
+                raise EngineError('Invalid session baseline')
             pending = session.get('pending_rebind')
             if 'pending_rebind' in session and (not isinstance(pending, dict) or not isinstance(pending.get('from'), str)
                     or isinstance(pending.get('at'), bool) or not isinstance(pending.get('at'), (int, float))):
@@ -685,7 +716,7 @@ class Engine:
         if not gates:
             return []
         artifact = self.artifact()
-        return [g['id'] for g in gates if g['artifact'] == artifact and self._intact(g)]
+        return [g['id'] for g in gates if self._same(g['artifact'], artifact) and self._intact(g)]
 
     @staticmethod
     def _glob_regex(glob):
@@ -711,17 +742,40 @@ class Engine:
                 i += 1
         return re.compile(''.join(out))
 
-    def _changed(self, base):
-        """(paths, changed line count) from the run's base commit to the working tree, untracked files included."""
+    def _dirty_baseline(self):
+        """{path: short digest} of the work already in the tree when a run starts: modified tracked files and untracked
+        files. The run's size and review lenses count only what changes after it, not the owner's earlier edits."""
+        names = set()
+        for row in self._git('diff', '--name-only', '-z', '--no-renames', 'HEAD', '--').split(b'\0'):
+            if row:
+                names.add(os.fsdecode(row))
+        for raw in self._git('ls-files', '-z', '--others', '--exclude-standard').split(b'\0'):
+            if raw and not self._noise(os.fsdecode(raw)):
+                names.add(os.fsdecode(raw))
+        digests = self._entry_digests()
+        return {name: digests[name] for name in sorted(names) if name in digests}
+
+    def _changed(self, base, baseline=None):
+        """(paths, changed line count) from the run's base commit to the working tree, untracked files included. Paths
+        whose content still equals the `baseline` taken at the start are not the run's work."""
+        digests = self._entry_digests() if baseline else {}
+
+        def inherited(name):
+            return bool(baseline) and baseline.get(name) is not None and baseline.get(name) == digests.get(name)
+
         paths, lines = set(), 0
         for row in self._git('diff', '--numstat', '-z', '--no-renames', base, '--').split(b'\0'):
             if row:
                 added, deleted, name = row.decode(errors='replace').split('\t', 2)
+                if inherited(name):
+                    continue
                 paths.add(name)
                 lines += (int(added) + int(deleted)) if added.isdigit() and deleted.isdigit() else 0
         for raw in self._git('ls-files', '-z', '--others', '--exclude-standard').split(b'\0'):
             if raw:
                 name = os.fsdecode(raw)
+                if self._noise(name) or inherited(name):
+                    continue
                 paths.add(name)
                 path = self.repo / name
                 if path.is_file() and not path.is_symlink():
@@ -729,13 +783,20 @@ class Engine:
                     lines += len(data.splitlines())
         return sorted(paths), lines
 
+    def _run_changed(self, state):
+        """The run's own changes: from its base commit, less the dirty tree it started with. None when it has no base."""
+        session = state['session'] or {}
+        base = session.get('base')
+        return None if base is None else self._changed(base, session.get('baseline'))
+
     def prepr(self):
         """Contract item 7: the pre-PR size check and reviewer choice. Read-only, no lease."""
         with self._state(False) as state:
             session = state['session'] or {}
             base = session.get('base')
             lenses = self._required_lenses(state)
-            lines = self._changed(base)[1] if base is not None else None
+            changed = self._run_changed(state)
+            lines = changed[1] if changed is not None else None
         size, asks = session.get('size'), session.get('asks')
         budget = TIER_GUIDE[size] * asks if size in TIER_GUIDE else None
         over = budget is not None and lines is not None and lines > budget
@@ -755,7 +816,7 @@ class Engine:
         base = (state['session'] or {}).get('base')
         if base is None:
             return list(CATEGORIES)
-        paths, lines = self._changed(base)
+        paths, lines = self._run_changed(state)
         wanted = set(ALWAYS_LENSES)
         if any(self._glob_regex(g).fullmatch(p) for g in self.policy['sensitive_paths'] for p in paths):
             wanted.add('security')
@@ -767,7 +828,8 @@ class Engine:
     def _lease(state, actor, lease):
         session = state['session']
         if not session or not session['active'] or session['actor'] != actor or session['lease'] != lease:
-            raise EngineError('Invalid or interrupted coordinator lease')
+            raise EngineError('Invalid or interrupted coordinator lease. If this session lost its lease, take it back with '
+                              '`start --recover --harness-session ID` (the id is in the SessionStart context)')
 
     def validate_lease(self, actor, lease):
         """Check coordinator consistency; caller identifiers are not authentication."""
@@ -817,7 +879,8 @@ class Engine:
                 raise EngineError('Invalid session size')
         with self._state() as state:
             if state['session'] and state['session']['active']:
-                raise EngineError('A coordinator session is already active')
+                raise EngineError('A coordinator session is already active. If this session lost its lease, take it back with '
+                                  '`start --recover --harness-session ID`')
             lease = uuid.uuid4().hex
             prior = state['session']
             if prior is not None and items is not None:
@@ -830,13 +893,14 @@ class Engine:
             state['session'] = dict(actor=actor, lease=lease, active=True)
             if prior is None:
                 state['session']['base'] = self._git('rev-parse', 'HEAD').decode().strip()
+                state['session']['baseline'] = self._dirty_baseline()
                 if items is not None:
                     state['session'].update(items=items, route=self._route_for(items), route_log=[])
                 elif size is not None:
                     state['session'].update(size=size, asks=1 if asks is None else asks, owner_request=bool(owner_request),
                                             route_log=[])
             else:
-                for key in ('base', 'items', 'route', 'route_log', 'size', 'asks', 'owner_request'):
+                for key in ('base', 'baseline', 'items', 'route', 'route_log', 'size', 'asks', 'owner_request'):
                     if key in prior:
                         state['session'][key] = prior[key]
             if harness_session is not None:
@@ -1160,12 +1224,61 @@ class Engine:
                                   + self._open_repair(state, task)['id'])
             if not task or task['state'] not in PARKABLE:
                 raise EngineError('Only a queued, running or reported card can be parked')
-            task.update(state='parked', parked_reason=reason.strip())
-            for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact'):
-                task.pop(key, None)
-            for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair's report is dropped: its chain is under repair again
-                ancestor['state'] = 'repairing'
-                ancestor['review_since'] = len(state['reviews'])
+            self._set_aside(state, task, reason.strip())
+
+    def _set_aside(self, state, task, reason):
+        """Park a card: drop its assignment, reservation and report, and put its repair chain under repair again."""
+        task.update(state='parked', parked_reason=reason)
+        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact'):
+            task.pop(key, None)
+        for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair's report is dropped: its chain is under repair again
+            ancestor['state'] = 'repairing'
+            ancestor['review_since'] = len(state['reviews'])
+
+    def cancel(self, actor, lease, task_id, reason):
+        """Drop a card that should never run (a mis-specified or superseded one) so it stops blocking completion. Only
+        a card nothing else depends on and no review or repair chain mentions can go; the drop is recorded."""
+        if not isinstance(reason, str) or not reason.strip():
+            raise EngineError('Cancelling needs a reason')
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = state['tasks'].get(task_id)
+            if not task:
+                raise EngineError('Unknown task: ' + str(task_id))
+            if task['state'] not in ('queued', 'parked'):
+                raise EngineError('Only a queued or parked card can be cancelled; park a running or reported card first')
+            if task.get('repair_of') or task.get('repaired_by') or task.get('held_finding'):
+                raise EngineError('A card in a repair chain cannot be cancelled')
+            users = [t['id'] for t in state['tasks'].values()
+                     if task_id in t.get('dependencies', []) or task_id in t.get('review_of', [])]
+            if users:
+                raise EngineError('Cancel or change the cards that depend on it first: ' + ', '.join(sorted(users)))
+            if any(task_id in r.get('tasks', []) for r in state['reviews']):
+                raise EngineError('A review covers this card, so it stays in the record')
+            del state['tasks'][task_id]
+            state.setdefault('cancelled', []).append(dict(id=task_id, reason=reason.strip(), at=self._clock(),
+                                                          was=task['state']))
+
+    def recover_lease(self, actor, harness_session):
+        """Issue a fresh coordinator lease to the session that already owns the run. The lease is a consistency token, not
+        a credential (README, Safety): when the coordinator has lost it (compaction, a restart) the same harness session,
+        named by the SessionStart context, takes it back. Running cards keep their assignments."""
+        self._check_identity(actor, harness_session)
+        if not harness_session:
+            raise EngineError('Recovering the lease needs --harness-session from the SessionStart context')
+        with self._state() as state:
+            session = state['session']
+            if not session or not session['active']:
+                raise EngineError('No active run to recover; use start')
+            if session['actor'] != actor or session.get('harness_session') != harness_session:
+                raise EngineError('This run belongs to another session; the owner ends it with interrupt or starts over')
+            lease = uuid.uuid4().hex
+            session['lease'] = lease
+            for task in state['tasks'].values():
+                if 'lease' in task:
+                    task['lease'] = lease
+            state['permits'] = []
+            return lease
 
     @staticmethod
     def _walk(tasks, task, key):
@@ -1325,6 +1438,12 @@ class Engine:
             if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
                 raise EngineError('A review covers this report; route a change through a repair card')
             self._lease(state, state['session']['actor'], task['lease'])
+            blocked = next((line[len('BLOCKED:'):].strip() for line in report.splitlines() if line.startswith('BLOCKED:')), '')
+            if blocked and not replacing:
+                # A worker that cannot do the card says so instead of faking a self-review: the card is parked with the
+                # reason, and the coordinator decides (unpark with a changed card, or cancel it).
+                self._set_aside(state, task, 'blocked: ' + blocked)
+                return
             review = self._parse_self_review(report) if task['role'] == 'builder' else None
             if task['role'] == 'builder' and not any(
                     line.startswith('ARTIFACT:') and line[len('ARTIFACT:'):].strip() for line in report.splitlines()):
@@ -1504,7 +1623,7 @@ class Engine:
                 raise EngineError('Review cites an unknown gate receipt: ' + ident)
             if not self._intact(gate):
                 raise EngineError('Review cites an altered gate receipt: ' + ident)
-            if gate['artifact'] != current:
+            if not self._same(gate['artifact'], current):
                 raise EngineError('Review cites a stale gate receipt: ' + ident)
             failed = failed or not gate['passed']
         if failed and not findings:
@@ -1539,7 +1658,7 @@ class Engine:
         ids = [r['id'] for r in state['reviews']]
         later = [r for r in state['reviews'][ids.index(review['id']) + 1:]
                  if r.get('repair_check') and not r['findings'] and self._intact(r)
-                 and r['artifact'] == self._artifact_cached(cache, r.get('scope'))]
+                 and self._same(r['artifact'], self._artifact_cached(cache, r.get('scope')))]
         repairs = {i for r in later for i in r['tasks']
                    if state['tasks'][i]['role'] == 'builder' and state['tasks'][i]['mode'] == 'repair'}
         scope = self._scope_of(state, sorted(repairs)) if repairs else None
@@ -1567,7 +1686,7 @@ class Engine:
                 continue
             # Each receipt is compared against the artifact recomputed with its own stored scope.
             # A stale newest receipt leaves its categories without a current verdict (O19).
-            current = review['artifact'] == self._artifact_cached(cache, review.get('scope'))
+            current = self._same(review['artifact'], self._artifact_cached(cache, review.get('scope')))
             resolved = None
             if not current and keep and review['final']:
                 resolved = self._kept_current(state, review, cache)
@@ -1610,8 +1729,11 @@ class Engine:
                 return 'Self-review has a failing check or unmet criterion'
         elif task.get('review_required', False):
             return None if verdicts else 'Task needs current independent review'
-        if task['report_artifact'] != self._artifact_cached(cache, self._scope_of(state, [task_id])):
-            return 'Reported artifact is stale'
+        reported, now = task['report_artifact'], self._artifact_cached(cache, self._scope_of(state, [task_id]))
+        # A commit after the report moves HEAD but not the reported content, and the independent review above is current
+        # on the committed tree: only a change to the files themselves makes the report stale.
+        if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'fingerprint', 'scope')):
+            return 'Reported artifact is stale: the files in its scope changed after the report; re-report or send a repair card'
         return None
 
     def accept(self, actor, lease, task_id):
@@ -1684,7 +1806,7 @@ class Engine:
         if not again:  # SPEC 5.11 item 2: a failed gate always reruns
             for gate in gates:
                 if (gate['name'] == name and gate['argv'] == argv and gate['passed']
-                        and gate['artifact'] == before and self._intact(gate)):
+                        and self._same(gate['artifact'], before) and self._intact(gate)):
                     raise EngineError('Gate %s already passed on this artifact (receipt %s); pass --again to rerun'
                                       % (name, gate['id']))
         log = self.state_dir / ('gate-' + uuid.uuid4().hex + '.log')
@@ -1800,7 +1922,9 @@ class Engine:
             if any(self._task_findings(r, task_id) for r in task_verdicts.values()):
                 raise EngineError('Current task review has findings: ' + task_id)
         required_categories = set(self._required_lenses(state))
-        if (require_review or state['tasks']) and not required_categories <= categories:
+        changed = self._run_changed(state)
+        owed = require_review or bool(state['tasks']) or bool(changed and changed[0])  # unreviewed changes need a review
+        if owed and not required_categories <= categories:
             raise EngineError('Current final review coverage is incomplete')
         triaged = {f['fingerprint'] for f in state.get('findings', []) if f['source'].get('kind') == 'out_of_scope'}
         for review in {r['id']: r for r in verdicts.values()}.values():  # SPEC 5.7 item 4
@@ -1821,7 +1945,7 @@ class Engine:
             if not expected:
                 raise EngineError('Required gate needs configured argv: ' + name)
             matching = [g for g in state['gates'] if g['name'] == name and g['argv'] == expected]
-            if not matching or not matching[-1]['passed'] or matching[-1]['artifact'] != artifact or not self._intact(matching[-1]):
+            if not matching or not matching[-1]['passed'] or not self._same(matching[-1]['artifact'], artifact) or not self._intact(matching[-1]):
                 raise EngineError('Required gate is missing, failed, altered or stale: ' + name)
         return artifact
 
@@ -1897,7 +2021,7 @@ class Engine:
             self._armable(state, path, snapshot=False)  # read-only: no ledger copy yet
             lease = state['session']['lease']
         remote_heads, remote_defaults = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
-        remote_push_urls = {r: url for r in remote_defaults if (url := effective_push_url(self.repo, r))}
+        remote_push_urls = {r: push_url_digest(url) for r in remote_defaults if (url := effective_push_url(self.repo, r))}
         with self._state(activity=False) as state:
             self._refuse_rearm(state)  # A second arm may have won while the remotes were asked
             fields, snapshot = self._armable(state, path)
@@ -2130,7 +2254,7 @@ class Engine:
                 return False
             matches.append(same[-1])
         artifact = self.artifact()
-        if not all(g['artifact'] == artifact for g in matches):
+        if not all(self._same(g['artifact'], artifact) for g in matches):
             return False
         try:
             self._completion_evidence(state)
@@ -2170,7 +2294,7 @@ class Engine:
         base = (state['session'] or {}).get('base')
         final_owed = (not (running or actionable or held or final_open or parked)
                       and all(t['state'] == 'accepted' for t in tasks)
-                      and bool(tasks or (base is not None and self._changed(base)[0])))
+                      and bool(tasks or (base is not None and self._run_changed(state)[0])))
         if not (running or actionable or held or final_open or final_owed):
             return ('parked-only' if parked else 'no-ready-card'), None
         auto['accepted'] = self._accepted(state)

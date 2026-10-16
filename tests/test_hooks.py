@@ -1947,7 +1947,7 @@ class AutonomyHookTest(unittest.TestCase):
         engine = mock.Mock()
         push_url = git(self.repo, 'remote', 'get-url', '--push', '--all', 'origin')
         engine.status.return_value = {'autonomy': {'pull_requests': True, 'remote_defaults': {'origin': 'main'},
-                                                   'remote_push_urls': {'origin': push_url}}}
+                                                   'remote_push_urls': {'origin': __import__('orchestra_core.paths', fromlist=['x']).push_url_digest(push_url)}}}
         engine.policy = {'release': {'enabled': True, 'remote': 'origin', 'target': 'feat/rel'}}
         push = hooks_module._pull_request_push
         self.assertIsNone(push('git push origin feat/x', str(self.repo), engine))

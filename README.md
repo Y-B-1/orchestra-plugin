@@ -175,7 +175,8 @@ python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project board
 | `prepr` | Size check and pre-PR reviewer pick (read-only) |
 | `review REVIEW.json` | Record the pre-PR review or the fix re-review |
 | `finding add\|list`, `hold TASK --finding TEXT` | Findings ledger; end a repair ladder |
-| `park TASK --reason TEXT`, `unpark TASK` | Set a card aside at a boundary; return it |
+| `park TASK --reason TEXT`, `unpark TASK`, `cancel TASK --reason TEXT` | Set a card aside at a boundary; return it; drop one that should never run |
+| `start --recover --harness-session ID` | Take back a lost coordinator lease |
 | `pr URL` | Record a pull request the run opened; the brief lists it for you to review and merge |
 | `autonomy arm\|disarm\|status`, `brief` | Autonomous mode; print the newest run brief |
 | `permit REMOTE TARGET`, `release REMOTE TARGET` | Release under configured policy |
