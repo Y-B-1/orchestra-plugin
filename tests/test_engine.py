@@ -4506,6 +4506,24 @@ class RunHygieneTests(EngineFixture):
         hidden_view = engine._baseline_view(['a'])['a']
         self.assertIn('100755', hidden_view)
 
+    def test_an_index_only_change_after_a_report_blocks_accept(self):
+        self.task('a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'wa')
+        self.engine.report('wa', token, done('built'))
+        self.git('update-index', '--chmod=+x', 'a')  # staged only: the report never covered it
+        with self.assertRaisesRegex(EngineError, 'stale'):
+            self.engine.accept('main', self.lease, 'a')
+        self.git('commit', '-qm', 'mode')  # committed, yet the worktree still differs from HEAD: not what was reported
+        with self.assertRaisesRegex(EngineError, 'stale'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_staged_and_worktree_changes_to_one_path_are_both_counted(self):
+        engine, lease = self.fresh('both')
+        (self.repo / 'a').write_text('x\n' * 500)
+        self.git('add', 'a')
+        (self.repo / 'a').write_text('one line\n')  # the worktree now differs little from HEAD, the index a lot
+        self.assertGreaterEqual(engine._run_changed(engine.status())[1], 500)
+
     def test_a_staged_rename_at_start_is_not_run_work_and_pre_run_edits_are_not_charged(self):
         (self.repo / 'big').write_text('line\n' * 300)
         self.git('add', 'big')

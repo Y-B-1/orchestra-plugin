@@ -770,7 +770,8 @@ class Engine:
         for row in self._git('diff', '--cached', '--numstat', '-z', '--no-renames', base, '--').split(b'\0'):
             if row:  # work that exists only in the index (staged, worktree put back) is still work
                 added, deleted, name = row.decode(errors='replace').split('\t', 2)
-                counts.setdefault(name, (int(added) + int(deleted)) if added.isdigit() and deleted.isdigit() else 0)
+                staged = (int(added) + int(deleted)) if added.isdigit() and deleted.isdigit() else 0
+                counts[name] = max(counts.get(name, 0), staged)  # the larger of the index and worktree changes: neither masks the other
         for raw in self._git('ls-files', '-z', '--others', '--exclude-standard').split(b'\0'):
             if raw and not self._noise(os.fsdecode(raw)):
                 path = self.repo / os.fsdecode(raw)
@@ -1769,8 +1770,11 @@ class Engine:
             return None if verdicts else 'Task needs current independent review'
         reported, now = task['report_artifact'], self._artifact_cached(cache, self._scope_of(state, [task_id]))
         # A commit after the report moves HEAD but not the reported content, and the independent review above is current
-        # on the committed tree: only a change to the files themselves makes the report stale.
-        if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'fingerprint', 'scope')):
+        # on the committed tree. The report stays good only when it is unchanged outright, or when nothing is staged,
+        # modified or untracked any more (within its scope): then HEAD holds exactly the reported files.
+        clean = now.get('status') == _hash(b'')
+        if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'fingerprint', 'scope')) or (
+                reported != now and not clean):
             return 'Reported artifact is stale: the files in its scope changed after the report; re-report or send a repair card'
         return None
 
