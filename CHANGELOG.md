@@ -2,6 +2,17 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.7.1 — 2026-10-16
+
+- **Finish:** a run that changed files needs a current final review even when it has no cards. `finish` used to accept 300 unreviewed lines.
+- **Start baseline:** the files already modified or untracked when a run starts are recorded; the size warning and the review lenses count only what the run changes.
+- **Evidence:** interpreter leftovers (`__pycache__`, `*.pyc`, tool caches, `.DS_Store`) are never evidence, so a gate that exits 0 no longer reports `passed: false` for them; a deleted file adds nothing to the fingerprint staged or not; tracked paths hidden by a sparse checkout are bound by their index mode and object id. Evidence still goes stale when anything moves, staging and committing included. After committing reviewed work, record the independent review again and `accept` succeeds: it needs the review to be current and the reported files unchanged, not the same HEAD.
+- **Lost lease:** `start --recover --harness-session ID` gives the session that owns the run a fresh lease. The lease errors name it.
+- **Blocked workers:** a report line `BLOCKED: reason` parks the card with the reason, so a worker that cannot do its card no longer has to fake a self-review.
+- **Dropping cards:** `cancel TASK --reason TEXT` removes a queued or parked card that should never run.
+- **Credentials:** `autonomy arm` records a digest of each remote's push URL instead of the URL, which can carry a token that `status` would print.
+- **Small fixes:** `review` names the keys a report file is missing; a ledger saved with Windows line ends arms.
+
 ## 2.7.0 — 2026-10-16
 
 - **Guards, scope:** changing Git aliases, push mappings, remotes and credential settings (`git config`, `git remote add|set-url|rename|remove`, `-c`) is a `config` boundary: it is denied only while autonomy runs and is an ordinary command otherwise. 2.6.3 to 2.6.5 denied it for every user.

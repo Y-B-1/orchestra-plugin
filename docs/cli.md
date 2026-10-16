@@ -33,8 +33,19 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `pr URL` | Record a pull request the run opened (an http(s) URL, once each); the run brief lists it under Needs you as "review and merge pull request URL". | yes |
 | `park TASK --reason TEXT` | Set a card aside at an approval boundary. | yes |
 | `unpark TASK` | Return a parked card to the queue. | yes |
+| `cancel TASK --reason TEXT` | Drop a queued or parked card that should never run. Refused while another card depends on it, a review covers it or it is in a repair chain; the drop is kept in the state's `cancelled` list. | yes |
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |
-| `finish` | Close the run after completion checks. A parked card blocks it. | yes |
+| `finish` | Close the run after completion checks. A parked card blocks it. A run that changed files needs a current final review even with no cards. | yes |
+
+## Changes in 2.7.1
+
+- `start --recover --harness-session ID` gives the session that owns the run a fresh lease when it has lost its own (after compaction or a restart). Running cards keep their assignments; release permits are cleared. The id is in the SessionStart context.
+- `cancel TASK --reason TEXT` drops a card that should never run.
+- A worker that cannot do its card ends its report with a line `BLOCKED: reason`. The card is parked with that reason; no `SELF_REVIEW` is needed.
+- The files already modified or untracked when a run starts are recorded as its baseline: the size warning and the review lenses count only what the run changes. Interpreter leftovers (`__pycache__`, `*.pyc`, tool caches, `.DS_Store`) are never evidence.
+- Evidence stays strict: staging or committing after a review makes it stale. After committing, record the independent review again, then `accept` succeeds (the report needs unchanged files, not the same HEAD). Sparse-checkout paths and deletions are handled; interpreter leftovers are never evidence.
+- `review` names the keys a report file is missing.
+- `autonomy arm` records a digest of each remote's push URL, not the URL.
 
 ## Changes in 2.6.0
 

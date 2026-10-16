@@ -38,6 +38,8 @@ def parser():
     start.add_argument('--asks', help='Number of separately stated asks (default 1); the size-check budget is the tier guide times it')
     start.add_argument('--owner-request', action='store_true', help='The owner asked for a map: allows a large start and plan cards')
     start.add_argument('--items', type=int, help='The 2.4 flag; refused, start with --size')
+    start.add_argument('--recover', action='store_true', help='Take back the lease of the run this harness session already owns '
+                       '(needs --harness-session); running cards keep their assignments')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
     for name in ['status','ready','board','interrupt','finish','scan']:
@@ -96,6 +98,9 @@ def parser():
     park = sub.add_parser('park', help='Set a card aside at an approval boundary')
     park.add_argument('task_id')
     park.add_argument('--reason', required=True)
+    cancel = sub.add_parser('cancel', help='Drop a queued or parked card that should never run')
+    cancel.add_argument('task_id')
+    cancel.add_argument('--reason', required=True)
     unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
     unpark.add_argument('task_id')
     hold = sub.add_parser('hold', help='End the repair ladder: move a blocked repair chain to held and log the finding')
@@ -158,6 +163,10 @@ def execute(args):
     if args.command=='start':
         if args.items is not None:
             raise EngineError('--items is the 2.4 flag; start with --size')
+        if args.recover:
+            if args.new_run or args.size or args.asks or args.owner_request:
+                raise EngineError('--recover takes only --harness-session')
+            return {'lease':engine.recover_lease(args.actor,args.harness_session),'state':str(state),'repo':str(repo)},0
         asks = parse_asks(args.asks)
         if args.new_run:  # refuse before archiving, so the ended run stays in place
             engine._check_start(args.size,asks,args.owner_request)
@@ -229,6 +238,9 @@ def execute(args):
         review = read_json(args.report)
         if not isinstance(review,dict):
             raise EngineError('Review report must be a JSON object')
+        missing = [k for k in ('reviewer','categories','tasks','final','findings') if k not in review]
+        if missing:
+            raise EngineError('Review report is missing: '+', '.join(missing))
         result = engine.record_review(args.actor,args.lease,review['reviewer'],args.report,
                                      review['categories'],review['tasks'],review['final'],review['findings'])
         return result,0
@@ -296,6 +308,9 @@ def execute(args):
     if args.command=='park':
         engine.park(args.actor,args.lease,args.task_id,args.reason)
         return {'parked':args.task_id},0
+    if args.command=='cancel':
+        engine.cancel(args.actor,args.lease,args.task_id,args.reason)
+        return {'cancelled':args.task_id},0
     if args.command=='unpark':
         engine.unpark(args.actor,args.lease,args.task_id)
         return {'unparked':args.task_id},0
