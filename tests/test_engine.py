@@ -4511,6 +4511,26 @@ class RunHygieneTests(EngineFixture):
         self.assertTrue(after['settled'])
         self.assertFalse(Engine._same(before, after))
 
+    def test_staged_content_unlike_the_worktree_at_start_is_baseline_work(self):
+        (self.repo / 'a').write_text('staged version')
+        self.git('add', 'a')
+        self.git('checkout', '--', 'a')  # worktree back to HEAD's content; the index still holds the staged one (MM-like)
+        engine, lease = self.fresh('staged')
+        self.assertEqual(engine._run_changed(engine.status()), ([], 0))
+        self.git('reset', '-q', 'a')  # the run throws the owner's staged work away
+        self.assertEqual(engine._run_changed(engine.status())[0], ['a'])
+        with self.assertRaisesRegex(EngineError, 'final review coverage is incomplete'):
+            engine.close_session('main', lease)
+
+    def test_a_staged_mode_change_is_not_settled_when_filemode_is_off(self):
+        self.git('config', 'core.filemode', 'false')
+        before = self.engine.artifact()
+        self.git('update-index', '--chmod=+x', 'a')  # staged only; the worktree bit is untouched and unseen
+        after = self.engine.artifact()
+        self.assertEqual(before['fingerprint'], after['fingerprint'])
+        self.assertFalse(after['settled'])
+        self.assertFalse(Engine._same(before, after))
+
     def test_a_staged_rename_at_start_is_not_run_work_and_pre_run_edits_are_not_charged(self):
         (self.repo / 'big').write_text('line\n' * 300)
         self.git('add', 'big')

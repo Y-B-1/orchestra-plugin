@@ -425,7 +425,7 @@ class Engine:
                       fingerprint=_digest(entries), index=_hash(index), status=_hash(status),
                       policy=self.policy_hash)
         if scope is None:
-            result['settled'] = self._settled(status)
+            result['settled'] = self._settled(status) and self._git_filemode()
         if scope is not None:
             lines = [l for l in index.split(b'\0') if l and self._in_scope(os.fsdecode(l.split(b'\t', 1)[-1]), scope)]
             changes, parts = [], status.split(b'\0')
@@ -457,6 +457,14 @@ class Engine:
         if all(recorded.get(k) == current.get(k) for k in ('head', 'tree', 'index', 'status')):
             return True
         return current.get('settled') is True
+
+    def _git_filemode(self):
+        """False when `core.filemode` is off: Git then ignores the worktree's executable bits, so a staged mode change is
+        invisible to the content fingerprint and a staged tree cannot be called settled."""
+        try:
+            return self._git('config', '--bool', 'core.filemode').decode().strip() != 'false'
+        except EngineError:
+            return True  # unset: Git probes the filesystem and keeps the default
 
     @staticmethod
     def _settled(status):
@@ -799,22 +807,34 @@ class Engine:
                 counts[os.fsdecode(raw)] = len(path.read_bytes().splitlines()) if path.is_file() and not path.is_symlink() else 0
         return counts
 
-    def _dirty_baseline(self):
-        """(digests, line counts) of the work already in the tree when a run starts: modified tracked files and untracked
-        files, a deleted path recorded as 'missing'. The run's size and review lenses count only what it changes after."""
-        counts = self._line_counts('HEAD')
+    def _baseline_view(self, names):
+        """{path: 'worktree digest|index object id'} for `names`: both halves, so work staged but unlike the worktree
+        (`MM`), and the run resetting the index, are visible. A path in neither is 'missing|none'."""
         digests = self._entry_digests()
-        return ({name: digests.get(name, 'missing') for name in sorted(counts)},
-                {name: counts[name] for name in sorted(counts)})
+        index = {}
+        for row in self._git('ls-files', '-s', '-z').split(b'\0'):
+            meta, _, name = row.partition(b'\t')
+            if meta:
+                index[os.fsdecode(name)] = meta.split(b' ')[1].decode()
+        return {name: '%s|%s' % (digests.get(name, 'missing'), index.get(name, 'none')) for name in names}
+
+    def _dirty_baseline(self):
+        """(digests, line counts) of the work already in the tree when a run starts: modified tracked files, untracked
+        files and anything staged. The run's size and review lenses count only what it changes after."""
+        counts = self._line_counts('HEAD')
+        staged = {os.fsdecode(r) for r in self._git('diff', '--cached', '--name-only', '-z', '--no-renames', 'HEAD', '--')
+                  .split(b'\0') if r}
+        names = sorted(set(counts) | staged)
+        return self._baseline_view(names), {name: counts.get(name, 0) for name in names}
 
     def _changed(self, base, baseline=None, baseline_lines=None):
         """(paths, changed line count) from the run's base commit to the working tree, untracked files included. A path
         whose content still equals the `baseline` taken at the start is not the run's work, and a path already dirty then
         is charged only for the lines added since (`baseline_lines`)."""
-        digests = self._entry_digests() if baseline else {}
+        view = self._baseline_view(list(baseline)) if baseline else {}
 
         def inherited(name):
-            return bool(baseline) and name in baseline and baseline[name] == digests.get(name, 'missing')
+            return bool(baseline) and name in baseline and baseline[name] == view.get(name)
 
         paths, lines, counts = set(), 0, self._line_counts(base)
         for name, count in counts.items():
