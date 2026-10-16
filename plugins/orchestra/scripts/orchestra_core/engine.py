@@ -783,15 +783,19 @@ class Engine:
         def inherited(name):
             return bool(baseline) and name in baseline and baseline[name] == digests.get(name, 'missing')
 
-        paths, lines = set(), 0
-        for name, count in self._line_counts(base).items():
+        paths, lines, counts = set(), 0, self._line_counts(base)
+        for name, count in counts.items():
             if inherited(name):
                 continue
             paths.add(name)
-            lines += max(0, count - (baseline_lines or {}).get(name, 0))
+            # The distance from the baseline's own count: appending to pre-run work charges the new lines, reverting it
+            # charges the lines taken out. A same-size rewrite of pre-run work is under-counted; its path still counts.
+            lines += abs(count - (baseline_lines or {}).get(name, 0))
         for name in (baseline or {}):
             if not inherited(name):  # the run deleted, restored or rewrote work that was already in the tree
                 paths.add(name)
+                if name not in counts:
+                    lines += (baseline_lines or {}).get(name, 0)  # fully reverted or deleted
         return sorted(paths), lines
 
     def _run_changed(self, state):

@@ -4484,6 +4484,14 @@ class RunHygieneTests(EngineFixture):
         paths, lines = engine._run_changed(engine.status())
         self.assertEqual((paths, lines), (['a'], 1))  # only the appended line, not the earlier rewrite
 
+    def test_reverting_pre_run_work_is_charged_by_the_lines_taken_out(self):
+        (self.repo / 'a').write_text('x\n' * 500)
+        engine, lease = self.fresh('revert')
+        self.git('checkout', '--', 'a')  # back to HEAD: the 500-line pre-run rewrite is gone
+        paths, lines = engine._run_changed(engine.status())
+        self.assertEqual(paths, ['a'])
+        self.assertGreaterEqual(lines, 500)
+
     def test_discarding_work_that_was_in_the_tree_at_start_is_a_run_change(self):
         (self.repo / 'before.txt').write_text('owner work\n')
         (self.repo / 'a').write_text('owner edit')
