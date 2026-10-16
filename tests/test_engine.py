@@ -4522,6 +4522,16 @@ class RunHygieneTests(EngineFixture):
         with self.assertRaisesRegex(EngineError, 'final review coverage is incomplete'):
             engine.close_session('main', lease)
 
+    def test_index_modes_are_part_of_the_baseline_and_of_hidden_path_binding(self):
+        self.git('update-index', '--chmod=+x', 'a')  # staged-only mode change before the run
+        engine, lease = self.fresh('mode')
+        self.assertEqual(engine._run_changed(engine.status()), ([], 0))
+        self.git('reset', '-q', 'a')  # the run discards it: same blob, different mode
+        self.assertEqual(engine._run_changed(engine.status())[0], ['a'])
+        self.git('update-index', '--chmod=+x', 'a')
+        hidden_view = engine._baseline_view(['a'])['a']
+        self.assertIn('100755', hidden_view)
+
     def test_a_staged_mode_change_is_not_settled_when_filemode_is_off(self):
         self.git('config', 'core.filemode', 'false')
         before = self.engine.artifact()

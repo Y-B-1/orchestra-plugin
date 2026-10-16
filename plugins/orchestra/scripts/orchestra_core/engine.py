@@ -366,7 +366,7 @@ class Engine:
         for row in self._git('ls-files', '-s', '-z').split(b'\0'):
             meta, _, name = row.partition(b'\t')
             if name in hidden:
-                found[name] = meta.split(b' ')[1].decode()
+                found[name] = b' '.join(meta.split(b' ')[:2]).decode()  # index mode and object id
         return found
 
     _NOISE_PARTS = frozenset(('__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.DS_Store'))
@@ -815,7 +815,7 @@ class Engine:
         for row in self._git('ls-files', '-s', '-z').split(b'\0'):
             meta, _, name = row.partition(b'\t')
             if meta:
-                index[os.fsdecode(name)] = meta.split(b' ')[1].decode()
+                index[os.fsdecode(name)] = b' '.join(meta.split(b' ')[:2]).decode()  # index mode and object id
         return {name: '%s|%s' % (digests.get(name, 'missing'), index.get(name, 'none')) for name in names}
 
     def _dirty_baseline(self):
