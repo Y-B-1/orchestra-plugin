@@ -11353,5 +11353,19 @@ export const CORPUS: CorpusCase[] = [
    "command": "python3 orchestra.py \"autonomy\" 'disarm'"
   },
   "class": "allow"
+ },
+ {
+  "id": "autonomy-switch-named-0",
+  "input": {
+   "command": "echo 'python3 orchestra.py autonomy disarm'"
+  },
+  "class": "allow"
+ },
+ {
+  "id": "autonomy-switch-named-1",
+  "input": {
+   "command": "rg 'orchestra.py autonomy disarm' README.md"
+  },
+  "class": "allow"
  }
 ];

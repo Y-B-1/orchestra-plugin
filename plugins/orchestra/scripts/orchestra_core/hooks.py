@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import sys
 import subprocess
 import time
@@ -111,7 +112,7 @@ def _protected(path, cwd, state_dir):
 def _is_ledger(path, cwd, state_dir):
     """True when `path` is the autonomy ledger of the run in `state_dir`."""
     try:
-        return (Path(cwd) / path).resolve() == Path(state_dir).expanduser().resolve() / 'autonomy.md'
+        return (Path(cwd) / path).resolve() == (Path(state_dir).expanduser() / 'autonomy.md').resolve()
     except (OSError, RuntimeError, ValueError):
         return False
 
@@ -120,9 +121,26 @@ _AUTONOMY_SWITCH = re.compile(r'\borchestra\.py\b[^|;&\n]*\bautonomy\s+(?:arm|di
 
 
 def _switches_autonomy(command):
-    """True when the shell would run `orchestra.py autonomy arm|disarm`; line continuations and quotes are removed first."""
+    """True when a command runs `orchestra.py autonomy arm|disarm`. Line continuations are removed and each segment is
+    split into words, so the phrase inside a quoted argument (`echo 'orchestra.py autonomy disarm'`, `rg ...`) does not
+    count; a segment run through a shell (`sh -c`, `eval`) is searched as text, since the shell will run it."""
     joined = re.sub(r'\\\r?\n', '', command)
-    return bool(_AUTONOMY_SWITCH.search(joined) or _AUTONOMY_SWITCH.search(re.sub(r'[\'"]', '', joined)))
+    for segment in re.split(r'[;&|\n]+', joined):
+        try:
+            words = shlex.split(segment)
+        except ValueError:
+            return bool(_AUTONOMY_SWITCH.search(segment))  # Unbalanced quoting: read it as text
+        if not words:
+            continue
+        if '-c' in words or Path(words[0]).name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.'}:
+            if _AUTONOMY_SWITCH.search(' '.join(words)):
+                return True
+        for i, word in enumerate(words):
+            if Path(word).name == 'orchestra.py':
+                rest = words[i + 1:]
+                if any(a == 'autonomy' and b in {'arm', 'disarm'} for a, b in zip(rest, rest[1:])):
+                    return True
+    return False
 
 
 LEDGER_LOCKED = ('The autonomy ledger and the autonomy switch belong to the owner while autonomy is armed: '
@@ -799,8 +817,8 @@ def main(argv=None):
         raise
     except Exception as exc:
         name = _CRASH_TOOL['name']
-        if event == 'PreToolUse' and isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
-                                                  or name in {'Agent', 'Task'}):
+        if event == 'PreToolUse' and (name is None or isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
+                                                  or name in {'Agent', 'Task'})):
             reason = 'Orchestra guard could not check this call (%s: %s); report it to the plugin owner' % (type(exc).__name__, exc)
             print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                                                      'permissionDecisionReason': reason}}))

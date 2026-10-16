@@ -812,6 +812,9 @@ class HookCrashTest(unittest.TestCase):
             self.assertEqual(self.run_event('PreToolUse', {'tool_name': 'Read', 'tool_input': {}, 'cwd': '/tmp'})[:2], (0, {}))
             self.assertEqual(self.run_event('Stop', {'cwd': '/tmp'})[:2], (0, {}))
             self.assertEqual(self.run_event('SessionStart', {'cwd': '/tmp'})[:2], (0, {}))
+        with mock.patch('sys.stdin') as stdin, mock.patch('sys.stdout', new_callable=io.StringIO), mock.patch('sys.stderr', new_callable=io.StringIO):
+            stdin.read.side_effect = OSError('broken pipe')  # The payload itself cannot be read
+            self.assertEqual(main(['PreToolUse']), 2)
 
     def test_the_state_location_survives_a_missing_home_directory(self):
         from orchestra_core import paths
@@ -2021,6 +2024,15 @@ class AutonomyHookTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(self.repo, command), 'deny')
         self.assertIsNone(self.hook(self.repo, 'python3 orchestra.py autonomy status'))  # reading is free
+        for command in ("echo 'python3 orchestra.py autonomy disarm'", "rg 'orchestra.py autonomy disarm' README.md"):
+            with self.subTest(command=command):  # Naming the switch is not running it
+                self.assertIsNone(self.hook(self.repo, command))
+        (self.state / 'autonomy.md').rename(self.state / 'autonomy-real.md')
+        (self.state / 'autonomy.md').symlink_to(self.state / 'autonomy-real.md')
+        code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Write', 'tool_input': {'file_path': str(self.state / 'autonomy.md'), 'content': 'x'}})
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')  # A symlinked ledger is the ledger
+        (self.state / 'autonomy.md').unlink()
+        (self.state / 'autonomy-real.md').rename(self.state / 'autonomy.md')
         with self.assertRaisesRegex(Exception, 'already armed'):
             self.engine.arm_autonomy()
         self.engine.disarm_autonomy()  # the owner's own route
