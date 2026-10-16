@@ -722,6 +722,7 @@ function rawRefDelete(args: string[]): boolean {
   return false;
 }
 
+const ROUTED_PUSH_REASON = 'A push or release cannot set Git configuration that routes or rewrites it; set it before, as the owner';
 const CONFIG_REASON = 'Git aliases, push mappings and remotes are set by the owner while autonomy runs';
 
 function configGuarded(key: string): boolean {
@@ -774,6 +775,7 @@ function configTouch(words: string[]): boolean {
 function git(words: string[]): Decision {
   const decision = gitRules(words);
   if (klassOf(decision) === 'allow' && configTouch(words)) return boundaryOf('config', CONFIG_REASON);
+  if (klassOf(decision) === 'release' && configTouch(words)) return denyOf(ROUTED_PUSH_REASON);
   return decision;
 }
 

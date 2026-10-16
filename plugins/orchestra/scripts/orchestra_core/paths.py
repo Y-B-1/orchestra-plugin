@@ -26,7 +26,13 @@ def _private_temp_root():
     if root.is_symlink() or info.st_uid != os.getuid():
         raise StateRootError('Fallback state directory %s is not owned by this user' % root)
     if info.st_mode & 0o077:
-        root.chmod(0o700)
+        try:
+            root.chmod(0o700)
+            tightened = root.lstat().st_mode & 0o077
+        except OSError as exc:
+            raise StateRootError('Fallback state directory %s cannot be made private: %s' % (root, exc)) from None
+        if tightened:
+            raise StateRootError('Fallback state directory %s is not private' % root)
     return root
 
 

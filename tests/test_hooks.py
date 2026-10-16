@@ -535,9 +535,12 @@ class HooksTest(unittest.TestCase):
 
     def test_git_config_touching_commands_are_free_without_autonomy(self):
         """An ordinary session may set an alias, a hooks path or a remote; only an armed autonomy run refuses them."""
-        for command in CONFIG_TOUCHING + CONFIG_PUSHES:
+        for command in CONFIG_TOUCHING:
             with self.subTest(command=command):
                 self.assertNotEqual(decision_of(self.pre('Bash', {'command': command})), 'deny')
+        for command in CONFIG_PUSHES:  # A push that carries its own routing settings goes where the caller says: refused
+            with self.subTest(command=command):
+                self.assertEqual(decision_of(self.pre('Bash', {'command': command})), 'deny')
         for command in CONFIG_FREE:
             with self.subTest(command=command):
                 self.assertEqual(self.pre('Bash', {'command': command}).output, {})

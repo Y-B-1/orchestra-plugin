@@ -10575,7 +10575,7 @@ export const CORPUS: CorpusCase[] = [
   "input": {
    "command": "git -c remote.origin.push=refs/heads/feat/x:refs/heads/main push origin feat/x"
   },
-  "class": "release"
+  "class": "deny"
  },
  {
   "id": "guard-119",
@@ -10774,7 +10774,7 @@ export const CORPUS: CorpusCase[] = [
   "input": {
    "command": "git -c remote.origin.push=refs/heads/x:refs/heads/main push origin x"
   },
-  "class": "release"
+  "class": "deny"
  },
  {
   "id": "guard-147",
@@ -10967,7 +10967,7 @@ export const CORPUS: CorpusCase[] = [
   "input": {
    "command": "git -c remote.origin.url=/other/repo push origin x"
   },
-  "class": "release"
+  "class": "deny"
  },
  {
   "id": "guard-172",
@@ -11245,21 +11245,21 @@ export const CORPUS: CorpusCase[] = [
   "input": {
    "command": "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=remote.origin.url GIT_CONFIG_VALUE_0=/other/repo git push origin feat/x"
   },
-  "class": "release"
+  "class": "deny"
  },
  {
   "id": "guard-208",
   "input": {
    "command": "GIT_SSH_COMMAND=/tmp/x git push origin feat/x"
   },
-  "class": "release"
+  "class": "deny"
  },
  {
   "id": "guard-209",
   "input": {
    "command": "env GIT_CONFIG_COUNT=1 git push origin feat/x"
   },
-  "class": "release"
+  "class": "deny"
  },
  {
   "id": "guard-210",
@@ -11303,7 +11303,7 @@ export const CORPUS: CorpusCase[] = [
   "input": {
    "command": "env -S 'GIT_SSH_COMMAND=/tmp/x git push origin feat/x'"
   },
-  "class": "release"
+  "class": "deny"
  },
  {
   "id": "autonomy-switch-0",

@@ -563,6 +563,7 @@ def _raw_ref_delete(args):
     return False
 
 
+_ROUTED_PUSH_REASON = 'A push or release cannot set Git configuration that routes or rewrites it; set it before, as the owner'
 _CONFIG_REASON = 'Git aliases, push mappings and remotes are set by the owner while autonomy runs'
 
 
@@ -621,6 +622,8 @@ def _git(words):
     decision = _git_rules(words)
     if decision.klass == 'allow' and _config_touch(words):
         return _boundary('config', _CONFIG_REASON)
+    if decision.klass == 'release' and _config_touch(words):
+        return _deny(_ROUTED_PUSH_REASON)  # A push may not carry the settings that decide where it goes
     return decision
 
 
