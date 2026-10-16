@@ -4459,6 +4459,29 @@ class RunHygieneTests(EngineFixture):
         (self.repo / 'a').write_text('changed after review')
         self.assertFalse(Engine._same(before, self.engine.artifact()))
 
+    def test_a_partial_stage_or_commit_leaves_whole_repo_evidence_stale(self):
+        (self.repo / 'a').write_text('reviewed a')
+        (self.repo / 'b.txt').write_text('reviewed b')
+        before = self.engine.artifact()
+        self.git('add', 'a')  # only part of the reviewed work is staged
+        self.assertFalse(Engine._same(before, self.engine.artifact()))
+        self.git('commit', '-qm', 'part')  # and committed: b.txt is not in the commit
+        self.assertFalse(Engine._same(before, self.engine.artifact()))
+        self.git('add', 'b.txt')
+        self.git('commit', '-qm', 'rest')
+        self.assertTrue(Engine._same(before, self.engine.artifact()))  # the whole of it is in HEAD now
+
+    def test_discarding_work_that_was_in_the_tree_at_start_is_a_run_change(self):
+        (self.repo / 'before.txt').write_text('owner work\n')
+        (self.repo / 'a').write_text('owner edit')
+        engine, lease = self.fresh('discard')
+        self.assertEqual(engine._run_changed(engine.status())[0], [])
+        (self.repo / 'before.txt').unlink()
+        self.git('checkout', '--', 'a')
+        self.assertEqual(engine._run_changed(engine.status())[0], ['a', 'before.txt'])
+        with self.assertRaisesRegex(EngineError, 'final review coverage is incomplete'):
+            engine.close_session('main', lease)
+
     def test_a_card_can_be_accepted_after_the_work_is_committed_and_re_reviewed(self):
         self.allow_review()
         (self.repo / 'a').write_text('built')

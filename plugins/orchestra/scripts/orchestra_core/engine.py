@@ -404,6 +404,8 @@ class Engine:
                       tree=self._git('rev-parse', 'HEAD^{tree}').decode().strip(),
                       fingerprint=_digest(entries), index=_hash(index), status=_hash(status),
                       policy=self.policy_hash)
+        if scope is None:
+            result['clean'] = not any(status.split(b'\0'))  # nothing staged, modified or untracked: HEAD holds this content
         if scope is not None:
             lines = [l for l in index.split(b'\0') if l and self._in_scope(os.fsdecode(l.split(b'\t', 1)[-1]), scope)]
             changes, parts = [], status.split(b'\0')
@@ -422,14 +424,19 @@ class Engine:
     @staticmethod
     def _same(recorded, current):
         """Whether evidence recorded against `recorded` still holds for `current`. What was reviewed is the content: the
-        files' bytes and modes, the policy and the scope. Staging or committing exactly the reviewed work changes HEAD,
-        the index and the status text but not the content, so whole-repo evidence ignores those. Scoped evidence also
-        needs the same HEAD: a commit that may carry other changes stales it, as before."""
+        files' bytes and modes, the policy and the scope. Whole-repo evidence also survives HEAD, the index and the status
+        moving, but only when the tree is now clean, i.e. everything reviewed has been committed and nothing else is
+        staged or pending; a partial stage or commit leaves the tree unclean and the evidence stale. Scoped evidence needs
+        the same HEAD: a commit that may carry other changes stales it."""
         if not isinstance(recorded, dict) or not isinstance(current, dict):
             return False
         if any(recorded.get(k) != current.get(k) for k in ('repo', 'identity', 'policy', 'fingerprint', 'scope')):
             return False
-        return recorded.get('scope') is None or recorded.get('head') == current.get('head')
+        if recorded.get('scope') is not None:
+            return recorded.get('head') == current.get('head')
+        if all(recorded.get(k) == current.get(k) for k in ('head', 'tree', 'index', 'status')):
+            return True
+        return current.get('clean') is True
 
     def scope_for(self, task_ids):
         """Union of the tasks' reservation files, or None (whole repo) when any task reserves no files."""
@@ -781,6 +788,9 @@ class Engine:
                 if path.is_file() and not path.is_symlink():
                     data = path.read_bytes()
                     lines += len(data.splitlines())
+        for name, was in (baseline or {}).items():
+            if digests.get(name) != was:  # the run deleted, restored or rewrote work that was already in the tree
+                paths.add(name)
         return sorted(paths), lines
 
     def _run_changed(self, state):
