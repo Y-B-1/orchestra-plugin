@@ -328,13 +328,13 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
         return _deny(LEDGER_LOCKED)  # An agent never re-arms or disarms itself: that would rewrite its own boundaries
     if decision.category == 'merged-delete':
         # SPEC 5.14 item 4: with or without an engine and autonomy. Only a provably merged branch is deleted.
-        denied = _merged_delete_check(decision, cwd)
+        denied = _merged_delete_check(decision, cwd, engine)
         if denied:
             return HookResult(denied)
         if active:
             return HookResult({})  # Cleanup of merged work is allowed under autonomy
     if active and decision.boundary == 'delete':
-        cleanup = _autonomy_cleanup(command, decision, cwd)
+        cleanup = _autonomy_cleanup(command, decision, cwd, engine)
         if cleanup is not None:
             return cleanup
     if active:
@@ -351,7 +351,7 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             return _deny('Approval boundary under autonomy: ' + hint)
         if decision.boundary == 'config':
             return _deny('Autonomy is active: ' + decision.reason + '. ' + hint)
-        if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd):
+        if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd, engine):
             return _deny('Approval boundary under autonomy: no merge on the default branch. ' + hint)
     if klass in {'release', 'release-multi'} and (engine is not None or armed):
         # A current permit lets the release run. Otherwise the user is present: ask, unless autonomy is active.
@@ -425,8 +425,8 @@ def _pull_request_push(command, cwd, engine):
     if not isinstance(armed_url, str) or not armed_url or push_url_digest(now_url) != armed_url:
         return ('Where %s pushes to differs from what it was when autonomy was armed (or was not recorded); '
                 'the owner checks the remote and arms again.' % remote)
-    if target.casefold() in {default.casefold(), 'main', 'master'}:
-        return 'Never push the default branch; push a feature branch and open a pull request.'
+    if target.casefold() in {default.casefold(), *(x.casefold() for x in RULES['git']['autonomy_protected_branches'])}:
+        return 'Never push the default or a release branch (main, master, production, gh-pages ...); push a feature branch and open a pull request.'
     if release.get('remote') == remote and str(release.get('target', '')).casefold() == target.casefold():
         return 'That branch is the configured release target; a release needs the pre-authorized permit.'
     return None
@@ -616,7 +616,16 @@ def _remote_tip_matches(repo, remote, branch):
     return len(rows) == 1 and len(rows[0]) == 2 and rows[0][0] == tracking and rows[0][1] == 'refs/heads/' + branch
 
 
-def _merged_delete_check(decision, cwd):
+def _armed_defaults(engine):
+    """The default branch names each remote reported when autonomy was armed; {} without an engine or an armed run."""
+    try:
+        found = (engine.status()['autonomy'] or {}).get('remote_defaults') or {}
+        return {k: v for k, v in found.items() if isinstance(k, str) and isinstance(v, str) and v}
+    except Exception:
+        return {}
+
+
+def _merged_delete_check(decision, cwd, engine=None):
     """SPEC 5.14 item 4: a deny payload for a merged-delete that is not safe, else None."""
     branch, remote = decision.branch, decision.remote if decision.kind == 'remote' else None
     if not branch:
@@ -632,7 +641,9 @@ def _merged_delete_check(decision, cwd):
     # Full refnames only (R2): a local branch or tag named origin/main must not shadow the default, and a ref
     # is read only after it exists exactly, so rev-parse's short-name lookup never finds a decoy (G2f).
     tracked = 'refs/remotes/%s/' % (remote or 'origin')
-    heads = [tracked + 'HEAD', tracked + 'main'] + ([] if remote else ['refs/heads/main'])
+    # The owner-confirmed default first, then the usual names: a repository whose default is `trunk` or `master` resolves too.
+    names = list(dict.fromkeys([x for x in (_armed_defaults(engine).get(remote or 'origin'), 'main', 'master') if x]))
+    heads = [tracked + 'HEAD'] + [tracked + n for n in names] + ([] if remote else ['refs/heads/' + n for n in names])
     default = sha = None
     for ref in heads:
         if ref.endswith('/HEAD'):
@@ -681,7 +692,7 @@ def _merged_delete_check(decision, cwd):
 _CLEANUP_PLAIN = re.compile(r'[A-Za-z0-9_./+=-]+( [A-Za-z0-9_./+=-]+)*')
 
 
-def _autonomy_cleanup(command, decision, cwd):
+def _autonomy_cleanup(command, decision, cwd, engine=None):
     """Cleanup of merged work under autonomy, for three plain one-command shapes; None for any other command.
     `git branch -d B` and `git worktree remove PATH` (no force) need the merged-delete proof for the branch; the
     worktree must be a linked worktree of this repository, not the session's own. `git worktree prune` only drops
@@ -702,7 +713,7 @@ def _autonomy_cleanup(command, decision, cwd):
     if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._/+-]*', branch):
         return _deny('Branch %s is not a plain branch name' % branch)
     merged = replace(decision, category='merged-delete', kind='local', branch=branch, remote=None)
-    denied = _merged_delete_check(merged, cwd)
+    denied = _merged_delete_check(merged, cwd, engine)
     return HookResult(denied) if denied else HookResult({})
 
 
@@ -729,8 +740,9 @@ def _worktree_branch(cwd, path):
     return _deny('%s is not a worktree of this repository' % path)
 
 
-def _on_default_branch(cwd):
-    """SPEC 5.1: the branch is read from the payload cwd's own worktree; any doubt counts as the default branch."""
+def _on_default_branch(cwd, engine=None):
+    """SPEC 5.1: the branch is read from the payload cwd's own worktree; any doubt counts as the default branch. The default
+    is what origin/HEAD names, else `main` or `master`; a default the remote reported when autonomy was armed counts too."""
     try:
         current = subprocess.check_output(['git', '-C', str(cwd), 'symbolic-ref', '--short', 'HEAD'],
                                           stderr=subprocess.PIPE, timeout=10).decode().strip()
@@ -739,10 +751,10 @@ def _on_default_branch(cwd):
     try:
         head = subprocess.check_output(['git', '-C', str(cwd), 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD'],
                                        stderr=subprocess.PIPE, timeout=10).decode().strip()
-        default = head[len('origin/'):] if head.startswith('origin/') else head
+        defaults = {head[len('origin/'):] if head.startswith('origin/') else head}
     except (OSError, subprocess.SubprocessError):
-        default = 'main'
-    return current == default
+        defaults = {'main', 'master'}
+    return current in defaults | set(_armed_defaults(engine).values())
 
 
 def _main_worktree(cwd):

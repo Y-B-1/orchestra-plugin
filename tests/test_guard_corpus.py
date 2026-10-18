@@ -345,7 +345,7 @@ class LongOptionAbbreviationTest(unittest.TestCase):
         for command in ('git commit --amend', 'git commit --am -m x', 'git commit --amen', 'git commit -m x --amend'):
             with self.subTest(command=command):
                 decision = classify_command(command)
-                self.assertEqual((decision.action, decision.reason), ('deny', 'Amend rewrites history'))
+                self.assertEqual((decision.action, decision.reason), ('deny', 'Amend rewrites history; make a new commit instead'))
         self.assertEqual(classify_command('git commit -m --amend').action, 'allow')
 
     def test_commit_guarded_flags_come_from_the_rules_table(self):

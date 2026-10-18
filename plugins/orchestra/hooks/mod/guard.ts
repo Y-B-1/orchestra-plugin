@@ -43,6 +43,7 @@ type Rules = {
     package_verb: string;
     deploy_tools: string[];
     deploy_words: string[];
+    tool_verbs: Record<string, string[]>;
     gh_api_merge: string;
     gh_api_graphql_opaque: string[];
   };
@@ -113,6 +114,8 @@ export function loadRules(json: string): void {
   strings(release.package_tools, 'release.package_tools');
   strings(release.deploy_tools, 'release.deploy_tools');
   strings(release.deploy_words, 'release.deploy_words');
+  if (typeof release.tool_verbs !== 'object' || release.tool_verbs === null || Array.isArray(release.tool_verbs)) throw new ValueError('Invalid guard rules: release.tool_verbs');
+  for (const [tool, verbs] of Object.entries(release.tool_verbs)) strings(verbs, `release.tool_verbs.${tool}`);
   strings(release.gh_api_graphql_opaque, 'release.gh_api_graphql_opaque');
   if (typeof release.gh_api_merge !== 'string' || release.gh_api_merge === '') throw new ValueError('Invalid guard rules: release.gh_api_merge');
   strings(release.az_pr_update.prefix, 'release.az_pr_update');
@@ -800,35 +803,35 @@ function gitRules(words: string[]): Decision {
   const short = flags.filter((x) => !x.startsWith('--')).map((x) => x.slice(1)).join('');
   const hasFlag = (name: string) => flags.includes(name);
   if (verb === 'stash') {
-    return denyOf('Git stash shares state across worktrees', 'stash');
+    return denyOf('Git stash shares state across worktrees; commit the work on a branch instead', 'stash');
   }
   if (verb === 'update-ref' && rawRefDelete(args)) return denyOf('Raw ref deletion is not allowed; use git branch -d');
-  if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work');
-  if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files');
+  if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work; unstage with `git restore --staged <path>` or keep the work on a new branch');
+  if (verb === 'clean' && (short.includes('f') || hasFlag('--force')) && !(short.includes('n') || hasFlag('--dry-run'))) return denyOf('Forced clean discards files; preview with `git clean -n` and remove only the named paths');
   if (verb === 'branch' && (short.includes('D') || ((short.includes('d') || hasFlag('--delete')) && (short.includes('f') || hasFlag('--force'))))) {
     const merged = !args.includes('--') ? mergedDelete(verb, options, flags, short, words, !plain, args) : null;
-    return merged ?? denyOf('Forced branch deletion discards refs');
+    return merged ?? denyOf('Forced branch deletion discards refs; merge the branch, then `git branch -d`');
   }
   const wholesale = args.includes('.') || args.includes(':/');
-  if (verb === 'checkout' && (wholesale || hasFlag('--force') || short.includes('f'))) return denyOf('Wholesale restore discards work');
-  if (verb === 'switch' && (short.includes('f') || [...GIT.switch_force_flags!].some((x) => hasFlag(x)))) return denyOf('Wholesale restore discards work');
+  if (verb === 'checkout' && (wholesale || hasFlag('--force') || short.includes('f'))) return denyOf('Wholesale restore discards work; restore named paths with `git restore <path>`');
+  if (verb === 'switch' && (short.includes('f') || [...GIT.switch_force_flags!].some((x) => hasFlag(x)))) return denyOf('Wholesale restore discards work; restore named paths with `git restore <path>`');
   if (verb === 'restore') {
     const stagedOnly = (hasFlag('--staged') || short.includes('S')) && !(hasFlag('--worktree') || short.includes('W'));
-    if (hasFlag('--force') || (wholesale && !stagedOnly)) return denyOf('Wholesale restore discards work');
+    if (hasFlag('--force') || (wholesale && !stagedOnly)) return denyOf('Wholesale restore discards work; restore named paths with `git restore <path>`');
   }
   if (verb === 'add' && ([...GIT.wholesale_add_flags!].some((x) => hasFlag(x)) || short.includes('A') || short.includes('u') || args.some((x) => GIT.wholesale_add_pathspecs!.has(x)))) {
-    return denyOf('Stage explicit paths only', 'wholesaleStage');
+    return denyOf('Stage explicit paths only: `git add <path> ...`', 'wholesaleStage');
   }
   if (verb === 'commit') {
     // A message beginning with a dash is still a message.
     const opts = options.filter((x) => !(x.startsWith('--message=') || x.startsWith('--file=') || x.startsWith('-m')));
     if (opts.includes('--all') || opts.some((x) => x.startsWith('-') && !x.startsWith('--') && x.slice(1).includes('a'))) {
-      return denyOf('Commit explicit staged paths only', 'wholesaleStage');
+      return denyOf('Commit explicit staged paths only: stage with `git add <path>`, then `git commit`', 'wholesaleStage');
     }
-    if (opts.some((x) => GIT.commit_guarded_flags!.has(x))) return denyOf('Amend rewrites history');
+    if (opts.some((x) => GIT.commit_guarded_flags!.has(x))) return denyOf('Amend rewrites history; make a new commit instead');
   }
   if (verb === 'push') {
-    if (flags.some((x) => x.startsWith('--force') || x === '--mirror') || short.includes('f') || args.some((x) => x.startsWith('+'))) return denyOf('Force push rewrites remote history');
+    if (flags.some((x) => x.startsWith('--force') || x === '--mirror') || short.includes('f') || args.some((x) => x.startsWith('+'))) return denyOf('Force push rewrites remote history; push normally or ask the owner');
     const dryRun = hasFlag('--dry-run') || short.includes('n');
     const positional = options.filter((x) => !x.startsWith('-'));
     if ((hasFlag('--delete') || short.includes('d')) && !dryRun && !args.includes('--')) {
@@ -884,6 +887,7 @@ function isRelease(name: string, words: string[]): boolean {
       (RELEASE.az_requires.every((x) => words.includes(x)) ||
         (sameWords(words.slice(1, 4), RELEASE.az_pr_update.prefix) && words.includes(RELEASE.az_pr_update.word)))) ||
     (RELEASE.package_tools.includes(name) && words.slice(1).includes(RELEASE.package_verb)) ||
+    (Object.prototype.hasOwnProperty.call(RELEASE.tool_verbs, name) && RELEASE.tool_verbs[name]!.some((x) => words.slice(1).includes(x))) ||
     (RELEASE.deploy_tools.includes(name) && RELEASE.deploy_words.some((x) => words.slice(1).includes(x)))
   );
 }
@@ -2190,7 +2194,8 @@ export function classifyCommand(command: string, depth = 0): Decision {
 
 function classifyInner(command: string, depth: number): Decision {
   if (budgetLeft < 0) return denyOf('Malformed shell quoting', 'malformed'); // The reading budget is spent (FX6).
-  if (!(typeof command === 'string') || !strip(command) || codePointLength(command) > 131072 || depth > 8) return denyOf('Invalid or excessively nested command', 'malformed');
+  if (typeof command === 'string' && codePointLength(command) > 131072) return denyOf('Command is over 128 KiB; write the content to a file with the Write tool and run that file', 'malformed');
+  if (!(typeof command === 'string') || !strip(command) || depth > 8) return denyOf('Invalid or excessively nested command', 'malformed');
   if (command.includes(RMARK) || command.includes(SMARK)) return denyOf('Malformed shell quoting', 'malformed'); // Reserved placeholder characters (R2k minor 4).
   const items: Item[] = [];
   try {

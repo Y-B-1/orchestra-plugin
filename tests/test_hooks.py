@@ -2055,6 +2055,24 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(self.hook(self.repo, 'git push origin HEAD:Trunk'), 'deny')
         self.assertIsNone(self.hook(self.repo, 'git push origin feat/x'))
 
+    def test_autonomy_pull_request_push_refuses_release_branches_besides_the_default(self):
+        self.origin()
+        self.arm()
+        for command in ('git push origin production', 'git push origin HEAD:gh-pages', 'git push origin HEAD:release', 'git push origin stable'):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(self.repo, command), 'deny')
+
+    def test_the_default_branch_is_the_one_the_remote_reported_or_main_or_master(self):
+        engine = mock.Mock()
+        engine.status.return_value = {'autonomy': {'remote_defaults': {'origin': 'trunk'}}}
+        git(self.repo, 'checkout', '-q', '-b', 'trunk')
+        self.assertTrue(hooks_module._on_default_branch(str(self.repo), engine))  # reported at arm
+        self.assertFalse(hooks_module._on_default_branch(str(self.repo), None))  # nothing says trunk is the default
+        git(self.repo, 'checkout', '-q', '-b', 'master')
+        self.assertTrue(hooks_module._on_default_branch(str(self.repo), None))  # no origin/HEAD: main and master count
+        git(self.repo, 'checkout', '-q', '-b', 'feat/y')
+        self.assertFalse(hooks_module._on_default_branch(str(self.repo), engine))
+
     def test_autonomy_pull_request_push_refuses_an_unknown_default_branch(self):
         git(self.repo, 'config', 'remote.origin.url', str(self.root / 'missing.git'))  # the remote cannot answer
         git(self.repo, 'update-ref', 'refs/remotes/origin/main', 'HEAD')

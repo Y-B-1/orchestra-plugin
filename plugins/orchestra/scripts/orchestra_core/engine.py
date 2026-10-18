@@ -50,11 +50,15 @@ REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
+WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
+GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which an unattended run stops
+LARGE_FILE_BYTES = 64 * 1024 * 1024  # Files over this are bound by size, mtime and sampled content, not read whole
+SAMPLE_BYTES = 1024 * 1024
 STALE_REVIEW = 'Review with findings is stale; re-review'
 # Keys the engine writes on a card; a task file never supplies them (repair_of only on a builder repair card).
 ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
                     'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
-                    'final_findings', 'helper_reason')
+                    'final_findings', 'helper_reason', 'started_at')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -291,6 +295,21 @@ def effective_push_url(repo, remote):
         return ''
 
 
+def _hash_file(path):
+    """A digest of a file. Past LARGE_FILE_BYTES the file is not read whole (that made every command seconds long): its
+    size, mtime and first and last SAMPLE_BYTES stand for it, so a same-size edit in the middle that also restores the
+    mtime goes unseen."""
+    info = path.stat()
+    if info.st_size <= LARGE_FILE_BYTES:
+        return _hash(path.read_bytes())
+    digest = hashlib.sha256(('large:%d:%d' % (info.st_size, info.st_mtime_ns)).encode())
+    with path.open('rb') as stream:
+        digest.update(stream.read(SAMPLE_BYTES))
+        stream.seek(max(0, info.st_size - SAMPLE_BYTES))
+        digest.update(stream.read(SAMPLE_BYTES))
+    return digest.hexdigest()
+
+
 def _hash(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -330,6 +349,9 @@ class Engine:
         globs = self.policy['sensitive_paths']
         if not isinstance(globs, list) or any(not isinstance(g, str) or not g for g in globs):
             raise EngineError('sensitive_paths must be a list of glob strings')
+        stale = self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS)
+        if isinstance(stale, bool) or not isinstance(stale, (int, float)) or not math.isfinite(stale) or stale <= 0:
+            raise EngineError('worker_stale_seconds must be positive and finite')
         minimum = self.policy['standards_min_lines']
         if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 0:
             raise EngineError('standards_min_lines must be a non-negative integer')
@@ -391,7 +413,7 @@ class Engine:
             if path.is_symlink():
                 value = ['symlink', os.readlink(path)]
             elif path.is_file():
-                value = ['file', path.stat().st_mode & 0o777, _hash(path.read_bytes())]
+                value = ['file', path.stat().st_mode & 0o777, _hash_file(path)]
             elif path.is_dir():
                 # Gitlinks need their nested HEAD, dirty state and contents bound too.
                 value = ['directory', self._directory_hash(path)]
@@ -474,7 +496,7 @@ class Engine:
             if child.is_symlink():
                 entries.append([str(child.relative_to(path)), 'link', os.readlink(child)])
             elif child.is_file():
-                entries.append([str(child.relative_to(path)), _hash(child.read_bytes())])
+                entries.append([str(child.relative_to(path)), _hash_file(child)])
         return _digest(entries)
 
     @contextlib.contextmanager
@@ -759,6 +781,14 @@ class Engine:
                 i += 1
         return re.compile(''.join(out))
 
+    @staticmethod
+    def _count_lines(path):
+        """Lines in an untracked file; a file over LARGE_FILE_BYTES is estimated from its size, never read whole."""
+        size = path.stat().st_size
+        if size > LARGE_FILE_BYTES:
+            return size // 40
+        return len(path.read_bytes().splitlines())
+
     def _line_counts(self, base):
         """{path: changed lines} from `base` to the working tree: tracked files by numstat, untracked files by length."""
         counts = {}
@@ -774,7 +804,7 @@ class Engine:
         for raw in self._git('ls-files', '-z', '--others', '--exclude-standard').split(b'\0'):
             if raw and not self._noise(os.fsdecode(raw)):
                 path = self.repo / os.fsdecode(raw)
-                counts[os.fsdecode(raw)] = len(path.read_bytes().splitlines()) if path.is_file() and not path.is_symlink() else 0
+                counts[os.fsdecode(raw)] = self._count_lines(path) if path.is_file() and not path.is_symlink() else 0
         return counts
 
     def _baseline_view(self, names):
@@ -948,6 +978,7 @@ class Engine:
                 if task['state'] == 'running':
                     task['state'] = 'queued'
                     task.pop('assignment', None)
+                    task.pop('started_at', None)
                     task.pop('report', None)
             state['permits'] = []
             return lease
@@ -1267,7 +1298,7 @@ class Engine:
     def _set_aside(self, state, task, reason):
         """Park a card: drop its assignment, reservation and report, and put its repair chain under repair again."""
         task.update(state='parked', parked_reason=reason)
-        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact'):
+        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'started_at'):
             task.pop(key, None)
         for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair's report is dropped: its chain is under repair again
             ancestor['state'] = 'repairing'
@@ -1417,7 +1448,8 @@ class Engine:
                 raise EngineError('Task is not ready or capacity is exhausted')
             self._check_contract(state['tasks'][task_id])
             token = uuid.uuid4().hex
-            state['tasks'][task_id].update(state='running', worker=worker, assignment=token, lease=lease, inline=inline)
+            state['tasks'][task_id].update(state='running', worker=worker, assignment=token, lease=lease, inline=inline,
+                                           started_at=self._clock())
             if isinstance(helper, str) and helper.strip():
                 state['tasks'][task_id]['helper_reason'] = helper.strip()
             return token
@@ -2192,6 +2224,9 @@ class Engine:
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
         needs += ['review and merge pull request ' + url for url in state.get('pull_requests', [])]
+        gate = self._failing_gate(state) if reason == 'gate-failing' else None
+        if gate:
+            needs.append('required gate %s failed %d times in a row -- read its log, fix the cause, then arm again' % (gate, GATE_FAILURE_LIMIT))
         if (reason in ('closed', 'complete') and not any(self._is_release(t) for t in tasks.values())
                 and not (auto or {}).get('release')):
             needs.append('ready to release')
@@ -2319,7 +2354,13 @@ class Engine:
         held = (not any(t['state'] == 'parked' and not self._is_release(t) for t in tasks)
                 and any(t['state'] == 'held' and not t.get('repaired_by') and not self._final_receipts(state, t['id'])
                         for t in tasks))
-        running = any(t['state'] == 'running' and not t.get('inline') for t in tasks)
+        failing = self._failing_gate(state)
+        if failing:
+            return 'gate-failing', None
+        stale_after = self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS)
+        silent = [t for t in tasks if t['state'] == 'running' and not t.get('inline')
+                  and self._clock() - t.get('started_at', self._clock()) > stale_after]
+        running = any(t['state'] == 'running' and not t.get('inline') and t not in silent for t in tasks)
         judged = {i for t in tasks if t['state'] == 'running' for i in t.get('review_of', [])}
         actionable = (any(t['state'] == 'reported' and t['id'] not in judged for t in tasks)
                       or any(t['state'] == 'running' and t.get('inline') for t in tasks) or bool(self._ready(state)))
@@ -2330,6 +2371,20 @@ class Engine:
         final_owed = (not (running or actionable or held or final_open or parked)
                       and all(t['state'] == 'accepted' for t in tasks)
                       and bool(tasks or (base is not None and self._run_changed(state)[0])))
+        if silent and not (running or actionable or held or final_open or final_owed):
+            auto['accepted'] = self._accepted(state)
+            names = ', '.join(t['id'] for t in silent)
+            message = ('the worker for %s has been silent for over %d minutes and may be gone: park the card with `park CARD '
+                       '--reason lost-worker`, `unpark` it and dispatch it again, or wait if it is a long task.'
+                       % (names, round(stale_after / 60)))
+            signature = self._signature(state)
+            if signature == auto.get('signature'):
+                auto['stalls'] += 1
+                return 'stalled', None
+            auto['signature'] = signature
+            auto['stalls'] = 0
+            auto['passes'] += 1
+            return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
         if not (running or actionable or held or final_open or final_owed):
             return ('parked-only' if parked else 'no-ready-card'), None
         auto['accepted'] = self._accepted(state)
@@ -2352,6 +2407,19 @@ class Engine:
         auto['stalls'] = 0
         auto['passes'] += 1
         return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
+
+    def _failing_gate(self, state):
+        """The name of a required gate whose last GATE_FAILURE_LIMIT receipts all failed, else None: an unattended run
+        stops instead of repeating it until the deadline."""
+        names = [c['name'] if isinstance(c, dict) else c for c in self.policy['required_checks']]
+        names += [c['name'] for c in (state['autonomy'] or {}).get('checks', []) if isinstance(c, dict)]  # the ledger's checks
+        if self.policy['secret_scan'].get('required'):
+            names.append('secret-scan')
+        for name in names:
+            recent = [g for g in state['gates'] if g['name'] == name][-GATE_FAILURE_LIMIT:]
+            if len(recent) == GATE_FAILURE_LIMIT and not any(g['passed'] for g in recent):
+                return name
+        return None
 
     def hook_stop(self):
         """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm, an
