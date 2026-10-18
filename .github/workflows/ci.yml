@@ -38,9 +38,13 @@ jobs:
         run: python -m unittest discover -s tests
 
   windows:
-    name: Windows tests
+    name: Windows tests (${{ matrix.shard }})
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [engine, hooks, rest]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -53,7 +57,14 @@ jobs:
           git config --global init.defaultBranch main
           git config --global core.autocrlf false
       - name: Unit and integration tests (UTF-8 mode, as the launcher runs them)
-        run: python -X utf8 -m unittest discover -s tests -v
+        shell: bash
+        run: |
+          case "${{ matrix.shard }}" in
+            engine) mods="test_engine" ;;
+            hooks) mods="test_hooks" ;;
+            rest) mods=$(cd tests && ls test_*.py | grep -v -e test_engine -e test_hooks | sed 's#\.py$##' | tr '\n' ' ') ;;
+          esac
+          PYTHONPATH=tests python -X utf8 -m unittest $mods
 
   plugin:
     name: Plugin validation and mod tests
