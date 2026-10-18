@@ -82,3 +82,8 @@ Workers retain documentation/browser tools and relevant state reads. Native prof
 Opening a session never installs old charter healers, stale-state rewrites, fixed product ports, relay forwarding, automatic rollback or source deployment recipes. ActionNotch and Orca integrations remain separate.
 
 Claude Code does not automatically trust bundled hooks. Review and trust the current definition in the host interface; updates can need another review. Installer code never edits trust or uses a trust bypass.
+
+## Windows
+
+The hooks and the CLI run on Windows through Git for Windows' `sh`. `run-hook.sh` accepts a backslash script path, tries `python3.14` to `python3`, `python` and `py -3.x`, and passes `-X utf8`. `orchestra_core/portable.py` holds the platform differences: `msvcrt` byte locks (exclusive only, so a shared request waits like an exclusive one), `CREATE_NEW_PROCESS_GROUP` and `taskkill /F /T` for gates and the push check, no numeric user id (the fallback state root is named for the user), and `%LOCALAPPDATA%` as the state base when `XDG_STATE_HOME` is not absolute. Path checks ignore case. The guard classifies POSIX shell commands, so the PowerShell tool, which the hook matcher does not name, is outside it. The TypeScript module returns before it writes a marker when the plugin root is a Windows path, so the Python hooks guard every call there; if it ever runs, it starts the launcher with `sh` and forward slashes.
+

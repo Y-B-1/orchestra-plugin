@@ -6,7 +6,7 @@ The role count does not limit concurrency. Several instances of one role can run
 
 ## Install
 
-Prerequisites: Python 3.11 or later, Git and Claude Code. Without Python 3.11 or later, the PreToolUse hook fails closed and every other hook only shows a warning. Native checks used Claude Code 2.1.289. Windows is not supported by the POSIX locking core; use WSL.
+Prerequisites: Python 3.11 or later, Git and Claude Code. Without Python 3.11 or later, the PreToolUse hook fails closed and every other hook only shows a warning. Native checks used Claude Code 2.1.289. On Windows you also need Git for Windows, which supplies the `sh` that runs the hooks (see [Windows](#windows)).
 
 ```sh
 claude plugin marketplace add Y-B-1/orchestra-plugin
@@ -24,6 +24,16 @@ Orchestra sets no context limit. For long runs, set Claude Code's auto-compactio
 The value is in tokens (100000 to 1000000). Claude Code caps it at the model's window, so it has no effect on a 200K model. Run state lives on disk (`progress.md`, `state.json`) and survives compaction.
 
 No installer changes application instructions, resumes old work, grants release rights or writes hook trust. Existing project rules still apply. If a project carries older Orchestra enforcement of its own, port it separately to avoid two competing coordinators.
+
+### Windows
+
+Windows works with Git for Windows and Python 3.11 or later. Install Python from python.org or winget; the Microsoft Store `python3` stub is skipped. The hook launcher tries `python3.14` down to `python3`, then `python`, then the `py` launcher, and runs Python in UTF-8 mode. WSL needs nothing extra.
+
+- Run state lives under `%LOCALAPPDATA%\orchestra`, unless `XDG_STATE_HOME` is an absolute path.
+- The guard reads the POSIX shell syntax of Claude Code's Bash tool, which is Git Bash on Windows. A command run through the PowerShell tool is not classified, and protected-path checks ignore case.
+- File locks on Windows are exclusive, so concurrent readers of the run state take turns. A gate that times out is stopped with `taskkill /T`; a process a gate leaves running after it exits is not tracked there.
+- The function-hook module (below) stays inert on Windows paths, so the Python hooks guard every call.
+- CI runs the whole test suite on `windows-latest` on every pull request.
 
 ### Function hooks (optional)
 
@@ -185,14 +195,113 @@ python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project board
 
 Every command, flag and schema: [CLI guide](docs/cli.md) and the package [CLI reference](plugins/orchestra/skills/orchestra/references/cli.md). Run state lives under the user state directory, outside the checkout (`orchestra.py where` prints it).
 
-## Example instruction files
+## Set up your agent session (once)
 
-Two starting points, based on the files this project runs with:
+Do this once after installing, then again only when a session feels slow or forgetful. It takes about fifteen minutes and needs no plugin feature: it is advice, plus a script you run yourself. Everything here was checked against the Claude Code documentation in October 2026.
 
-- [`examples/global-CLAUDE.md`](examples/global-CLAUDE.md): a user-level `~/.claude/CLAUDE.md`. It sets coding discipline and session mechanics and routes work through Orchestra's size tiers, lanes and roles.
-- [`examples/project-AGENTS.md`](examples/project-AGENTS.md): a project charter saved as `AGENTS.md` at the repository root. Its standing orders are the rules the coordinator pastes verbatim into every worker brief.
+### 1. See what loads before you type
 
-Keep global habits in the first file and project rules in the second. Do not copy rules the plugin's guard already enforces.
+Context you pay for in every session comes from a short list: the system prompt, MCP tool definitions, the skill listing (name and description of every skill and plugin skill), agent descriptions, your `CLAUDE.md` files, auto memory and hook output. Look at it first.
+
+- `/context` shows the breakdown for the current session; `/context all` expands each item. It also warns about context-heavy tools and memory bloat.
+- `/skills` lists skills; press `t` to sort them by token count.
+- `claude plugin details <plugin>` prints a plugin's always-on tokens. Orchestra's own cost, measured on this release, is about 860 tokens: roughly 300 for its eight skill descriptions, 370 for its twelve agent descriptions and 190 for the session-start note. A skill body (2 to 4.5 KB) loads only when the skill runs, and the 9 KB orchestrator contract only when the main session acts as the coordinator.
+- The script below lists the instruction files, skill and agent descriptions and MCP servers on disk, biggest first. It is standard-library Python and runs on Windows too. Run it from a project root: `python scan.py`.
+
+<details>
+<summary>scan.py</summary>
+
+```python
+"""One-off: list what your sessions load before you type anything, biggest first. Run from a project root."""
+import glob, json, os, re
+from pathlib import Path
+
+home = Path.home()
+rows = []
+
+def add(kind, path, text):
+    rows.append((len(text), kind, str(path)))
+
+def read(path):
+    try:
+        return Path(path).read_text(encoding='utf-8', errors='replace')
+    except OSError:
+        return ''
+
+# Instruction files: always loaded in full.
+for p in [home / '.claude/CLAUDE.md', Path('CLAUDE.md'), Path('CLAUDE.local.md'), Path('AGENTS.md')]:
+    if p.is_file():
+        add('instructions (all of it, every session)', p, read(p))
+
+# Skills and agents: only the description sits in context; the body loads when used.
+roots = [home / '.claude/skills', Path('.claude/skills')] + [Path(x) for x in glob.glob(str(home / '.claude/plugins/cache/**/skills'), recursive=True)]
+for root in roots:
+    for skill in glob.glob(str(root / '*/SKILL.md')):
+        text = read(skill)
+        match = re.search(r'^description:\s*(.*)$', text, re.M)
+        add('skill description (body loads on use)', skill, (match.group(1) if match else '') + Path(skill).parent.name)
+for root in [home / '.claude/agents', Path('.claude/agents')] + [Path(x) for x in glob.glob(str(home / '.claude/plugins/cache/**/agents'), recursive=True)]:
+    for agent in glob.glob(str(root / '*.md')):
+        match = re.search(r'^description:\s*(.*)$', read(agent), re.M)
+        add('agent description', agent, match.group(1) if match else '')
+
+# MCP servers: every tool's name and schema is loaded unless tool search defers it. Count the servers here;
+# /context shows the real token cost of their tools.
+for config in [Path('.mcp.json'), home / '.claude.json']:
+    try:
+        servers = json.loads(read(config)).get('mcpServers', {})
+    except ValueError:
+        servers = {}
+    for name in servers:
+        add('MCP server (see /context for its tools)', f'{config}: {name}', '')
+
+print(f'{"~tokens":>8}  {"kind":<42} source')
+for size, kind, path in sorted(rows, reverse=True):
+    print(f'{size // 4:>8}  {kind:<42} {path}')
+print(f'{sum(r[0] for r in rows) // 4:>8}  total of the above (plus tools, system prompt and memory: run /context)')
+```
+
+</details>
+
+### 2. Trim what you do not use
+
+- **MCP servers.** Tool search is on by default: only tool names load at start and a schema loads when the tool is needed. `ENABLE_TOOL_SEARCH=auto:10` loads tools up front only while they fit in 10 percent of the window; `false` loads everything. A server entry can set `"alwaysLoad": true` for the few tools you use constantly. `/mcp disable <server>` switches a server off for now; `disabledMcpjsonServers` in settings rejects one that a project's `.mcp.json` asks for. Remove servers you have not called in a month.
+- **Plugins.** `claude plugin disable <name>@<marketplace> --scope local` turns one off for a single repository without uninstalling it. Keep a plugin enabled globally only if you would use it in most projects.
+- **Skills.** Only the description sits in context. Set `disable-model-invocation: true` in a skill you invoke by name, or `skillOverrides` to `"off"`, `"name-only"` or `"user-invocable-only"` in settings. Descriptions longer than 1,536 characters are cut; `skillListingMaxDescChars` and `skillListingBudgetFraction` tune the listing.
+- **Instruction files.** Keep each `CLAUDE.md` under 200 lines. `@path` imports do not reduce cost, because the imported text loads too. Files in subdirectories load only when Claude works there, so a rule that matters in one package belongs in that package. Move reference material that is needed rarely into a skill or a doc the file links to.
+- **Habits.** `/clear` between unrelated tasks. `/compact` with a focus sentence at a natural break; the skill listing is not injected again afterward, and skill bodies that ran come back capped at 5,000 tokens each.
+
+### 3. Your global `~/.claude/CLAUDE.md`
+
+It loads into every session in every project, so it holds only what is true everywhere: how you want the agent to think, your Git habits, which tools you prefer and what it must never do. Aim for 60 lines.
+
+- Put in: plan before editing, state assumptions, keep changes minimal, evidence for every "done" claim, commit each working step with explicit paths, never `git stash` when worktrees are in use, never push to the default branch.
+- Leave out: build commands, file layouts, domain terms and anything about one repository. Those belong in that repository.
+- Add a routing paragraph for Orchestra: size each ask by the diff it will produce, do tiny work inline and start a run for anything larger.
+- Prefer a hook or a check to another sentence when a rule must always hold.
+
+[`examples/global-CLAUDE.md`](examples/global-CLAUDE.md) is a ready starting point. Copy it, then delete what you do not want.
+
+### 4. Each project's `AGENTS.md`
+
+It holds what only this repository can tell the agent. Claude Code reads `AGENTS.md` itself (2.1.277 or later) when the directory has no `CLAUDE.md`. If you keep a `CLAUDE.md` as well, `CLAUDE.md` wins; put `@AGENTS.md` in it so both tools read one file.
+
+- Put in: the commands that build, test and lint (fast check per edit, scoped test per unit, full suite on request), the layout and who owns what, the conventions a newcomer would get wrong, what is never allowed (migrations, secrets, release) and where state and decisions live.
+- Give Orchestra a section of **standing orders**: the binding rules, short and checkable. The coordinator copies that section into every worker brief, so a worker that never read the file still obeys it.
+- Test each line: if deleting it would not cause a mistake, delete it. Do not repeat what a guard, a hook or the linter already enforces.
+- Keep it under 200 lines and update it in the commit that changes the behavior it describes.
+
+[`examples/project-AGENTS.md`](examples/project-AGENTS.md) is a starting charter.
+
+### 5. The one-time checklist
+
+1. Run `/context`, then `scan.py`, and write down the five biggest items.
+2. Disable or remove every MCP server, plugin and skill you did not use this month.
+3. Cut your global `CLAUDE.md` to what holds everywhere; move the rest to project files.
+4. Give each active project an `AGENTS.md` with commands, ownership and standing orders.
+5. Start a fresh session, run `/context` again, and compare the totals.
+
+To have the agent do the file-based part for you, paste: "Run `python scan.py` in this repository. Also list `~/.claude/CLAUDE.md`, `CLAUDE.md`, `AGENTS.md`, `.mcp.json` and the enabled plugins with their sizes. Report the ten largest fixed-context items with a one-line recommendation each. Change nothing." You still run `/context` yourself: the agent cannot open slash commands.
 
 ## Upgrade notes
 

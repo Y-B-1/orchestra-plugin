@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import tempfile
 
+from . import portable
+
 
 def repository(cwd):
     return Path(subprocess.check_output(['git','-C',str(cwd),'rev-parse','--show-toplevel'],stderr=subprocess.PIPE).decode().strip()).resolve()
@@ -16,16 +18,18 @@ class StateRootError(Exception):
 
 
 def _private_temp_root():
-    """A per-user 0700 directory owned by this uid under the system temp folder; refuses a root another user made."""
-    root = Path(tempfile.gettempdir()) / ('orchestra-state-%d' % os.getuid())
+    """A per-user private directory under the system temp folder; refuses a root another user made. Without a numeric
+    user id (Windows) the folder is named for the user and the ownership and mode checks do not apply."""
+    uid = portable.current_uid()
+    root = Path(tempfile.gettempdir()) / ('orchestra-state-%s' % (uid if uid is not None else _user_name()))
     try:
         root.mkdir(mode=0o700, exist_ok=True)
         info = root.lstat()
     except OSError as exc:
         raise StateRootError('Fallback state directory %s cannot be created: %s' % (root, exc)) from None
-    if root.is_symlink() or info.st_uid != os.getuid():
+    if root.is_symlink() or (uid is not None and info.st_uid != uid):
         raise StateRootError('Fallback state directory %s is not owned by this user' % root)
-    if info.st_mode & 0o077:
+    if uid is not None and info.st_mode & 0o077:
         try:
             root.chmod(0o700)
             tightened = root.lstat().st_mode & 0o077
@@ -36,11 +40,19 @@ def _private_temp_root():
     return root
 
 
+def _user_name():
+    return ''.join(c if c.isalnum() else '_' for c in os.environ.get('USERNAME') or os.environ.get('USER') or 'user')
+
+
 def state_home():
-    """XDG_STATE_HOME when it is absolute (the XDG rule, as the mod reads it), else ~/.local/state."""
+    """XDG_STATE_HOME when it is absolute (the XDG rule), else %LOCALAPPDATA% on Windows, else ~/.local/state."""
     value = os.environ.get('XDG_STATE_HOME', '')
     if os.path.isabs(value):
         return Path(value)
+    if portable.IS_WINDOWS:
+        local = os.environ.get('LOCALAPPDATA', '')
+        if os.path.isabs(local):
+            return Path(local)
     try:
         return Path.home() / '.local/state'
     except RuntimeError:  # No HOME and no passwd entry (a container run as an arbitrary uid): a private temp location

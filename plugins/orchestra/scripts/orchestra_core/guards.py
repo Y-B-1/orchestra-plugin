@@ -648,40 +648,40 @@ def _git_rules(words):
     flags = [x for x in options if x.startswith('-')]
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
-        return _deny('Git stash shares state across worktrees', 'stash')
+        return _deny('Git stash shares state across worktrees; commit the work on a branch instead', 'stash')
     if verb == 'update-ref' and _raw_ref_delete(args):
         return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):
-        return _deny('Hard reset discards work')
+        return _deny('Hard reset discards work; unstage with `git restore --staged <path>` or keep the work on a new branch')
     if verb == 'clean' and ('f' in short or '--force' in flags) and not ('n' in short or '--dry-run' in flags):
-        return _deny('Forced clean discards files')
+        return _deny('Forced clean discards files; preview with `git clean -n` and remove only the named paths')
     if verb == 'branch' and ('D' in short or (('d' in short or '--delete' in flags) and ('f' in short or '--force' in flags))):
         merged = '--' not in args and _merged_delete(verb, options, flags, short, words, not plain, args)
         if merged:
             return merged
-        return _deny('Forced branch deletion discards refs')
+        return _deny('Forced branch deletion discards refs; merge the branch, then `git branch -d`')
     wholesale = '.' in args or ':/' in args
     if verb == 'checkout' and (wholesale or '--force' in flags or 'f' in short):
-        return _deny('Wholesale restore discards work')
+        return _deny('Wholesale restore discards work; restore named paths with `git restore <path>`')
     if verb == 'switch' and ('f' in short or any(x in flags for x in _GIT['switch_force_flags'])):
-        return _deny('Wholesale restore discards work')
+        return _deny('Wholesale restore discards work; restore named paths with `git restore <path>`')
     if verb == 'restore':
         staged_only = ('--staged' in flags or 'S' in short) and not ('--worktree' in flags or 'W' in short)
         if '--force' in flags or (wholesale and not staged_only):
-            return _deny('Wholesale restore discards work')
+            return _deny('Wholesale restore discards work; restore named paths with `git restore <path>`')
     if verb == 'add' and (any(x in flags for x in _GIT['wholesale_add_flags']) or 'A' in short or 'u' in short or
                           any(x in _GIT['wholesale_add_pathspecs'] for x in args)):
-        return _deny('Stage explicit paths only', 'wholesaleStage')
+        return _deny('Stage explicit paths only: `git add <path> ...`', 'wholesaleStage')
     if verb == 'commit':
         # A message beginning with a dash is still a message.
         opts = [x for x in options if not (x.startswith(('--message=', '--file=')) or x.startswith('-m'))]
         if '--all' in opts or any(x.startswith('-') and not x.startswith('--') and 'a' in x[1:] for x in opts):
-            return _deny('Commit explicit staged paths only', 'wholesaleStage')
+            return _deny('Commit explicit staged paths only: stage with `git add <path>`, then `git commit`', 'wholesaleStage')
         if any(x in _GIT['commit_guarded_flags'] for x in opts):
-            return _deny('Amend rewrites history')
+            return _deny('Amend rewrites history; make a new commit instead')
     if verb == 'push':
         if any(x.startswith('--force') or x == '--mirror' for x in flags) or 'f' in short or any(x.startswith('+') for x in args):
-            return _deny('Force push rewrites remote history')
+            return _deny('Force push rewrites remote history; push normally or ask the owner')
         dry_run = '--dry-run' in flags or 'n' in short
         positional = [x for x in options if not x.startswith('-')]
         if (('--delete' in flags or 'd' in short) and not dry_run and '--' not in args and
@@ -722,6 +722,7 @@ def _is_release(name, words):
             (name == 'az' and (all(x in words for x in _RELEASE['az_requires']) or
                                (words[1:4] == _RELEASE['az_pr_update']['prefix'] and _RELEASE['az_pr_update']['word'] in words))) or
             (name in _RELEASE['package_tools'] and _RELEASE['package_verb'] in words[1:]) or
+            (any(verb in words[1:] for verb in _RELEASE['tool_verbs'].get(name, ()))) or
             (name in _RELEASE['deploy_tools'] and any(x in words[1:] for x in _RELEASE['deploy_words'])))
 
 
@@ -2016,7 +2017,9 @@ def classify_command(command: str, _depth=0) -> Decision:
 def _classify_command(command, _depth):
     if _BUDGET['left'] < 0:
         return _deny('Malformed shell quoting', 'malformed')  # The reading budget is spent (FX6).
-    if not isinstance(command, str) or not command.strip() or len(command) > 131072 or _depth > 8:
+    if isinstance(command, str) and len(command) > 131072:
+        return _deny('Command is over 128 KiB; write the content to a file with the Write tool and run that file', 'malformed')
+    if not isinstance(command, str) or not command.strip() or _depth > 8:
         return _deny('Invalid or excessively nested command', 'malformed')
     if _RMARK in command or _SMARK in command:  # Reserved placeholder characters (R2k minor 4).
         return _deny('Malformed shell quoting', 'malformed')

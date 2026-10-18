@@ -2,6 +2,10 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.8.0 — 2026-10-18
+
+- **Windows:** the hooks and the CLI run on Windows with Git for Windows and Python 3.11 or later. File locks use `msvcrt`, a gate that times out is stopped with `taskkill /T`, the launcher tries `python` and `py -3` after `python3`, accepts a backslash script path and starts Python in UTF-8 mode, run state lives under `%LOCALAPPDATA%` unless `XDG_STATE_HOME` is absolute, and protected-path checks ignore case. The TypeScript mod stays inert on Windows paths, so the Python hooks guard every call there. CI runs the test suite on `windows-latest`.
+
 ## 2.7.1 — 2026-10-16
 
 - **Finish:** a run that changed files needs a current final review even when it has no cards. `finish` used to accept 300 unreviewed lines.

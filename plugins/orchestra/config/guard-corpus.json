@@ -11362,6 +11362,132 @@
     "command": "rg 'orchestra.py autonomy disarm' README.md"
    },
    "class": "allow"
+  },
+  {
+   "id": "release-tools-0",
+   "input": {
+    "command": "yarn publish"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-1",
+   "input": {
+    "command": "docker push ghcr.io/o/i:1"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-2",
+   "input": {
+    "command": "terraform apply -auto-approve"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-3",
+   "input": {
+    "command": "twine upload dist/*"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-4",
+   "input": {
+    "command": "helm upgrade app ./chart"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-5",
+   "input": {
+    "command": "kubectl apply -f k.yaml"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-6",
+   "input": {
+    "command": "firebase deploy"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-7",
+   "input": {
+    "command": "bun publish"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-8",
+   "input": {
+    "command": "docker build -t i ."
+   },
+   "class": "allow"
+  },
+  {
+   "id": "release-tools-9",
+   "input": {
+    "command": "terraform plan"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "release-tools-10",
+   "input": {
+    "command": "yarn install"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "release-tools-11",
+   "input": {
+    "command": "kubectl get pods"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "release-tools-12",
+   "input": {
+    "command": "docker push"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-tools-13",
+   "input": {
+    "command": "echo docker push"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "autonomy-protected-0",
+   "input": {
+    "command": "git push origin production"
+   },
+   "class": "release"
+  },
+  {
+   "id": "autonomy-protected-1",
+   "input": {
+    "command": "git push origin HEAD:gh-pages"
+   },
+   "class": "release"
+  },
+  {
+   "id": "autonomy-protected-2",
+   "input": {
+    "command": "git push origin HEAD:release"
+   },
+   "class": "release"
+  },
+  {
+   "id": "autonomy-protected-3",
+   "input": {
+    "command": "git push origin stable"
+   },
+   "class": "release"
   }
  ]
 }

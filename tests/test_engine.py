@@ -3972,6 +3972,38 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.assertIsNone(self.last_stop())
         self.assertTrue(self.engine.autonomy_active())
 
+    def test_a_silent_worker_is_surfaced_and_a_repeat_stops_the_run(self):
+        self.arm(deadline=iso(T0 + 20000))
+        self.worker_running('busy')
+        self.assertIsNone(self.engine.hook_stop())  # a worker that just started: wait for the harness to wake us
+        self.now[0] = T0 + 3700
+        message = self.engine.hook_stop()
+        self.assertIn('busy', message)
+        self.assertIn('silent for over 60 minutes', message)
+        self.assertIsNone(self.engine.hook_stop())  # nothing changed since the nudge: stop and brief
+        self.assertEqual(self.last_stop(), 'stalled')
+
+    def test_a_card_requeued_by_a_new_session_loses_its_start_time(self):
+        self.arm(deadline=iso(T0 + 20000))
+        self.worker_running('busy')
+        self.assertIn('started_at', self.engine.status()['tasks']['busy'])
+        self.engine.interrupt('main', self.lease)
+        self.lease = self.engine.open_session('main')
+        self.assertNotIn('started_at', self.engine.status()['tasks']['busy'])
+
+    def test_a_required_gate_that_fails_three_times_in_a_row_stops_the_run(self):
+        failing = [sys.executable, '-c', 'raise SystemExit(3)']
+        self.arm(checks=['fixture: ' + shlex.join(failing)], deadline=iso(T0 + 20000))
+        self.built('B1')
+        for _ in range(2):
+            self.engine.run_gate('main', self.lease, 'fixture', failing, again=True)
+        self.engine.hook_stop()
+        self.assertNotEqual(self.last_stop(), 'gate-failing')  # two failures are not yet a pattern
+        self.engine.run_gate('main', self.lease, 'fixture', failing, again=True)
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.last_stop(), 'gate-failing')
+        self.assertIn('required gate fixture failed 3 times in a row', self.engine.brief())
+
     def test_hook_stop_never_stops_on_pass_count(self):
         self.arm()
         self.task('x')
@@ -4610,6 +4642,32 @@ class RunHygieneTests(EngineFixture):
         state = self.engine.status()
         self.assertNotIn('b', state['tasks'])
         self.assertEqual([c['id'] for c in state['cancelled']], ['b'])
+
+    def test_a_huge_file_is_bound_by_size_mtime_and_samples_and_never_read_whole(self):
+        import orchestra_core.engine as engine_module
+        big = self.repo / 'big.bin'
+        big.write_bytes(b'a' * 4096)
+        original = pathlib.Path.read_bytes
+
+        def guarded(path):
+            if path.name == 'big.bin':
+                raise AssertionError('read whole')
+            return original(path)
+
+        with mock.patch.object(engine_module, 'LARGE_FILE_BYTES', 1024), mock.patch.object(engine_module, 'SAMPLE_BYTES', 16), \
+                mock.patch.object(pathlib.Path, 'read_bytes', guarded):
+            before = self.engine.artifact()['fingerprint']
+            self.assertEqual(self.engine._count_lines(big), 4096 // 40)
+            info = big.stat()
+            data = bytearray(b'a' * 4096)
+            data[2000] = ord('b')  # in the middle, outside both samples
+            big.write_bytes(data)
+            os.utime(big, ns=(info.st_atime_ns, info.st_mtime_ns))
+            self.assertEqual(self.engine.artifact()['fingerprint'], before)  # the documented limit
+            data[0] = ord('c')  # a change inside a sample is seen
+            big.write_bytes(data)
+            os.utime(big, ns=(info.st_atime_ns, info.st_mtime_ns))
+            self.assertNotEqual(self.engine.artifact()['fingerprint'], before)
 
     def test_push_urls_are_recorded_as_digests(self):
         from orchestra_core.paths import push_url_digest

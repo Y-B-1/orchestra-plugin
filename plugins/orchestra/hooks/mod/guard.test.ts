@@ -219,7 +219,7 @@ test('SPEC 5.15: abbreviated long options classify as the full option, exemption
 test('SPEC 5.15: commit --amend is denied with its reason, in full and abbreviated', () => {
   for (const command of ['git commit --amend', 'git commit --am -m x', 'git commit --amen', 'git commit -m x --amend']) {
     const d = classifyCommand(command);
-    expect([d.action, d.reason]).toEqual(['deny', 'Amend rewrites history']);
+    expect([d.action, d.reason]).toEqual(['deny', 'Amend rewrites history; make a new commit instead']);
   }
   expect(classifyCommand('git commit -m --amend').action).toBe('allow');
 });
