@@ -1779,8 +1779,8 @@ class SessionEndBuildErrorTest(unittest.TestCase):
 
 class RunHookScriptTest(unittest.TestCase):
     def test_syntax(self):
-        self.assertEqual(subprocess.run(['bash', '-n', RUN_HOOK.as_posix()]).returncode, 0)
-        self.assertEqual(subprocess.run([SH, '-n', str(RUN_HOOK)]).returncode, 0)
+        for shell in {SH, shutil.which('bash') if not portable.IS_WINDOWS else None} - {None}:  # Windows `bash` can be the WSL stub
+            self.assertEqual(subprocess.run([shell, '-n', RUN_HOOK.as_posix()]).returncode, 0, shell)
 
     def run_hook(self, *args, trace=False, stdin=''):
         cmd = [SH] + (['-x'] if trace else []) + [str(RUN_HOOK), *args]
@@ -1814,6 +1814,7 @@ class RunHookScriptTest(unittest.TestCase):
         return subprocess.run([SH, str(RUN_HOOK), event, '--harness', 'claude'], input='{}', text=True,
                               capture_output=True, timeout=60, env={'PATH': path})
 
+    @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: the stub interpreters are extensionless executable scripts')
     def test_a_broken_versioned_shim_is_skipped(self):
         path = self.stub_path({'python3.12': 'echo "pyenv: python3.12: command not found" >&2; exit 127',
                                'python3': 'exec %s "$@"' % sys.executable})

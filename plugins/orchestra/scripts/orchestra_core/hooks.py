@@ -689,7 +689,7 @@ def _merged_delete_check(decision, cwd, engine=None):
     return None
 
 
-_CLEANUP_PLAIN = re.compile(r'[A-Za-z0-9_./+=-]+( [A-Za-z0-9_./+=-]+)*')
+_CLEANUP_PLAIN = re.compile(r'[A-Za-z0-9_./:+=-]+( [A-Za-z0-9_./:+=-]+)*')
 
 
 def _autonomy_cleanup(command, decision, cwd, engine=None):
