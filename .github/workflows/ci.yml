@@ -37,6 +37,23 @@ jobs:
       - name: Unit and integration tests
         run: python -m unittest discover -s tests
 
+  macos:
+    name: macOS tests
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Git identity for the test repositories
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.invalid
+          git config --global init.defaultBranch main
+      - name: Unit and integration tests
+        run: python -m unittest discover -s tests
+
   windows:
     name: Windows tests (${{ matrix.shard }})
     runs-on: windows-latest
