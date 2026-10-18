@@ -780,9 +780,16 @@ class HooksTest(unittest.TestCase):
         claude = json.loads((PLUGIN / 'hooks/claude.json').read_text())
         matcher = claude['hooks']['PreToolUse'][0]['matcher']
         self.assertEqual(matcher, RULES['tools']['claude_matcher'])
-        for tool in ['Bash', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task']:
+        for tool in ['Bash', 'PowerShell', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task']:
             self.assertRegex(tool, '^(?:' + matcher + ')$')
         self.assertNotRegex('Read', '^(?:' + matcher + ')$')
+
+    def test_powershell_commands_are_classified_like_bash(self):
+        for command, decision in [('git reset --hard', 'deny'), ('git status', None)]:
+            with self.subTest(command=command):
+                with tempfile.TemporaryDirectory() as cwd:
+                    code, output = run_main({'cwd': cwd, 'tool_name': 'PowerShell', 'tool_input': {'command': command}})
+                self.assertEqual(output.get('hookSpecificOutput', {}).get('permissionDecision'), decision)
 
     def test_mod_tools_match_orchestra_ts_guarded(self):
         """_MOD_TOOLS hand-mirrors GUARDED in the TypeScript mod; drift would reopen a marker skip."""
@@ -1914,13 +1921,38 @@ class AutonomyHookTest(unittest.TestCase):
         git(self.repo, 'push', '-q', 'origin', 'HEAD:refs/heads/' + default)
         git(self.repo, 'fetch', '-q', 'origin')
 
+    def test_pull_request_push_reasons_name_the_problem(self):
+        from orchestra_core import hooks as h
+        self.origin()
+        git(self.repo, 'branch', 'feat/x')
+        self.arm()
+        engine = mock.Mock()
+        for command, text in [('git push origin feat/café', 'ASCII branch name'),
+                              ('git push origin feat/x:refs/heads/feat/z', 'keeps the branch name'),
+                              ('git push origin HEAD:feat/x', 'keeps the branch name')]:
+            with self.subTest(command=command):
+                self.assertIn(text, h._pull_request_push(command, str(self.repo), engine))
+
+    def test_session_start_brief_leaves_out_empty_sections(self):
+        from orchestra_core.hooks import _compact_brief
+        text = '# Run brief\n\n### Needs you\n  - none\n### Still failing\n  - card a\n### Notes\n  - none\n### Accepted\n  - none'
+        self.assertEqual(_compact_brief(text), '# Run brief\n\n### Still failing\n  - card a')
+
+    def test_merged_delete_check_denies_when_its_deadline_has_passed(self):
+        from orchestra_core import hooks as h
+        decision = classify_command('git branch -d feat/x')
+        with mock.patch.object(h, 'MERGED_DELETE_BUDGET', -1.0):
+            denied = h._merged_delete_check(decision, str(self.repo))
+        self.assertIsNotNone(denied)
+        self.assertIsNone(h._DEADLINE[0])  # the deadline never outlives the check
+
     def test_autonomy_may_push_a_feature_branch_and_open_a_pull_request(self):
         self.origin()
         git(self.repo, 'branch', 'feat/x')
         git(self.repo, 'tag', 'v1.0')
         self.arm()
         for command in ['git push origin feat/x', 'git push -u origin feat/x', 'git push --set-upstream origin feat/x',
-                        'git push origin HEAD:feat/x', 'git push origin feat/x:refs/heads/feat/z', 'gh pr create --fill']:
+                        'git push origin feat/x:refs/heads/feat/x', 'gh pr create --fill']:
             with self.subTest(command=command):
                 self.assertIsNone(self.hook(self.repo, command))
         self.assertIsNone(self.hook(self.repo, "gh api graphql -f query='query{viewer{login}}'"))  # a read stays allowed
@@ -1930,7 +1962,7 @@ class AutonomyHookTest(unittest.TestCase):
         git(self.repo, 'checkout', '-q', 'main')
         refused = ['git push origin HEAD', 'git push origin @', 'git push origin main', 'git push origin master',
                    'git push origin HEAD:Main', 'git push origin HEAD:heads/main', 'git push origin heads/main',
-                   'git push origin HEAD:refs/heads/main', 'git push origin feat/x:main',
+                   'git push origin HEAD:refs/heads/main', 'git push origin feat/x:main', 'git push origin HEAD:feat/x', 'git push origin feat/x:refs/heads/feat/z', 'git push origin feat/café',
                    'git push origin v1.0', 'git push origin refs/tags/v1.0', 'git push origin HEAD:refs/tags/v2',
                    'git push origin HEAD:tags/v2', 'git push origin nosuch', 'git push origin', 'git push',
                    'gh pr merge 3 --squash', 'gh api -X PUT repos/o/r/pulls/1/merge',
@@ -1958,7 +1990,7 @@ class AutonomyHookTest(unittest.TestCase):
         push = hooks_module._pull_request_push
         self.assertIsNone(push('git push origin feat/x', str(self.repo), engine))
         self.assertIn('release target', push('git push origin feat/rel', str(self.repo), engine))
-        self.assertIn('release target', push('git push origin feat/x:Feat/Rel', str(self.repo), engine))
+        self.assertIn('keeps the branch name', push('git push origin feat/x:Feat/Rel', str(self.repo), engine))
         for autonomy in ({'pull_requests': False}, {}):  # a 2.5 Push line, or a state armed before the flag existed
             engine.status.return_value = {'autonomy': autonomy}
             self.assertIn('does not allow pull request pushes', push('git push origin feat/x', str(self.repo), engine))

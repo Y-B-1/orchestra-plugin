@@ -30,8 +30,8 @@ No installer changes application instructions, resumes old work, grants release 
 Windows works with Git for Windows and Python 3.11 or later. Install Python from python.org or winget; the Microsoft Store `python3` stub is skipped. The hook launcher tries `python3.14` down to `python3`, then `python`, then the `py` launcher, and runs Python in UTF-8 mode. WSL needs nothing extra.
 
 - Run state lives under `%LOCALAPPDATA%\orchestra`, unless `XDG_STATE_HOME` is an absolute path.
-- The guard reads the POSIX shell syntax of Claude Code's Bash tool, which is Git Bash on Windows. A command run through the PowerShell tool is not classified, and protected-path checks ignore case.
-- File locks on Windows are exclusive, so concurrent readers of the run state take turns. A gate that times out is stopped with `taskkill /T`; a process a gate leaves running after it exits is not tracked there.
+- The guard reads the POSIX shell syntax of Claude Code's Bash tool, which is Git Bash on Windows. A command run through the PowerShell tool is read with the same rules, so Git, release and deploy commands are caught but PowerShell-only commands (`Remove-Item`, `Invoke-WebRequest`) are not. Protected-path checks ignore case.
+- File locks on Windows are exclusive, so concurrent readers of the run state take turns. A gate runs in a job object, so a gate that times out, or leaves a process running, is stopped there too.
 - The function-hook module (below) stays inert on Windows paths, so the Python hooks guard every call.
 - CI runs the whole test suite on `windows-latest` on every pull request (three shards, because the Windows runner is slow). It has not been checked with Claude Code on a real Windows machine.
 

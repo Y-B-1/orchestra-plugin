@@ -145,7 +145,7 @@ class NativeTests(unittest.TestCase):
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
         versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
         self.assertEqual(len(set(versions.values())), 1, versions)
-        self.assertEqual(set(versions.values()), {'2.8.1'})
+        self.assertEqual(set(versions.values()), {'2.9.0'})
 
     def test_prepr_reviewer_agents_exist(self):
         sys.path.insert(0, str(PLUGIN / 'scripts'))

@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -119,6 +120,30 @@ class StateLocationTest(unittest.TestCase):
                 mock.patch.dict(os.environ, {'USERNAME': 'Ada Lovelace'}):
             root = paths._private_temp_root()
         self.assertEqual(root.name, 'orchestra-state-Ada_Lovelace')
+
+
+class WindowsJobTest(unittest.TestCase):
+    @unittest.skipIf(POSIX, 'job objects exist only on Windows')
+    def test_a_job_sees_and_kills_a_process_the_child_left_running(self):
+        code = ('import subprocess, sys\n'
+                'subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], close_fds=True)\n')
+        process = subprocess.Popen([sys.executable, '-c', code], **portable.group_kwargs())
+        portable.track(process)
+        self.addCleanup(portable.release, process)
+        process.wait(timeout=30)
+        self.assertTrue(portable.group_alive(process))  # the grandchild outlived its parent
+        portable.kill_group(process)
+        for _ in range(100):
+            if not portable.group_alive(process):
+                break
+            time.sleep(0.05)
+        self.assertFalse(portable.group_alive(process))
+
+    def test_track_and_release_are_harmless_without_a_job(self):
+        process = mock.Mock(pid=1)
+        with mock.patch.object(portable, 'IS_WINDOWS', False):
+            portable.track(process)
+        portable.release(process)  # nothing was tracked: no error
 
 
 class LauncherTest(unittest.TestCase):
