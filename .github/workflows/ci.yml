@@ -40,6 +40,7 @@ jobs:
   windows:
     name: Windows tests
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -52,7 +53,7 @@ jobs:
           git config --global init.defaultBranch main
           git config --global core.autocrlf false
       - name: Unit and integration tests (UTF-8 mode, as the launcher runs them)
-        run: python -X utf8 -m unittest discover -s tests
+        run: python -X utf8 -m unittest discover -s tests -v
 
   plugin:
     name: Plugin validation and mod tests
