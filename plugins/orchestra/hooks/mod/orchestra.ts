@@ -96,9 +96,17 @@ export function thrownReason(error: unknown): string {
   return failClosed('spawn', code);
 }
 
+/** A drive-letter or backslash path: the mod's POSIX path rules do not hold there, so it stays inert (Python guards in full). */
+export function isWindowsPath(path: string): boolean {
+  return /^[A-Za-z]:[\\/]/.test(path) || path.includes('\\');
+}
+
 /** SPEC 5.16 item 2: the cwd is explicit; `delegate` passes the plugin root, the CLI reads the session cwd. */
 async function runHook($: Dollar, args: string[], stdin: string | undefined, opts: { cwd: string }): Promise<Run> {
-  return $.process.run(['/bin/sh', `${$.plugin.root}/scripts/run-hook.sh`, ...args], { stdin, cwd: opts.cwd, timeoutMs: 8000 });
+  // Git Bash on Windows has no /bin/sh on the native PATH: `sh` is found there, and the script path takes forward slashes.
+  const windows = isWindowsPath($.plugin.root);
+  const root = windows ? $.plugin.root.replace(/\\/g, '/') : $.plugin.root;
+  return $.process.run([windows ? 'sh' : '/bin/sh', `${root}/scripts/run-hook.sh`, ...args], { stdin, cwd: opts.cwd, timeoutMs: 8000 });
 }
 
 async function delegate($: Dollar, tool: string, toolInput: Json, sessionId: string): Promise<string | null> {
@@ -279,6 +287,7 @@ export const register: Register = (on: On) => {
         home = envHome && envHome.startsWith('/') ? envHome : undefined;
         if (xdg === undefined && home === undefined) return false;
         const root = $.plugin.root;
+        if (isWindowsPath(root)) return false;  // Not supported on Windows: no marker, so the Python hooks guard every call
         const rules = await $.fs.read(`${root}/config/guard-rules.json`);
         const pluginJson = await $.fs.read(`${root}/.claude-plugin/plugin.json`);
         const contents: (Uint8Array | null)[] = [];

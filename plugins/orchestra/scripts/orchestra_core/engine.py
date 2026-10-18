@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import contextlib
 import copy
-import fcntl
 import hashlib
 import json
 import os
@@ -11,7 +10,6 @@ import math
 import re
 import shlex
 import shutil
-import signal
 from pathlib import Path
 import subprocess
 import tempfile
@@ -21,6 +19,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .guards import classify_command
+from . import portable
 from .paths import push_url_digest
 
 
@@ -487,12 +486,12 @@ class Engine:
             raise EngineError('Role or method instructions changed; start a new run')
         with (self.state_dir / 'state.lock').open('a+') as lock:
             if write or block or self.lock_wait is None:
-                fcntl.flock(lock, fcntl.LOCK_EX if write else fcntl.LOCK_SH)
+                portable.lock(lock, exclusive=write)
             else:
                 end = time.monotonic() + self.lock_wait
                 while True:
                     try:
-                        fcntl.flock(lock, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                        portable.lock(lock, exclusive=False, blocking=False)
                         break
                     except OSError:
                         if time.monotonic() >= end:
@@ -1859,26 +1858,20 @@ class Engine:
                     code = 126
                 else:
                     process = subprocess.Popen(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT,
-                                               start_new_session=True)
+                                               **portable.group_kwargs())
                     try:
                         code = process.wait(timeout=timeout or self.policy['gate_timeout_seconds'])
                     except subprocess.TimeoutExpired:
-                        os.killpg(process.pid, signal.SIGKILL)
+                        portable.kill_group(process)
                         process.wait()
                         raise
-                    try:  # anything the gate left running in its own process group could still change the tree (a new session escapes this)
-                        os.killpg(process.pid, 0)
-                    except OSError:
-                        pass
-                    else:
+                    # Anything the gate left running in its own process group could still change the tree (a new session
+                    # escapes this; Windows cannot see the group once the gate has exited).
+                    if portable.group_alive(process):
                         with contextlib.suppress(OSError):
-                            os.killpg(process.pid, signal.SIGKILL)
+                            portable.kill_group(process)
                         deadline = time.monotonic() + 5
-                        while time.monotonic() < deadline:  # SIGKILL is asynchronous: wait until the group is gone before `after`
-                            try:
-                                os.killpg(process.pid, 0)
-                            except OSError:
-                                break
+                        while time.monotonic() < deadline and portable.group_alive(process):  # the kill is asynchronous: wait until the group is gone before `after`
                             time.sleep(0.02)
                         out.write(b'\nGate left background processes running; stopped them\n')
             except subprocess.TimeoutExpired:

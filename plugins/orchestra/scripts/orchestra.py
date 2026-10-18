@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """Portable Orchestra CLI. Each command prints a JSON receipt."""
+import os
+import subprocess
+import sys
+
+if os.name == 'nt' and not sys.flags.utf8_mode:
+    # Windows opens text files in the locale encoding unless Python runs in UTF-8 mode: run again in it.
+    raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.argv]))
 import argparse
-import fcntl
 import json
 import os
 from pathlib import Path
 import shlex
-import signal
 import math
 import subprocess
 import sys
 import uuid
 
+from orchestra_core import portable
 from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, repository, state_location
@@ -124,7 +130,7 @@ def parse_asks(text):
 
 def archive_inactive(state,engine):
     with (state/'state.lock').open('a') as stream:
-        fcntl.flock(stream,fcntl.LOCK_EX)
+        portable.lock(stream)
         source = state/'state.json'
         if not source.exists():
             return
@@ -281,13 +287,13 @@ def execute(args):
                 engine.validate_lease(args.actor,args.lease)
                 engine.check_release(args.remote,args.target,argv=argv)
                 process=subprocess.Popen(argv,cwd=repo,stdout=stream,stderr=subprocess.STDOUT,
-                                         start_new_session=True)
+                                         **portable.group_kwargs())
                 try:
                     code=process.wait(timeout=timeout)
                 except subprocess.TimeoutExpired:
                     try:
-                        os.killpg(process.pid,signal.SIGKILL)
-                    except ProcessLookupError:
+                        portable.kill_group(process)
+                    except OSError:
                         pass
                     process.wait()
                     raise

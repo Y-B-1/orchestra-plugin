@@ -37,6 +37,23 @@ jobs:
       - name: Unit and integration tests
         run: python -m unittest discover -s tests
 
+  windows:
+    name: Windows tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Git identity for the test repositories
+        run: |
+          git config --global user.name ci
+          git config --global user.email ci@example.invalid
+          git config --global init.defaultBranch main
+          git config --global core.autocrlf false
+      - name: Unit and integration tests (UTF-8 mode, as the launcher runs them)
+        run: python -X utf8 -m unittest discover -s tests
+
   plugin:
     name: Plugin validation and mod tests
     runs-on: ubuntu-latest

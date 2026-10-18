@@ -6,7 +6,6 @@ https://code.claude.com/docs/en/hooks (checked 2026-09-30).
 import argparse
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -16,6 +15,7 @@ import sys
 import subprocess
 import time
 
+from . import portable
 from .guards import RULES, classify_command, guard_digest, runs_test_suite
 
 _PROTECTED = RULES['protected']
@@ -96,15 +96,18 @@ def _protected(path, cwd, state_dir):
     marker = _marker_dir()
     if resolved == marker or marker in resolved.parents:
         return True
-    parts = resolved.parts
-    if _PROTECTED['component'] in parts:
+    fold = str.lower if portable.IS_WINDOWS else str  # Windows paths ignore case: `.CLAUDE\\Settings.json` is the same file
+    parts = tuple(fold(part) for part in resolved.parts)
+    if fold(_PROTECTED['component']) in parts:
         return True
+    harness_dirs = {fold(d) for d in _PROTECTED['harness_dirs']}
+    files = {fold(f) for f in _PROTECTED['files']}
+    agents_prefixes = tuple(fold(x) for x in _PROTECTED['agents_prefixes'])
     # Every harness directory in the path counts, not only the first (B-F4).
     for i, part in enumerate(parts):
-        if part in _PROTECTED['harness_dirs']:
+        if part in harness_dirs:
             tail = parts[i + 1:]
-            if tail and (tail[0] in _PROTECTED['files'] or
-                         (tail[0] == 'agents' and any(x.startswith(tuple(_PROTECTED['agents_prefixes'])) for x in tail[1:]))):
+            if tail and (tail[0] in files or (tail[0] == 'agents' and any(x.startswith(agents_prefixes) for x in tail[1:]))):
                 return True
     return False
 
@@ -438,7 +441,7 @@ def _wait_for_lock(lock_path, started):
     with open(lock_path, 'a+') as lock:
         while True:
             try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                portable.lock(lock, exclusive=True, blocking=False)
                 return True  # Closing the file releases it
             except OSError:
                 if time.monotonic() >= end:
@@ -595,14 +598,14 @@ def _remote_tip_matches(repo, remote, branch):
     try:
         proc = subprocess.Popen(['git', '-C', str(repo), 'ls-remote', remote, 'refs/heads/' + branch], env=env,
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                start_new_session=True)
+                                **portable.group_kwargs())
     except OSError:
         return False
     try:
         out, _ = proc.communicate(timeout=3)
     except subprocess.TimeoutExpired:
         try:
-            os.killpg(proc.pid, 9)
+            portable.kill_group(proc)
         except OSError:
             pass
         proc.communicate()

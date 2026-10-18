@@ -3,7 +3,7 @@ import type { On } from 'claude-code';
 
 import { RULES_JSON } from './fixtures/guard-fixtures.js';
 import { classifyCommand, klassOf, loadRules } from './guard.js';
-import { failClosed, thrownReason } from './orchestra.js';
+import { failClosed, isWindowsPath, thrownReason } from './orchestra.js';
 import { deferred, encode, EXPECTED_DIGEST, rig, toBase64 } from './testkit.js';
 import type { Rig } from './testkit.js';
 
@@ -644,4 +644,11 @@ test('delegate passes an ask on to the native hook instead of deciding it', asyn
   const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git push origin main' });
   expect((res as { deny?: string }).deny).toBeUndefined();
   expect(b.calls.length).toBe(1);
+});
+
+test('isWindowsPath: drive letters and backslashes read as Windows, POSIX paths do not', async () => {
+  expect(isWindowsPath('C:\\Users\\a\\plugin')).toBe(true);
+  expect(isWindowsPath('c:/Users/a/plugin')).toBe(true);
+  expect(isWindowsPath('/home/a/plugin')).toBe(false);
+  expect(isWindowsPath('/Users/a/My Plugin')).toBe(false);
 });
