@@ -988,6 +988,8 @@ class HarnessSessionTests(EngineFixture):
                 self.assertTrue(getattr(hook_engine, method)(*args))
                 self.assertFalse(self.session()['active'])
                 self.assertEqual(self.engine.status()['last_brief']['reason'], reason)
+                timer.join()
+                handle.close()  # Windows cannot delete the state directory while the lock file is open
 
     def test_interrupt_active_on_inactive_run_leaves_state_unwritten(self):
         self.engine.interrupt_active()
