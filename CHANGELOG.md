@@ -4,6 +4,13 @@ Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
 ## 2.8.0 — 2026-10-18
 
+- **Releases:** `docker push`, `podman push`, `terraform apply|destroy`, `tofu apply|destroy`, `helm install|upgrade`, `kubectl apply`, `pulumi up|destroy`, `twine upload`, `gem push`, `yarn`, `bun`, `poetry` and `uv` publish, and the `firebase`, `heroku`, `serverless`, `sls`, `cdk`, `sam` and `railway` deploys count as releases.
+- **Guard messages:** the destructive Git denials name the safe alternative, and a command over 128 KiB says to write a file with the Write tool.
+- **Autonomy:** a push to `production`, `prod`, `stable`, `live`, `release`, `releases`, `gh-pages`, `trunk`, `develop` or `development` is refused as well as the default branch; the default branch also comes from the remote's answer at arm, for both the merge guard and the merged-branch cleanup; `master` is tried when `main` is absent.
+- **Silent workers:** a background worker with no report after `worker_stale_seconds` (policy, default 3600) is named in the next continuation; if nothing changes after that, the run stops as `stalled`.
+- **Failing gates:** a required gate or ledger check that fails three times in a row stops the run as `gate-failing`, and the brief says which.
+- **Large files:** files over 64 MiB are bound by size, mtime and their first and last megabyte, and their line count is estimated; before, every command read them whole.
+- **README:** a one-time section for `CLAUDE.md`, `AGENTS.md` and trimming fixed context, with a script that lists what a session loads.
 - **Windows:** the hooks and the CLI run on Windows with Git for Windows and Python 3.11 or later. File locks use `msvcrt`, a gate that times out is stopped with `taskkill /T`, the launcher tries `python` and `py -3` after `python3`, accepts a backslash script path and starts Python in UTF-8 mode, run state lives under `%LOCALAPPDATA%` unless `XDG_STATE_HOME` is absolute, and protected-path checks ignore case. The TypeScript mod stays inert on Windows paths, so the Python hooks guard every call there. CI runs the test suite on `windows-latest`.
 
 ## 2.7.1 — 2026-10-16
