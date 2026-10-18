@@ -548,11 +548,12 @@ class Engine:
                         out.flush()
                         os.fsync(out.fileno())
                     os.replace(name, self.state_path)
-                    directory = os.open(self.state_dir, os.O_RDONLY)
-                    try:
-                        os.fsync(directory)
-                    finally:
-                        os.close(directory)
+                    if not portable.IS_WINDOWS:
+                        directory = os.open(self.state_dir, os.O_RDONLY)
+                        try:
+                            os.fsync(directory)
+                        finally:
+                            os.close(directory)
                 finally:
                     if os.path.exists(name):
                         os.unlink(name)

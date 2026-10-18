@@ -9,12 +9,14 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import shutil
 
 FIXTURES=Path(__file__).resolve().parent/'fixtures'
 PLUGIN=Path(__file__).resolve().parents[1]/'plugins/orchestra'
 
 CLI=PLUGIN/'scripts/orchestra.py'
 HOOK=PLUGIN/'scripts/run-hook.sh'
+SH=shutil.which('sh') or '/bin/sh'
 CATEGORIES=['requirements','correctness','security','tests','architecture','standards','cleanup']
 BASE=['requirements','correctness','tests','architecture']
 SELF_REVIEW='ARTIFACT: fixture\nSELF_REVIEW: '+json.dumps(dict(checks=[dict(command='fixture check',exit_code=0)],
@@ -123,7 +125,7 @@ class WorkflowIntegration(unittest.TestCase):
         self.assertEqual(result.returncode,1,result.stderr)
         receipt=json.loads(result.stdout)
         self.assertEqual(receipt['exit_code'],127)
-        self.assertIn('No such file',Path(receipt['log']).read_text())
+        self.assertRegex(Path(receipt['log']).read_text(),'No such file|cannot find the file')
         self.assertEqual(len(list(self.state.glob('release-receipt-*.json'))),1)
 
     def test_local_release_and_repeated_run(self):
@@ -145,7 +147,7 @@ class WorkflowIntegration(unittest.TestCase):
         self.review(['B1','B2'],True)
         self.cli('permit','fixture-remote','main',lease=True)
         payload=json.dumps({'cwd':str(self.repo),'tool_name':'Bash','tool_input':{'command':'git push fixture-remote main'}})
-        result=subprocess.run(['/bin/sh',str(HOOK),'PreToolUse','--harness','claude'],input=payload,capture_output=True,text=True,
+        result=subprocess.run([SH,str(HOOK),'PreToolUse','--harness','claude'],input=payload,capture_output=True,text=True,
                               env={**os.environ,'ORCHESTRA_STATE_DIR':str(self.state)},timeout=15)
         self.assertEqual(result.returncode,0,result.stderr)
         self.assertNotIn('permissionDecision',result.stdout)
@@ -336,7 +338,7 @@ class LinkedWorktreeHook(unittest.TestCase):
 
     def hook(self,cwd,command):
         payload={'cwd':str(cwd),'tool_name':'Bash','tool_input':{'command':command}}
-        result=subprocess.run(['/bin/sh',str(HOOK),'PreToolUse','--harness','claude'],input=json.dumps(payload),
+        result=subprocess.run([SH,str(HOOK),'PreToolUse','--harness','claude'],input=json.dumps(payload),
                               capture_output=True,text=True,env=self.env,timeout=30)
         self.assertEqual(result.returncode,0,result.stderr)
         return json.loads(result.stdout).get('hookSpecificOutput',{}).get('permissionDecision')
@@ -402,7 +404,7 @@ class HarnessSessionIntegration(unittest.TestCase):
 
     def hook(self,event,**payload):
         payload.setdefault('cwd',str(self.repo))
-        result=subprocess.run(['/bin/sh',str(HOOK),event,'--harness','claude'],input=json.dumps(payload),env=self.env,
+        result=subprocess.run([SH,str(HOOK),event,'--harness','claude'],input=json.dumps(payload),env=self.env,
                               capture_output=True,text=True,timeout=25)
         self.assertEqual(result.returncode,0,result.stderr)
         return json.loads(result.stdout)

@@ -314,6 +314,7 @@ Source: the first-principles audit that followed 2.6.5. Each release went throug
 | 2.7.0 | #23 | Six Codex rounds | The last commit (`13b6560`) merged without a Codex pass: Codex hit its usage limit. CI was green. |
 | 2.7.1 | #24 | Thirteen Codex rounds | The evidence rule that let reviews survive a commit was removed on the owner's choice after the twelfth finding (staged submodule pointers); strict binding returned. The last two commits (`5ef3f76`, `641f72a`) merged without a Codex pass (usage limit). CI was green. |
 | 2.8.0 | #25 | None | Merged at the owner's instruction without waiting for CI or review. Local tests passed. The `windows-latest` job had not finished when the pull request merged. |
+| 2.8.1 | #27 | None | The first Windows CI run on 2.8.0 failed 48 tests and errored 467; one product bug (directory fsync) and a set of POSIX-only tests. Fixed over five pushes; the Windows job runs in three shards (engine, hooks, rest) and passed on the final commit. |
 
 Known limits kept open: `core.filemode=false` with a staged-only chmod then a commit; a same-size rewrite of pre-run work is under-counted in the size estimate; files over 64 MiB are bound by size, mtime and samples; on Windows the PowerShell tool is outside the guard, a gate's leftover processes are not tracked, and the function-hook module stays inert.
 

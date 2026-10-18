@@ -15,6 +15,7 @@ sys.path.insert(0, str(SCRIPTS))
 from pathlib import Path
 
 from orchestra_core.paths import push_url_digest
+from orchestra_core import portable
 from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions, ensure_remote_heads
 
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
@@ -895,6 +896,7 @@ class FinalBlockerTests(EngineFixture):
                 self.engine.interrupt('main', self.lease)
                 self.engine.state_path.unlink()
 
+    @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: the alternate Git is an extensionless script')
     def test_known_git_release_accepts_only_engine_git_executable(self):
         import shutil
         git = str(pathlib.Path(shutil.which('git')).resolve())
@@ -972,7 +974,6 @@ class HarnessSessionTests(EngineFixture):
 
     def test_end_writes_wait_for_a_lock_held_past_lock_wait(self):
         """Interrupt and SessionEnd records survive a busy lock: they wait instead of raising StateBusy."""
-        import fcntl
         import threading
         for method, args, reason in [('interrupt_active', (), 'interrupted'), ('end_harness_session', ('S',), 'ended')]:
             with self.subTest(method=method):
@@ -980,13 +981,15 @@ class HarnessSessionTests(EngineFixture):
                 hook_engine = Engine(self.root / 'state', self.repo, clock=lambda: self.now[0], lock_wait=0.2)
                 handle = (self.root / 'state' / 'state.lock').open('a+')
                 self.addCleanup(handle.close)
-                fcntl.flock(handle, fcntl.LOCK_EX)
-                timer = threading.Timer(0.8, fcntl.flock, [handle, fcntl.LOCK_UN])
+                portable.lock(handle, exclusive=True)
+                timer = threading.Timer(0.8, portable.unlock, [handle])
                 timer.start()
                 self.addCleanup(timer.cancel)
                 self.assertTrue(getattr(hook_engine, method)(*args))
                 self.assertFalse(self.session()['active'])
                 self.assertEqual(self.engine.status()['last_brief']['reason'], reason)
+                timer.join()
+                handle.close()  # Windows cannot delete the state directory while the lock file is open
 
     def test_interrupt_active_on_inactive_run_leaves_state_unwritten(self):
         self.engine.interrupt_active()
@@ -1397,7 +1400,7 @@ class AutonomyArmTests(AutonomyFixture):
     def test_missing_ledger_writes_the_template_and_refuses(self):
         with self.assertRaisesRegex(EngineError, 'fill the ledger, then arm again') as raised:
             self.engine.arm_autonomy()
-        self.assertIn(str(self.state / 'autonomy.md'), str(raised.exception))
+        self.assertIn(str((self.state / 'autonomy.md').resolve()), str(raised.exception))
         text = (self.state / 'autonomy.md').read_text()
         for line in AUTONOMY_FIXED:
             self.assertIn(line, text)
@@ -3918,12 +3921,11 @@ class RunBriefTests(AutonomyFixture, HoldFixture):
             self.engine.status()
 
     def test_lock_wait_raises_state_busy_and_default_blocks(self):
-        import fcntl
         from orchestra_core.engine import StateBusy
         busy = Engine(self.state, self.repo, lock_wait=0.3, clock=lambda: self.now[0])
         self.engine.status()  # creates state.lock
         with (self.state / 'state.lock').open('a+') as lock:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            portable.lock(lock, exclusive=True)
             with self.assertRaises(StateBusy):
                 busy.status()
             self.assertTrue(issubclass(StateBusy, EngineError))
@@ -4538,6 +4540,7 @@ class RunHygieneTests(EngineFixture):
         hidden_view = engine._baseline_view(['a'])['a']
         self.assertIn('100755', hidden_view)
 
+    @unittest.skipIf(portable.IS_WINDOWS, 'Git for Windows has core.filemode off, so a mode change is not visible')
     def test_an_index_only_change_after_a_report_blocks_accept(self):
         self.task('a')
         token = self.engine.dispatch('main', self.lease, 'a', 'wa')
