@@ -2,6 +2,10 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.8.1 — 2026-10-18
+
+- **Windows:** the Windows CI job (the whole test suite on `windows-latest`) now passes. The first run found one product bug and it is fixed: the engine tried to open the state directory to flush it, which Windows refuses, so every state write failed. The autonomy cleanup also accepts a drive-letter path (`git worktree remove C:/...`). The rest were tests that assumed POSIX (`/bin/sh`, `fcntl`, `os.getuid`, symlinks, deleting a process's working directory); they now use the portable layer or are skipped on Windows. Windows is still not checked on a real machine with Claude Code.
+
 ## 2.8.0 — 2026-10-18
 
 - **Releases:** `docker push`, `podman push`, `terraform apply|destroy`, `tofu apply|destroy`, `helm install|upgrade`, `kubectl apply`, `pulumi up|destroy`, `twine upload`, `gem push`, `yarn`, `bun`, `poetry` and `uv` publish, and the `firebase`, `heroku`, `serverless`, `sls`, `cdk`, `sam` and `railway` deploys count as releases.

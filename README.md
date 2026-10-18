@@ -33,7 +33,7 @@ Windows works with Git for Windows and Python 3.11 or later. Install Python from
 - The guard reads the POSIX shell syntax of Claude Code's Bash tool, which is Git Bash on Windows. A command run through the PowerShell tool is not classified, and protected-path checks ignore case.
 - File locks on Windows are exclusive, so concurrent readers of the run state take turns. A gate that times out is stopped with `taskkill /T`; a process a gate leaves running after it exits is not tracked there.
 - The function-hook module (below) stays inert on Windows paths, so the Python hooks guard every call.
-- CI runs the whole test suite on `windows-latest` on every pull request.
+- CI runs the whole test suite on `windows-latest` on every pull request (three shards, because the Windows runner is slow). It has not been checked with Claude Code on a real Windows machine.
 
 ### Function hooks (optional)
 
