@@ -18,11 +18,13 @@ import tempfile
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
 from orchestra_core.guards import classify_command, guard_digest, RULES, RULES_PATH
 from orchestra_core import hooks as hooks_module
+from orchestra_core import portable
 from orchestra_core.hooks import _main_worktree, handle_event, main
 
 PLUGIN = Path(__file__).resolve().parents[1] / 'plugins/orchestra'
 CLI = PLUGIN / 'scripts/orchestra.py'
 RUN_HOOK = PLUGIN / 'scripts/run-hook.sh'
+SH = shutil.which('sh') or '/bin/sh'
 
 # Command lists shared with tests/test_guard_corpus.py, which requires each one in the corpus.
 DENY_COMMANDS = [
@@ -650,6 +652,7 @@ class HooksTest(unittest.TestCase):
             self.assertEqual(decision_of(self.pre('Write', {'file_path': 'mods/../mods/s2.json'}, cwd=marker.parent)), 'deny')
             self.assertEqual(self.pre('Write', {'file_path': str(Path(directory) / 'orchestra' / 'notes.md')}, cwd=directory).output, {})
 
+    @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: Windows keeps state under %LOCALAPPDATA%')
     def test_a12_marker_directory_defaults_under_home(self):
         with tempfile.TemporaryDirectory() as home, mock.patch.dict(os.environ, {'HOME': home}):
             os.environ.pop('XDG_STATE_HOME', None)
@@ -816,6 +819,7 @@ class HookCrashTest(unittest.TestCase):
             stdin.read.side_effect = OSError('broken pipe')  # The payload itself cannot be read
             self.assertEqual(main(['PreToolUse']), 2)
 
+    @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: the fallback root is a private POSIX temp directory')
     def test_the_state_location_survives_a_missing_home_directory(self):
         from orchestra_core import paths
         with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
@@ -828,6 +832,7 @@ class HookCrashTest(unittest.TestCase):
             again = paths.state_home()
         self.assertEqual(again.stat().st_mode & 0o077, 0)  # a loosened root is tightened again
 
+    @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: the fallback root uses uids and symlinks')
     def test_an_unsafe_fallback_root_denies_instead_of_reading_as_no_run(self):
         from orchestra_core import paths
         with tempfile.TemporaryDirectory() as tmp, mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), \
@@ -1061,7 +1066,7 @@ class MergedDeleteHookTest(unittest.TestCase):
         git(self.repo, 'worktree', 'add', '-q', '--detach', str(root / 'wt-d'), 'main')
         kw = self.autonomy()
         self.assertAllowed('git worktree remove ../wt-x', **kw)
-        self.assertAllowed('git worktree remove ' + str(root / 'wt-x'), **kw)
+        self.assertAllowed('git worktree remove ' + (root / 'wt-x').as_posix(), **kw)
         self.assertDenied('git worktree remove ../wt-y', 'is not merged', **kw)
         self.assertDenied('git worktree remove ../wt-d', 'no branch checked out', **kw)
         self.assertDenied('git worktree remove ../nowhere', 'not a worktree of this repository', **kw)
@@ -1774,11 +1779,11 @@ class SessionEndBuildErrorTest(unittest.TestCase):
 
 class RunHookScriptTest(unittest.TestCase):
     def test_syntax(self):
-        self.assertEqual(subprocess.run(['bash', '-n', str(RUN_HOOK)]).returncode, 0)
-        self.assertEqual(subprocess.run(['/bin/sh', '-n', str(RUN_HOOK)]).returncode, 0)
+        self.assertEqual(subprocess.run(['bash', '-n', RUN_HOOK.as_posix()]).returncode, 0)
+        self.assertEqual(subprocess.run([SH, '-n', str(RUN_HOOK)]).returncode, 0)
 
     def run_hook(self, *args, trace=False, stdin=''):
-        cmd = ['/bin/sh'] + (['-x'] if trace else []) + [str(RUN_HOOK), *args]
+        cmd = [SH] + (['-x'] if trace else []) + [str(RUN_HOOK), *args]
         return subprocess.run(cmd, input=stdin, text=True, capture_output=True, timeout=60)
 
     def test_hook_launches_python_once_after_one_probe(self):
@@ -1806,7 +1811,7 @@ class RunHookScriptTest(unittest.TestCase):
         return str(bin_dir)
 
     def run_with_path(self, path, event):
-        return subprocess.run(['/bin/sh', str(RUN_HOOK), event, '--harness', 'claude'], input='{}', text=True,
+        return subprocess.run([SH, str(RUN_HOOK), event, '--harness', 'claude'], input='{}', text=True,
                               capture_output=True, timeout=60, env={'PATH': path})
 
     def test_a_broken_versioned_shim_is_skipped(self):
@@ -1841,7 +1846,7 @@ class RunHookScriptTest(unittest.TestCase):
         self.assertNotEqual(self.run_hook('--cli', 'no-such-command').returncode, 0)
 
     def test_script_resolves_its_directory_from_dollar_zero(self):
-        result = subprocess.run(['/bin/sh', 'run-hook.sh', '--cli', 'classify', 'git status'], cwd=RUN_HOOK.parent,
+        result = subprocess.run([SH, 'run-hook.sh', '--cli', 'classify', 'git status'], cwd=RUN_HOOK.parent,
                                 text=True, capture_output=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['action'], 'allow')
@@ -2453,16 +2458,14 @@ class RunBriefHookTest(unittest.TestCase):
         return json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
 
     def hold_lock(self):
-        import fcntl
         self.engine.status()
         handle = open(self.state / 'state.lock', 'a+')
-        fcntl.flock(handle, fcntl.LOCK_EX)
+        portable.lock(handle, exclusive=True)
         self.addCleanup(handle.close)
         return handle
 
     def release_lock(self, handle):
-        import fcntl
-        fcntl.flock(handle, fcntl.LOCK_UN)
+        portable.unlock(handle)
 
     def agent_main(self, kind='general-purpose'):
         code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Agent',
@@ -2595,9 +2598,10 @@ class RunBriefHookTest(unittest.TestCase):
         gone.mkdir()
         script = PLUGIN / 'scripts/orchestra_hook.py'
         shell = 'cd "$1" && rmdir "$1" && exec "$2" "$3" PreToolUse --harness claude'
-        return subprocess.run(['/bin/sh', '-c', shell, 'sh', str(gone), sys.executable, str(script)],
+        return subprocess.run([SH, '-c', shell, 'sh', str(gone), sys.executable, str(script)],
                               input=json.dumps(payload(gone)), text=True, capture_output=True, timeout=60)
 
+    @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: Windows cannot remove a directory that is a process cwd')
     def test_pretooluse_deleted_process_cwd_denies_delegated(self):
         payloads = {'payload cwd removed': lambda gone, c: {'cwd': str(gone), 'tool_name': 'Bash', 'tool_input': {'command': c}},
                     'no payload cwd': lambda gone, c: {'tool_name': 'Bash', 'tool_input': {'command': c}}}
@@ -2626,9 +2630,11 @@ class RunBriefHookTest(unittest.TestCase):
     def hold_lock_in_process(self, seconds):
         """Hold the state lock exclusively from another process for `seconds`."""
         self.engine.status()
-        code = ('import fcntl, sys, time\nf = open(sys.argv[1], "a+")\nfcntl.flock(f, fcntl.LOCK_EX)\n'
+        code = ('import sys, time\nsys.path.insert(0, sys.argv[3])\nfrom orchestra_core import portable\n'
+                'f = open(sys.argv[1], "a+")\nportable.lock(f, exclusive=True)\n'
                 'print("held", flush=True)\ntime.sleep(float(sys.argv[2]))\n')
-        proc = subprocess.Popen([sys.executable, '-c', code, str(self.state / 'state.lock'), str(seconds)],
+        proc = subprocess.Popen([sys.executable, '-c', code, str(self.state / 'state.lock'), str(seconds),
+                                 str(PLUGIN / 'scripts')],
                                 stdout=subprocess.PIPE, text=True)
         self.addCleanup(proc.stdout.close)
         self.addCleanup(proc.wait)
