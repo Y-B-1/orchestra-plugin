@@ -304,3 +304,24 @@ A headless `claude -p` coordinator (Sonnet 5.5, `--permission-mode acceptEdits` 
 | Not exercised | Repair and hold: the review had no blocking finding, so those paths ran only in the scripted CLI walk above |
 | Finding | The reviewer's scratch probe left a `__pycache__` in a repository with no `.gitignore`; the artifact hashes every non-ignored untracked file, so the review card's report went stale and the coordinator stopped with R1 `reported`. As designed; a repository should ignore its bytecode caches |
 
+
+## 2.7.0, 2.7.1 and 2.8.0
+
+Source: the first-principles audit that followed 2.6.5. Each release went through a pull request, with Codex review rounds and CI on Python 3.11 and 3.13; the findings and fixes are in the pull request threads and CHANGELOG.md.
+
+| Release | Pull request | Review | Notes |
+| --- | --- | --- | --- |
+| 2.7.0 | #23 | Six Codex rounds | The last commit (`13b6560`) merged without a Codex pass: Codex hit its usage limit. CI was green. |
+| 2.7.1 | #24 | Thirteen Codex rounds | The evidence rule that let reviews survive a commit was removed on the owner's choice after the twelfth finding (staged submodule pointers); strict binding returned. The last two commits (`5ef3f76`, `641f72a`) merged without a Codex pass (usage limit). CI was green. |
+| 2.8.0 | #25 | None | Merged at the owner's instruction without waiting for CI or review. Local tests passed. The `windows-latest` job had not finished when the pull request merged. |
+
+Known limits kept open: `core.filemode=false` with a staged-only chmod then a commit; a same-size rewrite of pre-run work is under-counted in the size estimate; files over 64 MiB are bound by size, mtime and samples; on Windows the PowerShell tool is outside the guard, a gate's leftover processes are not tracked, and the function-hook module stays inert.
+
+### Live check of the working tree (2026-10-18, Claude Code with `--plugin-dir plugins/orchestra`)
+
+| Observed | Result |
+| --- | --- |
+| Plugin load | `orchestra` listed among the loaded plugins |
+| Hooks | `SessionStart:startup` and `Stop` ran from the plugin and exited 0 |
+| Guard | A headless `claude -p` session asked to run `git reset --hard` in a scratch repository received `Orchestra guard: Hard reset discards work; unstage with \`git restore --staged <path>\` or keep the work on a new branch`; the repository was unchanged |
+| Not checked | Windows on a real Windows machine; the autonomy loop and the new silent-worker and failing-gate stops live (unit tests only) |
