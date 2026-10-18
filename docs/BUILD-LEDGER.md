@@ -315,8 +315,9 @@ Source: the first-principles audit that followed 2.6.5. Each release went throug
 | 2.7.1 | #24 | Thirteen Codex rounds | The evidence rule that let reviews survive a commit was removed on the owner's choice after the twelfth finding (staged submodule pointers); strict binding returned. The last two commits (`5ef3f76`, `641f72a`) merged without a Codex pass (usage limit). CI was green. |
 | 2.8.0 | #25 | None | Merged at the owner's instruction without waiting for CI or review. Local tests passed. The `windows-latest` job had not finished when the pull request merged. |
 | 2.8.1 | #27 | None | The first Windows CI run on 2.8.0 failed 48 tests and errored 467; one product bug (directory fsync) and a set of POSIX-only tests. Fixed over five pushes; the Windows job runs in three shards (engine, hooks, rest) and passed on the final commit. |
+| 2.9.0 | #28 | None | Local suite passes (744 tests) and the mod tests (91). The job-object code can only run on Windows, so its test is Windows-only and runs in the Windows CI job. |
 
-Known limits kept open: `core.filemode=false` with a staged-only chmod then a commit; a same-size rewrite of pre-run work is under-counted in the size estimate; files over 64 MiB are bound by size, mtime and samples; on Windows the PowerShell tool is outside the guard, a gate's leftover processes are not tracked, and the function-hook module stays inert.
+Known limits kept open: `core.filemode=false` with a staged-only chmod then a commit; a same-size rewrite of pre-run work is under-counted in the size estimate; files over 64 MiB are bound by size, mtime and samples; on Windows the function-hook module stays inert and PowerShell-only commands are not classified (2.9.0 matches the PowerShell tool and reads its command with the Bash rules, and runs gates in job objects).
 
 ### Live check of the working tree (2026-10-18, Claude Code with `--plugin-dir plugins/orchestra`)
 

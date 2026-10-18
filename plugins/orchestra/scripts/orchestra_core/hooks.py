@@ -378,11 +378,14 @@ def _pull_request_push(command, cwd, engine):
     `git push [-u|--set-upstream] REMOTE REFSPEC` qualifies: no environment prefix, wrapper, Git option or other push
     option, a configured remote by name with no push mapping, and a refspec whose destination is one branch that is
     not the remote's default branch, `main` or `master` (compared ignoring case). REFSPEC is BRANCH, HEAD or @
-    (the current branch), or SRC:DST where DST is BRANCH or refs/heads/BRANCH. None allows; otherwise the reason.
+    (the current branch), or SRC:DST where DST names the same branch as SRC (BRANCH or refs/heads/BRANCH). None allows; otherwise the reason.
     Any doubt refuses, including a remote whose default branch the remote itself did not confirm at arm. The ledger must allow pull
     request pushes (the 2.6 Push line), and the configured release branch is never a pull request push."""
     shape = 'A pull request push is exactly `git push -u <remote> <branch>`, run as a command of its own.'
     if cwd is None or not re.fullmatch(r'[A-Za-z0-9_./:@+-]+( [A-Za-z0-9_./:@+-]+)*', command.strip()):
+        if not command.isascii() and command.lstrip().startswith('git push'):
+            return ('A pull request push needs an ASCII branch name; this one has other characters. '
+                    'Rename the branch (`git branch -m`) or push it by hand.')
         return shape
     words = command.split()
     rest = [w for w in words[2:] if w not in ('-u', '--set-upstream')]
@@ -405,6 +408,9 @@ def _pull_request_push(command, cwd, engine):
     target = target[len('refs/heads/'):] if target.startswith('refs/heads/') else target
     if not _BRANCH.fullmatch(target) or target.startswith(_NOT_A_BRANCH) or '..' in target or target.endswith(('/', '.lock')):
         return 'The destination must be one branch name.'
+    if target != source:
+        return ('A pull request push keeps the branch name: push %s to %s, not %s. '
+                'Rename the local branch first if the name is wrong.' % (source, source, target))
     try:
         auto = engine.status()['autonomy']
         allowed = auto.get('pull_requests') is True
@@ -540,23 +546,49 @@ def _raw_session_active(state_file):
     return not (session is None or (isinstance(session, dict) and session.get('active') is False))
 
 
+def _compact_brief(text):
+    """The brief without its empty sections ("### Title" followed only by "  - none"): they cost context and say nothing."""
+    out, lines, i = [], text.split('\n'), 0
+    while i < len(lines):
+        if lines[i].startswith('### ') and i + 1 < len(lines) and lines[i + 1].strip() == '- none' \
+                and (i + 2 >= len(lines) or not lines[i + 2].startswith('  - ')):
+            i += 2
+            continue
+        out.append(lines[i])
+        i += 1
+    return '\n'.join(out).strip()
+
+
 def _report_context(engine):
     try:
         brief = engine.status().get('last_brief')
         if isinstance(brief, dict) and isinstance(brief.get('text'), str):
-            return ' Run brief (' + str(brief.get('reason')) + '): ' + brief['text'][:2000] \
+            return ' Run brief (' + str(brief.get('reason')) + '): ' + _compact_brief(brief['text'])[:2000] \
                 + ' Full report: ' + str(brief.get('path')) + '.'
         report = engine.autonomy_report()
     except Exception:
         return ''
     if not isinstance(report, dict) or not isinstance(report.get('text'), str):
         return ''
-    return ' Autonomy report (' + str(report.get('reason')) + '): ' + report['text'][:2000] \
+    return ' Autonomy report (' + str(report.get('reason')) + '): ' + _compact_brief(report['text'])[:2000] \
         + ' Full report: ' + str(report.get('path')) + '.'
+
+
+_DEADLINE = [None]  # time.monotonic() by which the current merged-delete check must finish; None outside one
+
+
+def _remaining(limit):
+    """`limit` seconds, cut to what is left of the merged-delete deadline; 0.0 once it has passed."""
+    if _DEADLINE[0] is None:
+        return limit
+    return max(0.0, min(limit, _DEADLINE[0] - time.monotonic()))
 
 
 def _git_out(repo, *args, timeout=10):
     """(returncode, stdout) of a git command in repo; a spawn error or timeout is (1, '') so callers fail closed."""
+    timeout = _remaining(timeout)
+    if timeout <= 0 and _DEADLINE[0] is not None:
+        return 1, ''
     try:
         done = subprocess.run(['git', '-C', str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                               stdin=subprocess.DEVNULL, timeout=timeout)
@@ -602,7 +634,7 @@ def _remote_tip_matches(repo, remote, branch):
     except OSError:
         return False
     try:
-        out, _ = proc.communicate(timeout=3)
+        out, _ = proc.communicate(timeout=_remaining(3) or 0.01)
     except subprocess.TimeoutExpired:
         try:
             portable.kill_group(proc)
@@ -625,8 +657,23 @@ def _armed_defaults(engine):
         return {}
 
 
+MERGED_DELETE_BUDGET = 25.0  # seconds; under the 30 s PreToolUse hook timeout in hooks/claude.json
+
+
 def _merged_delete_check(decision, cwd, engine=None):
-    """SPEC 5.14 item 4: a deny payload for a merged-delete that is not safe, else None."""
+    """SPEC 5.14 item 4: a deny payload for a merged-delete that is not safe, else None. The whole check shares one
+    deadline: a slow repository or remote is denied with that reason instead of the hook being killed mid-answer."""
+    _DEADLINE[0] = time.monotonic() + MERGED_DELETE_BUDGET
+    try:
+        denied = _merged_delete_checked(decision, cwd, engine)
+        if denied is None and time.monotonic() >= _DEADLINE[0]:
+            return _deny('The merged-delete check ran out of time (%d s); refusing to delete %s' % (MERGED_DELETE_BUDGET, decision.branch)).output
+        return denied
+    finally:
+        _DEADLINE[0] = None
+
+
+def _merged_delete_checked(decision, cwd, engine=None):
     branch, remote = decision.branch, decision.remote if decision.kind == 'remote' else None
     if not branch:
         return _deny('Branch deletion must run plainly in the session repository').output

@@ -2,6 +2,14 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.9.0 — 2026-10-18
+
+- **Session start:** the injected run brief leaves out empty sections (`### Needs you` with only `- none`), about 600 bytes per session.
+- **Pull request pushes:** the destination must be the same branch name as the source (`git push origin feat/x`, or `feat/x:refs/heads/feat/x`); `HEAD:other-name` is refused with a reason that says so. A branch name with non-ASCII characters gets its own reason instead of the generic shape message.
+- **Merged-delete check:** the whole check shares one 25 s deadline (the hook's timeout is 30 s). Past it the delete is denied with that reason, instead of the hook being killed with no answer.
+- **PowerShell:** the PowerShell tool is now matched by the PreToolUse hook and its command is read with the same rules as Bash, so `git reset --hard`, pushes, deploys and the other classified commands are caught. PowerShell-only commands (`Remove-Item`, `Invoke-WebRequest`) are still not classified.
+- **Windows gates:** a gate runs in a job object, so a process it leaves running is found and stopped after it exits, as on POSIX; the job also ends if the engine itself dies.
+
 ## 2.8.1 — 2026-10-18
 
 - **Windows:** the Windows CI job (the whole test suite on `windows-latest`) now passes. The first run found one product bug and it is fixed: the engine tried to open the state directory to flush it, which Windows refuses, so every state write failed. The autonomy cleanup also accepts a drive-letter path (`git worktree remove C:/...`). The rest were tests that assumed POSIX (`/bin/sh`, `fcntl`, `os.getuid`, symlinks, deleting a process's working directory); they now use the portable layer or are skipped on Windows. Windows is still not checked on a real machine with Claude Code.

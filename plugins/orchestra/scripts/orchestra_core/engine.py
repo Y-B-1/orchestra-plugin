@@ -1892,14 +1892,16 @@ class Engine:
                 else:
                     process = subprocess.Popen(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT,
                                                **portable.group_kwargs())
+                    portable.track(process)
                     try:
                         code = process.wait(timeout=timeout or self.policy['gate_timeout_seconds'])
                     except subprocess.TimeoutExpired:
                         portable.kill_group(process)
                         process.wait()
+                        portable.release(process)
                         raise
-                    # Anything the gate left running in its own process group could still change the tree (a new session
-                    # escapes this; Windows cannot see the group once the gate has exited).
+                    # Anything the gate left running in its own process group (on Windows, its job object) could still
+                    # change the tree; a POSIX new session escapes this.
                     if portable.group_alive(process):
                         with contextlib.suppress(OSError):
                             portable.kill_group(process)
@@ -1907,6 +1909,7 @@ class Engine:
                         while time.monotonic() < deadline and portable.group_alive(process):  # the kill is asynchronous: wait until the group is gone before `after`
                             time.sleep(0.02)
                         out.write(b'\nGate left background processes running; stopped them\n')
+                    portable.release(process)
             except subprocess.TimeoutExpired:
                 out.write(b'Gate timed out\n')
                 code = 124

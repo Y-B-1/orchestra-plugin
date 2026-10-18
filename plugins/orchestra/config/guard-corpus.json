@@ -11488,6 +11488,28 @@
     "command": "git push origin stable"
    },
    "class": "release"
+  },
+  {
+   "id": "release-inline-pr-unicode",
+   "input": {
+    "command": "git push origin feat/café"
+   },
+   "class": "release"
+  },
+  {
+   "id": "release-inline-pr-same-name",
+   "input": {
+    "command": "git push origin feat/x:refs/heads/feat/x"
+   },
+   "class": "release"
+  },
+  {
+   "id": "deny-destructive-merged-d",
+   "input": {
+    "command": "git branch -d feat/x"
+   },
+   "class": "boundary",
+   "category": "delete"
   }
  ]
 }
