@@ -6,7 +6,7 @@ The role count does not limit concurrency. Several instances of one role can run
 
 ## Install
 
-Prerequisites: Python 3.11 or later, Git and Claude Code. Without Python 3.11 or later, the PreToolUse hook fails closed and every other hook only shows a warning. Native checks used Claude Code 2.1.289. Windows is not supported by the POSIX locking core; use WSL.
+Prerequisites: Python 3.11 or later, Git and Claude Code. Without Python 3.11 or later, the PreToolUse hook fails closed and every other hook only shows a warning. Native checks used Claude Code 2.1.289. On Windows you also need Git for Windows, which supplies the `sh` that runs the hooks (see [Windows](#windows)).
 
 ```sh
 claude plugin marketplace add Y-B-1/orchestra-plugin
@@ -24,6 +24,16 @@ Orchestra sets no context limit. For long runs, set Claude Code's auto-compactio
 The value is in tokens (100000 to 1000000). Claude Code caps it at the model's window, so it has no effect on a 200K model. Run state lives on disk (`progress.md`, `state.json`) and survives compaction.
 
 No installer changes application instructions, resumes old work, grants release rights or writes hook trust. Existing project rules still apply. If a project carries older Orchestra enforcement of its own, port it separately to avoid two competing coordinators.
+
+### Windows
+
+Windows works with Git for Windows and Python 3.11 or later. Install Python from python.org or winget; the Microsoft Store `python3` stub is skipped. The hook launcher tries `python3.14` down to `python3`, then `python`, then the `py` launcher, and runs Python in UTF-8 mode. WSL needs nothing extra.
+
+- Run state lives under `%LOCALAPPDATA%\orchestra`, unless `XDG_STATE_HOME` is an absolute path.
+- The guard reads the POSIX shell syntax of Claude Code's Bash tool, which is Git Bash on Windows. A command run through the PowerShell tool is not classified, and protected-path checks ignore case.
+- File locks on Windows are exclusive, so concurrent readers of the run state take turns. A gate that times out is stopped with `taskkill /T`; a process a gate leaves running after it exits is not tracked there.
+- The function-hook module (below) stays inert on Windows paths, so the Python hooks guard every call.
+- CI runs the whole test suite on `windows-latest` on every pull request.
 
 ### Function hooks (optional)
 
