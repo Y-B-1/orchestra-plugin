@@ -25,6 +25,8 @@ The value is in tokens (100000 to 1000000). Claude Code caps it at the model's w
 
 No installer changes application instructions, resumes old work, grants release rights or writes hook trust. Existing project rules still apply. If a project carries older Orchestra enforcement of its own, port it separately to avoid two competing coordinators.
 
+CI runs the whole test suite on Linux (Python 3.11 and 3.13), `macos-latest` and `windows-latest` on every pull request. No platform has been checked with a live Claude Code session except Linux.
+
 ### Windows
 
 Windows works with Git for Windows and Python 3.11 or later. Install Python from python.org or winget; the Microsoft Store `python3` stub is skipped. The hook launcher tries `python3.14` down to `python3`, then `python`, then the `py` launcher, and runs Python in UTF-8 mode. WSL needs nothing extra.
