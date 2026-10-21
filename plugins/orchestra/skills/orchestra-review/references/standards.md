@@ -7,7 +7,7 @@ Cover the standards and cleanup categories. Report a violation only when you can
 
 ## Standards
 
-- Read the binding rules first: the project charter, path rules, the vocabulary file and the standing orders the brief carries. Cite the rule file and the rule text for each finding.
+- Read the binding rules first: the project charter, path rules, the vocabulary file and the standing orders the brief carries. Cite the rule file and the rule text for each finding. Also search the base commit for other rule files, such as coding-standard and contributing files, and cite any the brief did not carry.
 - The change stays inside the approved ask and the owned paths. A changed file no ticket needs is scope drift.
 - The change uses the repository's own terms. One concept under a second name is drift.
 - Generated files are regenerated from their source, never edited by hand.

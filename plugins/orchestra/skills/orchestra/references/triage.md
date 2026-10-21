@@ -15,7 +15,7 @@ Size by the diff the work will produce, not by the number of items: tiny up to 5
 4. Start with `start --size tiny|medium --asks N`. A new run never starts at large unless the owner asked for a map (`--owner-request`).
 5. Escalate with `route --size TIER --reason TEXT`. Tiny goes to medium when an edit needs a decision or the diff passes the guide. Medium goes to large when grilling outgrows one context (a compaction during grilling is the signal), or when answers open questions faster than they close. Large starts a map ([wayfinder](wayfinder.md)).
 
-Grill in the main session only, never through a worker. Ask in frontier rounds, each question with a recommended answer. Put settled terms in the glossary and hard-to-reverse choices in decision records.
+Grill in the main session only, never through a worker. Ask in frontier rounds, each question with a recommended answer and worded so that "yes" accepts it. While an investigator card looks up a fact, ask the questions that do not depend on it. Put settled terms in the glossary and hard-to-reverse choices in decision records.
 
 Before the PR, `prepr` compares the diff with the budget and warns when it is over. The warning never blocks.
 
@@ -28,7 +28,7 @@ Before the PR, `prepr` compares the diff with the budget and warns when it is ov
    - invalid, as misuse, expected behavior, duplicate or out of scope
 3. Give a severity, critical, high, medium or low, with a one-line rationale.
 4. Name the suspected code paths and why each is suspect.
-5. Route: a valid defect goes to the bug lane, a missing decision to design, an unknown behavior to investigate.
+5. Route: a valid defect goes to the bug lane, a missing decision to design, an unknown behavior to investigate. Two builder blockers of the same shape against one spec send the whole spec back to design, not a patch per card.
 
 Done when every report in hand carries a verdict, a severity and a route, and each verdict rests on a command or a file you read.
 

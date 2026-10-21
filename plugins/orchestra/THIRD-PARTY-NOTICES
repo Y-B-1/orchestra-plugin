@@ -178,7 +178,7 @@ mattpocock/skills pr (idea level)
 The `skills/engineering/pr/` skill of mattpocock/skills at the commit above. Its CREDITS.md attributes part of its method to a third party, so only the idea is used.
 
 pstack (idea level)
-Ideas only, restated in our own words. The 2.10.0 additions draw on the `swarm`, `poteto-mode` and `blast-radius` playbooks of pstack (github.com/cursor/plugins, `pstack/`, MIT, copyright Lauren Tan, read at commit 88d47514b82e7c44f00f2b2a72ff6dd12158038c). No text is copied.
+Ideas only, restated in our own words. The 2.10.0 and 2.11.0 additions draw on the `swarm`, `poteto-mode`, `orchestrate`, `architect`, `blast-radius` and principle playbooks of pstack (github.com/cursor/plugins, `pstack/`, MIT, copyright Lauren Tan, read at commit 88d47514b82e7c44f00f2b2a72ff6dd12158038c). No text is copied.
 
 OMC (idea level)
 Ideas only, restated in our own words.
@@ -187,4 +187,4 @@ dzhng/skills ratchet-files (idea level)
 The `skills/engineering/ratchet-files/` skill of dzhng/skills (MIT, copyright David Zhang, read at commit dc8f546c3adaa615ab86e8328449ae6efe23aca4). Only the baseline idea is used, restated in our own words: judge a change against HEAD, freeze existing debt as backlog and treat growth as the regression. No text or script is copied.
 
 Claude Code Review documentation (idea level)
-The public Claude Code documentation and Anthropic posts on Code Review (code.claude.com/docs/en/code-review, claude.com/blog/code-review). They have no license for reuse, so only the method is used, restated in our own words: review rules are read from the base branch, and a review never approves.
+The public Claude Code documentation and Anthropic posts on Code Review (code.claude.com/docs/en/code-review, claude.com/blog/code-review, claude.dev/blog/solving-code-review-at-anthropic, claude.dev/blog/spending-your-effort). They have no license for reuse, so only the method is used, restated in our own words: review rules are read from the base branch, and a review never approves.

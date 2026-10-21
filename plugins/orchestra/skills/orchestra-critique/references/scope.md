@@ -23,6 +23,8 @@ Map requirements to tasks. A requirement with no task, and a task with no requir
 
 Name the one or two facts the change's safety rests on, for example that no other caller depends on the old behavior. Listing callers is not proof. Require a test, script or probe that shows each fact, or report it as `unproven`. Never invent a caller or an API.
 
+Check what a symbol search misses: wire and persisted formats that other code reads, feature flags, library source at the pinned version, and run order at teardown. List each risk you checked and ruled out, with its reason, beside the confirmed ones.
+
 ## Out of scope
 
 Check each exclusion before you call something creep. When you find rejected scope, record it as one entry per concept: the decision, a durable reason (project focus, a technical constraint, a settled choice), and the requests it covers. A deferral for lack of time is not a rejection. Put the entry in your report for the coordinator to file.

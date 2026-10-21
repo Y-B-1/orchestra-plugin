@@ -27,6 +27,9 @@ For a change to structure or interfaces, use this method:
 - Design the interface twice. Sketch two contrasting shapes, for example one minimal and one tuned for the most common caller, then compare them on leverage, locality and seam placement. Recommend one, or a hybrid.
 - Extract shared code only with two verified callers. Reuse an existing helper first. Count the net lines saved. Reject an abstraction that serves a single use.
 - Give each unit one purpose. Keep files that change together together, and split by responsibility. In existing code, follow the local patterns and improve only what the work touches. Propose no unrelated refactor.
+- Give each piece of state one owner. A second writer or a private copy is a design defect.
+- When a new interface replaces an old one, name the callers to move and the old form to delete in the same change, unless an outside consumer needs it.
+- When two places must list the same items, derive one from the other or add a check that fails when they differ.
 
 ## Write the spec
 
@@ -36,7 +39,7 @@ Synthesize from what is settled. Do not re-interview, and do not restate the dos
 - Observable journeys, each with its failure directions: what the user sees when it goes wrong.
 - Glossary of the terms the work uses.
 - Constraints and dependencies. Cite the binding project sections for engine, permission, data and persisted identifiers.
-- Test seams. Prefer an existing seam, and the highest one that works. List a seam no one has agreed to as an open decision.
+- Test seams. Prefer an existing seam, and the highest one that works. Give each seam one line on what it catches and what it misses, and prefer fewer seams. List a seam no one has agreed to as an open decision.
 - Acceptance criteria: numbered, pass or fail, each checkable by a command or an observation. Never write "works correctly" or "handles edge cases".
 
 Cite what you found by path in the spec. The summary prose you return to the user stays free of file paths and code, which go stale. Quote a schema or type only where prose cannot fix the decision.

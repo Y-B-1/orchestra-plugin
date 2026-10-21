@@ -3,7 +3,7 @@ Sentinel: orchestra/references/worktrees.md
 
 # Worktrees
 
-A worktree buys isolation and nothing else. Use the fewest that keep writers apart:
+A worktree buys isolation and nothing else. Use the fewest that keep writers apart, and never more than three at once; past three groups, merge groups or run them in sequence:
 
 - Work whose files intersect shares one worktree.
 - A single writer, or writers in sequence, use none: the main tree.

@@ -41,6 +41,8 @@ With a single lens, set `categories` in the verdict to the row for your lens and
 
 Echo the `artifact` output as the base skill says. Set `final` to true. Return BLOCKED if any finding in your categories is an open blocker.
 
+Open the summary with the count of blocking findings and of notes, and say plainly when nothing needs fixing. Report at most five notes, highest impact first. When a defect is one instance of a pattern, name the pattern and list every instance in the diff in one finding, so one repair covers them all.
+
 ## Fix re-review
 
 When the brief names a fix range and `repair_check`, review only that range against the findings it answers and the rejected findings the brief lists. For each finding, report fixed, not fixed or regressed. Open a new finding only for a defect the fix introduced. Do not reopen settled code.

@@ -15,7 +15,7 @@ Finish after the pre-PR review is clean and the named project checks are green o
 
 ## Pull request body
 
-The pull request body has a summary, before and after evidence, and a merge danger section: one-way or two-way door, and the blast radius.
+The pull request body has a summary, before and after evidence, and a merge danger section: one-way or two-way door, and the blast radius. List the changed files that match `sensitive_paths` as needing a human reviewer before merge.
 
 Add a "Held / next phase" section from `orchestra.py brief`: its Still failing, Held log, Final rounds, Notes and Needs you sections, unedited. If no brief exists for this run yet, write the section from `orchestra.py status` and the held log in `progress.md`.
 

@@ -247,3 +247,24 @@ Three rules were added from a re-read of pstack, ratchet-files and Anthropic's C
 | `orchestra-critique/references/scope.md` | Name the facts a change's safety rests on and prove each or report `unproven` | pstack (idea level) |
 
 Not adopted: pstack's multi-model arena and interrogate (roles are fixed to three models, and workers cannot delegate), reflect and automate-me (they read private transcripts and wait for approval), and never-block-on-the-human (autonomy stays bounded by the ledger). ratchet-files' installer and Node script are not adopted: the plugin writes no hooks into a project, so the baseline is a review rule, not a pre-commit gate.
+
+## 2.11.0 additions
+
+A re-read of Anthropic's code review posts, pstack (unchanged since its last read) and mattpocock/skills at 5beb35b. Each rule below was absent or partial in the skills; the wording is Orchestra's own. mattpocock/skills rows restate rules from commit 5beb35b without copying text.
+
+| Destination | Rule | Source |
+| --- | --- | --- |
+| `orchestra-review/references/final.md` | Summary opens with the counts; at most five notes, ranked; one finding names a defect pattern and lists every instance | Claude Code Review documentation (idea level) |
+| `orchestra/references/final-review.md` | The review brief carries the project's review-instruction file from the base commit | Claude Code Review documentation (idea level) |
+| `orchestra/references/finishing.md` | The PR body lists changed `sensitive_paths` files for a human reviewer | Claude Code Review documentation (idea level) |
+| `orchestra-build/references/implementation.md` | Compare edge-case logic with a simple reference on generated inputs; pair a did-not-happen test with a did-happen case; prove a forced red applied; suspect the observation first; note what a chosen seam catches and misses | Claude Code Review documentation (idea level); pstack (idea level); mattpocock/skills diagnosing-bugs and tdd |
+| `orchestra-build/references/repair.md` | Fix where the wrong state is first produced; name other sites with the same fault | pstack (idea level) |
+| `orchestra/references/parallel.md` | Re-dispatch a short report once, then record an open gap; at most two re-dispatches for a dead worker; first of three or more similar tickets runs alone | pstack (idea level) |
+| `orchestra/references/briefs.md` | Exhaustive acceptance; a time cap with a partial-findings return | mattpocock/skills writing-for-agents; pstack (idea level) |
+| `orchestra/references/triage.md`, `orchestra-design/SKILL.md` | Word a question so "yes" accepts the recommendation; ask independent questions while an investigator runs; repeated same-shape blockers return the spec to design | mattpocock/skills grilling; pstack (idea level) |
+| `orchestra/references/handoff.md` | Date handoff claims to a commit and supersede, never rewrite | mattpocock/skills chief-of-staff |
+| `orchestra-design/references/design.md`, `plan.md` | One owner per state; a replacement names the callers to move and the form to delete; derive or check duplicate lists; seam trade-off notes; removal before build; a baseline ticket for comparison work | pstack (idea level); mattpocock/skills tdd |
+| `orchestra-review/references/correctness.md`, `architecture.md`, `standards.md` | Absence-only tests, unproven numbers, the no-spec case, two live paths for one task, other rule files at the base commit | pstack (idea level); mattpocock/skills code-review |
+| `orchestra-critique/references/scope.md` | Look where a symbol search stops; list the risks checked and cleared | pstack (idea level) |
+
+Not adopted: the verifier vote ensemble (the posts state no threshold), daily incident evals and approval circuit breakers (standing infrastructure), the Fowler smell baseline, an implement-spec integration merge before reporting (it breaks the immutable starting artifact), prompting only in the positive (no room in the coordinator's brief budget), and the excluded arena, interrogate, reflect, automate-me and never-block-on-the-human.

@@ -13,7 +13,7 @@ Use this mode to fix findings that the pre-PR review raised and the coordinator 
 3. Recheck each finding against the source at the artifact the brief names. Write down the input or state and the wrong outcome it produces. A finding you cannot reproduce or confirm is not fixed on trust; report what you ran and saw.
 4. Sort the confirmed findings. Fix in this order: blocking problems such as breakage or security, then simple fixes such as imports and typos, then complex fixes such as logic and structure.
 5. For each finding, write the failing test first, see it fail, fix, see it pass, then run the checks the fix touches. One finding at a time. Rerun after each fix; a fix for one finding can break another.
-6. Repair only the defects the findings name, inside your owned paths. No drive-by cleanup.
+6. Repair only the defects the findings name, inside your owned paths. No drive-by cleanup. Fix where the wrong state is first produced; a guard, retry or clamp at the failure point is a fix only when that state is legitimate. Name other sites with the same fault in the report instead of editing them.
 
 ## Push back with evidence
 
