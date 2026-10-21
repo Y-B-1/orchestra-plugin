@@ -2,6 +2,14 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.10.0 — 2026-10-21
+
+- **Autonomy band:** after a stop the band stays as `stopped: <reason>` until you re-arm, disarm or start a new session; before, the reason showed only as a toast and the band cleared. While active it also shows the running background workers, stalls above zero and any worker silent past `worker_stale_seconds`. `orchestra.py autonomy status` gains `running` and `silent`.
+- **Idle on a lost worker:** the Stop hook that stops a `stalled` run runs only at the end of a turn, so a session idle on a worker that died was never checked. The band now shows the silent worker while you wait. The engine still decides nothing without a Stop event.
+- **Review standards lens:** judge a change against HEAD (untouched debt is a note, not a blocker), name every suppression the diff adds, and read the repository's rules from the base commit.
+- **Coordinator and critic:** own each worker result and send a redirected worker's whole scope to a fresh card; name the facts a change's safety rests on and prove each or report `unproven`. Credits for pstack, ratchet-files and the Code Review documentation are in `THIRD-PARTY-NOTICES` and `docs/SKILL-SOURCES.md`.
+- **Packaging:** the marketplace entry no longer repeats the version (Claude Code reads `plugin.json` first and a second copy can only drift); the plugin has an icon; CI runs Claude Code 2.1.306.
+
 ## 2.9.0 — 2026-10-18
 
 - **Session start:** the injected run brief leaves out empty sections (`### Needs you` with only `- none`), about 600 bytes per session.

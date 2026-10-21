@@ -18,6 +18,9 @@ Skill curation is a synthesis. Each row takes a base text, merges in the stronge
 | Claude Code security-review | Claude Code built-in skill `security-review` | none (no published text at a SHA) | `ideas: Claude Code security-review (idea level)` | No published license: idea level only |
 | Claude Code simplify | Claude Code built-in skill `simplify` | none (no published text at a SHA) | `ideas: Claude Code simplify (idea level)` | No published license: idea level only |
 | mattpocock/skills pr | the `skills/engineering/pr/` skill of mattpocock/skills | d81f3a183412e71a5b1e84ca21bc1a35eea03a60 (located only; no text used) | `ideas: mattpocock/skills pr (idea level)` | Idea level only: its CREDITS.md attributes part of its method to a third party |
+| pstack | `pstack/` of cursor/plugins (poteto) | 88d47514b82e7c44f00f2b2a72ff6dd12158038c (the last commit touching `pstack/` when read; the head of `main` was not confirmed) | `ideas: pstack (idea level)` | MIT, ideas only |
+| dzhng/skills ratchet-files | `skills/engineering/ratchet-files/` of dzhng/skills | dc8f546c3adaa615ab86e8328449ae6efe23aca4 (head of `main` per its commit feed; not cross-checked) | `ideas: dzhng/skills ratchet-files (idea level)` | MIT, ideas only |
+| Claude Code Review documentation | code.claude.com/docs/en/code-review and the Anthropic Code Review posts | none (web pages) | `ideas: Claude Code Review documentation (idea level)` | No published license: idea level only |
 
 License notes:
 - Every MIT source may be used at text level and is credited in `plugins/orchestra/THIRD-PARTY-NOTICES` with URL, full SHA and license text. A row that uses an MIT source only for an idea still credits it by `repo@sha12` in the destination's `Source:` header, so credit never depends on judging how close a paraphrase is.
@@ -230,3 +233,15 @@ Lens repo (`bmad-code-org/BMAD-METHOD@3cae711ea527`):
 8. mattpocock/skills pr (idea level): idea level only, because its CREDITS.md and frontmatter credit part of its method (the summary visuals menu) to a third party's skill. Its evidence and merge-danger sections are Pocock's own, but the skill is cited as one unit at idea level so that no text from the third-party part is copied.
 9. SPEC 8.2 "Spec-kit assess gate": by coordinator ruling it means `extensions/assess` (the go / needs-clarification / kill idea gate). It is merged into the Product dossier row; the plan-template Constitution Check is a separate element kept in the Planning row.
 10. Coordinator ruling on N7 (MXR round 2): cso's attacker-control narrowing of the built-in security exclusions counts as "adds to" under O11, because it keeps findings the blanket exclusions would drop. Security row element 2 is therefore tagged additive, with no Stronger reason; round 1 had tagged it as an override.
+
+## 2.10.0 additions
+
+Three rules were added from a re-read of pstack, ratchet-files and Anthropic's Code Review documentation. Most of what those sources teach was already in the skills (the strategic track, failing test first, `failure direction unproven`, deduping across lenses, refuting findings, a review that grants no permission).
+
+| Destination | Rule | Source |
+| --- | --- | --- |
+| `orchestra-review/references/standards.md` | Judge against HEAD, list untouched debt as a note, name every added suppression, and read the repository's rules from the base commit | dzhng/skills ratchet-files (idea level); Claude Code Review documentation (idea level) |
+| `orchestra/references/coordination.md` | Own each worker result; send a redirected worker's whole scope to a fresh card | pstack (idea level) |
+| `orchestra-critique/references/scope.md` | Name the facts a change's safety rests on and prove each or report `unproven` | pstack (idea level) |
+
+Not adopted: pstack's multi-model arena and interrogate (roles are fixed to three models, and workers cannot delegate), reflect and automate-me (they read private transcripts and wait for approval), and never-block-on-the-human (autonomy stays bounded by the ledger). ratchet-files' installer and Node script are not adopted: the plugin writes no hooks into a project, so the baseline is a review rule, not a pre-commit gate.

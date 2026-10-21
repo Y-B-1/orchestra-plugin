@@ -368,7 +368,7 @@ class ProvenanceTests(unittest.TestCase):
         for sha in shas:
             self.assertIn(sha, notices)
         ideas = set(re.findall(r'ideas: ([^`|;]+? \(idea level\))', matrix))
-        self.assertEqual(len(ideas), 3, ideas)
+        self.assertEqual(len(ideas), 6, ideas)  # 2.10.0 added pstack, ratchet-files and the Code Review documentation
         for name in ideas:
             self.assertIn(name, notices)
         for repo in re.findall(r'\| (?:[\w.-]+/[\w.-]+) \|', matrix):

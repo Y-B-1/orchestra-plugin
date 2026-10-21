@@ -1,4 +1,4 @@
-Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/task-reviewer-prompt.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/OUT-OF-SCOPE.md (MIT); garrytan/gstack@4015c2870b06 review/SKILL.md (MIT); github/spec-kit@ae5ade7234be templates/commands/analyze.md (MIT); see THIRD-PARTY-NOTICES.
+Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/task-reviewer-prompt.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/OUT-OF-SCOPE.md (MIT); garrytan/gstack@4015c2870b06 review/SKILL.md (MIT); github/spec-kit@ae5ade7234be templates/commands/analyze.md (MIT); ideas: pstack (idea level); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-critique/references/scope.md
 
 # Critic: scope mode
@@ -18,6 +18,10 @@ Start from the stated intent: the ask, the spec's exclusions, the commit message
 ## Coverage
 
 Map requirements to tasks. A requirement with no task, and a task with no requirement, are both findings. A success criterion that needs buildable work, such as performance or security, and appears in no task is a finding. A plan that mandates an extra is still a finding when the ask does not.
+
+## Safety facts
+
+Name the one or two facts the change's safety rests on, for example that no other caller depends on the old behavior. Listing callers is not proof. Require a test, script or probe that shows each fact, or report it as `unproven`. Never invent a caller or an API.
 
 ## Out of scope
 
