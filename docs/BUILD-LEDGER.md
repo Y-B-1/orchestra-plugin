@@ -347,7 +347,7 @@ Source: the owner's handoff (the code review post, a TypeScript check of the mod
 
 | Item | Evidence |
 | --- | --- |
-| Code review post | Read at claude.dev. Self-check, fresh-context review, CI, verifier vote and risk-scaled human approval are confirmed. The vote threshold is not stated ("enough" verifiers), and size scaling is an observation (most PRs over 1,000 lines get findings), not a rule. Orchestra already had each layer except the base-branch review-instruction file, which the pre-PR brief now carries. |
+| Code review post | Read at claude.dev through WebFetch (reachable this time; in 2.10.0 it was not). Self-check, fresh-context review, CI, verifier vote and risk-scaled human approval are confirmed. The vote threshold is not stated ("enough" verifiers), and size scaling is an observation (most PRs over 1,000 lines get findings), not a rule. Orchestra already had each layer except the base-branch review-instruction file, which the pre-PR brief now carries. |
 | TypeScript in `hooks/mod/*.ts` | Nothing type-checks it: a type error passes `claude plugin test` and `claude plugin validate --strict`. A check step is an open owner decision. |
 | pstack and mattpocock/skills | pstack unchanged since the last read (88d4751). mattpocock/skills diffed from the three pins to 5beb35b. Rules adopted in Orchestra's words are listed in `docs/SKILL-SOURCES.md` 2.11.0 additions. Not adopted: multi-model arena, interrogate, reflect, automate-me, never-block-on-the-human. |
 | File budget | Policy `file_budget_bytes` (off by default) and `file_budget_waivers`; `prepr` lists the files that grew past it. 13 engine tests. |

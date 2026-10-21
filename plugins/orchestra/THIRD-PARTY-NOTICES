@@ -177,6 +177,9 @@ The Claude Code built-in skill `simplify`. It has no published license, so only 
 mattpocock/skills pr (idea level)
 The `skills/engineering/pr/` skill of mattpocock/skills at the commit above. Its CREDITS.md attributes part of its method to a third party, so only the idea is used.
 
+mattpocock/skills 2.11.0 (idea level)
+Ideas only, restated in our own words. The 2.11.0 additions draw on the writing-for-agents, tdd, diagnosing-bugs, code-review, grilling and chief-of-staff skills of mattpocock/skills (github.com/mattpocock/skills, MIT, copyright Matt Pocock, read at commit 5beb35b). No text is copied.
+
 pstack (idea level)
 Ideas only, restated in our own words. The 2.10.0 and 2.11.0 additions draw on the `swarm`, `poteto-mode`, `orchestrate`, `architect`, `blast-radius` and principle playbooks of pstack (github.com/cursor/plugins, `pstack/`, MIT, copyright Lauren Tan, read at commit 88d47514b82e7c44f00f2b2a72ff6dd12158038c). No text is copied.
 
