@@ -163,7 +163,7 @@ test('autonomy: a tick CLI failure while active never throws and keeps polling',
   expect(r.toasts.length).toBe(1);
 });
 
-test('autonomy: the status band shows pass N/M and deadline while active and clears after a stop or off', async ($, on) => {
+test('autonomy: the status band shows pass and deadline while active, keeps the stop reason after a stop and clears on re-arm or off', async ($, on) => {
   const r = rig(on);
   const s = stage(on);
   const table: Record<string, { exitCode: number; stdout: string }> = {
@@ -178,7 +178,9 @@ test('autonomy: the status band shows pass N/M and deadline while active and cle
   expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2, deadline 07:30');
   table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
   await r.clock.advance(35000);
-  expect(s.bands.at(-1)).toBeUndefined();
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy stopped: deadline; /orchestra-autonomy on to re-arm');
+  await run($ as never, 'status');
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy stopped: deadline; /orchestra-autonomy on to re-arm');
   // Re-arm, then off clears the band.
   table['status'] = { exitCode: 0, stdout: JSON.stringify(ACTIVE) };
   await run($ as never, 'on');
@@ -237,7 +239,7 @@ test('autonomy: a run armed through the CLI before session.start gets the band a
   await r.clock.advance(30000);
   expect(r.toasts.length).toBe(1);
   expect(r.toasts[0]).toContain('deadline');
-  expect(s.bands.at(-1)).toBeUndefined();
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy stopped: deadline; /orchestra-autonomy on to re-arm');
   const reads = statusReads(r);
   await r.clock.advance(120000);
   expect(statusReads(r)).toBe(reads);
@@ -341,5 +343,61 @@ test('autonomy: a status read in flight when off runs is dropped: band stays cle
   expect(s.bands.at(-1)).toBeUndefined();
   await r.clock.advance(120000);
   expect(r.toasts.length).toBe(0);
+  expect(s.bands.at(-1)).toBeUndefined();
+});
+
+test('autonomy: the band names running workers, stalls and a worker silent past the limit', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const table: Record<string, { exitCode: number; stdout: string }> = {
+    arm: { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/l', preconditions: {} }) },
+    status: { exitCode: 0, stdout: JSON.stringify({ ...ACTIVE, running: 2 }) },
+  };
+  answers(r, table);
+  await $.session.start(start);
+  await run($ as never, 'on');
+  await run($ as never, 'status');
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2, deadline 07:30, 2 workers running');
+  table['status'] = { exitCode: 0, stdout: JSON.stringify({ ...ACTIVE, running: 1, stalls: 1, silent: [{ id: 'B2', minutes: 62 }, { nope: 1 }, null] }) };
+  await r.clock.advance(35000);
+  expect(s.bands.at(-1)).toBe('Orchestra autonomy: pass 2, deadline 07:30, 1 worker running, stalls 1, silent: B2 62m');
+});
+
+test('autonomy: a stop reason from an earlier session is not shown at startup, and a new arm clears a stop band', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const table: Record<string, { exitCode: number; stdout: string }> = {
+    arm: { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/l', preconditions: {} }) },
+    status: { exitCode: 0, stdout: JSON.stringify(STOPPED) },
+  };
+  answers(r, table);
+  await $.session.start(start);
+  expect(s.bands.filter((b) => b !== undefined)).toEqual([]);
+  table['status'] = { exitCode: 0, stdout: JSON.stringify(ACTIVE) };
+  await run($ as never, 'on');
+  await run($ as never, 'status');
+  table['status'] = { exitCode: 0, stdout: JSON.stringify(STOPPED) };
+  await r.clock.advance(35000);
+  expect(s.bands.at(-1)).toContain('stopped: deadline');
+  await run($ as never, 'on');
+  expect(s.bands.at(-1)).toBeUndefined();
+});
+
+test('autonomy: a disarm through the CLI, seen by the tick, clears the band instead of keeping a stop band', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const table: Record<string, { exitCode: number; stdout: string }> = {
+    arm: { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/l', preconditions: {} }) },
+    status: { exitCode: 0, stdout: JSON.stringify(ACTIVE) },
+  };
+  answers(r, table);
+  await $.session.start(start);
+  await run($ as never, 'on');
+  await run($ as never, 'status');
+  expect(s.bands.at(-1)).toContain('pass 2');
+  table['status'] = { exitCode: 0, stdout: JSON.stringify({ ...STOPPED, last_stop_reason: 'disarmed' }) };
+  await r.clock.advance(35000);
+  expect(s.bands.at(-1)).toBeUndefined();
+  await run($ as never, 'status');
   expect(s.bands.at(-1)).toBeUndefined();
 });

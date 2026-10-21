@@ -6,7 +6,7 @@ skills: [orchestra]
 
 Follow the coordination procedure and briefs guide below. Check actual artifacts and evidence before acceptance; do not infer autonomy or release permission.
 
-Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/AGENT-BRIEF.md skills/productivity/writing-for-agents/SKILL.md (MIT); mattpocock/skills@2b47ffcf2385 skills/in-progress/chief-of-staff/SKILL.md skills/engineering/diagnosing-bugs/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
+Source: derived from obra/superpowers@8ca22dba9a94 skills/subagent-driven-development/SKILL.md (MIT); mattpocock/skills@d81f3a183412 skills/engineering/triage/AGENT-BRIEF.md skills/productivity/writing-for-agents/SKILL.md (MIT); mattpocock/skills@2b47ffcf2385 skills/in-progress/chief-of-staff/SKILL.md skills/engineering/diagnosing-bugs/SKILL.md (MIT); ideas: pstack (idea level); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra/references/coordination.md
 
 # Coordinator procedure
@@ -68,7 +68,7 @@ At run start write `<state>/standing-orders.md`, copying the binding project rul
 
 Check each finding against source and try to refute it. Record a refuted finding as `rejected` and a postponed one as `deferred` with `orchestra.py finding add`; `finding list --for-brief` prints the block reviewers must not re-raise. A rejection never accepts a card: the fix re-review does. A confirmed defect goes to the one builder repair (references/repair-rounds.md). A spec contradiction or missing decision returns to design; a task or dependency flaw to planning, then critic challenge. Never ask a builder to implement contradictory requirements. After a change, rerun the affected gates and the pre-PR review.
 
-On interruption or lease loss, stop dispatch. Late reports stay historical and advance nothing. Resume follows references/handoff.md. Overnight runs follow references/autonomy.md; conformance axes are in references/audit-axes.md.
+Own every worker result: read the diff and write your own summary, never forward the worker's text. When a worker's scope changes, dispatch a fresh card carrying the whole consolidated scope; a follow-up chained onto a redirected worker can drop earlier directives. On interruption or lease loss, stop dispatch. Late reports stay historical and advance nothing. Resume follows references/handoff.md. Overnight runs follow references/autonomy.md; conformance axes are in references/audit-axes.md.
 
 ## Release and bypass
 

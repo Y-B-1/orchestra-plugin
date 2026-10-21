@@ -13,6 +13,8 @@ claude plugin marketplace add Y-B-1/orchestra-plugin
 claude plugin install orchestra@orchestra-distribution
 ```
 
+Updates: Claude Code does not auto-update third-party marketplaces unless you turn it on. In a session run `/plugin`, open the Marketplaces tab, select `orchestra-distribution` and choose Enable auto-update. Without it, run `claude plugin marketplace update orchestra-distribution`, then `claude plugin update orchestra@orchestra-distribution`. A new copy arrives only when the version in `plugin.json` changes, which every release does.
+
 Restart the client. Enable the plugin and review its hook definition in the native trust interface; installation does not grant trust. Once trusted, every session starts with the coordinator contract. The coordinator runs on whatever model and effort you pick; explicit user or managed settings can override defaults.
 
 Orchestra sets no context limit. For long runs, set Claude Code's auto-compaction in `~/.claude/settings.json`:
@@ -39,7 +41,7 @@ Windows works with Git for Windows and Python 3.11 or later. Install Python from
 
 ### Function hooks (optional)
 
-On Claude Code the plugin also registers a function-hook module. It classifies commands in process, adds `/orchestra-board` and `/orchestra-autonomy on|off|status`, shows verdict and stop toasts and an autonomy status band, and appends the run's standing orders to `orchestra:` agent briefs. It needs `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` and the `$` APIs the module uses; it is tested on Claude Code 2.1.289 (CLI) and 2.1.286 (Desktop with that variable set). If the module is off or fails, the Python hooks do the same guarding and the CLI does everything else. See [hook policy](docs/hooks.md).
+On Claude Code the plugin also registers a function-hook module. It classifies commands in process, adds `/orchestra-board` and `/orchestra-autonomy on|off|status`, shows verdict and stop toasts and an autonomy status band (running workers, stalls, a silent worker, and the stop reason after a stop, until you re-arm), and appends the run's standing orders to `orchestra:` agent briefs. It needs `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` and the `$` APIs the module uses; it is tested on Claude Code 2.1.289 (CLI) and 2.1.286 (Desktop with that variable set). If the module is off or fails, the Python hooks do the same guarding and the CLI does everything else. See [hook policy](docs/hooks.md).
 
 ## How Orchestra works
 

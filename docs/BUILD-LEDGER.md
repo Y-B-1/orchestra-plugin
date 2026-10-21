@@ -327,3 +327,16 @@ Known limits kept open: `core.filemode=false` with a staged-only chmod then a co
 | Hooks | `SessionStart:startup` and `Stop` ran from the plugin and exited 0 |
 | Guard | A headless `claude -p` session asked to run `git reset --hard` in a scratch repository received `Orchestra guard: Hard reset discards work; unstage with \`git restore --staged <path>\` or keep the work on a new branch`; the repository was unchanged |
 | Not checked | Windows on a real Windows machine; the autonomy loop and the new silent-worker and failing-gate stops live (unit tests only) |
+
+## 2.10.0 (2026-10-21)
+
+Source: the owner's audit request (autonomy that seems to stop with no sign on screen, a re-read of the skill stacks and pstack, ratchet-files, the Code Review posts, the TypeScript-to-Rust ports).
+
+| Item | Evidence |
+| --- | --- |
+| Stop reason cleared from the band | `autonomy.ts` `apply()` returned no band on a stop, so the reason was only a toast. Now kept as `stopped: <reason>` until arm, disarm or session start. Mod tests 93/93 (`claude plugin test`, Claude Code 2.1.306), two new and two updated. |
+| Idle on a lost worker | `_stop_check` names a silent worker only when Stop fires, and Stop fires only at the end of a turn; `test_a_silent_worker_is_surfaced_and_a_repeat_stops_the_run` calls `hook_stop()` directly and so never covered the idle case. `autonomy status` now carries `running` and `silent` and the band shows them. New engine test; full suite 746 OK (1 skipped) on Python 3.13. |
+| Skills | Three rules (review standards baseline, coordinator ownership, critic safety facts); see `docs/SKILL-SOURCES.md` 2.10.0 additions. Most source ideas were already present. |
+| Packaging | Marketplace entry version removed; icon added (512 px PNG); `claude plugin validate --strict` passes for the plugin and the marketplace with no warning; CI on Claude Code 2.1.306. |
+| TypeScript to Rust | pingdotgg/ts-rust (`tsc-rs`) and Cloudflare's tsrs are type-checker ports. Orchestra type-checks nothing at run time, so neither applies. |
+| Not checked | claude.dev was unreachable from the sandbox (DNS), so its posts were read only through claude.com and secondary summaries. The band was not seen in a live interactive session; Windows and macOS still have no live run. |

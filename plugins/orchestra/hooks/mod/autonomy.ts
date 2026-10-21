@@ -26,6 +26,8 @@ export type AutonomyState = {
   unknown: boolean;
   /** Bumped when a command or a CLI arm changes the state, so a read that started before it is dropped. */
   changes: number;
+  /** The band shown after a stop this process saw, kept until the next arm, disarm or session start. */
+  stopText: string | undefined;
 };
 
 export type Cli = { ok: boolean; body: Json | null; error: string };
@@ -33,7 +35,7 @@ export type Cli = { ok: boolean; body: Json | null; error: string };
 export type Outcome = { text: string; band?: { text: string | undefined } };
 
 export function newAutonomy(): AutonomyState {
-  return { registered: false, active: false, lastRead: null, busy: false, band: false, epoch: 0, unknown: true, changes: 0 };
+  return { registered: false, active: false, lastRead: null, busy: false, band: false, epoch: 0, unknown: true, changes: 0, stopText: undefined };
 }
 
 function parse(text: string): Json | null {
@@ -71,10 +73,39 @@ export function subOf(args: string): Sub | null {
   return word === 'on' ? 'arm' : word === 'off' ? 'disarm' : word === 'status' ? 'status' : null;
 }
 
+/** `silent` entries of a status read as `B2 62m`; anything malformed is skipped. */
+function silentLabels(status: Json): string[] {
+  const list = status['silent'];
+  if (!Array.isArray(list)) return [];
+  const labels: string[] = [];
+  for (const item of list) {
+    const row = parse(JSON.stringify(item ?? null));
+    if (row !== null && typeof row['id'] === 'string') labels.push(`${row['id']} ${num(row['minutes'])}m`);
+  }
+  return labels;
+}
+
+/**
+ * The active band: pass and deadline, then only what needs a glance: background workers running, stalls, and a worker
+ * silent past the engine's limit. The Stop hook that stops a stalled run fires only at the end of a turn, so a session
+ * left idle on a lost worker shows it here and nowhere else.
+ */
 function bandText(status: Json): string {
   const when = String(status['deadline'] ?? '');
   const hhmm = /T(\d{2}:\d{2})/.exec(when);
-  return `Orchestra autonomy: pass ${num(status['passes'])}, deadline ${hhmm !== null ? hhmm[1]! : when !== '' ? when : '?'}`;
+  let text = `Orchestra autonomy: pass ${num(status['passes'])}, deadline ${hhmm !== null ? hhmm[1]! : when !== '' ? when : '?'}`;
+  const running = status['running'];
+  if (typeof running === 'number' && running > 0) text += `, ${String(running)} worker${running === 1 ? '' : 's'} running`;
+  const stalls = status['stalls'];
+  if (typeof stalls === 'number' && stalls > 0) text += `, stalls ${String(stalls)}`;
+  const silent = silentLabels(status);
+  if (silent.length > 0) text += `, silent: ${silent.join(', ')}`;
+  return text;
+}
+
+/** The band that stays after a stop, so a stop seen while the user looked away is still on screen. */
+export function stopBand(status: Json): string {
+  return `Orchestra autonomy stopped: ${String(status['last_stop_reason'] ?? 'unknown')}; /orchestra-autonomy on to re-arm`;
 }
 
 export function stopLine(status: Json): string {
@@ -86,11 +117,14 @@ function apply(auto: AutonomyState, status: Json): { band: string | undefined; s
   auto.unknown = false;
   if (status['active'] === true) {
     auto.active = true;
+    auto.stopText = undefined;
     return { band: bandText(status), stopped: false };
   }
   const stopped = auto.active;
   auto.active = false;
-  return { band: undefined, stopped };
+  // A disarm through the CLI is the owner's own act, like /orchestra-autonomy off: it clears the band.
+  if (stopped) auto.stopText = status['last_stop_reason'] === 'disarmed' ? undefined : stopBand(status);
+  return { band: auto.stopText, stopped };
 }
 
 /** What a finished CLI call for `sub` shows, and the band change that goes with it. */
@@ -101,14 +135,16 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
     auto.active = body['active'] === true;
     auto.unknown = false;
     auto.lastRead = null;
+    auto.stopText = undefined;
     const pre = parse(JSON.stringify(body['preconditions'] ?? null)) ?? {};
     const lines = [`Orchestra autonomy: armed. Ledger: ${String(body['ledger'] ?? '?')}`];
     for (const key of Object.keys(pre)) lines.push(`${key}: ${String(pre[key])}`);
-    return { text: lines.join('\n') };
+    return { text: lines.join('\n'), band: { text: undefined } };
   }
   if (sub === 'disarm') {
     auto.active = false;
     auto.unknown = false;
+    auto.stopText = undefined;
     const text = String(body['text'] ?? '');
     const line = body['was_active'] === true ? `Orchestra autonomy: disarmed${text !== '' ? `\n${text}` : ''}` : 'Orchestra autonomy: disarmed (it was not active)';
     return { text: line, band: { text: undefined } };
@@ -140,6 +176,7 @@ export function pollOutcome(auto: AutonomyState, res: Cli): { band: string | und
 export function startSession(auto: AutonomyState): void {
   auto.epoch += 1;
   auto.active = false;
+  auto.stopText = undefined;
   auto.unknown = true;
   auto.lastRead = null;
   auto.busy = false;
