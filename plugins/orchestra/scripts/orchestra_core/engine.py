@@ -355,6 +355,13 @@ class Engine:
         minimum = self.policy['standards_min_lines']
         if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 0:
             raise EngineError('standards_min_lines must be a non-negative integer')
+        budget = self.policy.get('file_budget_bytes')  # off when absent or null
+        if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < 1):
+            raise EngineError('file_budget_bytes must be a positive integer')
+        waivers = self.policy.get('file_budget_waivers', {})
+        if not isinstance(waivers, dict) or any(not isinstance(g, str) or not g or not isinstance(r, str) or not r.strip()
+                                                 for g, r in waivers.items()):
+            raise EngineError('file_budget_waivers must map globs to reasons')
         self.modes, self.contract_hash = _contracts()
         self.policy_hash = _digest(dict(policy=self.policy, contracts=self.contract_hash))
         self._policy_hash_2_3 = _digest(dict(policy=legacy, contracts=CONTRACT_HASH_2_3))
@@ -866,6 +873,7 @@ class Engine:
             lenses = self._required_lenses(state)
             changed = self._run_changed(state)
             lines = changed[1] if changed is not None else None
+            file_budget = self._file_budget(base, changed[0]) if changed is not None else None
         size, asks = session.get('size'), session.get('asks')
         budget = TIER_GUIDE[size] * asks if size in TIER_GUIDE else None
         over = budget is not None and lines is not None and lines > budget
@@ -874,7 +882,45 @@ class Engine:
         warning = ('Size warning: declared %s with %d ask(s) budgets %d changed lines; the diff has %d. Run route --size TIER '
                    '--reason TEXT if the work grew.' % (size, asks, budget, lines)) if over else None
         return dict(base=base, changed_lines=lines, size=size, asks=asks, budget=budget, over_budget=over,
-                    reviewer=reviewer, agent=agent, lenses=lenses, warning=warning)
+                    reviewer=reviewer, agent=agent, lenses=lenses, warning=warning, file_budget=file_budget)
+
+    def _file_budget(self, base, paths):
+        """Policy `file_budget_bytes`: the run's changed text files now over the budget and larger than at `base` (a
+        renamed file compares with its old path), and the waived ones with their reasons. None when no budget is set.
+        Sizes come from stat and `git ls-tree -l`; only the first 8000 bytes are read, to skip binary files."""
+        budget = self.policy.get('file_budget_bytes')
+        if budget is None:
+            return None
+        waivers = self.policy.get('file_budget_waivers', {})
+        base_sizes = {}
+        for row in self._git('ls-tree', '-r', '-l', '-z', base).split(b'\0'):
+            if row:
+                meta, name = row.split(b'\t', 1)
+                size = meta.split()[-1]
+                base_sizes[os.fsdecode(name)] = int(size) if size.isdigit() else 0
+        renamed = {}
+        fields = self._git('diff', '-z', '--name-status', '-M', base, '--').split(b'\0')
+        for i, field in enumerate(fields):
+            if field.startswith(b'R') and i + 2 < len(fields):
+                renamed[os.fsdecode(fields[i + 2])] = os.fsdecode(fields[i + 1])
+        grew, waived = [], []
+        for name in paths:
+            path = self.repo / name
+            if path.is_symlink() or not path.is_file():
+                continue  # deleted, a directory or a link
+            size = path.stat().st_size
+            was = base_sizes.get(renamed.get(name, name), 0)
+            if size <= budget or size <= was:
+                continue
+            with path.open('rb') as handle:
+                if b'\0' in handle.read(8000):
+                    continue  # binary, as git judges it
+            reason = next((r for g, r in waivers.items() if self._glob_regex(g).fullmatch(name)), None)
+            if reason is not None:
+                waived.append(dict(path=name, reason=reason))
+            else:
+                grew.append(dict(path=name, base_bytes=was, bytes=size))
+        return dict(bytes=budget, grew=grew, waived=waived)
 
     def _required_lenses(self, state):
         """Contract item 6: the review categories completion needs. An explicit policy list overrides the derived set;
