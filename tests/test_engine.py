@@ -4125,6 +4125,8 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.last_stop(), 'gate-failing')
         self.assertIn('required gate fixture failed 3 times in a row', self.engine.brief())
+        log = self.engine.status()['gates'][-1]['path']
+        self.assertIn('read its log %s' % log, self.engine.brief())  # the owner gets the path, not a search
 
     def test_hook_stop_never_stops_on_pass_count(self):
         self.arm()

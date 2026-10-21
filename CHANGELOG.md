@@ -7,6 +7,7 @@ Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 - **Pre-PR review:** with policy `file_budget_bytes` set (off by default), `prepr` lists the changed files that grew past it against the run base, and the standards brief carries that list under `## Over file budget`; `file_budget_waivers` maps a glob to a reason.
 - **Parallel work:** at most three worktrees at once; read-only side workers run beside inline work at any size; a medium run escalates once two disjoint units each reach about 600 lines; near the context ceiling the remaining units go to builders; `max_workers` is the owner's device and usage limit.
 - **Worker results:** a short report is re-dispatched once, then recorded as an open gap; a dead worker gets at most two re-dispatches; the first of three or more similar tickets runs alone.
+- **Failing gate:** the brief after a `gate-failing` stop names the gate's last log path.
 - **Skills:** rules from Anthropic's code review posts, pstack and mattpocock/skills for briefs, triage, handoff, design, build, review and critic. Credits are in docs/SKILL-SOURCES.md.
 
 ## 2.10.0 — 2026-10-21

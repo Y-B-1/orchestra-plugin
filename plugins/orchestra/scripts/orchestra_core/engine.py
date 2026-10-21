@@ -2289,7 +2289,9 @@ class Engine:
         needs += ['review and merge pull request ' + url for url in state.get('pull_requests', [])]
         gate = self._failing_gate(state) if reason == 'gate-failing' else None
         if gate:
-            needs.append('required gate %s failed %d times in a row -- read its log, fix the cause, then arm again' % (gate, GATE_FAILURE_LIMIT))
+            log = [g['path'] for g in state['gates'] if g['name'] == gate][-1]
+            needs.append('required gate %s failed %d times in a row -- read its log %s, fix the cause, then arm again'
+                         % (gate, GATE_FAILURE_LIMIT, log))
         if (reason in ('closed', 'complete') and not any(self._is_release(t) for t in tasks.values())
                 and not (auto or {}).get('release')):
             needs.append('ready to release')

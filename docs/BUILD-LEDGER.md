@@ -340,3 +340,32 @@ Source: the owner's audit request (autonomy that seems to stop with no sign on s
 | Packaging | Marketplace entry version removed; icon added (512 px PNG); `claude plugin validate --strict` passes for the plugin and the marketplace with no warning; CI on Claude Code 2.1.306. |
 | TypeScript to Rust | pingdotgg/ts-rust (`tsc-rs`) and Cloudflare's tsrs are type-checker ports. Orchestra type-checks nothing at run time, so neither applies. |
 | Not checked | claude.dev was unreachable from the sandbox (DNS), so its posts were read only through claude.com and secondary summaries. The band was not seen in a live interactive session; Windows and macOS still have no live run. |
+
+## 2.11.0 (2026-10-22)
+
+Source: the owner's handoff (the code review post, a TypeScript check of the mods, pstack and mattpocock/skills gaps, a file budget, a transcript audit with live checks) and an audit of the parallel-work rules.
+
+| Item | Evidence |
+| --- | --- |
+| Code review post | Read at claude.dev. Self-check, fresh-context review, CI, verifier vote and risk-scaled human approval are confirmed. The vote threshold is not stated ("enough" verifiers), and size scaling is an observation (most PRs over 1,000 lines get findings), not a rule. Orchestra already had each layer except the base-branch review-instruction file, which the pre-PR brief now carries. |
+| TypeScript in `hooks/mod/*.ts` | Nothing type-checks it: a type error passes `claude plugin test` and `claude plugin validate --strict`. A check step is an open owner decision. |
+| pstack and mattpocock/skills | pstack unchanged since the last read (88d4751). mattpocock/skills diffed from the three pins to 5beb35b. Rules adopted in Orchestra's words are listed in `docs/SKILL-SOURCES.md` 2.11.0 additions. Not adopted: multi-model arena, interrogate, reflect, automate-me, never-block-on-the-human. |
+| File budget | Policy `file_budget_bytes` (off by default) and `file_budget_waivers`; `prepr` lists the files that grew past it. 13 engine tests. |
+| Transcript audit | Read-only count over local transcripts and run-state directories (no text kept). CLI error rate 13.4 % of 848 calls; the top refusal is a missing `--lease` (11). No session-binding refusal was seen. The `stalled`, `gate-failing`, `parked-only` and `ledger-tampered` stops never occurred in a real run. |
+| Parallel-work rules | The size rules (medium inline, large plan-first) are prose; only the tiny `--helper` check is enforced. Benchmark: n=2 per arm, medium parallel about 14 % slower, large parallel at best 40 % faster. The skills now cap worktrees at three, allow read-only side workers at any size, escalate at about 600 lines per unit and send remaining units to builders near the context ceiling. Engine enforcement is an open owner decision. |
+
+### Live check of the stop paths (2026-10-22, Claude Code 2.1.306)
+
+The real hook entry point (`run-hook.sh <Event> --harness claude`, hook JSON on stdin) ran against a scratch repository with a bare remote and an isolated state root.
+
+| Observed | Result |
+| --- | --- |
+| `stalled` | A worker past `worker_stale_seconds` got one nudge, then the next Stop ended the run as `stalled` |
+| `gate-failing` | Two failing runs of a ledger check continued; the third stopped the run and the brief named the gate |
+| `parked-only` | With only a parked card left, Stop ended the run and the brief listed the card under Needs you |
+| `ledger-tampered` | One appended line in the armed ledger ended the run on the next Stop |
+| Band | `autonomy status` output fed to the band functions gives `stopped: <reason>` for each of the four |
+| Discovery | `claude -p --plugin-dir plugins/orchestra` ran `SessionStart:startup` (exit 0) with the Orchestra context |
+| Fixed | The `gate-failing` brief said "read its log" without the path; it now names the last receipt's log (engine test extended first, red, then green) |
+| Not fixed | With `worker_stale_seconds` under 30 the nudge says "over 0 minutes"; only a test policy hits this |
+| Not checked | The band in a live interactive session; the guard and Stop inside `claude -p` |
