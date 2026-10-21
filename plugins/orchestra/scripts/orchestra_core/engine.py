@@ -2149,14 +2149,27 @@ class Engine:
             auto.pop('report', None)  # clear the report shown from the previous stop
             return dict(was_active=False)
 
+    def _silent_workers(self, state):
+        """Running background cards with no report for longer than `worker_stale_seconds`."""
+        stale_after = self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS)
+        return [t for t in state['tasks'].values() if t['state'] == 'running' and not t.get('inline')
+                and self._clock() - t.get('started_at', self._clock()) > stale_after]
+
     def autonomy_status(self):
+        """Read-only. `running` counts background workers, `silent` names those past `worker_stale_seconds`: the Stop
+        hook that stops a stalled run fires only at the end of a turn, so a session idle on a lost worker is seen here,
+        by the status band, and nowhere else."""
         with self._state(False) as state:
             auto = state['autonomy'] or {}
             parked = [dict(id=t['id'], reason=t.get('parked_reason', ''))
                       for t in state['tasks'].values() if t['state'] == 'parked']
+            silent = self._silent_workers(state)
+            running = sum(1 for t in state['tasks'].values() if t['state'] == 'running' and not t.get('inline'))
             keys = ('passes', 'max_passes', 'stalls', 'max_stalls', 'deadline')
             return dict(active=self._autonomy_on(state), parked=parked, signature=self._signature(state),
                         last_stop_reason=auto.get('last_stop_reason'), pull_requests=auto.get('pull_requests') is True,
+                        running=running, silent=[dict(id=t['id'], minutes=round((self._clock() - t['started_at']) / 60))
+                                                 for t in silent if 'started_at' in t],
                         **{k: auto.get(k) for k in keys})
 
     @staticmethod
@@ -2362,8 +2375,7 @@ class Engine:
         if failing:
             return 'gate-failing', None
         stale_after = self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS)
-        silent = [t for t in tasks if t['state'] == 'running' and not t.get('inline')
-                  and self._clock() - t.get('started_at', self._clock()) > stale_after]
+        silent = self._silent_workers(state)
         running = any(t['state'] == 'running' and not t.get('inline') and t not in silent for t in tasks)
         judged = {i for t in tasks if t['state'] == 'running' for i in t.get('review_of', [])}
         actionable = (any(t['state'] == 'reported' and t['id'] not in judged for t in tasks)

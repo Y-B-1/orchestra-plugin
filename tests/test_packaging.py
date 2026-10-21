@@ -143,9 +143,19 @@ class NativeTests(unittest.TestCase):
             for name in ['plugins/orchestra/plugin.json', 'plugins/orchestra/.claude-plugin/plugin.json']
         }
         market = json.loads((ROOT / '.claude-plugin/marketplace.json').read_text())
-        versions['marketplace'] = next(p['version'] for p in market['plugins'] if p['name'] == 'orchestra')
+        entry = next(p for p in market['plugins'] if p['name'] == 'orchestra')
+        # Claude Code takes the version from plugin.json first; a second copy in the entry can only drift.
+        self.assertNotIn('version', entry)
         self.assertEqual(len(set(versions.values())), 1, versions)
         self.assertEqual(set(versions.values()), {'2.9.0'})
+
+    def test_plugin_has_a_square_icon(self):
+        icon = PLUGIN / '.claude-plugin/icon.png'
+        data = icon.read_bytes()
+        self.assertEqual(data[:8], b'\x89PNG\r\n\x1a\n')
+        width, height = int.from_bytes(data[16:20], 'big'), int.from_bytes(data[20:24], 'big')
+        self.assertEqual(width, height)
+        self.assertTrue(512 <= width <= 2048 and len(data) < 2_000_000)
 
     def test_prepr_reviewer_agents_exist(self):
         sys.path.insert(0, str(PLUGIN / 'scripts'))

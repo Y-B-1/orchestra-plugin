@@ -1572,13 +1572,14 @@ class AutonomyArmTests(AutonomyFixture):
         idle = self.engine.autonomy_status()
         self.assertRegex(idle.pop('signature'), r'^[0-9a-f]{64}$')
         self.assertEqual(idle, dict(active=False, passes=None, max_passes=None, stalls=None,
-                         max_stalls=None, deadline=None, parked=[], last_stop_reason=None, pull_requests=False))
+                         max_stalls=None, deadline=None, parked=[], last_stop_reason=None, pull_requests=False,
+                         running=0, silent=[]))
         self.arm(passes='4')
         self.task('p')
         self.engine.park('main', self.lease, 'p', 'needs a push')
         status = self.engine.autonomy_status()
         self.assertEqual(set(status), {'active', 'passes', 'max_passes', 'stalls', 'max_stalls', 'deadline', 'parked',
-                                       'last_stop_reason', 'signature', 'pull_requests'})
+                                       'last_stop_reason', 'signature', 'pull_requests', 'running', 'silent'})
         self.assertEqual((status['active'], status['max_passes'], status['parked']), (True, 4, [{'id': 'p', 'reason': 'needs a push'}]))
         self.assertNotIn(self.lease, json.dumps(status))
 
@@ -3984,6 +3985,21 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.assertIn('silent for over 60 minutes', message)
         self.assertIsNone(self.engine.hook_stop())  # nothing changed since the nudge: stop and brief
         self.assertEqual(self.last_stop(), 'stalled')
+
+    def test_status_names_running_workers_and_a_silent_one_before_any_stop_event(self):
+        # The Stop hook never fires while the session idles on a lost worker, so the status read the band polls
+        # has to say it: running counts background cards, silent names those past the limit with their minutes.
+        self.arm(deadline=iso(T0 + 20000))
+        self.worker_running('busy')
+        status = self.engine.autonomy_status()
+        self.assertEqual((status['running'], status['silent']), (1, []))
+        self.now[0] = T0 + 3700
+        status = self.engine.autonomy_status()
+        self.assertEqual((status['running'], status['silent']), (1, [{'id': 'busy', 'minutes': 62}]))
+        self.assertTrue(status['active'])  # read-only: no stop, no state write
+        before = self.engine.state_path.read_bytes()
+        self.engine.autonomy_status()
+        self.assertEqual(before, self.engine.state_path.read_bytes())
 
     def test_a_card_requeued_by_a_new_session_loses_its_start_time(self):
         self.arm(deadline=iso(T0 + 20000))
