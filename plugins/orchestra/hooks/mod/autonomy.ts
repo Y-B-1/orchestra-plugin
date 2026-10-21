@@ -122,7 +122,8 @@ function apply(auto: AutonomyState, status: Json): { band: string | undefined; s
   }
   const stopped = auto.active;
   auto.active = false;
-  if (stopped) auto.stopText = stopBand(status);
+  // A disarm through the CLI is the owner's own act, like /orchestra-autonomy off: it clears the band.
+  if (stopped) auto.stopText = status['last_stop_reason'] === 'disarmed' ? undefined : stopBand(status);
   return { band: auto.stopText, stopped };
 }
 

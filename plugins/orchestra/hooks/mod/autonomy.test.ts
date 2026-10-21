@@ -382,3 +382,22 @@ test('autonomy: a stop reason from an earlier session is not shown at startup, a
   await run($ as never, 'on');
   expect(s.bands.at(-1)).toBeUndefined();
 });
+
+test('autonomy: a disarm through the CLI, seen by the tick, clears the band instead of keeping a stop band', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on);
+  const table: Record<string, { exitCode: number; stdout: string }> = {
+    arm: { exitCode: 0, stdout: JSON.stringify({ active: true, ledger: '/l', preconditions: {} }) },
+    status: { exitCode: 0, stdout: JSON.stringify(ACTIVE) },
+  };
+  answers(r, table);
+  await $.session.start(start);
+  await run($ as never, 'on');
+  await run($ as never, 'status');
+  expect(s.bands.at(-1)).toContain('pass 2');
+  table['status'] = { exitCode: 0, stdout: JSON.stringify({ ...STOPPED, last_stop_reason: 'disarmed' }) };
+  await r.clock.advance(35000);
+  expect(s.bands.at(-1)).toBeUndefined();
+  await run($ as never, 'status');
+  expect(s.bands.at(-1)).toBeUndefined();
+});

@@ -1,3 +1,4 @@
+Source: ideas: dzhng/skills ratchet-files (idea level), Claude Code Review documentation (idea level); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-review/references/standards.md
 
 # Code reviewer: standards lens
