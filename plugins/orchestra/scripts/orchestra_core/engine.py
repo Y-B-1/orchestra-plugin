@@ -50,6 +50,7 @@ REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
+PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop loop gives up as `stalled`
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
 GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which an unattended run stops
 LARGE_FILE_BYTES = 64 * 1024 * 1024  # Files over this are bound by size, mtime and sampled content, not read whole
@@ -1109,9 +1110,9 @@ class Engine:
     def interrupt(self, actor, lease):
         with self._state() as state:
             self._lease(state, actor, lease)
+            self._end_run(state, 'interrupted')
             state['session']['active'] = False
             state['permits'] = []
-            self._write_brief(state, 'interrupted')
             state['autonomy'] = self._kept_autonomy(state)
 
     def interrupt_active(self):
@@ -1122,11 +1123,20 @@ class Engine:
         with self._state() as state:
             if not (state['session'] and state['session']['active']):
                 return False
+            self._end_run(state, 'interrupted')
             state['session']['active'] = False
             state['permits'] = []
-            self._write_brief(state, 'interrupted')
             state['autonomy'] = self._kept_autonomy(state)
             return True
+
+    def _end_run(self, state, reason):
+        """Write the run brief for a session that ends. Active autonomy stops with `reason` instead, so the morning
+        report exists and `start --new-run` stays refused until the owner approves or disarms. Call before the session
+        is marked inactive."""
+        if self._autonomy_on(state):
+            self._stop_autonomy(state, reason)
+        else:
+            self._write_brief(state, reason)
 
     @staticmethod
     def _stopped_report_kept(state):
@@ -1151,10 +1161,10 @@ class Engine:
         with self._state() as state:
             if not self._bound_to(state, session_id):
                 return False
+            self._end_run(state, 'ended')
             state['session'].update(active=False, outcome='ended')
             state['session'].pop('pending_rebind', None)  # harness_session stays as a record
             state['permits'] = []
-            self._write_brief(state, 'ended')
             state['autonomy'] = self._kept_autonomy(state)
             return True
 
@@ -2276,9 +2286,9 @@ class Engine:
         with self._state() as state:
             self._lease(state, actor, lease)
             artifact = self._completion_evidence(state)
+            self._end_run(state, 'finished' if self._autonomy_on(state) else 'closed')
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []
-            self._write_brief(state, 'closed')
             state['autonomy'] = self._kept_autonomy(state)
             return artifact
 
@@ -2410,6 +2420,68 @@ class Engine:
             auto.pop('report', None)  # clear the report shown from the previous stop
             return dict(was_active=False)
 
+    RECEIPT_PR_KEYS = {'order': int, 'number': int, 'repo': str, 'url': str, 'head_ref': str, 'head_sha': str, 'base_ref': str}
+
+    def record_owner_approval(self, prs, excluded, evidence):
+        """Write the owner's receipt for the stopped run and return it. The only writer: the prompt hook calls it in
+        process and no CLI subcommand reaches it. A later call replaces the receipt. Refused while autonomy is active
+        and for a run that never stopped (no kept report and no earlier receipt), so approval never pre-authorizes a
+        run in progress. `prs` are the merge order, bottom of the stack first; `evidence` carries a prompt hash, never
+        the prompt text."""
+        if not (isinstance(prs, list) and all(
+                isinstance(p, dict) and all(type(p.get(k)) is t for k, t in self.RECEIPT_PR_KEYS.items()) for p in prs)):
+            raise EngineError('Approval prs must be a list of pull request entries with order, number, repo, url, head_ref, '
+                              'head_sha and base_ref')
+        if not (isinstance(excluded, list) and all(
+                isinstance(e, dict) and type(e.get('number')) is int and isinstance(e.get('reason'), str) for e in excluded)):
+            raise EngineError('Approval excluded must be a list of entries with number and reason')
+        if not isinstance(evidence, dict):
+            raise EngineError('Approval evidence must be an object')
+        with self._state(activity=False) as state:
+            auto = state['autonomy'] or {}
+            if auto.get('active'):
+                raise EngineError('Approval is refused while autonomy is active')
+            run = state.get('run_id')
+            if run is None or ('report' not in auto and (state.get('approval') or {}).get('run') != run):
+                raise EngineError('Approval is refused: the run never stopped')
+            try:
+                default = self._default_branch(auto)
+            except EngineError:
+                default = None
+            state['approval'] = dict(version=1, run=run, recorded_at=self._clock(), evidence=copy.deepcopy(evidence),
+                                     default_branch=default, prs=copy.deepcopy(prs), excluded=copy.deepcopy(excluded))
+            return copy.deepcopy(state['approval'])
+
+    def stop_stale_autonomy(self, session_id, now=None):
+        """Stop an armed loop nobody is driving; True when this call stopped it. The Stop hook only fires in the
+        running session, so a prompt from another session reaches here first. `deadline` when the ledger deadline has
+        passed. `stale` when the run is bound to another harness session and `state.json` was last written more than
+        `worker_stale_seconds` before `now` (default: the engine clock). A no-op never rewrites `state.json`."""
+        now = self._clock() if now is None else now
+        with self._state(False, block=True) as state:
+            if self._stale_reason(state, session_id, now) is None:
+                return False
+        with self._state(activity=False) as state:
+            reason = self._stale_reason(state, session_id, now)
+            if reason is None:
+                return False
+            self._stop_autonomy(state, reason)
+            return True
+
+    def _stale_reason(self, state, session_id, now):
+        auto = state['autonomy']
+        if not (auto and auto['active']):
+            return None
+        if now >= datetime.fromisoformat(auto['deadline']).timestamp():
+            return 'deadline'
+        if (state['session'] or {}).get('harness_session') == session_id:
+            return None
+        try:
+            written = self.state_path.stat().st_mtime
+        except OSError:
+            return None
+        return 'stale' if now - written > self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS) else None
+
     def _silent_workers(self, state):
         """Running background cards with no report for longer than `worker_stale_seconds`."""
         stale_after = self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS)
@@ -2419,7 +2491,8 @@ class Engine:
     def autonomy_status(self):
         """Read-only. `running` counts background workers, `silent` names those past `worker_stale_seconds`: the Stop
         hook that stops a stalled run fires only at the end of a turn, so a session idle on a lost worker is seen here,
-        by the status band, and nowhere else."""
+        by the status band, and nowhere else. A run that stopped on `gate-failing` (a required gate failed three times
+        in a row) shows it in `last_stop_reason`."""
         with self._state(False) as state:
             auto = state['autonomy'] or {}
             parked = [dict(id=t['id'], reason=t.get('parked_reason', ''))
@@ -2502,12 +2575,14 @@ class Engine:
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
         needs += ['review and merge pull request ' + entry['url'] for entry in self._pull_requests(state)]
+        if reason == 'stalled' and (auto or {}).get('pr_gap'):
+            needs.append('publish the work: ' + auto['pr_gap'])
         gate = self._failing_gate(state) if reason == 'gate-failing' else None
         if gate:
             log = [g['path'] for g in state['gates'] if g['name'] == gate][-1]
             needs.append('required gate %s failed %d times in a row -- read its log %s, fix the cause, then arm again'
                          % (gate, GATE_FAILURE_LIMIT, log))
-        if (reason in ('closed', 'complete') and not any(self._is_release(t) for t in tasks.values())
+        if (reason in ('closed', 'finished', 'complete') and not any(self._is_release(t) for t in tasks.values())
                 and not (auto or {}).get('release')):
             needs.append('ready to release')
         cleared_by = {}
@@ -2629,7 +2704,20 @@ class Engine:
         if self._clock() >= datetime.fromisoformat(auto['deadline']).timestamp():
             return 'deadline', None
         if self._complete(state):
-            return 'complete', None
+            gap = self._publication_gap(state)
+            if gap is None:
+                return 'complete', None
+            passes = auto.get('pr_passes', 0)
+            if passes >= PR_CONTINUATIONS:
+                auto['stalls'] += 1
+                auto['pr_gap'] = gap
+                return 'stalled', None
+            auto.update(pr_passes=passes + 1, accepted=self._accepted(state))
+            auto['passes'] += 1
+            return None, 'Autonomy pass %d: %s; push the branch, open the pull request, then record it with `pr URL`.' % (
+                auto['passes'], gap)
+        auto.pop('pr_passes', None)  # consecutive means no other work came between
+        auto.pop('pr_gap', None)
         parked = any(t['state'] == 'parked' for t in tasks)
         held = (not any(t['state'] == 'parked' and not self._is_release(t) for t in tasks)
                 and any(t['state'] == 'held' and not t.get('repaired_by') and not self._final_receipts(state, t['id'])
@@ -2688,6 +2776,20 @@ class Engine:
         auto['passes'] += 1
         return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
 
+    def _publication_gap(self, state):
+        """Why finished work is not yet published, or None: the branch holds commits beyond the session base and no
+        verified pull request the run opened has the current head."""
+        base = (state['session'] or {}).get('base')
+        try:
+            head = self._git('rev-parse', 'HEAD').decode().strip()
+            ahead = base is None or int(self._git('rev-list', '--count', base + '..HEAD').decode()) > 0
+        except (EngineError, ValueError):
+            return 'the work branch cannot be compared with its base'
+        if not ahead or any(e.get('autonomous') and e.get('verified_at') and e.get('head_sha') == head
+                            for e in self._pull_requests(state)):
+            return None
+        return 'every card is accepted and the checks passed, but the branch holds commits and no verified pull request has head ' + head[:12]
+
     def _failing_gate(self, state):
         """The name of a required gate whose last GATE_FAILURE_LIMIT receipts all failed, else None: an unattended run
         stops instead of repeating it until the deadline."""
@@ -2703,7 +2805,11 @@ class Engine:
 
     def hook_stop(self):
         """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm, an
-        idle run and a stall with no worker running (`stalled`). Caller identifiers do not authenticate."""
+        idle run, a required gate that failed three times in a row (`gate-failing`) and a stall with no worker running
+        (`stalled`). When every worker is silent past `worker_stale_seconds` the turn continues once with a message to
+        park or re-dispatch the lost card, then stops as `stalled`. Finished work counts as `complete` only once a
+        verified pull request has the current head or nothing lies beyond the base; two nudges to push and open it
+        come first. Caller identifiers do not authenticate."""
         with self._state(False) as state:
             if not self._autonomy_on(state):
                 return None  # Read-only unless autonomy is active in a session
