@@ -18,6 +18,7 @@ from orchestra_core.paths import push_url_digest
 from orchestra_core import portable
 from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions, ensure_remote_heads
 
+ROOT = SCRIPTS.parents[2]
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
 STATE_2_4 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.4.json'
 
@@ -2485,6 +2486,17 @@ class FixReviewTests(EngineFixture):
             with self.assertRaisesRegex(EngineError, 'current review findings'):
                 self.engine.accept('main', self.lease, name)
 
+    def test_repair_and_ancestor_wait_for_a_clean_fix_re_review_after_a_later_commit(self):
+        self.blocked_chain()
+        self.git('add', 'B1')
+        self.git('commit', '-qm', 'repair committed')  # the final receipt is now stale
+        for name, message in (('R1', 'fix re-review'), ('B1', 'repair must be accepted first')):
+            with self.assertRaisesRegex(EngineError, message):
+                self.engine.accept('main', self.lease, name)
+        self.reviewed('check', ['R1', 'B1'], repair_check=True)
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
+
     def test_clean_fix_re_review_accepts_the_chain_and_keeps_the_final_review_current(self):
         self.blocked_chain()
         self.engine.accept('main', self.lease, 'B2')
@@ -4090,6 +4102,15 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.assertIsNone(self.engine.hook_stop())  # nothing changed since the nudge: stop and brief
         self.assertEqual(self.last_stop(), 'stalled')
 
+    def test_a_sub_minute_stale_limit_is_worded_in_seconds(self):
+        self.fresh({'worker_stale_seconds': 30})
+        self.arm(deadline=iso(T0 + 20000))
+        self.worker_running('busy')
+        self.now[0] = T0 + 40
+        message = self.engine.hook_stop()
+        self.assertIn('silent for over 30 seconds', message)
+        self.assertNotIn('0 minutes', message)
+
     def test_status_names_running_workers_and_a_silent_one_before_any_stop_event(self):
         # The Stop hook never fires while the session idles on a lost worker, so the status read the band polls
         # has to say it: running counts background cards, silent names those past the limit with their minutes.
@@ -4737,6 +4758,68 @@ class RunHygieneTests(EngineFixture):
         self.assertEqual(task['state'], 'parked')
         self.assertIn('API key', task['parked_reason'])
         self.engine.unpark('main', self.lease, 'a')
+
+    def test_a_status_blocked_first_line_parks_a_card_that_needs_no_self_review(self):
+        self.task('a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'wa')
+        self.engine.report('wa', token, 'STATUS: BLOCKED\nNo credentials for the API.')
+        task = self.engine.status()['tasks']['a']
+        self.assertEqual(task['state'], 'parked')
+        self.assertIn('STATUS: BLOCKED', task['parked_reason'])
+        self.task('b', role='investigator', mode='code')
+        token = self.engine.dispatch('main', self.lease, 'b', 'wb')
+        self.engine.report('wb', token, 'STATUS: BLOCKED')
+        self.assertEqual(self.engine.status()['tasks']['b']['state'], 'parked')
+
+    def test_a_status_blocked_line_below_the_first_does_not_park(self):
+        self.task('a', role='investigator', mode='code')
+        token = self.engine.dispatch('main', self.lease, 'a', 'wa')
+        self.engine.report('wa', token, 'Looked.\nSTATUS: BLOCKED is the marker for a stuck worker.')
+        self.assertEqual(self.engine.status()['tasks']['a']['state'], 'reported')
+
+    def test_max_worktrees_caps_running_non_inline_builder_cards(self):
+        engine = Engine(self.root / 'wt', self.repo, {'schema_version': 1, 'max_worktrees': 2})
+        lease = engine.open_session('main')
+        add = lambda name, **kw: engine.add_task('main', lease, dict(
+            id=name, role='builder', mode='implementation', inputs=['spec'], acceptance=['x'], files=[name],
+            resources=[], dependencies=[], **kw))
+        for name in ('b1', 'b2', 'b3'):
+            add(name)
+        engine.add_task('main', lease, dict(id='inv', role='investigator', mode='code', inputs=['s'], acceptance=['x'],
+                                            files=[], resources=[], dependencies=[]))
+        engine.dispatch('main', lease, 'b1', 'w1')
+        engine.dispatch('main', lease, 'b2', 'w2')
+        with self.assertRaisesRegex(EngineError, 'Worktree cap: 2'):
+            engine.dispatch('main', lease, 'b3', 'w3')
+        engine.dispatch('main', lease, 'inv', 'wi')  # read-only roles do not count
+        engine.start_inline('main', lease, 'b3')  # inline cards do not count
+        self.assertEqual(engine.status()['tasks']['b3']['state'], 'running')
+
+    def test_max_worktrees_defaults_to_three_and_must_be_a_positive_integer(self):
+        for name in ('b1', 'b2', 'b3', 'b4'):
+            self.task(name)
+        for name in ('b1', 'b2', 'b3'):
+            self.engine.dispatch('main', self.lease, name, 'w' + name)
+        with self.assertRaisesRegex(EngineError, 'Worktree cap: 3'):
+            self.engine.dispatch('main', self.lease, 'b4', 'wb4')
+        for value in (0, -1, True, 1.5, '3'):
+            with self.assertRaisesRegex(EngineError, 'max_worktrees must be a positive integer'):
+                Engine(self.root / 'bad', self.repo, {'max_worktrees': value})
+        default = json.loads((ROOT / 'plugins/orchestra/config/policy.default.json').read_text())
+        self.assertEqual(default['max_worktrees'], 3)
+
+    def test_start_refuses_an_unknown_policy_key_by_name(self):
+        engine = Engine(self.root / 'typo', self.repo, {'schema_version': 1, 'file_budget_byte': 5000})
+        with self.assertRaisesRegex(EngineError, 'Unknown policy key: file_budget_byte'):
+            engine.open_session('main', size='medium')
+        with self.assertRaisesRegex(EngineError, 'Unknown policy key: file_budget_byte'):
+            engine._check_start('medium', None, False)
+
+    def test_start_accepts_every_key_of_the_older_schema(self):
+        old = {'schema_version': 1, 'required_review_categories': ['correctness'], 'worker_stale_seconds': 60,
+               'file_budget_bytes': 5000, 'file_budget_waivers': {}, 'check_commands': {}, 'release_timeout_seconds': 5,
+               **json.loads((ROOT / 'plugins/orchestra/config/policy.default.json').read_text())}
+        Engine(self.root / 'old', self.repo, old).open_session('main', size='medium')
 
     def test_a_lost_lease_is_taken_back_by_the_owning_session_only(self):
         engine, lease = self.fresh(harness_session='H1')

@@ -24,7 +24,7 @@ Accept first: the lens cards, investigator cards and every acceptable chain. A h
 
 Add one Opus repair card per chain with a current attributed finding, then one fix re-review of the fix diff (references/repair-rounds.md). After a CLEAN fix re-review, the pre-PR review stays current when every file changed since it belongs to a repair the fix re-review covered. Otherwise re-gate and review again. A BLOCKED chain is held for the owner.
 
-Notes never start a repair. Add every lens card, let all report, then record: a receipt recorded before a later card of its set is added is stale for coverage.
+Notes never start a repair. Confirmed standards or cleanliness findings that are not defects go to one cleanup card (builder cleanup mode) after the repairs, with the finding ids in its brief. Add every lens card, let all report, then record: a receipt recorded before a later card of its set is added is stale for coverage.
 
 ## Specialists
 

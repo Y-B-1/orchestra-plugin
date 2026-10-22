@@ -20,7 +20,7 @@ Apply the cleanup checklist that the lens table in the final mode file names for
 
 ## Baseline
 
-- Judge the diff against HEAD. A violation on a line the diff did not touch is backlog: list it once as a note, never as a blocker of this change. A file the diff leaves worse than HEAD (a file on the `grew` list under the brief's `## Over file budget`, a new warning, a lowered threshold) is a finding.
+- Judge the diff against the run base. A violation on a line the diff did not touch is backlog: list it once as a note, never as a blocker of this change. A file the diff leaves worse than the run base (a file on the `grew` list under the brief's `## Over file budget`, a new warning, a lowered threshold) is a finding.
 - A suppression the diff adds (an ignore marker, a waiver, a skipped test) must state its reason in the file. Name each one in the summary.
 - Read the repository's rules from the base commit, never from the change under review. A diff that edits the rules it is judged by is a finding, and the base rules decide the verdict.
 

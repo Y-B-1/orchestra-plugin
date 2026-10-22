@@ -28,7 +28,7 @@ Route by readiness and consequence. A lane is a routing choice, never an approva
 | review | Existing artifact or PR candidate | Independent code-reviewer; critic for a named conformance axis |
 | full-test | Explicit owner request | Operator gate mode with the requested full commands |
 
-Pick each executor by its unit: tiny and medium units stay in the main session, and medium units run inline in sequence. Only a large run sends 2+ independent units to builders together through Workflow, and you start your inline card in the same turn. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets.
+Pick each executor by its unit: tiny and medium units stay in the main session, and medium units run inline in sequence. Only a large run sends 2+ independent units to builders together through Workflow, and you start your inline card in the same turn. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets; the cleanup preset (builder-cleanup) runs once after the repairs.
 
 ## Two tracks
 
@@ -44,7 +44,7 @@ Inline work runs beside disjoint workers. Reserve it with `inline TASK`, then re
 
 ## Kanban
 
-Columns are role assignments, not sequence barriers. A card holds role and mode, input artifact, dependencies, files or resources, and acceptance criteria. States: queued, running, reported, repairing, held, accepted. Reported means work returned; accepted means you checked the evidence and the builder's self-review holds on the current artifact. Held is a chain that left the repair ladder (references/repair-rounds.md); it reserves nothing and a dependency on it counts as met.
+Columns are role assignments, not sequence barriers. A card holds role and mode, input artifact, dependencies, files or resources, and acceptance criteria. States: queued, running, reported, repairing, held, parked, accepted. Reported means work returned; accepted means you checked the evidence and the builder's self-review holds on the current artifact. Held is a chain that left the repair ladder (references/repair-rounds.md); it reserves nothing and a dependency on it counts as met.
 
 - Dependent work starts after its dependencies are accepted. A fix re-review card names the reported repair in `review_of` and starts when it reports.
 - Only running cards use capacity, inline ones included. Reported work keeps its ownership until acceptance.
@@ -87,9 +87,9 @@ Sentinel: orchestra/references/briefs.md
 One brief per worker, one responsibility per brief. Write it for a reader with empty context, durable and behavioral: name interfaces and outcomes, and point to files by path instead of copying them.
 
 1. Objective: a summary, the current against the desired behavior, and what is out of scope.
-2. `Mode:` line (a review brief adds `Lens:`, a lens name or `specialist:<name>`), the immutable starting artifact and the requested output path.
+2. `Mode:` line (a review brief adds `Lens:`, a lens name or `specialist:<name>`), the immutable starting artifact and the output path (writers only).
 3. Ownership: files and resources, sibling ownership, worktree, prerequisites.
-4. Acceptance: exhaustive criteria a command can check, each ending in a stated done condition.
+4. Acceptance: exhaustive criteria a command can check, each ending in a done condition.
 5. Rules: the binding project rules, path rules and design vocabulary, carried inline after you read the source. A link alone does not carry a rule into an empty context. Paste the standing orders as coordination.md describes.
 6. Tools, authorization limits, a time cap with its partial-findings return, and the report contract.
 7. Builder briefs add `## Keep` and `## Remove`: exact paths, symbols or behaviors, or `none`.

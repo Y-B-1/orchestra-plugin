@@ -20,7 +20,7 @@ Route by readiness and consequence. A lane is a routing choice, never an approva
 | review | Existing artifact or PR candidate | Independent code-reviewer; critic for a named conformance axis |
 | full-test | Explicit owner request | Operator gate mode with the requested full commands |
 
-Pick each executor by its unit: tiny and medium units stay in the main session, and medium units run inline in sequence. Only a large run sends 2+ independent units to builders together through Workflow, and you start your inline card in the same turn. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets.
+Pick each executor by its unit: tiny and medium units stay in the main session, and medium units run inline in sequence. Only a large run sends 2+ independent units to builders together through Workflow, and you start your inline card in the same turn. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets; the cleanup preset (builder-cleanup) runs once after the repairs.
 
 ## Two tracks
 
@@ -36,7 +36,7 @@ Inline work runs beside disjoint workers. Reserve it with `inline TASK`, then re
 
 ## Kanban
 
-Columns are role assignments, not sequence barriers. A card holds role and mode, input artifact, dependencies, files or resources, and acceptance criteria. States: queued, running, reported, repairing, held, accepted. Reported means work returned; accepted means you checked the evidence and the builder's self-review holds on the current artifact. Held is a chain that left the repair ladder (references/repair-rounds.md); it reserves nothing and a dependency on it counts as met.
+Columns are role assignments, not sequence barriers. A card holds role and mode, input artifact, dependencies, files or resources, and acceptance criteria. States: queued, running, reported, repairing, held, parked, accepted. Reported means work returned; accepted means you checked the evidence and the builder's self-review holds on the current artifact. Held is a chain that left the repair ladder (references/repair-rounds.md); it reserves nothing and a dependency on it counts as met.
 
 - Dependent work starts after its dependencies are accepted. A fix re-review card names the reported repair in `review_of` and starts when it reports.
 - Only running cards use capacity, inline ones included. Reported work keeps its ownership until acceptance.

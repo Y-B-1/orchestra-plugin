@@ -24,7 +24,7 @@ You cannot talk to the user. The coordinator asks and relays the answers. Make t
 
 ## Glossary first
 
-Define the domain terms before competing names spread. Read the project glossary first. The brief names its file; the user's projects use `CONTEXT.md`.
+Define the domain terms before competing names spread. Read the project glossary first. The brief names its file; use `CONTEXT.md` when the project has one.
 
 - Challenge each term in the request against the glossary. When one conflicts, name both meanings and ask which applies.
 - Replace a vague or overloaded word with one precise canonical term. List the rejected words as avoided names.

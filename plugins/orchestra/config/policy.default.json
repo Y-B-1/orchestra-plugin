@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "max_workers": 20,
+  "max_worktrees": 3,
   "required_checks": [],
   "sensitive_paths": ["**/auth/**", "**/security/**", "**/*secret*", "**/hooks/**", "**/guard*", "**/migrations/**", ".github/**"],
   "standards_min_lines": 200,
