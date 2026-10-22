@@ -519,6 +519,7 @@ class AutonomyIntegration(unittest.TestCase):
 
     def setUp(self):
         HarnessSessionIntegration.setUp(self)
+        subprocess.run(['git','-C',str(self.repo),'switch','-qc','work'],check=True,capture_output=True)  # arm refuses on the default branch
         self.lease=self.cli('start')['lease']
 
     def test_arm_needs_no_lease_writes_the_template_then_arms_and_reports_preconditions(self):
@@ -576,7 +577,8 @@ class AutonomyIntegration(unittest.TestCase):
 
     def test_cli_pr_records_the_pull_request_for_the_brief(self):
         url='https://example.invalid/sandbox/pull/1'
-        self.assertEqual(self.cli('--lease',self.lease,'pr',url),{'pull_requests':[url]})
+        recorded=self.cli('--lease',self.lease,'pr',url)['pull_requests']  # gh cannot see the sandbox URL: recorded unverified
+        self.assertEqual([(e['url'],e['verified_at'],e['autonomous'],e['tasks']) for e in recorded],[(url,None,False,[])])
         self.assertIn('http(s) URL',self.cli('--lease',self.lease,'pr','nope',expected=2))
         self.cli('pr',url,expected=2)  # the lease is required
         self.cli('--lease',self.lease,'interrupt')
