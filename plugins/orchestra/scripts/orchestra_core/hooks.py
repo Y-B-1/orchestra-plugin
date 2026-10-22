@@ -17,7 +17,7 @@ import subprocess
 import time
 
 from . import portable
-from .approval import raw_unattended
+from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
 from .guards import RULES, Decision, _command_words, _segments, classify_command, guard_digest, runs_test_suite
 
 _PROTECTED = RULES['protected']
@@ -25,6 +25,7 @@ _MARKER = RULES['marker']
 _MOD_TOOLS = {'Bash', 'Edit', 'Write', 'MultiEdit'}  # The mod guards only these; any other tool needs Python.
 _EDIT_TOOLS = set(RULES['tools']['edit'])
 _SCHEDULERS = set(RULES['tools']['scheduler'])
+_APPROVAL_TEXT_TOOLS = _SCHEDULERS | {'SendMessage'}  # a call to one of these must never carry the approval word alone
 _SHELL_TOOLS = set(RULES['tools']['shell'])
 _REBIND_SOURCES = ('clear', 'resume', 'fork')
 STOP_LOCK_BUDGET = 8.0  # SPEC 5.16 item 4: seconds from hook start that a busy-state Stop waits for the lock
@@ -315,6 +316,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     name, data = payload.get('tool_name'), payload.get('tool_input')
     if not isinstance(name, str) or not name or not isinstance(data, dict):
         return _deny('Malformed tool payload', True)
+    if name in _APPROVAL_TEXT_TOOLS and _carries_approval_text(data):
+        return _deny('A message or scheduled prompt that is only the approval word could record the owner\'s approval; '
+                     'the owner types it in their own session')
     role = os.environ.get('ORCHESTRA_ROLE', 'main')  # Advisory, caller-controlled marker.
     if harness == 'claude' and isinstance(payload.get('agent_id'), str) and payload['agent_id']:
         role = 'subagent'  # Claude Code sets agent_id only for calls made inside a subagent.
@@ -395,6 +399,11 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     if klass in {'release', 'release-multi', 'boundary'}:
         if missing_cwd:
             return _deny(MISSING_CWD)
+        merged = _merge_gate(command, cwd, state_dir, engine)
+        if merged is not None:
+            if merged[0] == 'allow':
+                return HookResult({})  # final in every mode: the receipt path never asks and the plane never reaches it
+            return _deny(('Autonomy is active: ' if auto_on else UNATTENDED_LOCKED + ' ' if unattended else '') + merged[1])
         if busy and mode == 'protect':
             return _deny(BUSY)  # Row 42: normal needs no engine state; autonomy forces protect
     if role == 'subagent' and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES) and runs_test_suite(command):
@@ -459,6 +468,35 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             return _deny('Release denied: ' + problem)
         return _ask('Orchestra run active: approve this release action? No current release permit covers it: ' + problem)
     return HookResult({})  # allow, boundary (autonomy off) and unarmed release classes
+
+
+def _carries_approval_text(value, depth=0):
+    """True when any string inside a tool input (a nested value, or a JSON string holding one) is only the approval word."""
+    if isinstance(value, str):
+        if APPROVAL_PROMPT.fullmatch(value):
+            return True
+        if depth < 3 and value.lstrip()[:1] in ('{', '['):
+            try:
+                return _carries_approval_text(json.loads(value), depth + 1)
+            except ValueError:
+                return False
+        return False
+    if depth > 6:
+        return False
+    if isinstance(value, dict):
+        return any(_carries_approval_text(v, depth + 1) for v in value.values())
+    if isinstance(value, list):
+        return any(_carries_approval_text(v, depth + 1) for v in value)
+    return False
+
+
+def _merge_gate(command, cwd, state_dir, engine):
+    """The merge guard (approval.py) for a merge-looking command: None when it does not gate, else ('allow', '') or
+    ('deny', reason). It reads raw state and asks gh; it writes nothing."""
+    directory = state_dir if state_dir is not None else getattr(engine, 'state_dir', None)
+    if not isinstance(directory, (str, os.PathLike)) or cwd is None or not MERGE_SEGMENT.search(command):
+        return None
+    return merge_decision(command, cwd, directory, _toplevel(cwd))
 
 
 def _toplevel(cwd):
@@ -1192,7 +1230,7 @@ def main(argv=None):
     except Exception as exc:
         name = _CRASH_TOOL['name']
         if event == 'PreToolUse' and (name is None or isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
-                                                  or name in {'Agent', 'Task'} or name in _SCHEDULERS)):
+                                                  or name in {'Agent', 'Task'} or name in _APPROVAL_TEXT_TOOLS)):
             reason = 'Orchestra guard could not check this call (%s: %s); report it to the plugin owner' % (type(exc).__name__, exc)
             print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                                                      'permissionDecisionReason': reason}}))
@@ -1202,10 +1240,24 @@ def main(argv=None):
         return 0
 
 
+def _prompt_submit(payload):
+    """UserPromptSubmit never blocks a prompt: any failure prints an empty answer and exits 0."""
+    reply = {}
+    try:
+        if isinstance(payload, dict) and isinstance(payload.get('cwd'), str) and payload['cwd']:
+            from .prompt_approval import handle_prompt
+            repo, state_dir = _run_location(payload['cwd'])
+            reply = handle_prompt(payload, state_dir, repo)
+    except Exception:
+        reply = {}
+    print(json.dumps(reply))
+    return 0
+
+
 def _main(argv=None):
     started = time.monotonic()
     parser = argparse.ArgumentParser()
-    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd'])
+    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit'])
     parser.add_argument('--harness', choices=['claude'], default='claude')
     parser.add_argument('--from-mod', action='store_true')
     args = parser.parse_args(argv)
@@ -1215,6 +1267,8 @@ def _main(argv=None):
         payload = None
     if isinstance(payload, dict) and isinstance(payload.get('tool_name'), str):
         _CRASH_TOOL['name'] = payload['tool_name']
+    if args.event == 'UserPromptSubmit':
+        return _prompt_submit(payload)
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
             and isinstance(payload, dict) and isinstance(payload.get('tool_name'), str)
             and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
