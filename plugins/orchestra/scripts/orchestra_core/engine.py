@@ -69,6 +69,12 @@ DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
 DEFAULT_2_3 = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
                    gate_timeout_seconds=300, secret_scan=dict(required=False, argv=[]),
                    release=dict(enabled=False, remote=None, target=None, argv=[]))
+MAX_WORKTREES = 3  # Running builder cards that are not inline; policy.max_worktrees overrides
+# Every key the engine reads or still loads from the older schema. `start` refuses any other, so a typo cannot turn a
+# setting off in silence.
+POLICY_KEYS = frozenset(DEFAULT) | frozenset(DEFAULT_2_3) | {
+    'schema_version', 'max_worktrees', 'reserved_ports', 'denied_tools', 'worker_stale_seconds', 'file_budget_bytes', 'file_budget_waivers', 'check_commands',
+    'release_timeout_seconds'}
 CONTRACT_HASH_2_3 = '7e12cdf268d85df0aac178c92f1577a3ce2ffbf686fbc536204b4677dfe3a942'
 
 
@@ -334,6 +340,9 @@ class Engine:
             legacy.update(copy.deepcopy(policy))
         if isinstance(self.policy['max_workers'], bool) or not isinstance(self.policy['max_workers'], int) or self.policy['max_workers'] < 1:
             raise EngineError('Invalid worker capacity')
+        worktrees = self.policy.get('max_worktrees', MAX_WORKTREES)
+        if isinstance(worktrees, bool) or not isinstance(worktrees, int) or worktrees < 1:
+            raise EngineError('max_worktrees must be a positive integer')
         timeout = self.policy['gate_timeout_seconds']
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise EngineError('Gate timeout must be positive and finite')
@@ -955,14 +964,19 @@ class Engine:
     def _asks_ok(asks):
         return type(asks) is int and asks >= 1
 
-    @classmethod
-    def _check_start(cls, size, asks, owner_request):
+    def _check_policy_keys(self):
+        unknown = sorted(set(self.policy) - POLICY_KEYS)
+        if unknown:
+            raise EngineError('Unknown policy key: ' + ', '.join(unknown))
+
+    def _check_start(self, size, asks, owner_request):
         """Contract item 2: what a new run must state. The CLI runs it before archiving an ended run."""
+        self._check_policy_keys()
         if size is None:
             raise EngineError('A new run needs --size tiny, medium or large')
         if size not in SIZES:
             raise EngineError('Size must be tiny, medium or large')
-        if asks is not None and not cls._asks_ok(asks):
+        if asks is not None and not self._asks_ok(asks):
             raise EngineError(ASKS_ERROR)
         if size == 'large' and not owner_request:
             raise EngineError('A new run starts at tiny or medium; escalate with route --size large --reason TEXT, '
@@ -1003,6 +1017,8 @@ class Engine:
             if prior is not None and (size is not None or asks is not None or owner_request):
                 raise EngineError('--size, --asks and --owner-request apply to a new run; use start --new-run, or route --size '
                                   'to change the tier')
+            if prior is None:
+                self._check_policy_keys()
             if prior is None and items is None and (require_size or size is not None or asks is not None or owner_request):
                 self._check_start(size, asks, owner_request)
             state['session'] = dict(actor=actor, lease=lease, active=True)
@@ -1491,6 +1507,11 @@ class Engine:
                 self._check_route(state, task, inline, helper)
             if task and task['role'] == 'builder' and task['mode'] == 'repair':
                 self._check_accept_before_repair(state, task)
+            if (task and task['role'] == 'builder' and not inline and sum(
+                    t['role'] == 'builder' and t['state'] == 'running' and not t.get('inline')
+                    for t in state['tasks'].values()) >= self.policy.get('max_worktrees', MAX_WORKTREES)):
+                raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report'
+                                  % self.policy.get('max_worktrees', MAX_WORKTREES))
             if task_id not in self._ready(state):
                 raise EngineError('Task is not ready or capacity is exhausted')
             self._check_contract(state['tasks'][task_id])
@@ -1555,7 +1576,10 @@ class Engine:
             if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
                 raise EngineError('A review covers this report; route a change through a repair card')
             self._lease(state, state['session']['actor'], task['lease'])
-            blocked = next((line[len('BLOCKED:'):].strip() for line in report.splitlines() if line.startswith('BLOCKED:')), '')
+            lines = report.splitlines()
+            blocked = next((line[len('BLOCKED:'):].strip() for line in lines if line.startswith('BLOCKED:')), '')
+            if not blocked and lines and lines[0].startswith('STATUS: BLOCKED'):
+                blocked = lines[0][len('STATUS: BLOCKED'):].strip() or 'worker reported STATUS: BLOCKED'
             if blocked and not replacing:
                 # A worker that cannot do the card says so instead of faking a self-review: the card is parked with the
                 # reason, and the coordinator decides (unpark with a changed card, or cancel it).
@@ -1826,6 +1850,22 @@ class Engine:
             raise EngineError('Current ' + kind + ' review evidence is missing or altered')
         return verdicts
 
+    def _fix_rechecked(self, state, cache, task):
+        """A repair, or an ancestor under repair, that a final review blamed (current or stale) waits for a CLEAN review
+        of the chain's tip repair at the current artifact: a fix re-review (`repair_check: true`) or a later final review."""
+        if task['state'] == 'held':
+            return True  # the chain left the repair ladder; a clean review of it accepts it
+        tip, chain = task, [task['id']]
+        while tip.get('repaired_by'):
+            tip = state['tasks'][tip['repaired_by']]
+            chain.append(tip['id'])
+        chain += [t['id'] for t in self._walk(state['tasks'], tip, 'repair_of')]
+        reviews = state['reviews'][task.get('review_since', 0):]
+        if not any(r['final'] and any(self._task_findings(r, i) for i in chain) for r in reviews):
+            return True
+        return any((r.get('repair_check') or r['final']) and not r['findings'] and tip['id'] in r['tasks'] and self._intact(r)
+                   and self._same(r['artifact'], self._artifact_cached(cache, r.get('scope'))) for r in reviews)
+
     def _accept_refusal(self, state, cache, task_id):
         """Why `accept` would refuse this card now, or None when every accept check passes."""
         task = state['tasks'].get(task_id)
@@ -1838,6 +1878,9 @@ class Engine:
             return 'Task has current review findings'
         if task.get('repaired_by') and state['tasks'][task['repaired_by']]['state'] != 'accepted':
             return 'Task repair must be accepted first'
+        if (task['role'] == 'builder' and (task['mode'] == 'repair' or task.get('repaired_by'))
+                and not self._fix_rechecked(state, cache, task)):
+            return 'A repair needs a clean fix re-review at the current artifact before accept'
         if task['role'] == 'builder':
             review = task.get('self_review')
             if review is None:
@@ -2438,9 +2481,10 @@ class Engine:
         if silent and not (running or actionable or held or final_open or final_owed):
             auto['accepted'] = self._accepted(state)
             names = ', '.join(t['id'] for t in silent)
-            message = ('the worker for %s has been silent for over %d minutes and may be gone: park the card with `park CARD '
+            span = '%d minutes' % round(stale_after / 60) if stale_after >= 60 else '%d seconds' % round(stale_after)
+            message = ('the worker for %s has been silent for over %s and may be gone: park the card with `park CARD '
                        '--reason lost-worker`, `unpark` it and dispatch it again, or wait if it is a long task.'
-                       % (names, round(stale_after / 60)))
+                       % (names, span))
             signature = self._signature(state)
             if signature == auto.get('signature'):
                 auto['stalls'] += 1

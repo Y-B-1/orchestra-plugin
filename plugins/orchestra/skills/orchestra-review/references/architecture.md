@@ -3,7 +3,7 @@ Sentinel: orchestra-review/references/architecture.md
 
 # Code reviewer: architecture lens
 
-Report findings only. Changes belong to the cleanup card, not to you.
+Report findings only. Changes belong to the cleanup card the coordinator adds after the repairs, not to you.
 
 ## Placement
 

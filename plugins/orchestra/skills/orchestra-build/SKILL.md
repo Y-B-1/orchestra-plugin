@@ -56,7 +56,7 @@ End the report with exactly one line, with non-empty `checks` and `criteria` (ev
 
 The engine refuses a builder report without it, and accepts the card only on a clean line.
 
-Cannot do the card? End with `BLOCKED: <reason>` instead; the card is parked.
+Cannot do the card? Start the report with `STATUS: BLOCKED` or end it with `BLOCKED: <reason>`. The card is parked and needs no SELF_REVIEW.
 
 Builder briefs carry `## Keep` and `## Remove` lists. Every Keep item still holds and every Remove item is gone when you report; name each in the report.
 

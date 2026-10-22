@@ -4,7 +4,7 @@ Sentinel: orchestra-build/references/cleanup.md
 
 # Builder: cleanup mode
 
-Use this mode for the end-of-run lean-and-simplify pass. The brief lists confirmed findings from the architecture, security and cleanliness review lenses and the paths they cite. Edit those paths only. This is not repo hygiene or release work.
+Use this mode for the end-of-run lean-and-simplify pass. The brief lists confirmed findings from the correctness, security and standards review lenses and the paths they cite. Edit those paths only. This is not repo hygiene or release work.
 
 ## Goal
 
