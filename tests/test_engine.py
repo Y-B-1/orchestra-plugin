@@ -1337,6 +1337,8 @@ class AutonomyFixture(EngineFixture):
 
     def setUp(self):
         super().setUp()
+        self.default_branch = self.git('branch', '--show-current')
+        self.git('switch', '-qc', 'work')  # arming refuses on the default branch
         self.now = [T0]
         self.state = self.root / 'state'
         self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
@@ -1594,6 +1596,8 @@ class AutonomyArmTests(AutonomyFixture):
         self.assertNotIn('max_stalls', template)
         self.assertIn('The Release line overrides Push and Engine-gated actions for that remote and target only.', template)
         self.assertEqual(len(AUTONOMY_FIXED), 6)
+        for old in ('no deletion of files, branches or tags', 'push only a feature branch', 'no pull request merge'):
+            self.assertNotIn(old, template)  # the pre-2.11 Merge, Push and Deletion lines are gone
 
 
 class AutonomyLoopTests(AutonomyFixture):
@@ -1605,8 +1609,10 @@ class AutonomyLoopTests(AutonomyFixture):
         with self.assertRaisesRegex(EngineError, 'lease|Lease|coordinator'):
             self.engine.record_pr('main', 'wrong', 'https://example.invalid/pull/1')
         url = 'https://example.invalid/pull/1'
-        self.assertEqual(self.engine.record_pr('main', self.lease, url), dict(pull_requests=[url]))
-        self.assertEqual(self.engine.record_pr('main', self.lease, url + ' '), dict(pull_requests=[url]))  # once
+        with mock.patch('orchestra_core.engine.shutil.which', return_value=None):  # no gh: recorded, unverified
+            first = self.engine.record_pr('main', self.lease, url)
+            self.assertEqual([e['url'] for e in first], [url])
+            self.assertEqual(self.engine.record_pr('main', self.lease, url + ' '), first)  # once
         self.engine.disarm_autonomy()
         self.assertIn('  - review and merge pull request ' + url, self.engine.status()['last_brief']['text'])
 
@@ -4558,14 +4564,15 @@ class AutonomyHarnessTests(AutonomyFixture, HoldFixture):
         self.arm()
         self.assertIs(self.auto()['pull_requests'], True)
         self.assertIs(self.engine.autonomy_status()['pull_requests'], True)
+
+    def test_ledger_legacy_push_line_refused(self):
         legacy = [l for l in AUTONOMY_FIXED if not l.startswith('- Push:')] + ['- Push: no push to any branch.']
-        self.engine.disarm_autonomy()
-        self.arm(boundaries=legacy)
-        self.assertIs(self.auto()['pull_requests'], False)
-        self.assertIs(self.engine.autonomy_status()['pull_requests'], False)
-        self.engine.disarm_autonomy()
-        self.arm(boundaries=list(AUTONOMY_FIXED) + ['- Push: no push to any branch.'])  # the stricter line wins
-        self.assertIs(self.auto()['pull_requests'], False)
+        for boundaries in (legacy, list(AUTONOMY_FIXED) + ['- Push: no push to any branch.']):
+            with self.subTest(boundaries=boundaries):
+                self.ledger(boundaries=boundaries)
+                with self.assertRaisesRegex(EngineError, 'pre-2.11 Approval boundaries'):
+                    self.engine.arm_autonomy()
+                self.assertIsNone(self.auto())
 
     def test_state_armed_before_pull_requests_reads_false(self):
         self.arm()
@@ -4882,3 +4889,524 @@ class RunHygieneTests(EngineFixture):
         self.assertEqual(push_url_digest('https://user:secret@example.invalid/r.git')[:7], 'sha256:')
         self.assertNotIn('secret', push_url_digest('https://user:secret@example.invalid/r.git'))
 
+
+
+GOLDEN_POLICY_2_10 = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
+                          secret_scan=dict(required=False, argv=[]),
+                          release=dict(enabled=False, remote=None, target=None, argv=[]),
+                          sensitive_paths=['**/auth/**', '**/security/**', '**/*secret*', '**/hooks/**', '**/guard*',
+                                           '**/migrations/**', '.github/**'],
+                          standards_min_lines=200)
+GOLDEN_CONTRACT_2_10 = '7b1f34b2bf297e6e95cdd59306a697f5a2b7410f5a84bc71feb7ffe0213439ed'
+GOLDEN_HASH_2_10 = '4b1d85568cf17dffc8adb272d1df95decfaf2a03c18c9176ff17190e4d5fb74d'  # computed at HEAD 8ae926f, before the new keys
+
+
+def run_cli(fixture, *args):
+    """The real CLI against the fixture's repository and state; returns (exit code, stdout, stderr)."""
+    done = subprocess.run([sys.executable, str(SCRIPTS / 'orchestra.py'), '--repo', str(fixture.repo),
+                           '--state', str(fixture.engine.state_dir), *args], capture_output=True, text=True, timeout=60)
+    return done.returncode, done.stdout, done.stderr
+
+
+class GuardPolicyTests(EngineFixture):
+    """The policy keys `guard_mode` and `release_workflows`."""
+
+    def engine_with(self, policy, name='other'):
+        return Engine(self.root / name, self.repo, policy)
+
+    def test_guard_mode_default_normal_protect_accepted_strict_refused(self):
+        self.assertNotIn('guard_mode', self.engine.policy)  # absent means normal; the hook reads the file itself
+        for mode in ('normal', 'protect'):
+            self.assertEqual(self.engine_with(dict(guard_mode=mode)).policy['guard_mode'], mode)
+        for bad in ('strict', 'Protect', '', None, True, ['protect']):
+            with self.subTest(mode=bad), self.assertRaisesRegex(EngineError, 'Invalid guard mode'):
+                self.engine_with(dict(guard_mode=bad))
+
+    def test_guard_mode_change_keeps_policy_hash(self):
+        normal = self.engine_with(dict(guard_mode='normal'), 'a')
+        protect = self.engine_with(dict(guard_mode='protect'), 'b')
+        self.assertEqual(normal.policy_hash, protect.policy_hash)
+        self.assertEqual(self.engine_with(None, 'c').policy_hash, protect.policy_hash)
+        lease = normal.open_session('main')  # a run started under one mode goes on under the other
+        Engine(self.root / 'a', self.repo, dict(guard_mode='protect')).validate_lease('main', lease)
+        self.assertNotEqual(self.engine_with(dict(guard_mode='protect', max_workers=3), 'd').policy_hash, normal.policy_hash)
+
+    def test_release_workflows_validated(self):
+        ok = ['release*', 'publish*']
+        self.assertEqual(self.engine_with(dict(release_workflows=ok)).policy['release_workflows'], ok)
+        self.assertEqual(self.engine_with(dict(release_workflows=[])).policy['release_workflows'], [])
+        for bad in ('release*', [''], [1], ['ok', None], {'a': 'b'}, None):
+            with self.subTest(value=bad), self.assertRaisesRegex(EngineError, 'release_workflows must be a list of globs'):
+                self.engine_with(dict(release_workflows=bad))
+
+    def test_start_accepts_both_new_keys_and_still_refuses_unknown(self):
+        engine = self.engine_with(dict(guard_mode='protect', release_workflows=['deploy*']))
+        self.assertTrue(engine.open_session('main'))
+        for extra in (dict(guard_mode='protect', bogus=1), dict(release_workflow=['x'])):
+            with self.subTest(policy=extra), self.assertRaisesRegex(EngineError, 'Unknown policy key'):
+                self.engine_with(extra, 'third').open_session('main')
+
+    def test_new_policy_keys_not_in_default_and_old_policy_hash_unchanged(self):
+        import orchestra_core.engine as engine_module
+        for key in ('guard_mode', 'release_workflows'):
+            self.assertNotIn(key, engine_module.DEFAULT)
+            self.assertIn(key, engine_module.POLICY_KEYS)
+            self.assertNotIn(key, json.loads((ROOT / 'plugins/orchestra/config/policy.default.json').read_text()))
+        self.assertEqual(self.engine.policy, GOLDEN_POLICY_2_10)
+        modes = engine_module._contracts()[0]
+        with mock.patch.object(engine_module, '_contracts', return_value=(modes, GOLDEN_CONTRACT_2_10)):
+            plain = Engine(self.root / 'golden', self.repo)
+            both = Engine(self.root / 'golden2', self.repo, dict(guard_mode='protect', release_workflows=['x*']))
+        self.assertEqual(plain.policy_hash, GOLDEN_HASH_2_10)  # a policy with neither key hashes as it did before
+        self.assertNotEqual(both.policy_hash, GOLDEN_HASH_2_10)  # release_workflows binds; guard_mode does not
+
+
+class RunIdTests(EngineFixture):
+    """`state['run_id']`: minted for a new run, stable after, archived with it."""
+
+    def run_id(self, engine=None):
+        return (engine or self.engine).status().get('run_id')
+
+    def test_run_id_minted_on_new_run_stable_across_resume_and_recover(self):
+        first = self.run_id()
+        self.assertRegex(first, r'^[0-9a-f]{16}$')
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main', 'S1')  # resume
+        self.assertEqual(self.run_id(), first)
+        self.engine.recover_lease('main', 'S1')
+        self.assertEqual(self.run_id(), first)
+        other = Engine(self.root / 'other', self.repo)
+        other.open_session('main')
+        self.assertNotEqual(self.run_id(other), first)
+
+    def test_run_id_archived_with_new_run(self):
+        first = self.run_id()
+        self.engine.interrupt('main', self.lease)
+        self.assertEqual(run_cli(self, 'start', '--new-run', '--size', 'tiny')[0], 0)
+        archived = [json.loads(p.read_text()) for p in (self.engine.state_dir / 'history').glob('run-*.json')]
+        self.assertEqual([a['state']['run_id'] for a in archived], [first])
+        second = self.run_id()
+        self.assertRegex(second, r'^[0-9a-f]{16}$')
+        self.assertNotEqual(second, first)
+
+    def test_a_malformed_run_id_refuses(self):
+        raw = json.loads(self.engine.state_path.read_text())
+        for bad in ('xyz', 5, '', 'ABCDEF0123456789'):
+            raw['run_id'] = bad
+            self.engine.state_path.write_text(json.dumps(raw))
+            with self.subTest(run_id=bad), self.assertRaisesRegex(EngineError, 'Invalid run state run_id'):
+                self.engine.status()
+
+
+GH_SCRIPT = '''import json, os, sys
+args = sys.argv[1:]
+with open(os.environ['FAKE_GH_LOG'], 'a') as log:
+    log.write(json.dumps(args) + '\\n')
+data = json.load(open(os.environ['FAKE_GH_DATA']))
+if args[:2] != ['pr', 'view'] or len(args) < 3 or args[2] not in data:
+    sys.stderr.write('no pull request found\\n')
+    sys.exit(1)
+print(json.dumps(data[args[2]]))
+'''
+
+
+class FakeGh:
+    """A `gh` on PATH from a temp directory: `gh pr view URL` answers from a JSON file keyed by URL; every call is logged."""
+
+    def __init__(self, root):
+        self.dir = Path(root) / 'fake-gh'
+        self.dir.mkdir()
+        self.data = self.dir / 'data.json'
+        self.log = self.dir / 'calls.log'
+        script = self.dir / 'gh.py'
+        script.write_text(GH_SCRIPT)
+        if os.name == 'nt':
+            (self.dir / 'gh.cmd').write_text('@"%s" "%s" %%*\r\n' % (sys.executable, script))
+        else:
+            wrapper = self.dir / 'gh'
+            wrapper.write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, script))
+            wrapper.chmod(0o755)
+        self.log.write_text('')
+        self.set({})
+
+    def set(self, views):
+        self.data.write_text(json.dumps(views))
+
+    def calls(self):
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def env(self):
+        return mock.patch.dict(os.environ, PATH=str(self.dir) + os.pathsep + os.environ.get('PATH', ''),
+                               FAKE_GH_DATA=str(self.data), FAKE_GH_LOG=str(self.log))
+
+
+class PullRequestFixture(AutonomyFixture, HoldFixture):
+    URL = 'https://github.example/o/r/pull/7'
+
+    def setUp(self):
+        super().setUp()
+        self.git('switch', '-qc', 'feat/x')
+        self.commit('x.txt', 'one')
+        self.gh = FakeGh(self.root)
+        patcher = self.gh.env()
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def commit(self, name, text):
+        (self.repo / name).write_text(text)
+        self.git('add', name)
+        self.git('commit', '-qm', 'change ' + name)
+        return self.git('rev-parse', 'HEAD')
+
+    def view(self, url=None, number=7, **kw):
+        view = dict(number=number, state='OPEN', baseRefName=self.default_branch, headRefName='feat/x',
+                    isCrossRepository=False, headRefOid=self.git('rev-parse', 'refs/heads/feat/x'))
+        view.update(kw)
+        self.gh.set({url or self.URL: view})
+        return view
+
+    def add_view(self, url, **view):
+        views = json.loads(self.gh.data.read_text())
+        views[url] = view
+        self.gh.set(views)
+
+    def prs(self):
+        return self.engine.status().get('pull_requests', [])
+
+    def clean_review_here(self, name):
+        """A clean final review of the work as committed now."""
+        if 'c' not in self.engine.status()['tasks']:
+            self.built('c', files=['c.txt'])
+        return self.reviewed(name, ['c'], final=True)
+
+
+class PullRequestTests(PullRequestFixture):
+    def test_record_pr_stores_object_and_reads_legacy_string(self):
+        legacy = 'https://github.example/o/r/pull/3'
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['pull_requests'] = [legacy]  # a 2.10 state holds bare strings
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertEqual(self.engine.status()['pull_requests'], [legacy])
+        view = self.view()
+        entries = self.engine.record_pr('main', self.lease, self.URL)
+        self.assertEqual(entries[0], dict(url=legacy, autonomous=False, verified_at=None))
+        entry = entries[1]
+        self.assertEqual(set(entry), {'url', 'number', 'repo', 'head_ref', 'head_sha', 'base_ref', 'autonomous', 'tasks',
+                                      'reviewed', 'verified_at', 'recorded_at'})
+        self.assertEqual((entry['url'], entry['number'], entry['repo'], entry['head_ref'], entry['head_sha'], entry['base_ref']),
+                         (self.URL, 7, 'o/r', 'feat/x', view['headRefOid'], self.default_branch))
+        self.assertEqual((entry['autonomous'], entry['tasks'], entry['reviewed']), (False, [], False))
+        self.assertRegex(entry['verified_at'], r'^20\d\d-')
+        self.assertEqual(entries, self.prs())
+        self.engine.interrupt('main', self.lease)
+        brief = self.engine.brief()
+        self.assertIn('review and merge pull request ' + legacy, brief)
+        self.assertIn('review and merge pull request ' + self.URL, brief)
+        self.assertEqual(self.gh.calls(), [['pr', 'view', self.URL, '--json',
+                                           'number,state,baseRefName,headRefName,headRefOid,isCrossRepository']])
+
+    def test_pr_marks_autonomous_and_tasks_when_armed(self):
+        self.arm()
+        self.view()
+        self.task('t1')
+        entry = self.engine.record_pr('main', self.lease, self.URL, tasks=['t1'])[0]
+        self.assertEqual((entry['autonomous'], entry['tasks']), (True, ['t1']))
+        with self.assertRaisesRegex(EngineError, 'Unknown task: nope'):
+            self.engine.record_pr('main', self.lease, self.URL, tasks=['nope'])
+        with self.assertRaisesRegex(EngineError, 'coordinator lease'):
+            self.engine.record_pr('main', 'wrong', self.URL)
+        self.assertEqual(len(self.prs()), 1)
+
+    def test_pr_refuses_non_open_cross_repo_wrong_base_unpushed_head(self):
+        self.git('branch', 'dev')
+        self.arm()  # `dev` exists at arm, so it is not a run branch
+        stale = self.git('rev-parse', 'HEAD~1')
+        cases = [(dict(state='CLOSED'), 'not open'), (dict(state='MERGED'), 'not open'),
+                 (dict(isCrossRepository=True), 'another repository'),
+                 (dict(baseRefName='dev'), 'neither the default branch nor a run branch'),
+                 (dict(baseRefName='nowhere'), 'neither the default branch nor a run branch'),
+                 (dict(headRefOid=stale), 'not the local tip'),
+                 (dict(headRefName='gone'), 'no local branch')]
+        for change, text in cases:
+            with self.subTest(change=change):
+                self.view(**change)
+                with self.assertRaisesRegex(EngineError, text):
+                    self.engine.record_pr('main', self.lease, self.URL)
+                self.assertEqual(self.prs(), [])
+        self.view()
+        self.assertEqual(len(self.engine.record_pr('main', self.lease, self.URL)), 1)
+
+    def test_pr_base_may_be_a_recorded_head_or_a_branch_created_after_arm(self):
+        self.arm()
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.git('switch', '-qc', 'feat/y')
+        self.commit('y.txt', 'y')
+        tip = self.git('rev-parse', 'HEAD')
+        url2, url3 = 'https://github.example/o/r/pull/8', 'https://github.example/o/r/pull/9'
+        self.add_view(url2, number=8, state='OPEN', baseRefName='feat/x', headRefName='feat/y', isCrossRepository=False,
+                      headRefOid=tip)
+        self.assertEqual([e['base_ref'] for e in self.engine.record_pr('main', self.lease, url2)],
+                         [self.default_branch, 'feat/x'])
+        self.git('branch', 'run/z')  # created after arm: a run branch, though no pull request names it yet
+        self.add_view(url3, number=9, state='OPEN', baseRefName='run/z', headRefName='feat/y', isCrossRepository=False,
+                      headRefOid=tip)
+        self.assertEqual(len(self.engine.record_pr('main', self.lease, url3)), 3)
+
+    def test_pr_rerun_refreshes_head_and_reviewed(self):
+        self.view()
+        first = self.engine.record_pr('main', self.lease, self.URL)[0]
+        self.assertFalse(first['reviewed'])
+        self.clean_review_here('r1')
+        self.now[0] += 60
+        second = self.engine.record_pr('main', self.lease, self.URL)
+        self.assertEqual(len(second), 1)
+        self.assertTrue(second[0]['reviewed'])  # a clean review of exactly this head
+        self.assertGreater(second[0]['verified_at'], first['verified_at'])
+        self.assertEqual(second[0]['recorded_at'], first['recorded_at'])
+        tip = self.commit('x.txt', 'two')  # the head moves; the earlier review no longer covers it
+        self.view()
+        self.now[0] += 60
+        third = self.engine.record_pr('main', self.lease, self.URL)[0]
+        self.assertEqual((third['head_sha'], third['reviewed']), (tip, False))
+        self.clean_review_here('r2')
+        self.assertTrue(self.engine.record_pr('main', self.lease, self.URL)[0]['reviewed'])
+
+    def test_pr_review_with_findings_does_not_count(self):
+        self.view()
+        self.built('c', files=['c.txt'])
+        self.reviewed('blocked', ['c'], findings=['f'], task_findings={'c': ['f']}, final=True)
+        self.assertFalse(self.engine.record_pr('main', self.lease, self.URL)[0]['reviewed'])
+
+    def test_pr_gh_missing_records_unverified(self):
+        with mock.patch('orchestra_core.engine.shutil.which', return_value=None):
+            entry = self.engine.record_pr('main', self.lease, self.URL)[0]
+        self.assertEqual((entry['verified_at'], entry['head_sha'], entry['base_ref'], entry['reviewed']),
+                         (None, None, None, False))
+        self.assertEqual((entry['url'], entry['number'], entry['repo']), (self.URL, 7, 'o/r'))
+        other = 'https://github.example/o/r/pull/9'  # gh runs but cannot find the pull request: also unverified
+        self.assertIsNone(self.engine.record_pr('main', self.lease, other)[1]['verified_at'])
+        self.view()  # a later run of the same command verifies the same entry in place
+        entries = self.engine.record_pr('main', self.lease, self.URL)
+        self.assertEqual(len(entries), 2)
+        self.assertIsNotNone(entries[0]['verified_at'])
+
+
+class BaseTests(PullRequestFixture):
+    def stack(self):
+        self.arm()
+        self.task('a')
+        self.task('b', dependencies=['a'])
+        self.task('c', dependencies=['b'])
+
+    def record(self, number, task, head):
+        url = 'https://github.example/o/r/pull/%d' % number
+        self.git('switch', '-q' if self.git('branch', '--list', head) else '-qc', head)
+        self.add_view(url, number=number, state='OPEN', baseRefName=self.default_branch, headRefName=head,
+                      isCrossRepository=False, headRefOid=self.git('rev-parse', 'HEAD'))
+        self.engine.record_pr('main', self.lease, url, tasks=[task])
+        return url
+
+    def test_base_default_when_no_parent(self):
+        self.stack()
+        self.assertEqual(self.engine.base('a'), self.default_branch)
+        self.assertEqual(self.engine.base('c'), self.default_branch)  # no dependency has a pull request
+        with self.assertRaisesRegex(EngineError, 'Unknown task'):
+            self.engine.base('nope')
+
+    def test_base_one_open_parent_head_ref(self):
+        self.stack()
+        url = self.record(7, 'a', 'feat/a')
+        self.assertEqual(self.engine.base('b'), 'feat/a')
+        self.assertEqual(self.engine.base('c'), 'feat/a')  # walks past b, which has none
+        self.add_view(url, number=7, state='MERGED', baseRefName=self.default_branch, headRefName='feat/a',
+                      isCrossRepository=False, headRefOid=self.git('rev-parse', 'HEAD'))
+        self.assertEqual(self.engine.base('b'), self.default_branch)  # a merged parent no longer stacks
+        self.gh.set({})
+        with self.assertRaisesRegex(EngineError, 'Could not read pull request 7'):
+            self.engine.base('b')
+
+    def test_base_two_open_parents_exit_2_deferred(self):
+        self.arm()
+        self.task('a')
+        self.task('b')
+        self.task('c', dependencies=['a', 'b'])
+        self.record(7, 'a', 'feat/a')
+        self.record(8, 'b', 'feat/b')
+        with self.assertRaisesRegex(EngineError, r'^deferred: wait for pull request\(s\) 7, 8 to merge$'):
+            self.engine.base('c')
+        code, out, err = run_cli(self, 'base', 'c')
+        self.assertEqual((code, out), (2, ''))
+        self.assertIn('deferred: wait for pull request(s) 7, 8 to merge', err)
+        self.assertEqual(run_cli(self, 'base', 'a')[:2], (0, self.default_branch + '\n'))  # one plain line
+
+    def test_pr_cli_takes_task_and_prints_the_entries(self):
+        self.arm()
+        self.view()
+        self.task('t1')
+        code, out, err = run_cli(self, '--lease', self.lease, 'pr', self.URL, '--task', 't1')
+        self.assertEqual(code, 0, err)
+        entries = json.loads(out)['pull_requests']
+        self.assertEqual([(e['url'], e['tasks'], e['autonomous']) for e in entries], [(self.URL, ['t1'], True)])
+
+
+class LedgerLineTests(AutonomyFixture):
+    PRE_2_11 = ['- Merge: no pull request merge, and no local merge on the default branch.',
+                '- Push: push only a feature branch for a pull request; never the default branch.',
+                '- Deletion: no deletion of files, branches or tags.']
+    REFILL = (r'Ledger uses the pre-2\.11 Approval boundaries: copy the Merge, Push and Deletion lines from the template, '
+              r'then arm again')
+
+    def test_ledger_new_lines_arm(self):
+        self.assertEqual(AUTONOMY_FIXED[1:4], (
+            '- Merge: no merge into the default or a protected branch; a pull request whose base is a run branch may merge.',
+            '- Push: push any branch except the default, protected branches and tags; never force.',
+            '- Deletion: delete only what the run created: its run branches and worktrees, and files inside a linked '
+            'worktree; never tags, the default branch or other branches.'))
+        self.assertTrue(self.arm()['active'])
+        self.assertIs(self.auto()['pull_requests'], True)
+
+    def test_ledger_old_merge_push_deletion_lines_refused_with_refill_message(self):
+        for index, old in enumerate(self.PRE_2_11):
+            with self.subTest(line=old):
+                boundaries = list(AUTONOMY_FIXED)
+                boundaries[index + 1] = old
+                self.ledger(boundaries=boundaries)
+                with self.assertRaisesRegex(EngineError, self.REFILL):
+                    self.engine.arm_autonomy()
+                self.assertIsNone(self.auto())
+        self.ledger(boundaries=[AUTONOMY_FIXED[0], *self.PRE_2_11, *AUTONOMY_FIXED[4:]])
+        with self.assertRaisesRegex(EngineError, self.REFILL):
+            self.engine.arm_autonomy()
+        self.ledger(boundaries=[l for l in AUTONOMY_FIXED if not l.startswith('- Merge:')])  # a missing line keeps its message
+        with self.assertRaisesRegex(EngineError, 'must keep the fixed line: - Merge:'):
+            self.engine.arm_autonomy()
+
+    def test_ledger_legacy_push_line_refused(self):
+        boundaries = [('- Push: no push to any branch.' if line.startswith('- Push:') else line) for line in AUTONOMY_FIXED]
+        self.ledger(boundaries=boundaries)
+        with self.assertRaisesRegex(EngineError, self.REFILL):
+            self.engine.arm_autonomy()
+        import orchestra_core.engine as engine_module
+        self.assertFalse(hasattr(engine_module, 'AUTONOMY_LEGACY_PUSH'))
+
+
+class ArmRecordsTests(AutonomyFixture):
+    def remote(self, name='origin', default='main', extra=()):
+        bare = self.root / (name + '.git')
+        self.git('init', '-q', '--bare', '-b', default, str(bare))
+        self.git('remote', 'add', name, str(bare))
+        self.git('push', '-q', name, 'HEAD:refs/heads/' + default)
+        for branch in extra:
+            self.git('push', '-q', name, 'HEAD:refs/heads/' + branch)
+        self.git('fetch', '-q', name)
+
+    def test_arm_refuses_on_default_branch_with_switch_hint(self):
+        self.git('switch', '-q', self.default_branch)
+        self.ledger()
+        with self.assertRaisesRegex(EngineError, r'default branch .*git switch -c NAME'):
+            self.engine.arm_autonomy()
+        self.assertIsNone(self.auto())
+        self.git('switch', '-qc', 'develop')  # a remote that reports `develop` as its default makes it the default branch
+        self.remote(default='develop')
+        with self.assertRaisesRegex(EngineError, r'default branch develop.*git switch -c NAME'):
+            self.engine.arm_autonomy()
+        self.assertIsNone(self.auto())
+        self.git('switch', '-q', 'work')
+        self.assertTrue(self.engine.arm_autonomy()['active'])
+        self.engine.disarm_autonomy()
+        self.git('checkout', '-q', '--detach')  # no branch name, nothing to refuse
+        self.assertTrue(self.engine.arm_autonomy()['active'])
+
+    def test_arm_stores_local_branches_at_arm(self):
+        self.git('branch', 'feat/a')
+        self.arm()
+        self.assertEqual(self.auto()['local_branches_at_arm'], sorted([self.default_branch, 'feat/a', 'work']))
+
+    def test_arm_stores_remote_branches_at_arm(self):
+        self.remote(extra=('extra', 'feat/deep'))
+        self.arm()
+        self.assertEqual(self.auto()['remote_branches_at_arm'], ['extra', 'feat/deep', 'main'])  # no HEAD, no remote prefix
+
+    def test_arm_stores_an_empty_remote_list_without_a_remote(self):
+        self.arm()
+        self.assertEqual(self.auto()['remote_branches_at_arm'], [])
+
+    def test_arm_mints_run_id_for_old_state(self):
+        raw = json.loads(self.engine.state_path.read_text())
+        raw.pop('run_id')  # a state written before 2.11
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertIsNone(self.engine.status().get('run_id'))
+        self.arm()
+        minted = self.engine.status()['run_id']
+        self.assertRegex(minted, r'^[0-9a-f]{16}$')
+        self.engine.disarm_autonomy()
+        self.arm()
+        self.assertEqual(self.engine.status()['run_id'], minted)  # arm keeps an id that exists
+
+    def test_arm_clears_previous_receipt(self):
+        self.arm()
+        run = self.engine.status()['run_id']
+        receipt = dict(run=run, prs=[], excluded=[])
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['approval'] = receipt
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.engine.disarm_autonomy()
+        self.assertEqual(self.engine.status()['approval'], receipt)
+        self.arm()
+        status = self.engine.status()
+        self.assertNotIn('approval', status)
+        self.assertEqual(status['approval_history'], [receipt])
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['approval'] = dict(run=run, prs=[1], excluded=[])
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.engine.disarm_autonomy()
+        self.arm()
+        self.assertEqual(len(self.engine.status()['approval_history']), 2)
+
+
+class NewRunRefusalTests(AutonomyFixture):
+    def stopped(self):
+        """Armed, stopped by a disarm (its report is kept) and the session ended."""
+        self.arm()
+        self.engine.disarm_autonomy()
+        self.engine.interrupt('main', self.lease)
+
+    def start(self):
+        return run_cli(self, 'start', '--new-run', '--size', 'tiny')
+
+    def test_new_run_refused_while_report_kept_without_receipt(self):
+        self.stopped()
+        run = self.engine.status()['run_id']
+        code, _, err = self.start()
+        self.assertEqual(code, 2)
+        self.assertIn('New run refused: autonomy kept a report for run %s and the owner has not approved it; type approved '
+                      "in the owner's session, or run orchestra.py autonomy disarm in a terminal" % run, err)
+        self.assertEqual(self.engine.status()['run_id'], run)  # nothing archived
+        self.assertFalse((self.state / 'history').exists())
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['approval'] = dict(run='0' * 16, prs=[], excluded=[])  # a receipt for another run does not count
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertEqual(self.start()[0], 2)
+
+    def test_new_run_allowed_after_receipt_or_disarm(self):
+        self.stopped()
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['approval'] = dict(run=raw['run_id'], prs=[], excluded=[])
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertEqual(self.start()[0], 0)
+        self.assertEqual(len(list((self.state / 'history').glob('run-*.json'))), 1)
+        self.fresh(None)
+        self.stopped()
+        self.assertEqual(self.start()[0], 2)
+        self.assertFalse(self.engine.disarm_autonomy()['was_active'])  # the second disarm pops the kept report
+        self.assertNotIn('report', self.auto() or {})
+        self.assertEqual(self.start()[0], 0)
+
+    def test_new_run_unaffected_for_unreadable_state_and_for_no_report(self):
+        self.engine.interrupt('main', self.lease)
+        self.assertEqual(self.start()[0], 0)  # no autonomy at all
+        self.fresh(None)
+        self.engine.state_path.write_text('{"version": 1, "autonomy": {"report"')  # truncated
+        self.assertEqual(self.start()[0], 0)
+        self.assertEqual(len(list((self.state / 'history').glob('unreadable-*.json'))), 1)

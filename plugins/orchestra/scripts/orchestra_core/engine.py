@@ -74,7 +74,10 @@ MAX_WORKTREES = 3  # Running builder cards that are not inline; policy.max_workt
 # setting off in silence.
 POLICY_KEYS = frozenset(DEFAULT) | frozenset(DEFAULT_2_3) | {
     'schema_version', 'max_worktrees', 'reserved_ports', 'denied_tools', 'worker_stale_seconds', 'file_budget_bytes', 'file_budget_waivers', 'check_commands',
-    'release_timeout_seconds'}
+    'release_timeout_seconds', 'guard_mode', 'release_workflows'}
+GUARD_MODES = ('normal', 'protect')  # `guard_mode` is read live by the hook, so it is left out of the policy hash
+RUN_ID = re.compile(r'[0-9a-f]{16}')
+PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
 CONTRACT_HASH_2_3 = '7e12cdf268d85df0aac178c92f1577a3ce2ffbf686fbc536204b4677dfe3a942'
 
 
@@ -106,13 +109,13 @@ def _contracts():
 AUTONOMY_TEMPLATE = PACKAGE_ROOT / 'config' / 'autonomy-template.md'
 AUTONOMY_FIXED = (
     '- Release: no release, permit or deploy.',
-    '- Merge: no pull request merge, and no local merge on the default branch.',
-    '- Push: push only a feature branch for a pull request; never the default branch.',
-    '- Deletion: no deletion of files, branches or tags.',
+    '- Merge: no merge into the default or a protected branch; a pull request whose base is a run branch may merge.',
+    '- Push: push any branch except the default, protected branches and tags; never force.',
+    '- Deletion: delete only what the run created: its run branches and worktrees, and files inside a linked worktree; '
+    'never tags, the default branch or other branches.',
     '- Credential entry: never enter credentials.',
     '- Engine-gated actions: nothing that needs a permit.',
 )
-AUTONOMY_LEGACY_PUSH = '- Push: no push to any branch.'  # a 2.5 ledger's line; stricter, so still accepted
 AUTONOMY_KEEP_AWAKE = 'User step: enable keep-awake in Claude Desktop (or keep the machine awake) for an overnight run.'
 CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
 PARKABLE = ('queued', 'running', 'reported')
@@ -216,14 +219,19 @@ def parse_ledger(text, now):
     pair = re.fullmatch(r'- Release: pre-authorized ([^\s]+) ([^\s]+)', releases[0]) if len(releases) == 1 else None
     if len(releases) != 1 or (releases[0] != AUTONOMY_FIXED[0] and not pair):
         raise EngineError('Approval boundaries need exactly one Release line')
+    refill = EngineError('Ledger uses the pre-2.11 Approval boundaries: copy the Merge, Push and Deletion lines '
+                         'from the template, then arm again')
+    if '- Push: no push to any branch.' in boundaries:  # the 2.5 line would be read as permission to push, not as a ban
+        raise refill
     for line in AUTONOMY_FIXED[1:]:
-        if line not in boundaries and not (line.startswith('- Push:') and AUTONOMY_LEGACY_PUSH in boundaries):
+        if line not in boundaries:
+            if line.startswith(('- Merge:', '- Push:', '- Deletion:')) and any(
+                    b.startswith(line.partition(':')[0] + ':') for b in boundaries):
+                raise refill
             raise EngineError('Approval boundaries must keep the fixed line: ' + line)
     caps = {k: fields[k] for k in ('max_passes', 'max_stalls') if k in fields}
     release = dict(release=dict(remote=pair.group(1), target=pair.group(2))) if pair else {}
-    # The 2.5 Push line forbids every push, so only the current line allows a feature-branch pull request.
-    pull_requests = AUTONOMY_FIXED[2] in boundaries and AUTONOMY_LEGACY_PUSH not in boundaries
-    return dict(goal=fields['goal'], deadline=fields['deadline'], checks=checks, pull_requests=pull_requests,
+    return dict(goal=fields['goal'], deadline=fields['deadline'], checks=checks, pull_requests=True,
                 **caps, **release)
 
 
@@ -371,8 +379,16 @@ class Engine:
         if not isinstance(waivers, dict) or any(not isinstance(g, str) or not g or not isinstance(r, str) or not r.strip()
                                                  for g, r in waivers.items()):
             raise EngineError('file_budget_waivers must map globs to reasons')
+        if 'guard_mode' in self.policy and (not isinstance(self.policy['guard_mode'], str)
+                                            or self.policy['guard_mode'] not in GUARD_MODES):
+            raise EngineError('Invalid guard mode: use normal or protect')
+        workflows = self.policy.get('release_workflows', [])
+        if not isinstance(workflows, list) or any(not isinstance(g, str) or not g for g in workflows):
+            raise EngineError('release_workflows must be a list of globs')
+        legacy.pop('guard_mode', None)
         self.modes, self.contract_hash = _contracts()
-        self.policy_hash = _digest(dict(policy=self.policy, contracts=self.contract_hash))
+        hashed = {k: v for k, v in self.policy.items() if k != 'guard_mode'}
+        self.policy_hash = _digest(dict(policy=hashed, contracts=self.contract_hash))
         self._policy_hash_2_3 = _digest(dict(policy=legacy, contracts=CONTRACT_HASH_2_3))
         if Path(self._git('rev-parse', '--show-toplevel').decode().strip()).resolve() != self.repo:
             raise EngineError('repo must name repository root')
@@ -692,8 +708,20 @@ class Engine:
             cls._walk(state['tasks'], task, 'repair_of')
             cls._walk(state['tasks'], task, 'repaired_by')
         prs = state.get('pull_requests', [])
-        if not isinstance(prs, list) or any(not isinstance(u, str) or not u for u in prs):
+        if not isinstance(prs, list) or any(
+                not (isinstance(u, str) and u) and not (isinstance(u, dict) and isinstance(u.get('url'), str) and u['url'])
+                for u in prs):
             raise EngineError('Invalid pull_requests state')
+        if 'run_id' in state and not (isinstance(state['run_id'], str) and RUN_ID.fullmatch(state['run_id'])):
+            raise EngineError('Invalid run state run_id')
+        history = state.get('approval_history', [])
+        if ('approval' in state and not isinstance(state['approval'], dict)) or not isinstance(history, list) or any(
+                not isinstance(h, dict) for h in history):
+            raise EngineError('Invalid run state approval')
+        for key in ('local_branches_at_arm', 'remote_branches_at_arm'):
+            names = (auto or {}).get(key, [])
+            if not isinstance(names, list) or any(not isinstance(n, str) or not n for n in names):
+                raise EngineError('Invalid autonomy state')
         findings = state.get('findings', [])
         if not isinstance(findings, list) or any(
                 not isinstance(f, dict) or any(not isinstance(f.get(k), str) for k in ('id', 'fingerprint', 'text', 'reason', 'at'))
@@ -1023,6 +1051,7 @@ class Engine:
                 self._check_start(size, asks, owner_request)
             state['session'] = dict(actor=actor, lease=lease, active=True)
             if prior is None:
+                state['run_id'] = uuid.uuid4().hex[:16]
                 state['session']['base'] = self._git('rev-parse', 'HEAD').decode().strip()
                 state['session']['baseline'], state['session']['baseline_lines'] = self._dirty_baseline()
                 if items is not None:
@@ -1283,18 +1312,145 @@ class Engine:
         verdicts = self._review_verdicts(state, {}, task_id=task_id)
         return any(r.get('repair_check') and self._task_findings(r, task_id) for r in verdicts.values())
 
-    def record_pr(self, actor, lease, url):
-        """Record a pull request the run opened, so the run brief asks the owner to review and merge it."""
+    @staticmethod
+    def _pull_requests(state):
+        """The recorded pull requests as objects; a 2.10 state holds bare URL strings."""
+        return [dict(url=e, autonomous=False, verified_at=None) if isinstance(e, str) else e
+                for e in state.get('pull_requests', [])]
+
+    def _stamp(self):
+        return datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')
+
+    def _gh_view(self, url):
+        """The fields `gh pr view` reports for a pull request, or None when gh is missing, fails or answers oddly."""
+        gh = shutil.which('gh')
+        if not gh:
+            return None
+        try:
+            done = subprocess.run([gh, 'pr', 'view', url, '--json',
+                                   'number,state,baseRefName,headRefName,headRefOid,isCrossRepository'],
+                                  cwd=self.repo, capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
+                                  env=dict(os.environ, GH_PROMPT_DISABLED='1'))
+            data = json.loads(done.stdout) if done.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        ok = isinstance(data, dict) and type(data.get('number')) is int and all(
+            isinstance(data.get(k), str) and data[k] for k in ('state', 'baseRefName', 'headRefName', 'headRefOid'))
+        return data if ok else None
+
+    def _local_branch(self, name):
+        try:
+            return self._git('rev-parse', '--verify', '-q', 'refs/heads/' + name).decode().strip()
+        except EngineError:
+            return None
+
+    def _default_branch(self, auto):
+        """The default branch: the one a remote reported at arm, else origin/HEAD, else a local `main` or `master`."""
+        defaults = (auto or {}).get('remote_defaults') or {}
+        if defaults:
+            return defaults.get('origin') or sorted(defaults.values())[0]
+        try:
+            ref = self._git('symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD').decode().strip()
+            if ref.startswith('origin/'):
+                return ref[len('origin/'):]
+        except EngineError:
+            pass
+        for name in ('main', 'master'):
+            if self._local_branch(name):
+                return name
+        raise EngineError('The default branch is unknown: no remote reported one and there is no main or master')
+
+    def _run_branches(self, auto, prs):
+        """Branches the run made: local branches absent at arm, and the head of every recorded pull request."""
+        made = set()
+        if auto and 'local_branches_at_arm' in auto:
+            known = set(auto['local_branches_at_arm']) | set(auto.get('remote_branches_at_arm', []))
+            made = set(self._git('for-each-ref', '--format=%(refname:short)', 'refs/heads').decode().split()) - known
+        return made | {e['head_ref'] for e in prs if e.get('head_ref')}
+
+    def record_pr(self, actor, lease, url, tasks=None):
+        """Record a pull request the run opened, so the run brief asks the owner to review and merge it. `gh pr view`
+        (no lock held) must find it open, from this repository, based on the default or a run branch, and headed by the
+        tip of the local branch; without gh the entry is recorded unverified. A rerun refreshes the entry in place."""
         url = url.strip() if isinstance(url, str) else ''
         parts = urllib.parse.urlsplit(url) if url and not any(c.isspace() for c in url) else None
         if not parts or parts.scheme not in ('http', 'https') or not parts.hostname:
             raise EngineError('A pull request is recorded by its http(s) URL with a host')
+        tasks = list(tasks or [])
+        with self._state(False) as state:
+            self._lease(state, actor, lease)
+            unknown = [t for t in tasks if t not in state['tasks']]
+            if unknown:
+                raise EngineError('Unknown task: ' + ', '.join(map(str, unknown)))
+            auto, seen = copy.deepcopy(state['autonomy']), self._pull_requests(state)
+        match = PR_URL.fullmatch(url)
+        number, repo = (int(match.group(2)), match.group(1)) if match else (None, None)
+        view = self._gh_view(url)
+        if view:
+            number = view['number']
+            if view['state'] != 'OPEN':
+                raise EngineError('Pull request %s is not open (%s)' % (url, view['state']))
+            if view.get('isCrossRepository') is True:
+                raise EngineError('Pull request %s comes from another repository' % url)
+            base, head = view['baseRefName'], view['headRefName']
+            if base != self._default_branch(auto) and base not in self._run_branches(auto, seen):
+                raise EngineError('Pull request base %s is neither the default branch nor a run branch' % base)
+            tip = self._local_branch(head)
+            if tip is None:
+                raise EngineError('Pull request head %s has no local branch' % head)
+            if tip != view['headRefOid']:
+                raise EngineError('Pull request head %s is not the local tip of %s' % (view['headRefOid'][:12], head))
         with self._state() as state:
             self._lease(state, actor, lease)
-            prs = state.setdefault('pull_requests', [])
-            if url not in prs:
-                prs.append(url)
-            return dict(pull_requests=list(prs))
+            prs = self._pull_requests(state)
+            now = self._stamp()
+            entry = next((e for e in prs if e['url'] == url or (number is not None and e.get('number') == number
+                                                              and e.get('repo') == repo)), None)
+            if entry is None:
+                entry = dict(url=url, number=number, repo=repo, head_ref=None, head_sha=None, base_ref=None,
+                             autonomous=False, tasks=[], reviewed=False, verified_at=None, recorded_at=now)
+                prs.append(entry)
+            if view:
+                sha = view['headRefOid']
+                entry.update(number=number, head_ref=view['headRefName'], head_sha=sha, base_ref=view['baseRefName'],
+                             verified_at=now, reviewed=any(
+                                 not r['findings'] and r['artifact'].get('head') == sha and self._intact(r)
+                                 for r in state['reviews']))
+            entry['autonomous'] = bool(entry.get('autonomous')) or self._autonomy_on(state)
+            entry['tasks'] = list(dict.fromkeys([*entry.get('tasks', []), *tasks]))
+            state['pull_requests'] = prs
+            return copy.deepcopy(prs)
+
+    def base(self, task_id):
+        """The branch a card's pull request should be based on (read-only, no lease). The nearest dependency cards with a
+        recorded run pull request that is still open are the parents: none gives the default branch, one gives its head
+        branch, two or more defer the card until they merge."""
+        with self._state(False) as state:
+            tasks = state['tasks']
+            if task_id not in tasks:
+                raise EngineError('Unknown task: ' + str(task_id))
+            prs, parents, queue, seen = self._pull_requests(state), {}, list(tasks[task_id].get('dependencies', [])), set()
+            while queue:
+                dep = queue.pop(0)
+                if dep in seen or dep not in tasks:
+                    continue
+                seen.add(dep)
+                entry = next((e for e in prs if e.get('autonomous') and dep in e.get('tasks', [])), None)
+                if entry:
+                    parents[entry['url']] = entry  # the nearest one; its own parents are behind it
+                else:
+                    queue.extend(tasks[dep].get('dependencies', []))
+            default = self._default_branch(state['autonomy'])
+        open_ = []
+        for entry in parents.values():
+            view = self._gh_view(entry['url'])
+            if view is None:
+                raise EngineError('Could not read pull request %s: run gh auth status, then try again' % (entry.get('number') or entry['url']))
+            if view['state'] == 'OPEN':
+                open_.append((view['number'], view['headRefName']))
+        if len(open_) > 1:
+            raise EngineError('deferred: wait for pull request(s) %s to merge' % ', '.join(str(n) for n, _ in sorted(open_)))
+        return open_[0][1] if open_ else default
 
     def hold(self, actor, lease, task_id, finding):
         """End the repair ladder: move the whole chain to `held` and log it (SPEC 5.2 item 2)."""
@@ -2182,16 +2338,32 @@ class Engine:
             lease = state['session']['lease']
         remote_heads, remote_defaults = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
         remote_push_urls = {r: push_url_digest(url) for r in remote_defaults if (url := effective_push_url(self.repo, r))}
+        current = self._git('branch', '--show-current').decode().strip()  # '' on a detached HEAD
+        trunk = {*remote_defaults.values(), 'main', 'master'}
+        if current in trunk:
+            raise EngineError('Autonomy does not run on the default branch %s: switch to a work branch first '
+                              '(git switch -c NAME), then arm again' % current)
+        local = sorted(self._git('for-each-ref', '--format=%(refname:short)', 'refs/heads').decode().split())
+        remotes = sorted(self._git('remote').decode().split(), key=len, reverse=True)
+        remote_branches = set()
+        for ref in self._git('for-each-ref', '--format=%(refname:lstrip=2)', 'refs/remotes').decode().split():
+            remote = next((r for r in remotes if ref.startswith(r + '/')), None)
+            if remote and ref[len(remote) + 1:] != 'HEAD':
+                remote_branches.add(ref[len(remote) + 1:])
         with self._state(activity=False) as state:
             self._refuse_rearm(state)  # A second arm may have won while the remotes were asked
             fields, snapshot = self._armable(state, path)
             if state['session']['lease'] != lease:
                 raise EngineError('The coordinator session changed while arming; arm again')
+            if 'approval' in state:  # a receipt never survives a re-arm
+                state.setdefault('approval_history', []).append(state.pop('approval'))
+            state.setdefault('run_id', uuid.uuid4().hex[:16])  # a state written before 2.11 has none
             state['autonomy'] = dict(
                 active=True, ledger=snapshot, passes=0, stalls=0, armed_at=self._clock(),
                 armed_gates=len(state['gates']), armed_reviews=len(state['reviews']),
                 accepted=self._accepted(state), remote_defaults=remote_defaults,
-                remote_push_urls=remote_push_urls, **fields)
+                remote_push_urls=remote_push_urls, local_branches_at_arm=local,
+                remote_branches_at_arm=sorted(remote_branches), **fields)
         preconditions = autonomy_preconditions(self.repo, home)
         preconditions['remote_heads'] = remote_heads
         return dict(active=True, ledger=str(path), preconditions=preconditions)
@@ -2329,7 +2501,7 @@ class Engine:
         needs = list(parked)
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
-        needs += ['review and merge pull request ' + url for url in state.get('pull_requests', [])]
+        needs += ['review and merge pull request ' + entry['url'] for entry in self._pull_requests(state)]
         gate = self._failing_gate(state) if reason == 'gate-failing' else None
         if gate:
             log = [g['path'] for g in state['gates'] if g['name'] == gate][-1]

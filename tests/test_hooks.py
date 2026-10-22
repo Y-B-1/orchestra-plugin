@@ -1883,11 +1883,26 @@ class AutonomyHookTest(unittest.TestCase):
         git(self.repo, 'commit', '-q', '-m', 'f')
         self.linked = self.root / 'linked'
         git(self.repo, 'worktree', 'add', '-q', str(self.linked), '-b', 'side')
+        git(self.repo, 'branch', 'arm-from')
         self.state = state_location(self.repo)
         self.now = [1_800_000_000.0]
         self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
+        self.arm_off_main()
         self.lease = self.engine.open_session('main')
         self.fixed = AUTONOMY_FIXED
+
+    def arm_off_main(self):
+        """Arming refuses on the default branch: arm from `arm-from`, then return to the branch the test runs on."""
+        arm = self.engine.arm_autonomy
+
+        def wrapped(*args, **kw):
+            before = git(self.repo, 'symbolic-ref', '--short', 'HEAD')
+            git(self.repo, 'switch', '-q', 'arm-from')
+            try:
+                return arm(*args, **kw)
+            finally:
+                git(self.repo, 'switch', '-q', before)
+        self.engine.arm_autonomy = wrapped
 
     def ledger(self, passes='3', deadline_in=3600):
         when = time.strftime('%Y-%m-%dT%H:%M:%S+00:00', time.gmtime(self.now[0] + deadline_in))
@@ -2077,13 +2092,14 @@ class AutonomyHookTest(unittest.TestCase):
         code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Write', 'tool_input': {'file_path': ledger, 'content': 'x'}})
         self.assertEqual(output, {})
 
-    def test_legacy_push_line_arms_without_pull_requests(self):
+    def test_legacy_push_line_refused_at_arm(self):
         self.origin()
         git(self.repo, 'branch', 'feat/x')
         self.fixed = [('- Push: no push to any branch.' if line.startswith('- Push:') else line) for line in self.fixed]
-        self.arm()
-        self.assertIs(self.engine.status()['autonomy']['pull_requests'], False)
-        self.assertEqual(self.hook(self.repo, 'git push origin feat/x'), 'deny')
+        with self.assertRaisesRegex(Exception, 'pre-2.11 Approval boundaries'):
+            self.arm()
+        self.assertIsNone(self.engine.status()['autonomy'])
+
 
     def test_autonomy_pull_request_push_follows_the_remote_default_branch(self):
         self.origin('trunk')
@@ -2182,6 +2198,7 @@ class AutonomyHookTest(unittest.TestCase):
         (self.state / 'state.json').unlink()
         (self.state / 'policy.json').write_text(json.dumps(policy))
         self.engine = Engine(self.state, self.repo, policy=policy, clock=lambda: self.now[0])
+        self.arm_off_main()
         self.lease = self.engine.open_session('main')
         categories = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
         report = self.root / 'final.json'
@@ -2216,6 +2233,7 @@ class AutonomyHookTest(unittest.TestCase):
         (self.state / 'state.json').unlink()  # a fresh run under the release policy the hook loads
         (self.state / 'policy.json').write_text(json.dumps(policy))
         self.engine = Engine(self.state, self.repo, policy=policy, clock=lambda: self.now[0])
+        self.arm_off_main()
         self.lease = self.engine.open_session('main')
         categories = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
         report = self.root / 'final.json'
@@ -2478,6 +2496,7 @@ class RunBriefHookTest(unittest.TestCase):
     """SPEC 5.9 and 5.16: the run brief at SessionStart, the missing-cwd and busy-lock behavior of the hooks."""
 
     setUp = AutonomyHookTest.setUp
+    arm_off_main = AutonomyHookTest.arm_off_main
     ledger = AutonomyHookTest.ledger
     arm = AutonomyHookTest.arm
     hook = AutonomyHookTest.hook
