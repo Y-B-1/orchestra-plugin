@@ -42,21 +42,51 @@ function bottom(on: On, r: Rig) {
 
 const deny = (reason: string) => `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":${JSON.stringify(reason)}}}`;
 
-test('tool.call: every git stash form is denied in TypeScript with no Python run; git status runs', async ($, on) => {
+test('tool.call: a hard deny is decided in TypeScript with no Python run; git status runs', async ($, on) => {
   const r = rig(on);
   const b = bottom(on, r);
   await $.session.start(start);
-  const denied = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' });
+  const denied = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git reset --hard' });
   expect('deny' in denied).toBe(true);
   expect(b.calls.length).toBe(0);
   expect(r.runs.length).toBe(0);
-  const listed = await $.tool.call({ tool: 'Bash', tool_use_id: 't3', command: 'git stash list' });
-  expect('deny' in listed).toBe(true);
+  const forced = await $.tool.call({ tool: 'Bash', tool_use_id: 't3', command: 'git push --force origin x' });
+  expect('deny' in forced).toBe(true);
   expect(b.calls.length).toBe(0);
+  expect(r.runs.length).toBe(0);
   const ok = await $.tool.call({ tool: 'Bash', tool_use_id: 't2', command: 'git status' });
   expect('deny' in ok).toBe(false);
   expect(b.calls.length).toBe(1);
   expect(r.runs.length).toBe(0);
+});
+
+test('tool.call: a softened deny is delegated to Python, which honors its deny or allow', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  r.runAnswer = () => ({ exitCode: 0, stdout: deny('protect mode: git stash') });
+  await $.session.start(start);
+  for (const command of ['git stash', 'git stash list', 'git add -A', 'git commit --amend', 'git push --tags origin']) {
+    const before = r.runs.length;
+    const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command });
+    expect(res).toEqual({ deny: 'Orchestra guard: protect mode: git stash' } as never);
+    expect(r.runs.length).toBe(before + 1);
+    expect(r.runs.at(-1)!.argv.join(' ')).toContain('run-hook.sh PreToolUse --harness claude --from-mod');
+    expect(JSON.parse(r.runs.at(-1)!.init!.stdin!).tool_input.command).toBe(command);
+  }
+  expect(b.calls.length).toBe(0);
+  r.runAnswer = () => ({ exitCode: 0, stdout: '{}' });
+  const ok = await $.tool.call({ tool: 'Bash', tool_use_id: 't2', command: 'git stash' });
+  expect('deny' in ok).toBe(false);
+  expect(b.calls.length).toBe(1);
+});
+
+test('tool.call: a softened deny with a failed delegation denies', async ($, on) => {
+  const r = rig(on);
+  bottom(on, r);
+  r.runAnswer = () => ({ exitCode: 1, stdout: '' });
+  await $.session.start(start);
+  const res = await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'git stash' });
+  expect('deny' in res).toBe(true);
 });
 
 test('tool.call: a missing or non-string command denies', async ($, on) => {

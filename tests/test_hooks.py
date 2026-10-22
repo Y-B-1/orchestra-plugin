@@ -692,7 +692,8 @@ class HooksTest(unittest.TestCase):
             mods.mkdir(parents=True)
             (mods / 's1.json').write_text(json.dumps({'session_id': 's1', 'heartbeat_ms': int(time.time() * 1000),
                                                       'plugin_version': '2.0.0', 'rules_sha256': guard_digest()}))
-            payload = {'cwd': directory, 'session_id': 's1', 'tool_name': 'Agent', 'tool_input': {}, 'agent_id': 'a1'}
+            payload = {'cwd': directory, 'session_id': 's1', 'tool_name': 'Agent', 'tool_input': {}, 'agent_id': 'a1',
+                       'agent_type': 'orchestra:builder'}  # normal mode denies a worker spawn only for an Orchestra agent
             code, output = run_main(payload, '--harness', 'claude', env={'XDG_STATE_HOME': directory})
             self.assertEqual(code, 0)
             self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
@@ -1224,7 +1225,7 @@ class MarkerHandshakeTest(unittest.TestCase):
                 'plugin_version': '2.0.0', 'rules_sha256': self.sha if sha is None else sha}
         (self.mods / ((name or session) + '.json')).write_text(json.dumps(data))
 
-    def call(self, session='s1', *args, harness='claude', command='git stash'):
+    def call(self, session='s1', *args, harness='claude', command='git reset --hard'):
         payload = {'cwd': str(self.cwd), 'session_id': session, 'tool_name': 'Bash', 'tool_input': {'command': command}}
         code, output = run_main(payload, '--harness', harness, *args, env=self.env)
         self.assertEqual(code, 0)
@@ -1342,7 +1343,7 @@ class MarkerHandshakeTest(unittest.TestCase):
         self.marker()
         for kind in ('orchestra:code-reviewer', 'orchestra:critic'):
             payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': 'Bash', 'agent_id': 'a1', 'agent_type': kind,
-                       'tool_input': {'command': 'git stash'}}
+                       'tool_input': {'command': 'git reset --hard'}}
             code, output = run_main(payload, '--harness', 'claude', env=self.env)
             self.assertGuards(output)
         payload.update(agent_type='orchestra:builder')
@@ -1377,7 +1378,15 @@ class RunStateResolutionTest(unittest.TestCase):
         self.linked = self.root / 'linked'
         git(self.repo, 'worktree', 'add', '-q', str(self.linked), '-b', 'side')
 
+    def protect(self, repo):
+        """Normal mode (no policy file) never asks; these tests are about the protect-mode ask."""
+        from orchestra_core.paths import state_location
+        state = state_location(repo)
+        state.mkdir(parents=True, exist_ok=True)
+        (state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
+
     def start(self, repo):
+        self.protect(repo)
         out = subprocess.run([sys.executable, str(CLI), '--repo', str(repo), 'start', '--size', 'medium'], env=os.environ,
                              capture_output=True, text=True, check=True).stdout
         return json.loads(out)['lease']
@@ -1413,7 +1422,7 @@ class RunStateResolutionTest(unittest.TestCase):
     def test_unloadable_state_file_asks_for_release(self):
         from orchestra_core.paths import state_location
         state = state_location(self.repo)
-        state.mkdir(parents=True)
+        self.protect(self.repo)
         for text in ['{not json', '{}', '[]', '{"version": 1, "session": {"active": "yes"}}']:
             (state / 'state.json').write_text(text)
             with self.subTest(text=text):
@@ -1488,6 +1497,7 @@ class RunStateResolutionTest(unittest.TestCase):
 
 class SessionRepoFixture(unittest.TestCase):
     """A scratch repository with an active run bound to the harness session `S`, state under a private XDG directory."""
+    policy = None
 
     def setUp(self):
         from orchestra_core.engine import Engine
@@ -1507,12 +1517,17 @@ class SessionRepoFixture(unittest.TestCase):
         (self.repo / 'f').write_text('x')
         git(self.repo, 'add', 'f')
         git(self.repo, 'commit', '-q', '-m', 'f')
-        self.engine = Engine(state_location(self.repo), self.repo)
+        state = state_location(self.repo)
+        if self.policy:  # Written first, so the run starts under it and the hook reads the same policy
+            state.mkdir(parents=True)
+            (state / 'policy.json').write_text(json.dumps(self.policy))
+        self.engine = Engine(state, self.repo, policy=self.policy)
         self.engine.open_session('main', harness_session='S')
 
 
 class BystanderSessionTest(SessionRepoFixture):
     """A session the run is not bound to must not be held to the coordinator's rules, and is told a run exists."""
+    policy = {'schema_version': 1, 'guard_mode': 'protect'}  # normal mode only warns about a foreign agent
 
     def agent(self, session):
         return run_main({'cwd': str(self.repo), 'session_id': session, 'tool_name': 'Agent',
@@ -1925,7 +1940,12 @@ class AutonomyHookTest(unittest.TestCase):
         self.assertEqual(code, 0)
         return output.get('hookSpecificOutput', {}).get('permissionDecision')
 
+    def protect(self):
+        """T2a1: normal mode never asks, so a test of the ask answer selects protect, as `policy.json` does."""
+        (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
+
     def test_interactive_run_asks_for_release_actions(self):
+        self.protect()
         for command in ['git push origin main', 'gh pr merge 3 --squash', 'npm publish', 'git push origin a && git push origin b',
                         'gh api graphql --input payload.json']:
             with self.subTest(command=command):
@@ -2303,6 +2323,7 @@ class AutonomyHookTest(unittest.TestCase):
         self.arm()
         self.engine.disarm_autonomy()
         self.break_policy()
+        self.protect()
         for cwd in (self.repo, self.linked):
             with self.subTest(cwd=cwd.name):
                 self.assertIsNone(self.hook(cwd, 'rm -rf build'))
@@ -2332,6 +2353,7 @@ class AutonomyHookTest(unittest.TestCase):
     def test_o35_active_run_under_a_changed_policy_stays_armed(self):
         self.engine.interrupt('main', self.lease)
         self.break_policy()
+        self.protect()
         self.set_raw_session_active(True)
         for cwd in (self.repo, self.linked):
             with self.subTest(cwd=cwd.name):
@@ -2507,6 +2529,7 @@ class RunBriefHookTest(unittest.TestCase):
     arm = AutonomyHookTest.arm
     hook = AutonomyHookTest.hook
     stop_main = AutonomyHookTest.stop_main
+    protect = AutonomyHookTest.protect
 
     def session_context(self):
         payload = {'cwd': str(self.repo), 'session_id': 's-9', 'source': 'startup'}
@@ -2532,11 +2555,13 @@ class RunBriefHookTest(unittest.TestCase):
         return output.get('hookSpecificOutput', {}).get('permissionDecisionReason')
 
     def test_agent_guard_denies_while_an_active_run_is_busy(self):
+        self.protect()
         self.hold_lock()
         self.assertEqual(self.agent_main(), hooks_module.AGENT_GUARD)
         self.assertIsNone(self.agent_main('orchestra:builder'))
 
     def test_agent_guard_denies_while_an_active_run_cannot_load(self):
+        self.protect()
         data = json.loads((self.state / 'state.json').read_text())
         data['version'] = 99
         (self.state / 'state.json').write_text(json.dumps(data))
@@ -2585,6 +2610,7 @@ class RunBriefHookTest(unittest.TestCase):
 
     def test_pretooluse_missing_cwd_allows_nothing_new(self):
         gone = self.root / 'gone'
+        self.protect()
         self.assertEqual(self.hook(gone, 'git status'), None)  # an allowed class stays allowed
         self.assertEqual(self.hook(gone, 'git reset --hard'), 'deny')  # a plain deny stays denied
         self.assertEqual(self.hook(self.repo, 'git push origin side'), 'ask')  # existing cwd: armed run, no permit

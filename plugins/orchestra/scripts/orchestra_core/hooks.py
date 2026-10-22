@@ -6,9 +6,10 @@ https://code.claude.com/docs/en/hooks (checked 2026-09-30).
 import argparse
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+import fnmatch
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shlex
 import sys
@@ -16,7 +17,7 @@ import subprocess
 import time
 
 from . import portable
-from .guards import RULES, classify_command, guard_digest, runs_test_suite
+from .guards import RULES, Decision, _command_words, _segments, classify_command, guard_digest, runs_test_suite
 
 _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
@@ -169,8 +170,40 @@ def _patch_paths(command):
     return paths
 
 
+GUARD_MODES = ('normal', 'protect')
+RELEASE_WORKFLOWS = ['release*', 'publish*', 'deploy*']  # the policy key `release_workflows` replaces these
+
+
+def _guard_mode(state_dir):
+    """The mode `policy.json` selects, read on every call with or without `state.json`: no file or no state directory
+    is `normal`; `protect` and `normal` are themselves; a file that cannot be read or checked, or any other value, is
+    `protect` (fail closed)."""
+    if state_dir is None:
+        return 'normal'
+    try:
+        from .paths import load_policy
+        policy = load_policy(state_dir)
+    except Exception:
+        return 'protect'
+    if policy is None:
+        return 'normal'
+    mode = policy.get('guard_mode', 'normal')
+    return mode if isinstance(mode, str) and mode in GUARD_MODES else 'protect'
+
+
 def handle_event(event, payload, *, harness='claude', state_dir=None, engine=None, armed=False, autonomy=False,
-                 busy=False, missing_cwd=False, started=None):
+                 busy=False, missing_cwd=False, started=None, mode='protect'):
+    """`mode` is the guard mode (`normal` or `protect`; the default keeps every direct caller on the strict verdicts).
+    A warning collected while deciding rides on an otherwise empty answer as `additionalContext`."""
+    notes = []
+    result = _decide(event, payload, notes, 'normal' if mode == 'normal' else 'protect', harness=harness, state_dir=state_dir,
+                     engine=engine, armed=armed, autonomy=autonomy, busy=busy, missing_cwd=missing_cwd, started=started)
+    if notes and event == 'PreToolUse' and not result.output:
+        return HookResult({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'additionalContext': ' '.join(notes)}})
+    return result
+
+
+def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, autonomy, busy, missing_cwd, started):
     """Decide output; optional engine adapter owns locked state operations.
 
     `armed` marks a run whose state could not be loaded: release classes deny (fail closed).
@@ -263,16 +296,26 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     role = os.environ.get('ORCHESTRA_ROLE', 'main')  # Advisory, caller-controlled marker.
     if harness == 'claude' and isinstance(payload.get('agent_id'), str) and payload['agent_id']:
         role = 'subagent'  # Claude Code sets agent_id only for calls made inside a subagent.
-    if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
-        return _deny('Workers do not delegate')
+    auto_on = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
+    if auto_on:
+        mode = 'protect'  # Only the autonomous run is careful: it never gets the normal relaxations
     unloaded_run = engine is None and armed and (state_dir is None or _raw_session_active(Path(state_dir) / 'state.json'))
+    run_on = _run_active(engine) or unloaded_run
+    if role != 'main' and name in {'Agent', 'Task', 'spawn_agent', 'create_thread', 'send_message_to_thread'}:
+        # Row 31: normal denies only inside a run or for an Orchestra agent; protect always.
+        if mode == 'protect' or run_on or str(payload.get('agent_type')).startswith('orchestra:'):
+            return _deny('Workers do not delegate')
     bystander = _other_session(engine, payload.get('session_id'))  # A session the run is not bound to does not coordinate it
-    if role == 'subagent' and _foreign_subagent(payload) and not bystander and (_run_active(engine) or unloaded_run):
-        return _deny(SUBAGENT_GUARD)  # item 9: a Workflow agent never passes the Agent/Task check above it
-    if name in {'Agent', 'Task'} and not bystander and (_run_active(engine) or unloaded_run):  # item 9, failing closed when busy or unloadable
+    if role == 'subagent' and _foreign_subagent(payload) and not bystander and run_on:
+        if mode == 'protect':
+            return _deny(SUBAGENT_GUARD)  # item 9: a Workflow agent never passes the Agent/Task check above it
+        notes.append(SUBAGENT_GUARD)  # Row 32: normal warns
+    if name in {'Agent', 'Task'} and not bystander and run_on:  # item 9, failing closed when busy or unloadable
         kind = data.get('subagent_type')
         if not (isinstance(kind, str) and kind.startswith('orchestra:')):
-            return _deny(AGENT_GUARD)
+            if mode == 'protect':
+                return _deny(AGENT_GUARD)
+            notes.append(AGENT_GUARD)  # Row 33: normal warns
     if 'cwd' in payload:
         cwd = payload['cwd']
         if not isinstance(cwd, str):
@@ -284,7 +327,6 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             cwd = os.getcwd()
         except OSError:  # The process cwd was removed: a missing cwd, never a crash that lets the call run
             cwd, missing_cwd = None, True
-    auto_on = (engine is not None and _autonomy_active(engine)) or (engine is None and armed and autonomy)
     if name in _EDIT_TOOLS:
         try:
             if name == 'apply_patch':
@@ -310,16 +352,30 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     decision = classify_command(command)
     klass = decision.klass
     if klass == 'deny':
-        return _deny(decision.reason, decision.category == 'malformed')
+        if mode != 'normal' or not decision.soften:
+            return _deny(decision.reason, decision.category == 'malformed')
+        # Rows 4, 10, 11, 12, 14, 15: the classifier kept the protect verdict; normal relaxes it.
+        refused = _soft_push_refusal(command, cwd, engine) if decision.category == 'release' else None
+        if refused:
+            return _deny(refused)
+        if decision.soften == 'warn':
+            notes.append(_guarded(decision.reason))
+        klass, decision = 'allow', Decision()
+    elif klass == 'release' and decision.workflow is not None and not auto_on and cwd is not None \
+            and _workflow_is_plain(_toplevel(cwd), decision.workflow, _release_globs(engine, state_dir)):
+        klass, decision = 'allow', Decision()  # Row N2: a workflow that is neither a release name nor missing
     if klass in {'release', 'release-multi', 'boundary'}:
         if missing_cwd:
             return _deny(MISSING_CWD)
-        if busy:
-            return _deny(BUSY)
+        if busy and mode == 'protect':
+            return _deny(BUSY)  # Row 42: normal needs no engine state; autonomy forces protect
     if role == 'subagent' and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES) and runs_test_suite(command):
         gates = _gate_ids(engine)
         if gates:
-            return _deny('Cite gate receipt ' + ', '.join(gates) + '; reviewers do not rerun suites')
+            reason = 'Cite gate receipt ' + ', '.join(gates) + '; reviewers do not rerun suites'
+            if mode == 'protect':
+                return _deny(reason)
+            notes.append(_guarded(reason))  # Row 43
     active = auto_on
     hint = _PARK_HINT if engine is not None else ('the run state is unreadable (%s); the owner starts over with '
                                                   '`orchestra.py start --new-run ...`, which keeps the old file under history/.'
@@ -353,8 +409,9 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             return _deny('Autonomy is active: ' + decision.reason + '. ' + hint)
         if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd, engine):
             return _deny('Approval boundary under autonomy: no merge on the default branch. ' + hint)
-    if klass in {'release', 'release-multi'} and (engine is not None or armed):
-        # A current permit lets the release run. Otherwise the user is present: ask, unless autonomy is active.
+    if klass in {'release', 'release-multi'} and (engine is not None or armed) and mode == 'protect':
+        # Normal never asks (rows 24, 27, 46, 50, 51). Protect: a current permit lets the release run; otherwise the
+        # user is present: ask, unless autonomy is active.
         problem = decision.reason
         if klass == 'release' and engine is not None and decision.remote and decision.target:
             try:
@@ -367,6 +424,110 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
             return _deny('Release denied: ' + problem)
         return _ask('Orchestra run active: approve this release action? No current release permit covers it: ' + problem)
     return HookResult({})  # allow, boundary (autonomy off) and unarmed release classes
+
+
+def _toplevel(cwd):
+    code, out = _git_out(cwd, 'rev-parse', '--show-toplevel')
+    return Path(out if code == 0 and out else cwd)
+
+
+def _release_globs(engine, state_dir):
+    """The `release_workflows` globs: the loaded policy, else policy.json, else the defaults; a malformed value is the default."""
+    found = None
+    try:
+        policy = engine.policy if engine is not None else None
+        if not isinstance(policy, dict) and state_dir is not None:
+            from .paths import load_policy
+            policy = load_policy(state_dir)
+        found = policy.get('release_workflows') if isinstance(policy, dict) else None
+    except Exception:
+        pass
+    if isinstance(found, list) and found and all(isinstance(g, str) and g for g in found):
+        return found
+    return RELEASE_WORKFLOWS
+
+
+def _workflow_is_plain(repo, name, globs):
+    """True when `gh workflow run NAME` names a local workflow file that no release glob matches. A name with a path,
+    a glob or no text is never plain; a workflow not found locally counts as a release."""
+    if not isinstance(name, str) or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._-]*', name) or '..' in name:
+        return False
+    if any(fnmatch.fnmatchcase(name.lower(), g.lower()) for g in (globs or RELEASE_WORKFLOWS)):
+        return False
+    folder = Path(repo) / '.github' / 'workflows'
+    return any((folder / (name + suffix)).is_file() for suffix in ('', '.yml', '.yaml'))
+
+
+def _soft_push_refusal(command, cwd, engine):
+    """Q1: normal warns on a softened push, but the hook still denies one that deletes a tag, the default branch or a
+    protected branch, and any one whose default branch it cannot resolve. A reason, or None."""
+    if cwd is None:
+        return 'A multi-ref push needs a working directory'
+    if re.search(r'\$\(|`|<\(|>\(', command):
+        return 'A multi-ref push inside a substitution cannot be checked; run it as a command of its own'
+    pushes = []
+    try:
+        for segment in _segments(command):
+            words = _command_words(segment)
+            if words and PurePosixPath(words[0]).name == 'git':
+                pushes.append(words)
+            elif words and PurePosixPath(words[0]).name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'eval'}:
+                return 'A multi-ref push inside a shell string cannot be checked; run it as a command of its own'
+    except ValueError:
+        return 'The push could not be read'
+    pushes = [w for w in pushes if 'push' in w]
+    if not pushes:
+        return None
+    protected = {b.lower() for b in RULES['git']['autonomy_protected_branches']}
+    value_options = set(RULES['git']['push_value_options'])
+    for words in pushes:
+        if len(words) < 2 or words[1] != 'push':
+            return 'A push with a Git global option cannot be checked; push by hand'
+        args, positional, delete, skip = words[2:], [], False, False
+        for word in args:
+            if skip:
+                skip = False
+            elif word in value_options:
+                skip = True
+            elif word == '--delete' or (re.fullmatch(r'-[A-Za-z]+', word) and 'd' in word):
+                delete = True
+            elif not word.startswith('-'):
+                positional.append(word)
+        if not positional:
+            return 'A multi-ref push needs an explicit remote'
+        remote, refspecs = positional[0], positional[1:]
+        known = set(protected)
+        code, head = _git_out(cwd, 'symbolic-ref', '--short', 'refs/remotes/%s/HEAD' % remote)
+        if code == 0 and head:
+            known.add((head[len(remote) + 1:] if head.startswith(remote + '/') else head).lower())
+        known |= {v.lower() for v in _armed_defaults(engine).values()}
+        if code != 0 and not _armed_defaults(engine):
+            return 'The default branch of %s cannot be resolved; push by hand' % remote
+        targets = refspecs if delete else [r.partition(':')[2] for r in refspecs if r.startswith(':')]
+        for target in targets:
+            target = target.lstrip(':')
+            if any(c in target for c in '*?[') or not target:
+                return 'A multi-ref push may not delete a pattern'
+            if target.startswith(('refs/tags/', 'tags/')) or _git_out(cwd, 'show-ref', '--verify', '--quiet', 'refs/tags/' + target)[0] == 0:
+                return 'A push may not delete a tag; ask the owner'
+            branch = target[len('refs/heads/'):] if target.startswith('refs/heads/') else target
+            branch = branch[len('heads/'):] if branch.startswith('heads/') else branch
+            if branch.lower() in known:
+                return 'A push may not delete the default or a protected branch (%s); ask the owner' % branch
+    return None
+
+
+def _soften_call(payload):
+    """A shell call whose classifier deny carries `soften`: normal mode relaxes it, so the mod cannot decide it and the
+    call always reaches this hook. A command that cannot be classified reaches it too."""
+    data = payload.get('tool_input')
+    command = data.get('command', data.get('cmd')) if isinstance(data, dict) else None
+    if not isinstance(payload.get('tool_name'), str) or payload['tool_name'] not in _SHELL_TOOLS or not isinstance(command, str):
+        return False
+    try:
+        return bool(classify_command(command).soften)
+    except Exception:
+        return True
 
 
 _BRANCH = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._/-]*')
@@ -909,6 +1070,7 @@ def _main(argv=None):
             and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
             and not _foreign_subagent(payload)
             and not _release_call(payload)
+            and not _soften_call(payload)
             and not _ledger_call(payload)
             and _mod_is_live(payload)):
         print('{}')
@@ -964,7 +1126,8 @@ def _main(argv=None):
                     and _raw_session_active(Path(state_dir) / 'state.json')):  # O35: an ended run has nothing to record
                 build_error = exc
     result = handle_event(args.event, payload, harness=args.harness, state_dir=state_dir, engine=engine, armed=armed,
-                          autonomy=autonomy, busy=busy, missing_cwd=missing_cwd, started=started)
+                          autonomy=autonomy, busy=busy, missing_cwd=missing_cwd, started=started,
+                          mode=_guard_mode(state_dir) if args.event == 'PreToolUse' else 'protect')
     if build_error is not None and not result.output:
         result = HookResult({'systemMessage': 'Orchestra session end could not be recorded: ' + str(build_error)
                              + '. A run that holds a lost lease is recovered by hand with '

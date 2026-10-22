@@ -381,6 +381,10 @@ class LinkedWorktreeHook(unittest.TestCase):
 
     def test_push_from_linked_worktree_follows_the_main_checkout_run(self):
         command='git push origin side'
+        state=self.root/'protect state'  # T2a1: normal mode never asks, so this run selects protect in its policy file
+        state.mkdir()
+        (state/'policy.json').write_text(json.dumps({'schema_version':1,'guard_mode':'protect'}))
+        self.env['ORCHESTRA_STATE_DIR']=str(state)
         self.assertIsNone(self.hook(self.linked,command))
         lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--size','medium'],env=self.env,
                                         capture_output=True,text=True,check=True).stdout)['lease']
@@ -497,6 +501,7 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.assertIn('state.json',refused)
         self.assertNotIn('Stop or finish',refused)
         self.assertFalse((self.state/'history').exists())
+        (self.state/'policy.json').write_text(json.dumps({'schema_version':1,'guard_mode':'protect'}))  # T2a1: normal never asks
         push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
         self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'ask')  # the run stays armed; the user is asked
 
