@@ -21,13 +21,17 @@ export type Decision = {
   boundary: string | null;
   kind: string | null; // category merged-delete only: 'local' or 'remote' (SPEC 5.14).
   branch: string | null; // category merged-delete only: the one branch the command deletes.
+  soften: string | null; // 'warn' or 'allow': how far normal mode may relax this deny; protect mode keeps it.
+  workflow: string | null; // `gh workflow run` only: the workflow name or file, when the command names one.
 };
 
 type Rules = {
   shells: string[];
   shell_value_flags: string[];
   wrappers: Record<string, string[]>;
-  tools: { shell: string[]; edit: string[] };
+  tools: { shell: string[]; edit: string[]; scheduler: string[] };
+  soften: Record<string, string>;
+  gh_builtin: string[];
   runners: {
     attached_value_flags: Record<string, string[]>;
     watch_exec_flags: string[];
@@ -46,12 +50,18 @@ type Rules = {
     tool_verbs: Record<string, string[]>;
     gh_api_merge: string;
     gh_api_graphql_opaque: string[];
+    gh_api_write_endpoints: string[];
+    gh_api_autonomy_allow: string[][];
   };
   boundary: { delete_commands: string[]; find_delete_flag: string; gh: string[][] };
-  protected: { harness_dirs: string[]; files: string[]; agents_prefixes: string[]; component: string; state_root_exceptions: string[] };
+  protected: { harness_dirs: string[]; files: string[]; agents_prefixes: string[]; component: string; state_root_exceptions: string[]; autonomy_files: string[] };
 };
 
 const MULTI = 'releasemulti';
+let SOFTEN: Record<string, string> = {};
+let GH_BUILTIN = new Set<string>();
+let hardDenies = 0; // Denies built in this call, and whether one of them is a warn-level soft deny (see softOf).
+let warnSeen = false;
 
 let SHELLS = new Set<string>();
 let SHELL_VALUE_FLAGS = new Set<string>();
@@ -96,7 +106,7 @@ export function loadRules(json: string): void {
   for (const key of Object.keys(need(runners.attached_value_flags, 'runners.attached'))) attached.set(key, new Set(strings(runners.attached_value_flags[key], 'attached')));
   const gitSets: Record<string, Set<string>> = {};
   for (const key of Object.keys(git)) gitSets[key] = new Set(strings(git[key], 'git.' + key));
-  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags', 'config_guarded', 'config_read_flags', 'remote_write_verbs', 'env_guarded']) need(gitSets[key], 'git.' + key);
+  for (const key of ['global_value_options', 'clean_value_options', 'push_value_options', 'commit_value_options', 'wholesale_add_flags', 'wholesale_add_pathspecs', 'push_multi_flags', 'push_soften_flags', 'switch_force_flags', 'worktree_delete', 'boundary_merge_verbs', 'commit_guarded_flags', 'config_guarded', 'config_read_flags', 'remote_write_verbs', 'env_guarded']) need(gitSets[key], 'git.' + key);
   // SPEC 5.15: per verb, the guarded long options, most restrictive first. An exemption (clean --dry-run, restore --staged) is absent: it counts only in full.
   const longGuarded: Record<string, string[]> = {
     add: git.wholesale_add_flags!,
@@ -117,6 +127,14 @@ export function loadRules(json: string): void {
   if (typeof release.tool_verbs !== 'object' || release.tool_verbs === null || Array.isArray(release.tool_verbs)) throw new ValueError('Invalid guard rules: release.tool_verbs');
   for (const [tool, verbs] of Object.entries(release.tool_verbs)) strings(verbs, `release.tool_verbs.${tool}`);
   strings(release.gh_api_graphql_opaque, 'release.gh_api_graphql_opaque');
+  strings(release.gh_api_write_endpoints, 'release.gh_api_write_endpoints');
+  if (!Array.isArray(release.gh_api_autonomy_allow)) throw new ValueError('Invalid guard rules: release.gh_api_autonomy_allow');
+  for (const pair of release.gh_api_autonomy_allow) if (strings(pair, 'release.gh_api_autonomy_allow').length !== 2) throw new ValueError('Invalid guard rules: release.gh_api_autonomy_allow');
+  const soften = need(raw.soften, 'soften');
+  for (const key of ['stash', 'wholesaleAdd', 'commitAll', 'amend', 'pushMulti', 'pushRefspec']) if (soften[key] !== 'warn' && soften[key] !== 'allow') throw new ValueError('Invalid guard rules: soften.' + key);
+  const ghBuiltin = new Set(strings(raw.gh_builtin, 'gh_builtin'));
+  strings(tools.scheduler, 'tools.scheduler');
+  strings(prot.autonomy_files, 'protected.autonomy_files');
   if (typeof release.gh_api_merge !== 'string' || release.gh_api_merge === '') throw new ValueError('Invalid guard rules: release.gh_api_merge');
   strings(release.az_pr_update.prefix, 'release.az_pr_update');
   strings(boundary.delete_commands, 'boundary.delete_commands');
@@ -137,6 +155,8 @@ export function loadRules(json: string): void {
   LONG_GUARDED = longGuarded;
   LONG_VALUE = { clean: gitSets.clean_value_options!, push: gitSets.push_value_options!, commit: gitSets.commit_value_options! };
   RELEASE = release;
+  SOFTEN = soften;
+  GH_BUILTIN = ghBuiltin;
   BOUNDARY = boundary;
   PROTECTED = prot;
   SHELL_TOOLS = shellTools;
@@ -255,11 +275,19 @@ export function shlexSplit(s: string, comments: boolean): string[] {
 // ---------------------------------------------------------------------------------------------
 
 function dec(action = 'allow', reason = '', category = '', extra: Partial<Decision> = {}): Decision {
-  return { action, reason, category, remote: null, target: null, argv: [], source: null, boundary: null, kind: null, branch: null, ...extra };
+  return { action, reason, category, remote: null, target: null, argv: [], source: null, boundary: null, kind: null, branch: null, soften: null, workflow: null, ...extra };
 }
 
 function denyOf(reason: string, category = 'destructiveGit'): Decision {
+  hardDenies += 1;
   return dec('deny', reason, category);
+}
+
+/** A deny that normal mode may relax (rules `soften`). Counted, so classifyCommand can tell an all-soft command from one that also holds a hard deny. */
+function softOf(reason: string, kind: string, category = 'destructiveGit'): Decision {
+  const level = SOFTEN[kind]!;
+  warnSeen = warnSeen || level === 'warn';
+  return dec('deny', reason, category, { soften: level });
 }
 
 /** The SPEC 5.1 class: allow, deny, release, release-multi or boundary. */
@@ -803,7 +831,7 @@ function gitRules(words: string[]): Decision {
   const short = flags.filter((x) => !x.startsWith('--')).map((x) => x.slice(1)).join('');
   const hasFlag = (name: string) => flags.includes(name);
   if (verb === 'stash') {
-    return denyOf('Git stash shares state across worktrees; commit the work on a branch instead', 'stash');
+    return softOf('Git stash shares state across worktrees; commit the work on a branch instead', 'stash', 'stash');
   }
   if (verb === 'update-ref' && rawRefDelete(args)) return denyOf('Raw ref deletion is not allowed; use git branch -d');
   if (verb === 'reset' && flags.some((x) => x === '--hard' || x.startsWith('--hard='))) return denyOf('Hard reset discards work; unstage with `git restore --staged <path>` or keep the work on a new branch');
@@ -820,15 +848,15 @@ function gitRules(words: string[]): Decision {
     if (hasFlag('--force') || (wholesale && !stagedOnly)) return denyOf('Wholesale restore discards work; restore named paths with `git restore <path>`');
   }
   if (verb === 'add' && ([...GIT.wholesale_add_flags!].some((x) => hasFlag(x)) || short.includes('A') || short.includes('u') || args.some((x) => GIT.wholesale_add_pathspecs!.has(x)))) {
-    return denyOf('Stage explicit paths only: `git add <path> ...`', 'wholesaleStage');
+    return softOf('Stage explicit paths only: `git add <path> ...`', 'wholesaleAdd', 'wholesaleStage');
   }
   if (verb === 'commit') {
     // A message beginning with a dash is still a message.
     const opts = options.filter((x) => !(x.startsWith('--message=') || x.startsWith('--file=') || x.startsWith('-m')));
     if (opts.includes('--all') || opts.some((x) => x.startsWith('-') && !x.startsWith('--') && x.slice(1).includes('a'))) {
-      return denyOf('Commit explicit staged paths only: stage with `git add <path>`, then `git commit`', 'wholesaleStage');
+      return softOf('Commit explicit staged paths only: stage with `git add <path>`, then `git commit`', 'commitAll', 'wholesaleStage');
     }
-    if (opts.some((x) => GIT.commit_guarded_flags!.has(x))) return denyOf('Amend rewrites history; make a new commit instead');
+    if (opts.some((x) => GIT.commit_guarded_flags!.has(x))) return softOf('Amend rewrites history; make a new commit instead', 'amend');
   }
   if (verb === 'push') {
     if (flags.some((x) => x.startsWith('--force') || x === '--mirror') || short.includes('f') || args.some((x) => x.startsWith('+'))) return denyOf('Force push rewrites remote history; push normally or ask the owner');
@@ -838,12 +866,19 @@ function gitRules(words: string[]): Decision {
       const merged = mergedDelete(verb, options, flags, short, words, !plain, args);
       if (merged) return merged;
     }
-    if (positional.length > 2 || [...GIT.push_multi_flags!].some((x) => hasFlag(x)) || short.includes('d')) return denyOf('Push needs one explicit remote and refspec', 'release');
+    const multi = flags.filter((x) => GIT.push_multi_flags!.has(x)).concat(short.includes('d') ? ['--delete'] : []);
+    if (positional.length > 2 || multi.length) {
+      if (positional.length <= 2 && multi.every((x) => GIT.push_soften_flags!.has(x))) return softOf('Push needs one explicit remote and refspec', 'pushMulti', 'release');
+      return denyOf('Push needs one explicit remote and refspec', 'release');
+    }
     let remote: string | null = positional[0] ?? null;
     let target: string | null = positional[1] ?? null;
     let source: string | null = target ? target.split(':', 2)[0]! : null;
     if (target) {
-      if (target.startsWith(':') || target.includes('*') || target.split(':').length - 1 > 1) return denyOf('Push needs one non-deleting refspec', 'release');
+      if (target.startsWith(':') || target.includes('*') || target.split(':').length - 1 > 1) {
+        if (target.startsWith(':') && !target.includes('*') && target.split(':').length - 1 === 1) return softOf('Push needs one non-deleting refspec', 'pushRefspec', 'release');
+        return denyOf('Push needs one non-deleting refspec', 'release');
+      }
       const last = target.split(':').pop()!;
       target = last.startsWith('refs/heads/') ? last.slice('refs/heads/'.length) : last;
     }
@@ -892,6 +927,119 @@ function isRelease(name: string, words: string[]): boolean {
   );
 }
 
+const GH_API_VALUE_LONG = new Set(['--method', '--header', '--jq', '--template', '--preview', '--field', '--raw-field', '--input', '--cache', '--hostname']);
+const GH_API_FIELD_LONG = new Set(['--field', '--raw-field', '--input']);
+const GH_API_VALUE_SHORT = 'XHqtpfF';
+const GH_URL_RE = /^https?:\/\/[^/]+\//;
+
+/** (method, hasField, endpoint) of the words after `gh api`. Mirrors guards._gh_api_parse. */
+function ghApiParse(args: string[]): [string | null, boolean, string | null] {
+  let method: string | null = null;
+  let field = false;
+  let endpoint: string | null = null;
+  let i = 0;
+  let rest = false;
+  while (i < args.length) {
+    const word = args[i]!;
+    i += 1;
+    if (rest || !word.startsWith('-') || word === '-') {
+      endpoint = endpoint !== null ? endpoint : word;
+    } else if (word === '--') {
+      rest = true;
+    } else if (word.startsWith('--')) {
+      const eq = word.indexOf('=');
+      const name = eq < 0 ? word : word.slice(0, eq);
+      if (GH_API_VALUE_LONG.has(name)) {
+        let value = eq < 0 ? '' : word.slice(eq + 1);
+        if (eq < 0) {
+          if (i >= args.length) return [method, field, null];
+          value = args[i]!;
+          i += 1;
+        }
+        if (name === '--method') method = value.toUpperCase();
+        field = field || GH_API_FIELD_LONG.has(name);
+      }
+    } else {
+      for (let k = 1; k < word.length; k++) {
+        const char = word[k]!;
+        if (GH_API_VALUE_SHORT.includes(char)) {
+          let value = word.slice(k + 1);
+          if (!value) {
+            if (i >= args.length) return [method, field, null];
+            value = args[i]!;
+            i += 1;
+          }
+          if (char === 'X') method = value.toUpperCase();
+          field = field || char === 'f' || char === 'F';
+          break;
+        }
+      }
+    }
+  }
+  return [method, field, endpoint];
+}
+
+/** The endpoint path without scheme, host, leading slash and query string, and whether it is plain. Mirrors guards._gh_api_path. */
+function ghApiPath(endpoint: string): [string, boolean] {
+  const url = GH_URL_RE.exec(endpoint);
+  let path = url ? endpoint.slice(url[0].length) : endpoint;
+  path = path.split('?')[0]!.split('#')[0]!.replace(/^\/+/, '');
+  const parts = path.split('/');
+  return [path, !path.includes('%') && !parts.some((x) => x === '' || x === '.' || x === '..')];
+}
+
+/** `*` is one path segment; a trailing `**` is any rest, none included. */
+function pathMatches(pattern: string, path: string): boolean {
+  const want = pattern.split('/');
+  const have = path.split('/');
+  if (want[want.length - 1] === '**') return have.length >= want.length - 1 && want.slice(0, -1).every((a, k) => a === '*' || a === have[k]);
+  return want.length === have.length && want.every((a, k) => a === '*' || a === have[k]);
+}
+
+function ghApi(words: string[]): Decision | null {
+  const [method, field, endpoint] = ghApiParse(words.slice(2));
+  if (endpoint === 'graphql' || !((method !== null && method !== 'GET') || (method === null && field))) return null;
+  const [path, plain] = endpoint !== null ? ghApiPath(endpoint) : ['', false];
+  if (RELEASE.gh_api_write_endpoints.some((x) => pathMatches(x, path))) return dec('release', 'Provider release needs structured authorization', 'providerrelease', { argv: words.slice() });
+  if (plain && RELEASE.gh_api_autonomy_allow.some(([m, p]) => m === (method ?? 'POST') && pathMatches(p!, path))) return null;
+  return dec('release', 'A gh api write outside the pull request and comment calls needs the owner', 'apiwrite', { argv: words.slice() });
+}
+
+function ghOperands(args: string[], valueFlags: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < args.length) {
+    const word = args[i]!;
+    i += 1;
+    if (word.startsWith('-') && word !== '-') {
+      if (valueFlags.includes(word)) i += 1;
+    } else {
+      out.push(word);
+    }
+  }
+  return out;
+}
+
+const GH_CONFIG_REASON = 'gh aliases and extensions add commands the guard cannot read; the owner sets them';
+
+/** Rules for gh beyond the pair table. Mirrors guards._gh. */
+function gh(words: string[]): Decision | null {
+  const sub = words.length > 1 ? words[1]! : '';
+  if (!sub || sub.startsWith('-')) return null;
+  const argv = words.slice();
+  if (sub === 'api') return ghApi(words);
+  if (sub === 'pr' && words[2] === 'edit' && words.slice(3).some((x) => x === '--base' || x === '-B' || x.startsWith('--base=') || (x.startsWith('-B') && !x.startsWith('--')))) {
+    return dec('release', 'Changing a pull request base can land work on another branch', 'prbase', { argv });
+  }
+  if (sub === 'workflow' && words[2] === 'run') {
+    const names = ghOperands(words.slice(3), ['-f', '-F', '-r', '-R', '--field', '--raw-field', '--ref', '--repo', '--json']);
+    return dec('release', 'Provider release needs structured authorization', 'providerrelease', { argv, workflow: names.length ? names[0]! : null });
+  }
+  if (sub === 'extension' || sub === 'extensions' || sub === 'ext' || (sub === 'alias' && ['set', 'import', 'delete'].includes(words[2] ?? ''))) return boundaryOf('config', GH_CONFIG_REASON);
+  if (!GH_BUILTIN.has(sub)) return dec('release', 'A gh command that is not built in can run anything; the owner runs it', 'ghcustom', { argv });
+  return null;
+}
+
 function findExec(words: string[], depth: number): Decision[] {
   const decisions: Decision[] = [];
   let i = 1;
@@ -937,6 +1085,10 @@ function classifySegment(words: string[], depth: number): Decision {
   }
   if (name === 'git') return git(words);
   if (isRelease(name, words)) return dec('release', 'Provider release needs structured authorization', 'providerrelease', { argv: words.slice() });
+  if (name === 'gh') {
+    const found = gh(words);
+    if (found !== null) return found;
+  }
   let base = dec();
   const pair = words.slice(1, 3);
   if (BOUNDARY.delete_commands.includes(name) || (name === 'find' && words.slice(1).includes(BOUNDARY.find_delete_flag)) || (name === 'gh' && BOUNDARY.gh.some((p) => sameWords(p, pair)))) {
@@ -2220,8 +2372,13 @@ function foldedSegments(text: string, subs: string[], level = 0): string[] {
 export function classifyCommand(command: string, depth = 0): Decision {
   if (depth) return classifyInner(command, depth);
   budgetLeft = READING_BUDGET;
+  hardDenies = 0;
+  warnSeen = false;
   const decision = classifyInner(command, 0);
-  return budgetLeft < 0 ? denyOf('Malformed shell quoting', 'malformed') : decision;
+  if (budgetLeft < 0) return denyOf('Malformed shell quoting', 'malformed');
+  // Every deny built while reading counts, a discarded one too: doubt keeps the protect verdict (fail closed).
+  if (decision.soften && (hardDenies || warnSeen)) return { ...decision, soften: hardDenies ? null : 'warn' };
+  return decision;
 }
 
 function classifyInner(command: string, depth: number): Decision {

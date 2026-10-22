@@ -783,9 +783,12 @@ class HooksTest(unittest.TestCase):
         claude = json.loads((PLUGIN / 'hooks/claude.json').read_text())
         matcher = claude['hooks']['PreToolUse'][0]['matcher']
         self.assertEqual(matcher, RULES['tools']['claude_matcher'])
-        for tool in ['Bash', 'PowerShell', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task']:
+        for tool in ['Bash', 'PowerShell', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task', 'CronCreate', 'ScheduleWakeup',
+                     'RemoteTrigger']:
             self.assertRegex(tool, '^(?:' + matcher + ')$')
-        self.assertNotRegex('Read', '^(?:' + matcher + ')$')
+        for tool in ['Read', 'SendMessage']:
+            self.assertNotRegex(tool, '^(?:' + matcher + ')$')
+        self.assertEqual(RULES['tools']['scheduler'], ['CronCreate', 'ScheduleWakeup', 'RemoteTrigger'])
 
     def test_powershell_commands_are_classified_like_bash(self):
         for command, decision in [('git reset --hard', 'deny'), ('git status', None)]:

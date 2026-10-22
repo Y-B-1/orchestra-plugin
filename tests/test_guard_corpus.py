@@ -54,7 +54,8 @@ class GuardCorpusTest(unittest.TestCase):
                     self.assertIn(case.get('category'), RULES['boundary_categories'])
                 else:
                     self.assertNotIn('category', case)
-                    self.assertNotIn('decision_category', case)
+                    if 'decision_category' in case:
+                        self.assertEqual((case['class'], case['decision_category']), ('release', 'apiwrite'))
                 self.assertIn(set(case['input']) - {'cwd'}, [{'command'}, {'tool', 'path'}])
 
     def test_every_case_matches_the_python_classifier(self):
@@ -69,13 +70,14 @@ class GuardCorpusTest(unittest.TestCase):
 
     def test_corpus_decision_category_matches(self):
         """SPEC 5.14 item 6: a case may name the Decision category; the guard must report exactly it."""
-        named = [case for case in CORPUS if 'decision_category' in case]
-        self.assertGreaterEqual(len(named), 15)
-        for case in named:
+        all_named = [case for case in CORPUS if 'decision_category' in case]
+        for case in all_named:
             with self.subTest(case=case['id']):
-                self.assertEqual(case['class'], 'boundary')
                 self.assertEqual(classify_command(case['input']['command']).category, case['decision_category'])
+        named = [case for case in all_named if case['class'] == 'boundary']
+        self.assertGreaterEqual(len(named), 15)
         self.assertEqual({case['decision_category'] for case in named}, {'merged-delete'})
+        self.assertEqual({case['decision_category'] for case in all_named if case['class'] == 'release'}, {'apiwrite'})
         by_command = {case['input'].get('command'): case for case in CORPUS}
         for command in MERGED_DELETE_SHAPES:
             with self.subTest(command=command):
@@ -276,6 +278,106 @@ class GuardCorpusTest(unittest.TestCase):
         result = subprocess.run([sys.executable, str(PLUGIN / 'hooks/mod/fixtures/sync.py'), '--check'],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+
+SOFTEN = {  # corpus id -> the soften level the deny carries; None is a hard deny that normal mode keeps
+    'soften-stash': 'warn', 'soften-add-all': 'allow', 'soften-commit-all': 'allow', 'soften-amend': 'warn',
+    'soften-push-tags': 'warn', 'soften-push-refspec-colon': 'warn',
+    'nosoften-push-prune': None, 'nosoften-push-mirror': None, 'nosoften-stash-then-reset': None,
+    'nosoften-stash-then-force-push': None, 'nosoften-push-tags-extra-refspec': None, 'nosoften-push-tags-prune': None}
+WORKFLOW = {'workflow-run-release': 'release.yml', 'workflow-run-flags-first': 'deploy.yml'}
+
+
+class SoftenAndGhRulesTest(unittest.TestCase):
+    """D4 2.7: the classifier keeps the protect verdict and marks the denies normal mode may relax; new gh rules."""
+
+    def by_id(self, case_id):
+        return next(case for case in CORPUS if case['id'] == case_id)
+
+    def test_soften_level_rides_the_decision_for_every_listed_case(self):
+        for case_id, level in SOFTEN.items():
+            with self.subTest(case=case_id):
+                decision = classify_command(self.by_id(case_id)['input']['command'])
+                self.assertEqual((decision.klass, decision.soften), ('deny', level))
+
+    def test_only_deny_decisions_soften_and_default_is_none(self):
+        self.assertIsNone(classify_command('git status').soften)
+        self.assertIsNone(classify_command('git reset --hard').soften)
+        self.assertIsNone(classify_command('git push origin main').soften)
+        self.assertIsNone(guards.Decision().soften)
+        self.assertIsNone(guards.Decision().workflow)
+
+    def test_two_softened_denies_keep_the_stricter_level(self):
+        self.assertEqual(classify_command('git add -A && git stash').soften, 'warn')
+        self.assertEqual(classify_command('git stash && git add -A').soften, 'warn')
+        self.assertEqual(classify_command("bash -c 'git add -A' && git commit --amend").soften, 'warn')
+        self.assertEqual(classify_command('git add -A; git commit -am x').soften, 'allow')
+
+    def test_a_hard_deny_anywhere_in_the_command_drops_soften(self):
+        for command in ('git stash; git clean -f', "bash -c 'git stash; git checkout .'", 'echo $(git stash) $(git reset --hard)',
+                        'git add -A && echo "$(git push --force origin x)"', 'git stash\ngit branch -D a b'):
+            with self.subTest(command=command):
+                decision = classify_command(command)
+                self.assertEqual((decision.klass, decision.soften), ('deny', None))
+
+    def test_softened_deny_keeps_its_protect_reason(self):
+        self.assertEqual(classify_command('git commit --amend').reason, 'Amend rewrites history; make a new commit instead')
+        self.assertEqual(classify_command('git push --tags origin').reason, 'Push needs one explicit remote and refspec')
+        self.assertEqual(classify_command('git push origin :x').reason, 'Push needs one non-deleting refspec')
+
+    def test_workflow_name_rides_the_decision(self):
+        for case_id, name in WORKFLOW.items():
+            with self.subTest(case=case_id):
+                decision = classify_command(self.by_id(case_id)['input']['command'])
+                self.assertEqual((decision.klass, decision.workflow), ('release', name))
+        self.assertIsNone(classify_command('gh workflow run').workflow)
+        self.assertIsNone(classify_command('gh api -X DELETE repos/o/r').workflow)
+
+    def test_gh_decision_categories(self):
+        for command, category in [('gh prm 12', 'ghcustom'), ('gh pr edit 12 --base main', 'prbase'), ('gh pr edit 12 -Bmain', 'prbase'),
+                                  ('gh pr edit 12 --base=main', 'prbase'), ('gh api -X DELETE repos/o/r', 'apiwrite'),
+                                  ('gh api -X POST repos/o/r/git/refs -f ref=x', 'providerrelease')]:
+            with self.subTest(command=command):
+                decision = classify_command(command)
+                self.assertEqual((decision.klass, decision.category), ('release', category))
+
+    def test_gh_config_boundaries_and_builtins(self):
+        for command in ('gh alias set a b', 'gh alias import f', 'gh alias delete a', 'gh extension install o/r', 'gh ext list'):
+            with self.subTest(command=command):
+                decision = classify_command(command)
+                self.assertEqual((decision.klass, decision.boundary), ('boundary', 'config'))
+        for command in ('gh alias list', 'gh pr view 3', 'gh issue list', 'gh repo view', 'gh run view 1', 'gh auth status', 'gh',
+                        'gh --help', 'gh -R o/r pr view'):
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'allow')
+
+    def test_gh_api_write_forms(self):
+        for command in ('gh api repos/o/r -f default_branch=x', 'gh api repos/o/r -F a=b', 'gh api repos/o/r --field a=b',
+                        'gh api repos/o/r --raw-field a=b', 'gh api repos/o/r -fa=b', 'gh api repos/o/r --input=x.json',
+                        'gh api -X delete repos/o/r', 'gh api -iXDELETE repos/o/r', 'gh api -H "A: b" -X DELETE repos/o/r',
+                        'gh api repos/o/r --method DELETE', 'gh api -X PATCH /repos/o/r', 'gh api -X PATCH https://api.github.com/repos/o/r',
+                        'gh api -X POST repos/o/r/pulls/3/reviews%2e%2e/x -f a=b', 'gh api -X PUT repos/o/r/pulls', 'gh api -X POST -f a=b'):
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'release', command)
+        for command in ('gh api repos/o/r', 'gh api -X GET repos/o/r -f a=b', 'gh api --method=get repos/o/r -F a=b', 'gh api -H "A: b" repos/o/r',
+                        'gh api repos/o/r/issues/3/comments -f body=x', 'gh api -X POST /repos/o/r/pulls -f title=t',
+                        'gh api -X POST https://api.github.com/repos/o/r/pulls?x=1 -f title=t',
+                        'gh api graphql -f query=query', 'gh api -X POST repos/o/r/pulls/3/comments -f body=x'):
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'allow', command)
+
+    def test_gh_api_write_endpoint_data_and_allow_list_data(self):
+        release = RULES['release']
+        self.assertTrue(all(isinstance(x, str) for x in release['gh_api_write_endpoints']))
+        self.assertEqual(sorted(method for method, _ in release['gh_api_autonomy_allow']), ['POST'] * 4)
+        self.assertEqual(sorted(path for _, path in release['gh_api_autonomy_allow']),
+                         ['repos/*/*/issues/*/comments', 'repos/*/*/pulls', 'repos/*/*/pulls/*/comments', 'repos/*/*/pulls/*/reviews'])
+        self.assertIn('pr', RULES['gh_builtin'])
+        self.assertNotIn('prm', RULES['gh_builtin'])
+        self.assertEqual(RULES['tools']['scheduler'], ['CronCreate', 'ScheduleWakeup', 'RemoteTrigger'])
+        self.assertEqual(RULES['protected']['autonomy_files'], ['.claude/settings.json', '.claude/settings.local.json'])
+        self.assertEqual(RULES['soften'], {'stash': 'warn', 'wholesaleAdd': 'allow', 'commitAll': 'allow', 'amend': 'warn',
+                                           'pushMulti': 'warn', 'pushRefspec': 'warn'})
 
 
 LONG_OPTION_DENY = [

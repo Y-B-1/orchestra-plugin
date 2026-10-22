@@ -43,6 +43,8 @@ _EXEC_FLAGS = set(_RUNNERS['watch_exec_flags'])
 _COMMAND_FLAGS = set(_RUNNERS['flock_command_flags'])
 _FIND_EXEC = set(_RUNNERS['find_exec_actions'])
 _MULTI = 'releasemulti'  # Decision.category of a release-class segment inside a multi-segment command.
+_SOFTEN = RULES['soften']
+_GH_BUILTIN = frozenset(RULES['gh_builtin'])
 
 
 def guard_digest(root=None):
@@ -71,6 +73,8 @@ class Decision:
     boundary: str | None = None  # 'delete' or 'merge' for class boundary; action stays allow.
     kind: str | None = None  # category merged-delete only: 'local' or 'remote' (SPEC 5.14).
     branch: str | None = None  # category merged-delete only: the one branch the command deletes.
+    soften: str | None = None  # 'warn' or 'allow': how far normal mode may relax this deny; protect mode keeps it.
+    workflow: str | None = None  # `gh workflow run` only: the workflow name or file, when the command names one.
 
     @property
     def klass(self):
@@ -83,7 +87,16 @@ class Decision:
 
 
 def _deny(reason, category='destructiveGit'):
+    _BUDGET['hard'] += 1
     return Decision('deny', reason, category)
+
+
+def _soft(reason, kind, category='destructiveGit'):
+    """A deny that normal mode may relax (rules `soften`). The call counts, so classify_command can tell a command
+    whose every deny is soft from one that also holds a hard deny."""
+    level = _SOFTEN[kind]
+    _BUDGET['warn'] = _BUDGET['warn'] or level == 'warn'
+    return Decision('deny', reason, category, soften=level)
 
 
 def _split(command):
@@ -648,7 +661,7 @@ def _git_rules(words):
     flags = [x for x in options if x.startswith('-')]
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
-        return _deny('Git stash shares state across worktrees; commit the work on a branch instead', 'stash')
+        return _soft('Git stash shares state across worktrees; commit the work on a branch instead', 'stash', 'stash')
     if verb == 'update-ref' and _raw_ref_delete(args):
         return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):
@@ -671,14 +684,14 @@ def _git_rules(words):
             return _deny('Wholesale restore discards work; restore named paths with `git restore <path>`')
     if verb == 'add' and (any(x in flags for x in _GIT['wholesale_add_flags']) or 'A' in short or 'u' in short or
                           any(x in _GIT['wholesale_add_pathspecs'] for x in args)):
-        return _deny('Stage explicit paths only: `git add <path> ...`', 'wholesaleStage')
+        return _soft('Stage explicit paths only: `git add <path> ...`', 'wholesaleAdd', 'wholesaleStage')
     if verb == 'commit':
         # A message beginning with a dash is still a message.
         opts = [x for x in options if not (x.startswith(('--message=', '--file=')) or x.startswith('-m'))]
         if '--all' in opts or any(x.startswith('-') and not x.startswith('--') and 'a' in x[1:] for x in opts):
-            return _deny('Commit explicit staged paths only: stage with `git add <path>`, then `git commit`', 'wholesaleStage')
+            return _soft('Commit explicit staged paths only: stage with `git add <path>`, then `git commit`', 'commitAll', 'wholesaleStage')
         if any(x in _GIT['commit_guarded_flags'] for x in opts):
-            return _deny('Amend rewrites history; make a new commit instead')
+            return _soft('Amend rewrites history; make a new commit instead', 'amend')
     if verb == 'push':
         if any(x.startswith('--force') or x == '--mirror' for x in flags) or 'f' in short or any(x.startswith('+') for x in args):
             return _deny('Force push rewrites remote history; push normally or ask the owner')
@@ -687,12 +700,17 @@ def _git_rules(words):
         if (('--delete' in flags or 'd' in short) and not dry_run and '--' not in args and
                 (merged := _merged_delete(verb, options, flags, short, words, not plain, args))):
             return merged
-        if len(positional) > 2 or any(x in flags for x in _GIT['push_multi_flags']) or 'd' in short:
+        multi = [x for x in flags if x in _GIT['push_multi_flags']] + (['--delete'] if 'd' in short else [])
+        if len(positional) > 2 or multi:
+            if len(positional) <= 2 and all(x in _GIT['push_soften_flags'] for x in multi):
+                return _soft('Push needs one explicit remote and refspec', 'pushMulti', 'release')
             return _deny('Push needs one explicit remote and refspec', 'release')
         remote, target = (positional + [None, None])[:2]
         source = target.split(':', 1)[0] if target else None
         if target:
             if target.startswith(':') or '*' in target or target.count(':') > 1:
+                if target.startswith(':') and '*' not in target and target.count(':') == 1:
+                    return _soft('Push needs one non-deleting refspec', 'pushRefspec', 'release')
                 return _deny('Push needs one non-deleting refspec', 'release')
             target = target.split(':')[-1].removeprefix('refs/heads/')
         if changed_repo:
@@ -724,6 +742,123 @@ def _is_release(name, words):
             (name in _RELEASE['package_tools'] and _RELEASE['package_verb'] in words[1:]) or
             (any(verb in words[1:] for verb in _RELEASE['tool_verbs'].get(name, ()))) or
             (name in _RELEASE['deploy_tools'] and any(x in words[1:] for x in _RELEASE['deploy_words'])))
+
+
+_GH_API_VALUE_LONG = frozenset(['--method', '--header', '--jq', '--template', '--preview', '--field', '--raw-field', '--input',
+                                '--cache', '--hostname'])
+_GH_API_FIELD_LONG = frozenset(['--field', '--raw-field', '--input'])
+_GH_API_VALUE_SHORT = 'XHqtpfF'
+_GH_URL = re.compile(r'https?://[^/]+/')
+
+
+def _gh_api_parse(args):
+    """(method, has_field, endpoint) of the words after `gh api`. method is upper case or None; endpoint is the first
+    operand or None. A value flag with no value ends the parse with endpoint None (doubt reads as a write)."""
+    method, field, endpoint, i, rest = None, False, None, 0, False
+    while i < len(args):
+        word = args[i]
+        i += 1
+        if rest or not word.startswith('-') or word == '-':
+            endpoint = endpoint if endpoint is not None else word
+        elif word == '--':
+            rest = True
+        elif word.startswith('--'):
+            name, eq, value = word.partition('=')
+            if name in _GH_API_VALUE_LONG:
+                if not eq:
+                    if i >= len(args):
+                        return method, field, None
+                    value = args[i]
+                    i += 1
+                if name == '--method':
+                    method = value.upper()
+                field = field or name in _GH_API_FIELD_LONG
+        else:
+            for k, char in enumerate(word[1:], 1):
+                if char in _GH_API_VALUE_SHORT:
+                    value = word[k + 1:]
+                    if not value:
+                        if i >= len(args):
+                            return method, field, None
+                        value = args[i]
+                        i += 1
+                    if char == 'X':
+                        method = value.upper()
+                    field = field or char in 'fF'
+                    break
+    return method, field, endpoint
+
+
+def _gh_api_path(endpoint):
+    """The endpoint path without scheme, host, leading slash and query string, and whether it is plain: no empty,
+    `.` or `..` segment and no percent escape, so the segments compare as written."""
+    url = _GH_URL.match(endpoint)
+    path = endpoint[url.end():] if url else endpoint
+    path = path.split('?', 1)[0].split('#', 1)[0].lstrip('/')
+    parts = path.split('/')
+    return path, '%' not in path and not any(x in ('', '.', '..') for x in parts)
+
+
+def _path_matches(pattern, path):
+    """`*` is one path segment; a trailing `**` is any rest, none included."""
+    want, have = pattern.split('/'), path.split('/')
+    if want[-1] == '**':
+        return len(have) >= len(want) - 1 and all(a in ('*', b) for a, b in zip(want[:-1], have))
+    return len(want) == len(have) and all(a in ('*', b) for a, b in zip(want, have))
+
+
+def _gh_api(words):
+    """A `gh api` call that writes is a release: providerrelease on a write endpoint, apiwrite elsewhere, and no
+    release on the short allow list (pull request, comment and review writes). `gh api graphql` has its own rule."""
+    method, field, endpoint = _gh_api_parse(words[2:])
+    if endpoint == 'graphql' or not (method not in (None, 'GET') or (method is None and field)):
+        return None
+    path, plain = _gh_api_path(endpoint) if endpoint is not None else ('', False)
+    argv = tuple(words)
+    if any(_path_matches(x, path) for x in _RELEASE['gh_api_write_endpoints']):
+        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv)
+    if plain and any(m == (method or 'POST') and _path_matches(p, path) for m, p in _RELEASE['gh_api_autonomy_allow']):
+        return None
+    return Decision('release', 'A gh api write outside the pull request and comment calls needs the owner', 'apiwrite', argv=argv)
+
+
+def _gh_operands(args, value_flags):
+    """The operands of a gh command: words that are not flags or flag values."""
+    out, i = [], 0
+    while i < len(args):
+        word = args[i]
+        i += 1
+        if word.startswith('-') and word != '-':
+            i += word in value_flags
+        else:
+            out.append(word)
+    return out
+
+
+_GH_CONFIG_REASON = 'gh aliases and extensions add commands the guard cannot read; the owner sets them'
+
+
+def _gh(words):
+    """Rules for gh beyond the pair table: api writes, a pull request base change, workflow runs, aliases and
+    extensions, and any command gh does not ship. None when none applies."""
+    sub = words[1] if len(words) > 1 else ''
+    if not sub or sub.startswith('-'):
+        return None
+    argv = tuple(words)
+    if sub == 'api':
+        return _gh_api(words)
+    if sub == 'pr' and words[2:3] == ['edit'] and any(x in ('--base', '-B') or x.startswith('--base=') or
+                                                      (x.startswith('-B') and not x.startswith('--')) for x in words[3:]):
+        return Decision('release', 'Changing a pull request base can land work on another branch', 'prbase', argv=argv)
+    if sub == 'workflow' and words[2:3] == ['run']:
+        names = _gh_operands(words[3:], ('-f', '-F', '-r', '-R', '--field', '--raw-field', '--ref', '--repo', '--json'))
+        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv,
+                        workflow=names[0] if names else None)
+    if sub in ('extension', 'extensions', 'ext') or (sub == 'alias' and words[2:3] in (['set'], ['import'], ['delete'])):
+        return _boundary('config', _GH_CONFIG_REASON)
+    if sub not in _GH_BUILTIN:
+        return Decision('release', 'A gh command that is not built in can run anything; the owner runs it', 'ghcustom', argv=argv)
+    return None
 
 
 def _find_exec(words, depth):
@@ -775,6 +910,8 @@ def _classify_segment(words, depth):
         return _git(words)
     if _is_release(name, words):
         return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=tuple(words))
+    if name == 'gh' and (found := _gh(words)) is not None:
+        return found
     base = Decision()
     if (name in _BOUNDARY['delete_commands'] or (name == 'find' and _BOUNDARY['find_delete_flag'] in words[1:]) or
             (name == 'gh' and words[1:3] in _BOUNDARY['gh'])):
@@ -1880,7 +2017,7 @@ def _heredoc_items(docs, pipelines, depth, process_sub=False):
 _FOLD_LEVELS = 16  # Substitution nesting levels folded (O33); a substitution nested deeper denies (O34).
 _SUFFIX_CAP = 32  # Command readings after pure-substitution words in one segment (FX4); more denies.
 _READING_BUDGET = 1024  # Extra readings (O33 removed, wrapper twin, FX4 suffix) per call, nested shells included (FX6).
-_BUDGET = {'left': _READING_BUDGET}
+_BUDGET = {'left': _READING_BUDGET, 'hard': 0, 'warn': False}  # hard and warn: denies built in this call (soften)
 _RANK = {'deny': 4, 'release-multi': 3, 'release': 2, 'boundary': 1}
 
 
@@ -2038,9 +2175,14 @@ def runs_test_suite(command, _depth=0):
 def classify_command(command: str, _depth=0) -> Decision:
     if _depth:
         return _classify_command(command, _depth)
-    _BUDGET['left'] = _READING_BUDGET
+    _BUDGET.update(left=_READING_BUDGET, hard=0, warn=False)
     decision = _classify_command(command, 0)
-    return _deny('Malformed shell quoting', 'malformed') if _BUDGET['left'] < 0 else decision
+    if _BUDGET['left'] < 0:
+        return _deny('Malformed shell quoting', 'malformed')
+    if decision.soften and (_BUDGET['hard'] or _BUDGET['warn']):
+        # Every deny built while reading counts, a discarded one too: doubt keeps the protect verdict (fail closed).
+        return replace(decision, soften=None if _BUDGET['hard'] else 'warn')
+    return decision
 
 
 def _classify_command(command, _depth):
