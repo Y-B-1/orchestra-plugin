@@ -16,7 +16,7 @@ from pathlib import Path
 
 from orchestra_core.paths import push_url_digest
 from orchestra_core import portable
-from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions, ensure_remote_heads
+from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, StateBusy, autonomy_preconditions, ensure_remote_heads
 
 ROOT = SCRIPTS.parents[2]
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
@@ -1927,18 +1927,22 @@ class AutonomyBoundaryTests(AutonomyFixture):
         self.engine.interrupt('main', self.lease)
         self.assertFalse(self.engine.autonomy_active())
 
-    def test_interrupt_finish_and_session_end_clear_autonomy(self):
+    def test_interrupt_and_session_end_stop_autonomy_and_keep_the_report(self):
+        def stopped(reason):
+            auto = self.auto()
+            self.assertEqual((auto['active'], auto['last_stop_reason'], auto['report']['reason']), (False, reason, reason))
+
         self.arm()
         self.engine.interrupt('main', self.lease)
-        self.assertIsNone(self.auto())
+        stopped('interrupted')
         self.engine.open_session('main', harness_session='S')
-        self.arm()
+        self.arm()  # a new arm replaces the kept report
         self.engine.end_harness_session('S')
-        self.assertIsNone(self.auto())
+        stopped('ended')
         self.engine.open_session('main')
         self.arm()
         self.engine.interrupt_active()
-        self.assertIsNone(self.auto())
+        stopped('interrupted')
 
 
 class AutonomyReportTests(AutonomyFixture):
@@ -5410,3 +5414,303 @@ class NewRunRefusalTests(AutonomyFixture):
         self.engine.state_path.write_text('{"version": 1, "autonomy": {"report"')  # truncated
         self.assertEqual(self.start()[0], 0)
         self.assertEqual(len(list((self.state / 'history').glob('unreadable-*.json'))), 1)
+
+
+class CompleteStopTests(PullRequestFixture):
+    """`complete` needs the work published: a verified autonomous pull request for the current head, or nothing beyond base."""
+
+    def passing_gate(self):
+        self.assertTrue(self.engine.run_gate('main', self.lease, 'fixture', PASS_ARGV)['passed'])
+
+    def finish_line(self):
+        self.built('B1')
+        self.reviewed('clean', ['B1'])
+        self.engine.accept('main', self.lease, 'B1')
+        self.reviewed('final', ['B1'], final=True, categories=self.ALL)
+        self.passing_gate()
+
+    def last_stop(self):
+        return self.auto().get('last_stop_reason')
+
+    def edit_entry(self, **fields):
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['pull_requests'][0].update(fields)
+        self.engine.state_path.write_text(json.dumps(raw))
+
+    def test_complete_not_returned_with_unpushed_commits_and_no_verified_pr(self):
+        self.arm()
+        self.finish_line()
+        message = self.engine.hook_stop()
+        self.assertIn('Autonomy pass 1:', message)
+        self.assertIn('no verified pull request', message)
+        self.assertTrue(self.auto()['active'])
+        self.assertNotEqual(self.last_stop(), 'complete')
+
+    def test_complete_with_verified_pr_for_head(self):
+        self.arm()
+        self.finish_line()
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.last_stop(), 'complete')
+
+    def not_complete_with(self, **fields):
+        self.arm()
+        self.finish_line()
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.edit_entry(**fields)
+        self.assertIn('no verified pull request', self.engine.hook_stop())
+        self.assertTrue(self.auto()['active'])
+
+    def test_complete_ignores_an_unverified_pr(self):
+        self.not_complete_with(verified_at=None)
+
+    def test_complete_ignores_a_pr_the_run_did_not_open(self):
+        self.not_complete_with(autonomous=False)
+
+    def test_complete_ignores_a_pr_for_another_head(self):
+        self.not_complete_with(head_sha='0' * 40)
+
+    def test_complete_when_no_commits_beyond_base(self):
+        self.git('switch', '-q', 'work')  # the branch AutonomyFixture cut at the session base: no commits beyond it
+        self.arm()
+        self.finish_line()
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.last_stop(), 'complete')
+
+    def test_push_and_pr_continuation_stalls_after_two_passes(self):
+        self.arm()
+        self.finish_line()
+        self.assertIn('Autonomy pass 1:', self.engine.hook_stop())
+        self.assertIn('Autonomy pass 2:', self.engine.hook_stop())  # nothing changed, yet the continuation repeats once
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'stalled'))
+        self.assertIn('no verified pull request', self.engine.brief())
+
+    def test_recording_the_pr_after_one_continuation_completes(self):
+        self.arm()
+        self.finish_line()
+        self.assertIn('Autonomy pass 1:', self.engine.hook_stop())
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.last_stop(), 'complete')
+
+
+class StopReasonTests(AutonomyFixture):
+    """A session that ends with autonomy active leaves the morning report and a reason."""
+
+    def restart(self, harness_session=None):
+        shutil.rmtree(self.state)
+        self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main', harness_session=harness_session)
+
+    def check(self, call, reason):
+        self.arm()
+        self.now[0] += 60
+        call()
+        auto = self.auto()
+        self.assertEqual((auto['active'], auto['last_stop_reason']), (False, reason))
+        self.assertEqual(auto['report']['reason'], reason)
+        self.assertIn('- stop reason: ' + reason, self.engine.autonomy_report()['text'])
+        self.assertEqual(self.engine.status()['last_brief']['reason'], reason)
+        self.assertEqual((self.state / 'progress.md').read_text().count('## Run brief'), 1)
+
+    def test_interrupt_end_close_with_autonomy_leave_report_and_reason(self):
+        with self.subTest('interrupt'):
+            self.check(lambda: self.engine.interrupt('main', self.lease), 'interrupted')
+        with self.subTest('interrupt_active'):
+            self.restart()
+            self.check(self.engine.interrupt_active, 'interrupted')
+        with self.subTest('ended'):
+            self.restart(harness_session='S')
+            self.check(lambda: self.engine.end_harness_session('S'), 'ended')
+        with self.subTest('finished'):
+            self.restart()
+            self.check(lambda: self.engine.close_session('main', self.lease), 'finished')
+
+    def test_a_close_without_autonomy_still_writes_closed(self):
+        self.engine.close_session('main', self.lease)
+        self.assertEqual(self.engine.status()['last_brief']['reason'], 'closed')
+        self.assertIsNone(self.auto())
+
+    def test_interrupt_then_new_run_refused_until_receipt_or_disarm(self):
+        self.arm()
+        self.engine.interrupt('main', self.lease)
+        run = self.engine.status()['run_id']
+        start = lambda: run_cli(self, 'start', '--new-run', '--size', 'tiny')
+        code, _, err = start()
+        self.assertEqual(code, 2)
+        self.assertIn('New run refused: autonomy kept a report for run ' + run, err)
+        self.assertEqual(self.engine.status()['run_id'], run)
+        self.assertFalse(self.engine.disarm_autonomy()['was_active'])  # pops the kept report
+        self.assertEqual(start()[0], 0)
+
+    def test_interrupt_then_a_receipt_lets_a_new_run_start(self):
+        self.arm()
+        self.engine.interrupt('main', self.lease)
+        self.engine.record_owner_approval([], [], dict(event='UserPromptSubmit'))
+        self.assertEqual(run_cli(self, 'start', '--new-run', '--size', 'tiny')[0], 0)
+
+
+
+class OwnerApprovalTests(AutonomyFixture):
+    """The receipt writer: only `Engine.record_owner_approval`, only for a stopped run."""
+
+    EVIDENCE = dict(event='UserPromptSubmit', session_id='S', prompt_id=None, prompt_sha256='a' * 64)
+
+    def pr(self, number=12, order=1):
+        return dict(order=order, number=number, repo='o/r', url='https://github.example/o/r/pull/%d' % number,
+                    head_ref='feat/%d' % number, head_sha='b' * 40, base_ref='main')
+
+    def stopped(self):
+        self.arm()
+        self.engine.disarm_autonomy()  # the stop that leaves the morning report
+
+    def raw(self):
+        return json.loads(self.engine.state_path.read_text())
+
+    def test_record_owner_approval_stores_the_receipt(self):
+        self.stopped()
+        excluded = [dict(number=13, reason='head moved')]
+        receipt = self.engine.record_owner_approval([self.pr()], excluded, self.EVIDENCE)
+        stored = self.raw()['approval']
+        self.assertEqual(receipt, stored)
+        self.assertEqual((stored['run'], stored['prs'], stored['excluded'], stored['evidence']),
+                         (self.engine.status()['run_id'], [self.pr()], excluded, self.EVIDENCE))
+        self.assertEqual((stored['version'], stored['recorded_at'], stored['default_branch']), (1, T0, self.default_branch))
+
+    def test_record_owner_approval_replaces_previous_receipt(self):
+        self.stopped()
+        self.engine.record_owner_approval([self.pr(12)], [], self.EVIDENCE)
+        self.now[0] += 60
+        self.engine.record_owner_approval([self.pr(12), self.pr(13, 2)], [], self.EVIDENCE)
+        stored = self.raw()
+        self.assertEqual([p['number'] for p in stored['approval']['prs']], [12, 13])
+        self.assertEqual(stored['approval']['recorded_at'], T0 + 60)
+        self.assertNotIn('approval_history', stored)
+
+    def test_record_owner_approval_with_no_prs(self):
+        self.stopped()
+        self.assertEqual(self.engine.record_owner_approval([], [], self.EVIDENCE)['prs'], [])
+        self.assertEqual(self.raw()['approval']['prs'], [])
+
+    def test_record_owner_approval_refused_while_autonomy_active(self):
+        self.arm()
+        with self.assertRaisesRegex(EngineError, 'autonomy is active'):
+            self.engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertNotIn('approval', self.raw())
+
+    def test_record_owner_approval_refused_when_run_never_stopped(self):
+        with self.assertRaisesRegex(EngineError, 'never stopped'):
+            self.engine.record_owner_approval([], [], self.EVIDENCE)  # no autonomy at all
+        self.arm()
+        self.engine.disarm_autonomy()
+        self.engine.disarm_autonomy()  # the second disarm pops the kept report
+        with self.assertRaisesRegex(EngineError, 'never stopped'):
+            self.engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertNotIn('approval', self.raw())
+
+    def test_record_owner_approval_refused_without_state(self):
+        engine = Engine(self.root / 'empty', self.repo)
+        with self.assertRaisesRegex(EngineError, 'never stopped'):
+            engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertFalse((self.root / 'empty' / 'state.json').exists())
+
+    def test_record_owner_approval_refuses_malformed_input(self):
+        self.stopped()
+        bad = [([], [], None), ([], [], 'prompt'), ({}, [], self.EVIDENCE), ([], 'x', self.EVIDENCE),
+               (['url'], [], self.EVIDENCE), ([{'number': 1}], [], self.EVIDENCE), ([], [{'number': 1}], self.EVIDENCE),
+               ([dict(self.pr(), number='12')], [], self.EVIDENCE)]
+        for prs, excluded, evidence in bad:
+            with self.subTest(prs=prs, excluded=excluded, evidence=evidence), self.assertRaises(EngineError):
+                self.engine.record_owner_approval(prs, excluded, evidence)
+        self.assertNotIn('approval', self.raw())
+
+    def test_start_new_run_archives_approval(self):
+        self.stopped()
+        self.engine.interrupt('main', self.lease)
+        run = self.engine.status()['run_id']
+        self.engine.record_owner_approval([self.pr()], [], self.EVIDENCE)
+        self.assertEqual(run_cli(self, 'start', '--new-run', '--size', 'tiny')[0], 0)
+        archived = json.loads(next((self.state / 'history').glob('run-*.json')).read_text())
+        self.assertEqual((archived['state']['run_id'], archived['state']['approval']['run']), (run, run))
+        self.assertNotIn('approval', self.raw())
+        self.assertNotEqual(self.raw()['run_id'], run)
+
+    def test_no_argparse_subcommand_writes_approval(self):
+        self.assertNotIn('record_owner_approval', (SCRIPTS / 'orchestra.py').read_text())
+        self.stopped()
+        for words in (('approval',), ('approve',), ('approved',), ('autonomy', 'approval'), ('autonomy', 'approve')):
+            with self.subTest(words=words):
+                self.assertEqual(run_cli(self, *words)[0], 2)  # argparse refuses an unknown command
+                self.assertNotIn('approval', self.raw())
+
+
+    def test_record_owner_approval_raises_state_busy_within_lock_wait(self):
+        self.stopped()
+        hook_engine = Engine(self.state, self.repo, clock=lambda: self.now[0], lock_wait=0.2)
+        handle = (self.state / 'state.lock').open('a+')
+        self.addCleanup(handle.close)
+        portable.lock(handle, exclusive=True)
+        started = time.monotonic()
+        with self.assertRaises(StateBusy):
+            hook_engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertLess(time.monotonic() - started, 1.5)
+        portable.unlock(handle)
+        self.assertNotIn('approval', self.raw())
+        hook_engine.record_owner_approval([], [], self.EVIDENCE)  # free again: it records
+        self.assertIn('approval', self.raw())
+
+
+class StaleAutonomyTests(AutonomyFixture):
+    """`stop_stale_autonomy`: a prompt from another session may end a run that stopped writing or ran out its deadline."""
+
+    def bound(self, session='NIGHT'):
+        shutil.rmtree(self.state)
+        self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main', harness_session=session)
+        self.arm()
+
+    def mtime(self):
+        return self.engine.state_path.stat().st_mtime
+
+    def stale(self):
+        return self.engine.policy.get('worker_stale_seconds', 3600)
+
+    def test_stop_stale_autonomy_deadline_passed(self):
+        self.bound()
+        self.assertFalse(self.engine.stop_stale_autonomy('MORNING', now=self.mtime() + 10))
+        self.assertTrue(self.auto()['active'])
+        self.now[0] += 7200
+        self.assertTrue(self.engine.stop_stale_autonomy('NIGHT'))  # even the bound session: the deadline ends the run
+        auto = self.auto()
+        self.assertEqual((auto['active'], auto['last_stop_reason']), (False, 'deadline'))
+        self.assertEqual(auto['report']['reason'], 'deadline')
+        self.assertFalse(self.engine.stop_stale_autonomy('NIGHT'))  # already stopped: nothing to do
+
+    def test_stop_stale_autonomy_other_session_and_old_mtime(self):
+        self.bound()
+        written = self.mtime()
+        self.assertTrue(self.engine.stop_stale_autonomy('MORNING', now=written + self.stale() + 1))
+        auto = self.auto()
+        self.assertEqual((auto['active'], auto['last_stop_reason']), (False, 'stale'))
+        self.assertIn('- stop reason: stale', self.engine.autonomy_report()['text'])
+
+    def test_stop_stale_autonomy_other_session_fresh_mtime_does_nothing(self):
+        self.bound()
+        before = self.engine.state_path.read_bytes()
+        self.assertFalse(self.engine.stop_stale_autonomy('MORNING', now=self.mtime() + self.stale() - 1))
+        self.assertEqual(before, self.engine.state_path.read_bytes())  # a no-op never rewrites state.json
+        self.assertTrue(self.auto()['active'])
+
+    def test_stop_stale_autonomy_bound_session_with_old_mtime_does_nothing(self):
+        self.bound()
+        self.assertFalse(self.engine.stop_stale_autonomy('NIGHT', now=self.mtime() + 10 * self.stale()))
+        self.assertTrue(self.auto()['active'])
+
+    def test_stop_stale_autonomy_without_active_autonomy_or_state(self):
+        self.assertFalse(self.engine.stop_stale_autonomy('MORNING', now=self.mtime() + 10 * self.stale()))
+        self.assertFalse(Engine(self.root / 'empty', self.repo).stop_stale_autonomy('X'))
+        self.assertFalse((self.root / 'empty' / 'state.json').exists())
