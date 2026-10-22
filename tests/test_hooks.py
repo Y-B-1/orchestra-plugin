@@ -2322,6 +2322,7 @@ class AutonomyHookTest(unittest.TestCase):
     def test_o29_policy_change_with_autonomy_inactive_is_armed_autonomy_off(self):
         self.arm()
         self.engine.disarm_autonomy()
+        self.engine.disarm_autonomy()  # the second call pops the kept report, so no unattended lock remains
         self.break_policy()
         self.protect()
         for cwd in (self.repo, self.linked):
@@ -2395,11 +2396,14 @@ class AutonomyHookTest(unittest.TestCase):
         git(self.repo, 'checkout', '-q', '--detach')
         self.assertEqual(self.hook(self.repo, 'git merge topic'), 'deny')
 
-    def test_a15_push_and_rm_denied_in_a_linked_worktree_of_the_armed_repository(self):
+    def test_a15_push_and_rm_in_a_linked_worktree_of_the_armed_repository(self):
         self.arm()
-        for command in ['git push origin main', 'git -C ../linked push origin side', 'rm -rf build', 'rm file.txt']:
+        for command in ['git push origin main', 'git -C ../linked push origin side']:
             with self.subTest(command=command):
                 self.assertEqual(self.hook(self.linked, command), 'deny')
+        for command in ['rm -rf build', 'rm file.txt']:  # T2a2 plane: files inside a linked worktree may go
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(self.linked, command))
         self.assertIsNone(self.hook(self.linked, 'git status'))
 
     def test_linked_worktree_merge_reads_the_branch_of_the_payload_cwd(self):
