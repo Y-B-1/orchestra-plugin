@@ -607,9 +607,21 @@ def _soft_push_refusal(command, cwd, engine):
 def _soft_remainder(command):
     """R4: (the command without its softened segments, True when one of them is a push), or None when the command
     cannot be split safely: a substitution, a heredoc, a shell string, a softened segment inside a pipe or an
-    unreadable segment."""
-    if re.search(r'\$\(|`|<\(|>\(|<<', command):
+    unreadable segment, a `$'...'` string or a `#` comment (the split reads neither, so either could hide a command)."""
+    if re.search(r'\$\(|`|<\(|>\(|<<|\$\'', command):
         return None
+    quote, escaped = None, False
+    for i, char in enumerate(command):
+        if escaped:
+            escaped = False
+        elif char == '\\' and quote != "'":
+            escaped = True
+        elif quote:
+            quote = None if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif char == '#' and (not i or command[i - 1] in ' \t\n;&|()<>'):
+            return None
     kept, pushed = [], False
     try:
         for pipeline in _pipelines(command):

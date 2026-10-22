@@ -578,6 +578,15 @@ class SoftenedCompoundTest(tm.MergeFixture):
             self.assertEqual(self.verdict('git add -A && git status'), 'allow')
             self.assertEqual(self.verdict('git stash && git status'), 'warn')
 
+    def test_comment_and_ansi_quote_do_not_hide_items(self):
+        state = {'state_dir': str(self.state)}
+        for command, kw in (("git add -A # it's\ngit push origin --delete main # it's", {}),
+                            ("git add -A # it's\ngh pr merge 7 --admin # it's", state),
+                            ("echo $'\\''; git add -A; git push origin --delete main # '", {}),
+                            ("echo $'\\''; git add -A; gh pr merge 7 --admin # '", state)):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, **kw), 'deny')
+
 
 if __name__ == '__main__':
     unittest.main()
