@@ -376,6 +376,34 @@ class SoftenAndGhRulesTest(unittest.TestCase):
                     result = handle_event('PreToolUse', payload, mode='protect', armed=True, autonomy=True)
                     self.assertEqual(result.output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
 
+    def test_line_continuation_is_joined(self):
+        nl = chr(10)
+        cont = chr(92) + nl  # A backslash and a real newline.
+        pairs = [('git ' + cont + 'push --force origin main', 'git push --force origin main'),
+                 ('gh pr ' + cont + 'merge 7 --admin', 'gh pr merge 7 --admin'),
+                 ('git branch ' + cont + '-D x', 'git branch -D x'),
+                 ('rm -r' + cont + 'f /', 'rm -rf /'),
+                 ('gh ' + cont + '-R o/r pr merge 7', 'gh -R o/r pr merge 7'),
+                 ("bash -c 'git " + cont + "push --force origin main'", "bash -c 'git push --force origin main'"),
+                 ('echo $(git ' + cont + 'push --force origin main)', 'echo $(git push --force origin main)'),
+                 ('echo "it\'s" # c' + nl + 'git ' + cont + 'push --force origin main',
+                  'echo "it\'s" # c' + nl + 'git push --force origin main'),
+                 ('cat <<EOF' + nl + "don't" + nl + 'EOF' + nl + 'git ' + cont + 'push --force origin main',
+                  'cat <<EOF' + nl + "don't" + nl + 'EOF' + nl + 'git push --force origin main')]
+        for continued, joined in pairs:
+            with self.subTest(command=continued):
+                got, want = classify_command(continued), classify_command(joined)
+                self.assertEqual((got.klass, got.category, got.boundary), (want.klass, want.category, want.boundary))
+        self.assertNotEqual(classify_command(pairs[0][0]).klass, 'allow')
+        self.assertIsNotNone(classify_command(pairs[2][0]).boundary)
+        self.assertEqual(classify_command("echo 'git " + cont + "push --force origin main'").klass, 'allow')
+        with tempfile.TemporaryDirectory() as state, mock.patch.dict(os.environ, {'XDG_STATE_HOME': state}):
+            for command in (pairs[0][0], pairs[1][0]):
+                with self.subTest(hook=command):
+                    payload = {'cwd': state, 'tool_name': 'Bash', 'tool_input': {'command': command}}
+                    result = handle_event('PreToolUse', payload, mode='protect', armed=True, autonomy=True)
+                    self.assertEqual(result.output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
+
     def test_gh_api_write_forms(self):
         for command in ('gh api repos/o/r -f default_branch=x', 'gh api repos/o/r -F a=b', 'gh api repos/o/r --field a=b',
                         'gh api repos/o/r --raw-field a=b', 'gh api repos/o/r -fa=b', 'gh api repos/o/r --input=x.json',

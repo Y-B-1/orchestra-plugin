@@ -2202,7 +2202,44 @@ def classify_command(command: str, _depth=0) -> Decision:
     return decision
 
 
-def _classify_command(command, _depth):
+def _join_continuations(command, literal=True):
+    """Remove each backslash-newline pair outside single quotes, as bash does before it reads words. Inside single
+    quotes the pair stays; a comment runs to its newline untouched. With literal=False single quotes are not
+    tracked at all (a heredoc body or `$'...'` may hide a quote from this scan), so every pair is removed."""
+    out, quote, i, n = [], None, 0, len(command)
+    while i < n:
+        char = command[i]
+        if char == '\\' and quote != "'":
+            if command.startswith('\n', i + 1):
+                i += 2
+                continue
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            quote = None if char == quote else quote
+        elif char in "\"'":
+            quote = char if literal else '"' if char == '"' else None
+        elif char == '#' and (not out or out[-1][-1] in _WORD_START):
+            end = command.find('\n', i)
+            end = n if end < 0 else end
+            out.append(command[i:end])
+            i = end
+            continue
+        out.append(char)
+        i += 1
+    return ''.join(out)
+
+
+def _classify_command(command, _depth, _joined=False):
+    if not _joined and isinstance(command, str) and '\\\n' in command and _RMARK not in command and _SMARK not in command:
+        texts = [_join_continuations(command)]
+        if '<<' in command or "$'" in command:
+            texts.append(_join_continuations(command, False))
+        texts = [text for text in dict.fromkeys(texts) if text.strip()]
+        if texts:
+            decisions = [_classify_command(text, _depth, True) for text in texts]
+            return max(decisions, key=lambda d: _RANK.get(d.klass, 0))
     if _BUDGET['left'] < 0:
         return _deny('Malformed shell quoting', 'malformed')  # The reading budget is spent (FX6).
     if isinstance(command, str) and len(command) > 131072:
