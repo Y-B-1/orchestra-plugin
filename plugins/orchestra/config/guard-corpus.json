@@ -740,7 +740,7 @@
    "input": {
     "command": "cat <<EOF\ngit reset --hard\nEOF"
    },
-   "class": "deny"
+   "class": "allow"
   },
   {
    "id": "allow-heredoc-3",
@@ -1439,7 +1439,7 @@
    "input": {
     "command": "cat <<'EOF'\ngit reset --hard\nEOF"
    },
-   "class": "deny"
+   "class": "allow"
   },
   {
    "id": "deny-heredoc-20",
@@ -1453,7 +1453,7 @@
    "input": {
     "command": "cat <<'EOF'\ngit reset \\\n--hard\nEOF"
    },
-   "class": "deny"
+   "class": "allow"
   },
   {
    "id": "allow-heredoc-8",
@@ -11510,6 +11510,118 @@
    },
    "class": "boundary",
    "category": "delete"
+  },
+  {
+   "id": "allow-heredoc-cat-file",
+   "input": {
+    "command": "cat > f.md <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-cat-unquoted",
+   "input": {
+    "command": "cat <<EOF\ngit stash\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-gh-body-file",
+   "input": {
+    "command": "gh pr create --body-file - <<'EOF'\ngit stash\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-git-commit-F",
+   "input": {
+    "command": "git commit -F - <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-quote-apostrophe-1",
+   "input": {
+    "command": "echo \"$(echo \"it's\")\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-quote-apostrophe-2",
+   "input": {
+    "command": "echo \"$(grep -c \"it's\" f)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-quote-apostrophe-3",
+   "input": {
+    "command": "VAR=\"$(cmd | tr -d '\"')\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "deny-heredoc-shell-bash",
+   "input": {
+    "command": "bash <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-sh-c",
+   "input": {
+    "command": "sh -c cat <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-cat-pipe-bash",
+   "input": {
+    "command": "cat <<'EOF' | bash\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-ssh",
+   "input": {
+    "command": "ssh host <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-source-stdin",
+   "input": {
+    "command": "source /dev/stdin <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-process-subst",
+   "input": {
+    "command": "cat <<'EOF' > >(bash)\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-unquoted-subst",
+   "input": {
+    "command": "cat <<EOF\n$(git reset --hard)\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-quote-force-push",
+   "input": {
+    "command": "echo \"$(git push --force origin x)\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-quote-unbalanced",
+   "input": {
+    "command": "echo \"$(unbalanced\""
+   },
+   "class": "deny"
   }
  ]
 }

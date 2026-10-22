@@ -141,12 +141,11 @@ HEREDOC_DENIED = ["bash <<'EOF'\ngit reset --hard\nEOF",
                   "cat <<'EOF' | eval\ngit reset --hard\nEOF",
                   "bash -c \"$(cat <<'EOF'\ngit reset --hard\nEOF\n)\"",
                   "bash <(cat <<'EOF'\ngit reset --hard\nEOF\n)",
-                  # Rule 5: a bare destructive line denies whatever the consumer (accepted v1 cost).
-                  "cat <<'EOF'\ngit reset --hard\nEOF",
-                  'cat <<EOF\ngit reset --hard\nEOF',
+                  # Rule 5: a bare destructive line denies when a consumer is not a data consumer.
                   "bash -c 'cat' <<EOF\ngit reset --hard\nEOF",
                   "bash -c 'cat' <<'EOF'\nit's data\ngit reset --hard\nEOF",
-                  "cat <<'EOF'\ngit reset \\\n--hard\nEOF"]
+                  "ssh host <<'EOF'\ngit reset --hard\nEOF",
+                  "cat <<'EOF' > >(bash)\ngit reset --hard\nEOF"]
 HEREDOC_ALLOWED = ["cat <<'EOF'\nit's fine\nEOF",
                    "cat <<'EOF' > f\nit's fine\nEOF",
                    "git commit -F - <<'EOF'\nmessage with a quote's apostrophe\nEOF",
@@ -155,6 +154,10 @@ HEREDOC_ALLOWED = ["cat <<'EOF'\nit's fine\nEOF",
                    "bash -c 'cat > f' <<'EOF'\nit's data\nEOF",
                    'cat <<EOF\necho "\\$(git reset --hard)" "$((1 + 2))"\nEOF',
                    "cat <<'EOF'\n$(date)\nEOF",
+                   # Rule 5: a heredoc whose whole pipeline is data consumers is data, command-looking or not.
+                   "cat <<'EOF'\ngit reset --hard\nEOF",
+                   'cat <<EOF\ngit reset --hard\nEOF',
+                   "cat <<'EOF'\ngit reset \\\n--hard\nEOF",
                    'cat <<< "git reset --hard"',
                    'echo $((1 << 2))']
 # G2f item 4: raw ref deletion skips the branch-delete rules, so it denies; a create or move stays allowed.

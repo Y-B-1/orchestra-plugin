@@ -1044,6 +1044,14 @@ def _dollar_decode(text):
             escaped = False
         elif char == '\\' and quote != "'":
             escaped = True
+        elif quote == '"' and text.startswith('$(', i):
+            end = _balanced_end(text, i + 2)
+            if end < 0:
+                out.append(text[i:])
+                break
+            out.append(text[i:end])
+            i = end
+            continue
         elif quote:
             if char == quote:
                 quote = None
@@ -1820,8 +1828,27 @@ def _stream_items(text, ops, depth):
     return items
 
 
-def _heredoc_items(docs, pipelines, depth):
-    """SPEC A5 rules (1) to (5): extra (decision, argv, counts) items for each heredoc body."""
+_DATA_CONSUMERS = {'cat', 'tee', 'gh', 'wc', 'head', 'tail', 'sort', 'uniq', 'cut', 'tr', 'base64', 'diff', 'grep'}
+_DATA_GIT_VERBS = {'commit', 'tag', 'notes', 'apply', 'am', 'hash-object', 'interpret-trailers'}
+
+
+def _data_consumer(segment):
+    """SPEC A5 rule (5): the segment is a command that only stores or shows its stdin."""
+    try:
+        words = _command_words(segment)
+    except ValueError:
+        return False
+    if not words:
+        return False
+    name = PurePosixPath(words[0]).name
+    if name == 'git':
+        return len(words) > 1 and words[1] in _DATA_GIT_VERBS
+    return name in _DATA_CONSUMERS
+
+
+def _heredoc_items(docs, pipelines, depth, process_sub=False):
+    """SPEC A5 rules (1) to (5): extra (decision, argv, counts) items for each heredoc body. process_sub: the
+    command has `<(` or `>(`, so no heredoc counts as data."""
     items = []
     found = {}  # heredoc index -> (pipeline, segment index) of its first marker: one pass, not one scan per heredoc
     for pipeline in pipelines:
@@ -1829,9 +1856,10 @@ def _heredoc_items(docs, pipelines, depth):
             for mark in _MARK_RE.finditer(segment):
                 found.setdefault(mark.group()[len('<<' + _MARK):-len(_MARK)], (pipeline, i))
     for index, (body, quoted) in enumerate(docs):
-        modes, argv = set(), ()
+        modes, argv, data = set(), (), False
         if str(index) in found:
             pipeline, where = found[str(index)]
+            data = not process_sub and all(_data_consumer(segment) for segment in pipeline[where:])
             argv = tuple(_MARK_RE.sub('<<HEREDOC', word) for word in _shlex_words(pipeline[where]))
             # Rules (1) to (3): the consumer and every later command of its pipeline.
             modes = {_consumer_mode(segment) for segment in pipeline[where:]}
@@ -1843,7 +1871,7 @@ def _heredoc_items(docs, pipelines, depth):
                 decision = classify_command(content, depth + 1)
                 if decision.klass != 'allow' and decision.category != 'malformed':
                     items.append((decision, argv, True))
-        decision = _scan_lines(body, depth)  # Rule (5)
+        decision = Decision() if data else _scan_lines(body, depth)  # Rule (5), except for data consumers
         if decision.action == 'deny':
             items.append((decision, argv, False))
     return items
@@ -1909,9 +1937,9 @@ def _fold(text, subs):
             out.append(text[i:i + 2])
             i += 2
             continue
-        if quote:
+        if quote == "'" or (quote == '"' and not text.startswith('$(', i)):
             quote = None if char == quote else quote
-        elif char in "\"'":
+        elif quote is None and char in "\"'":
             quote = char
         elif text.startswith('$(', i):
             end = _balanced_end(text, i + 2)
@@ -1919,7 +1947,8 @@ def _fold(text, subs):
                 out.append(text[i:])
                 break
             out.append(_SMARK + str(len(subs)) + _SMARK)
-            subs.append(text[i + 2:end - 1])
+            inner = text[i + 2:end - 1]
+            subs.append(_dollar_decode(inner) if quote == '"' else inner)
             i = end
             continue
         out.append(char)
@@ -2066,7 +2095,7 @@ def _classify_command(command, _depth):
                 decision = found if decision is None else _stricter(decision, found)
             if decision is not None:
                 items.append((decision, original, True))
-        items.extend(_heredoc_items(docs, _pipelines(text), _depth))
+        items.extend(_heredoc_items(docs, _pipelines(text), _depth, '<(' in text or '>(' in text))
         items.extend(_stream_items(text, _scan_ops(text), _depth))
         raw_hit = _raw_scan(text, _depth) or _backtick_scan(text, _depth)
         if raw_hit:

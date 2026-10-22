@@ -1218,6 +1218,16 @@ function dollarDecode(text: string): string {
       escaped = false;
     } else if (char === '\\' && q !== "'") {
       escaped = true;
+    } else if (q === '"' && text.startsWith('$(', i)) {
+      // A substitution inside double quotes is a nested command context: its quotes are not the outer ones.
+      const end = balancedEnd(text, i + 2);
+      if (end < 0) {
+        out.push(text.slice(i));
+        break;
+      }
+      out.push(text.slice(i, end));
+      i = end;
+      continue;
     } else if (q) {
       if (char === q) q = null;
     } else if (char === '"' || char === "'") {
@@ -2038,7 +2048,26 @@ function streamItems(text: string, ops: Ops, depth: number): Item[] {
   return items;
 }
 
-function heredocItems(docs: Doc[], pipes: string[][], depth: number): Item[] {
+const DATA_CONSUMERS = new Set(['cat', 'tee', 'gh', 'wc', 'head', 'tail', 'sort', 'uniq', 'cut', 'tr', 'base64', 'diff', 'grep']);
+const DATA_GIT_VERBS = new Set(['commit', 'tag', 'notes', 'apply', 'am', 'hash-object', 'interpret-trailers']);
+
+/** SPEC A5 rule (5): the segment is a command that only stores or shows its stdin. Mirrors guards._data_consumer. */
+function dataConsumer(segment: string): boolean {
+  let words: string[];
+  try {
+    words = commandWords(segment);
+  } catch (e) {
+    if (e instanceof ValueError) return false;
+    throw e;
+  }
+  if (!words.length) return false;
+  const name = posixName(words[0]!);
+  if (name === 'git') return words.length > 1 && DATA_GIT_VERBS.has(words[1]!);
+  return DATA_CONSUMERS.has(name);
+}
+
+/** processSub: the command has `<(` or `>(`, so no heredoc counts as data. */
+function heredocItems(docs: Doc[], pipes: string[][], depth: number, processSub = false): Item[] {
   const items: Item[] = [];
   const found = new Map<string, [string[], number]>(); // heredoc index -> its first marker's pipeline and segment: one pass
   for (const pipeline of pipes) {
@@ -2052,9 +2081,11 @@ function heredocItems(docs: Doc[], pipes: string[][], depth: number): Item[] {
   docs.forEach(([body, quoted], index) => {
     let modes = new Set<string | null>();
     let argv: string[] = [];
+    let data = false;
     const hit = found.get(String(index));
     if (hit) {
       const [pipeline, where] = hit;
+      data = !processSub && pipeline.slice(where).every((segment) => dataConsumer(segment));
       argv = shlexSplit(pipeline[where]!, true).map((word) => word.replace(MARK_RE, '<<HEREDOC'));
       modes = new Set(pipeline.slice(where).map((segment) => consumerMode(segment)));
     }
@@ -2066,7 +2097,7 @@ function heredocItems(docs: Doc[], pipes: string[][], depth: number): Item[] {
         if (klassOf(decision) !== 'allow' && decision.category !== 'malformed') items.push([decision, argv, true]);
       }
     }
-    const decision = scanLines(body, depth);
+    const decision = data ? dec() : scanLines(body, depth); // Rule (5), except for data consumers
     if (decision.action === 'deny') items.push([decision, argv, false]);
   });
   return items;
@@ -2149,9 +2180,9 @@ function fold(text: string, subs: string[]): string {
       i += 2;
       continue;
     }
-    if (q) {
+    if (q === "'" || (q === '"' && !text.startsWith('$(', i))) {
       if (char === q) q = null;
-    } else if (char === '"' || char === "'") {
+    } else if (q === null && (char === '"' || char === "'")) {
       q = char;
     } else if (text.startsWith('$(', i)) {
       const end = balancedEnd(text, i + 2);
@@ -2160,7 +2191,8 @@ function fold(text: string, subs: string[]): string {
         break;
       }
       out.push(SMARK + String(subs.length) + SMARK);
-      subs.push(text.slice(i + 2, end - 1));
+      const inner = text.slice(i + 2, end - 1);
+      subs.push(q === '"' ? dollarDecode(inner) : inner);
       i = end;
       continue;
     }
@@ -2233,7 +2265,7 @@ function classifyInner(command: string, depth: number): Decision {
       }
       if (decision !== null) items.push([decision, original, true]);
     }
-    items.push(...heredocItems(docs, pipelines(text), depth));
+    items.push(...heredocItems(docs, pipelines(text), depth, text.includes('<(') || text.includes('>(')));
     items.push(...streamItems(text, scanOps(text), depth));
     const rawHit = rawScan(text, depth) ?? backtickScan(text, depth);
     if (rawHit) items.push([rawHit, [], false]);

@@ -73,6 +73,17 @@ test('merged-delete: any git global option before the verb denies (R2 test_merge
   }
 });
 
+test('heredoc data and apostrophe in a double-quoted substitution: the T5 corpus cases get the Python verdict', () => {
+  const t5 = /^(allow-heredoc-(cat-file|cat-unquoted|gh-body-file|git-commit-F)|allow-quote-apostrophe-[123]|deny-heredoc-shell-.+|deny-quote-(force-push|unbalanced)|deny-heredoc-(2r|19|21|18))$/;
+  const cases = (CORPUS as Case[]).filter((c) => t5.test(c.id));
+  expect(cases.length).toBe(20);
+  expect(run(cases)).toEqual([]);
+  expect(cases.filter((c) => ['deny-heredoc-2r', 'deny-heredoc-19', 'deny-heredoc-21'].includes(c.id)).map((c) => c.class)).toEqual(['allow', 'allow', 'allow']);
+  expect(klassOf(classifyCommand("cat <<'EOF' > >(bash)\ngit reset --hard\nEOF"))).toBe('deny');
+  expect(klassOf(classifyCommand('cat <<EOF\n$(git reset --hard)\nEOF'))).toBe('deny');
+  expect(klassOf(classifyCommand('echo "$(git push --force origin x)"'))).toBe('deny');
+});
+
 test('corpus parity: O17 cases (reserved words, groups, arithmetic, case patterns)', () => {
   expect(O17_CASES.length).toBeGreaterThan(50);
   expect(run(O17_CASES as Case[])).toEqual([]);
