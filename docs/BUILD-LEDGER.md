@@ -369,3 +369,18 @@ The real hook entry point (`run-hook.sh <Event> --harness claude`, hook JSON on 
 | Fixed | The `gate-failing` brief said "read its log" without the path; it now names the last receipt's log (engine test extended first, red, then green) |
 | Not fixed | With `worker_stale_seconds` under 30 the nudge says "over 0 minutes"; only a test policy hits this |
 | Not checked | The band in a live interactive session; the guard and Stop inside `claude -p` |
+
+### Guard modes and approval to merge (2.11.0)
+
+| Item | Evidence |
+| --- | --- |
+| Design | Normal mode warns or allows routine git work; protect and an autonomous run stay strict; the owner's typed `approved` records a receipt and the printed merges run in order. Specified in `docs/hooks.md` (Guard modes, Approval and the merge guard) and `skills/orchestra/references/approval.md`. |
+| Unit and integration coverage | `tests.test_guard_modes`, `test_guard_plane`, `test_merge_guard`, `test_prompt_approval`, `test_guard_corpus`, `test_engine` and `test_integration` cover the modes, the unattended lock, the receipt, the merge guard with a fake `gh`, and the engine refusals. |
+| Known gap | A command run from a directory outside the repository and its worktrees finds no run, so it gets neither the autonomy plane nor the unattended lock. The guard cannot close this. Recommendation: a server-side ruleset on the default branch (required pull request, no force push, no deletion), the only backstop that does not depend on the agent. |
+| Known gap | Heredoc write-then-run (`cat > f <<EOF`, then `sh f`) is allowed, the same as `echo` and `printf` into a file. Text scanning cannot contain it. The guard is not isolation; the default branch stays guarded at push and merge. |
+| Not contained | `UserPromptSubmit` does not prove a human typed the prompt. A prompt scheduled before the stop that fires after it, a message from another owner session, shell schedulers (`crontab`, `at`, `claude -p`) and a hostile agent are outside the guard. |
+| G5, not measured | The night-run state write cadence against `worker_stale_seconds`. |
+| G9, assumption | GitHub retargets a child pull request's base when the merge deletes its parent branch. It does not when the parent branch is checked out in a worktree. The guard denies a child still based on a merged parent's branch and names `gh pr edit N --base DEFAULT`; the approval reply prints the same sentence. |
+| L1, deferred | Live firing of the `UserPromptSubmit` hook in an installed plugin session. Not run; unit tests cover the handler only. |
+| L2, deferred | With real `gh` on a throwaway repository: a wrong-SHA merge is refused, and the child pull request is retargeted after the parent merges, including a parent branch checked out in a worktree. Not run. |
+| L3, deferred | Whether `UserPromptSubmit` carries exactly `approved` for a background task's output, a `ScheduleWakeup` prompt or a subagent's final text. Not observed; the full-match deny of the scheduler and `SendMessage` tools is the guard regardless. The deny scans every string in the tool input (`prompt` for `CronCreate` and `ScheduleWakeup`, `body` for `RemoteTrigger`, `message` for `SendMessage`); the field names are to be confirmed against the live tool schemas. |
