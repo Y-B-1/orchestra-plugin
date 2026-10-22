@@ -384,3 +384,31 @@ The real hook entry point (`run-hook.sh <Event> --harness claude`, hook JSON on 
 | L1, deferred to the post-install live check | Live firing of the `UserPromptSubmit` hook in an installed plugin session. Not run; unit tests cover the handler only. |
 | L2, deferred to the post-install live check | With real `gh` on a throwaway repository: a wrong-SHA merge is refused, and the child pull request is retargeted after the parent merges, including a parent branch checked out in a worktree. Not run. |
 | L3 observations, deferred to the post-install live check | Whether `UserPromptSubmit` carries exactly `approved` for a background task's output, a `ScheduleWakeup` prompt or a subagent's final text. Not observed; the full-match deny of the scheduler and `SendMessage` tools is the guard regardless. The deny scans every string in the tool input (`prompt` for `CronCreate` and `ScheduleWakeup`, `body` for `RemoteTrigger`, `message` for `SendMessage`); the field names are taken from the live tool schemas. |
+
+### Pre-PR review and repairs (2.11.0)
+
+| Item | Evidence |
+| --- | --- |
+| Normal-mode softening (R4) | A softened deny relaxed the whole compound command. Repair RA1 relaxes only the softened items; repair RA3 (second repair, approved by the owner) closes the comment and `$'...'` forms the RA1 splitter missed. Failing tests first in `tests.test_guard_modes.SoftenedCompoundTest`. |
+| Unattended lock (R3, R6) | A stopped run could still run `gh release delete` and `gh repo delete`. Repair RA2 denies both until the owner's receipt; local deletes (`rm`, `git tag -d`) keep their path after a disarm, and remote tag deletes were already denied. `tests.test_guard_plane.UnattendedLockTest`. |
+| `gh -R` / `--repo` (bug, present since 2.10.0) | The repository flag before or between the `gh` subcommand words hid the pair from the classifier, so `gh -R o/r pr merge 7 --admin` passed every mode, active autonomy included. Fixed in the classifier; `argv` keeps the flag so the merge guard still refuses it. `tests.test_guard_corpus.SoftenAndGhRulesTest`. |
+| Line continuation (bug) | A backslash-newline split a command for the classifier but not for bash, so a force push or a merge written across two lines passed every mode. The classifier now joins continuations outside single quotes. `tests.test_guard_corpus.SoftenAndGhRulesTest`. |
+| Retro: missing check | Both classifier bugs come from lexing that differs from bash. Strategic follow-up: a corpus test that, for every corpus command, classifies equivalent spellings (global flags moved, line continuations, comments) and requires the same verdict. |
+| By design | Outside an autonomous run, a lone `git branch -D` of an unmerged branch is a delete boundary and is allowed; under autonomy only merged or run branches may be deleted. |
+
+### Deferred to a follow-up (review notes at 63e0da8 and later)
+
+| Item | Note |
+| --- | --- |
+| N1 | `gh repo set-default` is allowed; the merge guard checks PR N with `-R slug`, but the merge it allows resolves the repository from the cwd remotes. Fix: deny `gh repo set-default` while a run is active or locked, or make the printed merge carry `-R slug`. |
+| N2 | The `UserPromptSubmit` worst case is about 14 s against the 10 s hook timeout; a killed hook records nothing and prints nothing. |
+| N3 | A lower-order receipt pull request closed without merge makes every later one deny with "merge pull request N first"; the message should say to type `approved` again. |
+| N4 | `record_pr` sets `reviewed` from any CLEAN intact review at the PR head, including a narrow scoped one (unchecked). |
+| N5 | The merge parser does not require `--merge`; non-interactive `gh` refuses a merge without a method anyway. |
+| N6 | `sort` as a heredoc data consumer can run `--compress-program`; the same class as the accepted `echo`/`printf` write-then-run. |
+| N7 | The settings-file lock covers edit tools only; shell writes pass (the guard is not isolation). |
+| N8 | The receipt-run predicate and the `gh` subprocess setup are duplicated across `approval.py`, `prompt_approval.py`, `orchestra.py` and the engine. |
+| N9 | The README's macOS live-check claim rests only on the 2026-10-22 stop-path check. |
+| N10 | The unattended lock matches provider deletes by text, so a command that also holds a real `rm` and quotes `gh release delete` is denied (fails closed). |
+| E1 | Engine: adding a repair card ignores findings in a final receipt made stale by a sibling chain's repair, so the second chain needs a new review. Let `add` accept those findings, or refuse the first repair until every blamed chain has its card. |
+| E2 | Engine: `report` and `accept` run from a linked worktree resolve another state directory ("Invalid assignment") and leave an empty one. Run engine commands from the main checkout. |

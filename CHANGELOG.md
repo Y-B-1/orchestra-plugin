@@ -4,6 +4,7 @@ Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
 ## 2.11.0 — 2026-10-22
 
+- **Fix, softening in compound commands:** in normal mode a softened item (wholesale add, `stash`, amend) no longer relaxes the other items of the same command; each keeps its own verdict. A softened command that holds a `#` comment or a `$'...'` string gets the strict verdict, because the split cannot read either.
 - **Fix, `gh -R` / `--repo`:** the repository flag no longer hides a `gh` command pair from the guard; `gh -R o/r pr merge 7`, `gh --repo o/r release delete v1` and the like get the verdict of the flag-free command (the flag was a gap since 2.10.0).
 - **Fix, line continuation:** a backslash-newline outside single quotes is joined before the guard reads a command, so `git \<newline>push --force` gets the verdict of `git push --force` (it was allowed).
 - **Normal mode no longer blocks routine git work:** the new policy `guard_mode` defaults to `normal`, which warns or allows stash, wholesale `git add`, `commit -a`, amend, multi-ref and refspec pushes, and release actions without a question. `protect` keeps the strict verdicts and asks only while a run is active. An autonomous run, active or stopped with its report kept, is always strict. `classify` prints the strict verdict.
