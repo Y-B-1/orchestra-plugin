@@ -11,6 +11,8 @@ import unittest
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts'))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import test_merge_guard as tm
 from orchestra_core import hooks as hooks_module
 from orchestra_core.guards import guard_digest
 from orchestra_core.hooks import LEDGER_LOCKED, _guard_mode, _soften_call, handle_event, main
@@ -540,6 +542,41 @@ class AutonomyThroughMainTest(RepoCase):
                             mock.patch('sys.stdout', new_callable=io.StringIO) as out, mock.patch('sys.stderr', new_callable=io.StringIO):
                         main(['PreToolUse'])
                         self.assertEqual(json.loads(out.getvalue())['hookSpecificOutput']['permissionDecision'], 'deny')
+
+
+class SoftenedCompoundTest(tm.MergeFixture):
+    """R4: normal relaxes only the softened item of a compound command; every other item keeps its own verdict."""
+
+    def setUp(self):
+        super().setUp()
+        self.git('branch', '-m', self.default_branch, 'main')
+        self.default_branch = 'main'
+        self.git('remote', 'add', 'origin', str(self.root / 'origin.git'))
+        self.git('update-ref', 'refs/remotes/origin/main', 'main')
+        self.git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main')
+        self.git('tag', 'v1', 'main')
+        self.git('switch', '-qc', 'x')
+        (self.repo / 'x.txt').write_text('x')
+        self.git('add', 'x.txt')
+        self.git('commit', '-qm', 'x')
+        self.git('switch', '-q', 'work')
+        self.arm()
+        self.open_pr(7)
+        self.approve([7])
+
+    def verdict(self, command, **kw):
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo)}
+        return verdict(handle_event('PreToolUse', payload, mode='normal', **kw))
+
+    def test_softened_item_does_not_hide_other_items(self):
+        for item, kw in (('git push origin --delete main', {}), ('git push origin :main', {}), ('git push origin :v1', {}),
+                         ('git branch -D x', {}), ('gh pr merge 7 --admin', {'state_dir': str(self.state)})):
+            with self.subTest(command=item):
+                self.assertEqual(self.verdict(item, **kw), 'deny')
+                self.assertEqual(self.verdict('git add -A && ' + item, **kw), 'deny')
+        with self.subTest(command='git add -A && git status'):
+            self.assertEqual(self.verdict('git add -A && git status'), 'allow')
+            self.assertEqual(self.verdict('git stash && git status'), 'warn')
 
 
 if __name__ == '__main__':

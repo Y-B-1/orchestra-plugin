@@ -18,7 +18,7 @@ import time
 
 from . import portable
 from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
-from .guards import RULES, Decision, _command_words, _segments, classify_command, guard_digest, runs_test_suite
+from .guards import RULES, Decision, _command_words, _pipelines, _segments, classify_command, guard_digest, runs_test_suite
 
 _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
@@ -386,14 +386,22 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     if klass == 'deny':
         if mode != 'normal' or not decision.soften:
             return _deny(decision.reason, decision.category == 'malformed')
-        # Rows 4, 10, 11, 12, 14, 15: the classifier kept the protect verdict; normal relaxes it.
-        refused = _soft_push_refusal(command, cwd, engine) if decision.category == 'release' else None
+        # Rows 4, 10, 11, 12, 14, 15: the classifier kept the protect verdict; normal relaxes it for the softened
+        # items only. The rest of the command is decided as a command of its own (R4).
+        split = _soft_remainder(command)
+        if split is None:
+            return _deny(decision.reason)
+        remainder, pushed = split
+        refused = _soft_push_refusal(command, cwd, engine) if pushed or decision.category == 'release' else None
         if refused:
             return _deny(refused)
         if decision.soften == 'warn':
             notes.append(_guarded(decision.reason))
-        klass, decision = 'allow', Decision()
-    elif klass == 'release' and decision.workflow is not None and not locked and cwd is not None \
+        decision = classify_command(remainder) if remainder else Decision()
+        klass = decision.klass
+        if klass == 'deny':
+            return _deny(decision.reason, decision.category == 'malformed')
+    if klass == 'release' and decision.workflow is not None and not locked and cwd is not None \
             and _workflow_is_plain(_toplevel(cwd), decision.workflow, _release_globs(engine, state_dir)):
         klass, decision = 'allow', Decision()  # Row N2: a workflow that is neither a release name nor missing
     if klass in {'release', 'release-multi', 'boundary'}:
@@ -588,6 +596,32 @@ def _soft_push_refusal(command, cwd, engine):
             if branch.lower() in known:
                 return 'A push may not delete the default or a protected branch (%s); ask the owner' % branch
     return None
+
+
+def _soft_remainder(command):
+    """R4: (the command without its softened segments, True when one of them is a push), or None when the command
+    cannot be split safely: a substitution, a heredoc, a shell string, a softened segment inside a pipe or an
+    unreadable segment."""
+    if re.search(r'\$\(|`|<\(|>\(|<<', command):
+        return None
+    kept, pushed = [], False
+    try:
+        for pipeline in _pipelines(command):
+            soft = []
+            for segment in pipeline:
+                words = _command_words(segment)
+                if words and PurePosixPath(words[0]).name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'eval'}:
+                    return None
+                found = classify_command(segment)
+                soft.append(found.klass == 'deny' and bool(found.soften))
+                pushed = pushed or (soft[-1] and found.category == 'release')
+            if any(soft) and len(pipeline) > 1:
+                return None
+            if not any(soft):
+                kept.append(' | '.join(pipeline))
+    except ValueError:
+        return None
+    return '\n'.join(kept), pushed
 
 
 def _soften_call(payload):
