@@ -278,6 +278,28 @@ class UnattendedLockTest(PlaneFixture):
         self.assertEqual(self.hook('git merge topic'), 'deny')
         self.assertIn('approved', self.hook_reason('git merge topic'))
 
+    def test_release_and_repo_delete_denied_while_unattended(self):
+        commands = ('gh release delete v1 -y --cleanup-tag', 'gh repo delete o/r --yes')
+        for mode in ('protect', 'normal'):
+            for command in commands:
+                with self.subTest(mode=mode, command=command):
+                    output = self.decide(command, mode=mode, armed=True, unattended=True).output.get('hookSpecificOutput', {})
+                    self.assertEqual(output.get('permissionDecision'), 'deny')
+                    for word in WAY_OUT:
+                        self.assertIn(word, output['permissionDecisionReason'])
+            for command in ('rm -rf build', 'git tag -d v1'):  # a local delete keeps its ordinary path
+                with self.subTest(mode=mode, command=command):
+                    self.assertEqual(self.decide(command, mode=mode, armed=True, unattended=True).output,
+                                     self.decide(command, mode=mode, armed=True).output)
+        self.stop()
+        for command in commands:
+            with self.subTest(hook=True, command=command):
+                self.assertEqual(self.hook(command), 'deny')
+        self.engine.record_owner_approval([], [], EVIDENCE)
+        for command in commands:
+            with self.subTest(receipt=True, command=command):
+                self.assertIsNone(self.hook(command))  # the receipt rules are unchanged: the owner's receipt lets it run
+
     def test_a_disarm_by_the_owner_ends_the_lock(self):
         self.stop()
         self.assertEqual(self.hook('git push origin main'), 'deny')

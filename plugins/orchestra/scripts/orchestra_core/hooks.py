@@ -159,6 +159,11 @@ def _starts_new_run(command):
     return _runs_orchestra(command, _NEW_RUN, lambda rest: 'start' in rest and '--new-run' in rest[rest.index('start') + 1:])
 
 
+# A release or repository delete on the provider (`gh release delete`, `gh repo delete`): the unattended lock denies it
+# like a release. Local deletes (`rm`, `git tag -d`) keep their ordinary path after the owner's disarm.
+_PROVIDER_DELETE = re.compile(r'\bgh\b[^|;&\n]*\b(?:%s)\b' % '|'.join(r'%s\s+%s' % tuple(pair) for pair in RULES['boundary']['gh']))
+
+
 LEDGER_LOCKED = ('The autonomy ledger and the autonomy switch belong to the owner while autonomy is armed: '
                  'the owner changes them with /orchestra-autonomy off, then edits and arms again.')
 
@@ -424,7 +429,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     active = auto_on
     if unattended and not active:
         if klass in {'release', 'release-multi'} or _starts_new_run(command) or _switches_autonomy(command, ('disarm',)) \
-                or (decision.boundary == 'merge' and _on_default_branch(cwd, engine)):
+                or (decision.boundary == 'merge' and _on_default_branch(cwd, engine)) \
+                or (decision.boundary == 'delete' and _PROVIDER_DELETE.search(re.sub(r'\\\r?\n', '', command))):
             return _deny(UNATTENDED_LOCKED + ' Denied: ' + (decision.reason or command.strip()[:80]))
     hint = _PARK_HINT if engine is not None else ('the run state is unreadable (%s); the owner starts over with '
                                                   '`orchestra.py start --new-run ...`, which keeps the old file under history/.'
