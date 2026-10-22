@@ -27,7 +27,7 @@ The value is in tokens (100000 to 1000000). Claude Code caps it at the model's w
 
 No installer changes application instructions, resumes old work, grants release rights or writes hook trust. Existing project rules still apply. If a project carries older Orchestra enforcement of its own, port it separately to avoid two competing coordinators.
 
-CI runs the whole test suite on Linux (Python 3.11 and 3.13), `macos-latest` and `windows-latest` on every pull request. No platform has been checked with a live Claude Code session except Linux.
+`scripts/check.sh` runs every check locally on Python 3.11 and 3.13. CI runs the same suite on Linux, `macos-latest` and `windows-latest` only when started by hand. No platform has been checked with a live Claude Code session except Linux and macOS.
 
 ### Windows
 
@@ -37,7 +37,7 @@ Windows works with Git for Windows and Python 3.11 or later. Install Python from
 - The guard reads the POSIX shell syntax of Claude Code's Bash tool, which is Git Bash on Windows. A command run through the PowerShell tool is read with the same rules, so Git, release and deploy commands are caught but PowerShell-only commands (`Remove-Item`, `Invoke-WebRequest`) are not. Protected-path checks ignore case.
 - File locks on Windows are exclusive, so concurrent readers of the run state take turns. A gate runs in a job object, so a gate that times out, or leaves a process running, is stopped there too.
 - The function-hook module (below) stays inert on Windows paths, so the Python hooks guard every call.
-- CI runs the whole test suite on `windows-latest` on every pull request (three shards, because the Windows runner is slow). It has not been checked with Claude Code on a real Windows machine.
+- CI runs the whole test suite on `windows-latest` when started by hand (three shards, because the Windows runner is slow). Start it before a release that changes path or shell handling. It has not been checked with Claude Code on a real Windows machine.
 
 ### Function hooks (optional)
 
@@ -337,15 +337,13 @@ End any active run first (`orchestra.py finish` or `interrupt`), then run `claud
 
 To publish a release: raise the version in the manifests and `tests/test_packaging.py`, add `docs/release-notes/v<version>.md`, merge, then run the [Release workflow](.github/workflows/release.yml) from main (Actions, Release, Run workflow), or push the tag `v<version>`. Either way it checks that the commit is on main, that the tag matches `plugin.json` and that the notes exist, then builds the archives and publishes the release with their checksums. Run by hand, it creates the tag itself.
 
-Every pull request and every push to main runs [CI](.github/workflows/ci.yml): the generator check and the test suite on Python 3.11 and 3.13, then the strict plugin and marketplace validation and the mod tests. To run the same checks locally:
+All checks run locally. Before a push, run:
 
 ```sh
-python3.11 -m unittest discover -s tests
-python3.11 plugins/orchestra/scripts/generate.py --check
-claude plugin validate --strict plugins/orchestra
-claude plugin validate --strict .claude-plugin/marketplace.json
-python3.11 scripts/build_release.py
+scripts/check.sh
 ```
+
+It runs the unit suite on Python 3.11 and 3.13 (3.13 through `uv` when it is not on `PATH`), the generator and mod fixture checks, the mod type check, the strict plugin and marketplace validation, and the mod tests. It lists any check it could not run as SKIPPED. Use `scripts/check.sh --quick` while you work; it skips the unit suite. [CI](.github/workflows/ci.yml) adds macOS and Windows and runs only when started by hand (Actions, CI, Run workflow). To build the release archives locally, run `python3.11 scripts/build_release.py`.
 
 [Source comparison](docs/source-parity.md), [hook policy](docs/hooks.md), and [validation evidence](docs/VALIDATION.md) record what was preserved, changed, checked and not established. GitHub supplies an installable marketplace and release archives. Public directory listing requires a separate host submission; publishing this repository does not claim marketplace approval.
 

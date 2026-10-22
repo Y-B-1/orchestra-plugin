@@ -8,6 +8,11 @@ import type { On } from 'claude-code';
 import { RULES_JSON } from './fixtures/guard-fixtures.js';
 import { guardDigest } from './marker.js';
 
+// The mod runtime provides setTimeout; the type stubs load only the es2023 library.
+declare global {
+  function setTimeout(handler: () => void, timeout?: number): unknown;
+}
+
 export const encode = (s: string): Uint8Array => Uint8Array.from(Array.from(unescape(encodeURIComponent(s))).map((c) => c.charCodeAt(0)));
 
 const BASE64 = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';

@@ -1,4 +1,5 @@
 import { expect, test } from 'claude-code/testing';
+import type { TestBody } from 'claude-code/testing';
 import type { On } from 'claude-code';
 
 import { RULES_JSON } from './fixtures/guard-fixtures.js';
@@ -416,7 +417,7 @@ function texts(node: unknown, out: string[] = []): string[] {
   return out;
 }
 
-async function board($: Parameters<Parameters<typeof test>[1]>[0], r: Rig, status: unknown): Promise<string[]> {
+async function board($: Parameters<TestBody>[0], r: Rig, status: unknown): Promise<string[]> {
   r.runAnswer = () => ({ exitCode: 0, stdout: JSON.stringify(status) });
   await $.command.run({ command: 'orchestra-board', args: '' } as never);
   const ui = await $.ui.mount({ plugin: 'orchestra', surface: 'terminal', component: 'Pane', props: PANE as never, requestId: 'orchestra-board' });
