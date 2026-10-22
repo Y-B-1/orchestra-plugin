@@ -16,7 +16,7 @@ from pathlib import Path
 
 from orchestra_core.paths import push_url_digest
 from orchestra_core import portable
-from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions, ensure_remote_heads
+from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, StateBusy, autonomy_preconditions, ensure_remote_heads
 
 ROOT = SCRIPTS.parents[2]
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
@@ -5646,6 +5646,22 @@ class OwnerApprovalTests(AutonomyFixture):
             with self.subTest(words=words):
                 self.assertEqual(run_cli(self, *words)[0], 2)  # argparse refuses an unknown command
                 self.assertNotIn('approval', self.raw())
+
+
+    def test_record_owner_approval_raises_state_busy_within_lock_wait(self):
+        self.stopped()
+        hook_engine = Engine(self.state, self.repo, clock=lambda: self.now[0], lock_wait=0.2)
+        handle = (self.state / 'state.lock').open('a+')
+        self.addCleanup(handle.close)
+        portable.lock(handle, exclusive=True)
+        started = time.monotonic()
+        with self.assertRaises(StateBusy):
+            hook_engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertLess(time.monotonic() - started, 1.5)
+        portable.unlock(handle)
+        self.assertNotIn('approval', self.raw())
+        hook_engine.record_owner_approval([], [], self.EVIDENCE)  # free again: it records
+        self.assertIn('approval', self.raw())
 
 
 class StaleAutonomyTests(AutonomyFixture):

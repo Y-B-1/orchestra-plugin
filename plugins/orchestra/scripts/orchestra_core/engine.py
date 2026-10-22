@@ -533,20 +533,21 @@ class Engine:
         return _digest(entries)
 
     @contextlib.contextmanager
-    def _state(self, write=True, block=False, activity=True):
+    def _state(self, write=True, block=False, activity=True, wait=False):
         """`block` makes a read wait for the lock even when `lock_wait` is set (records that must not be dropped).
         A write bumps the `activity` counter the Stop signature reads, unless `activity` is False (the Stop hook's own
-        bookkeeping, arming and harness rebinds are not progress)."""
+        bookkeeping, arming and harness rebinds are not progress). `wait` lets a write give up with StateBusy after
+        `lock_wait` instead of blocking; other writes block."""
         if _contracts()[1] != self.contract_hash:
             raise EngineError('Role or method instructions changed; start a new run')
         with (self.state_dir / 'state.lock').open('a+') as lock:
-            if write or block or self.lock_wait is None:
+            if (write and not wait) or block or self.lock_wait is None:
                 portable.lock(lock, exclusive=write)
             else:
                 end = time.monotonic() + self.lock_wait
                 while True:
                     try:
-                        portable.lock(lock, exclusive=False, blocking=False)
+                        portable.lock(lock, exclusive=write, blocking=False)
                         break
                     except OSError:
                         if time.monotonic() >= end:
@@ -2437,7 +2438,7 @@ class Engine:
             raise EngineError('Approval excluded must be a list of entries with number and reason')
         if not isinstance(evidence, dict):
             raise EngineError('Approval evidence must be an object')
-        with self._state(activity=False) as state:
+        with self._state(activity=False, wait=True) as state:
             auto = state['autonomy'] or {}
             if auto.get('active'):
                 raise EngineError('Approval is refused while autonomy is active')
