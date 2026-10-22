@@ -838,6 +838,20 @@ def _gh_operands(args, value_flags):
 _GH_CONFIG_REASON = 'gh aliases and extensions add commands the guard cannot read; the owner sets them'
 
 
+def _gh_without_repo(words):
+    """The gh words without every -R/--repo flag and its value, so the pair table sees the command it names. A flag with
+    no value is dropped alone."""
+    kept, i = [], 0
+    while i < len(words):
+        word = words[i]
+        if word in ('-R', '--repo'):
+            i += 1
+        elif not (word.startswith('--repo=') or (word.startswith('-R') and not word.startswith('--'))):
+            kept.append(word)
+        i += 1
+    return kept
+
+
 def _gh(words):
     """Rules for gh beyond the pair table: api writes, a pull request base change, workflow runs, aliases and
     extensions, and any command gh does not ship. None when none applies."""
@@ -908,10 +922,13 @@ def _classify_segment(words, depth):
         return _scan_substitutions(text, depth) or decision
     if name == 'git':
         return _git(words)
+    argv = tuple(words)
+    if name == 'gh':
+        words = _gh_without_repo(words)
     if _is_release(name, words):
-        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=tuple(words))
+        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv)
     if name == 'gh' and (found := _gh(words)) is not None:
-        return found
+        return replace(found, argv=argv) if found.argv else found
     base = Decision()
     if (name in _BOUNDARY['delete_commands'] or (name == 'find' and _BOUNDARY['find_delete_flag'] in words[1:]) or
             (name == 'gh' and words[1:3] in _BOUNDARY['gh'])):

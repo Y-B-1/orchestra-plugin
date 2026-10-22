@@ -351,6 +351,31 @@ class SoftenAndGhRulesTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(classify_command(command).klass, 'allow')
 
+    def test_gh_repo_flag_does_not_hide_the_pair(self):
+        pairs = [('gh -R o/r pr merge 7 --admin', 'gh pr merge 7 --admin'), ('gh --repo o/r pr merge 7', 'gh pr merge 7'),
+                 ('gh --repo=o/r pr merge 7', 'gh pr merge 7'), ('gh -Ro/r pr merge 7', 'gh pr merge 7'),
+                 ('gh pr -R o/r merge 7', 'gh pr merge 7'), ('gh pr merge -R o/r 7', 'gh pr merge 7'),
+                 ('gh -R o/r release delete v1 -y', 'gh release delete v1 -y'), ('gh -R o/r repo delete --yes', 'gh repo delete --yes'),
+                 ('gh -R o/r release create v1', 'gh release create v1'), ('gh -R o/r workflow run x', 'gh workflow run x'),
+                 ('gh -R o/r pr edit 7 --base main', 'gh pr edit 7 --base main'), ('gh -R o/r prm 7', 'gh prm 7'),
+                 ('gh -R', 'gh'), ('gh pr merge -R', 'gh pr merge')]
+        for flagged, plain in pairs:
+            with self.subTest(command=flagged):
+                got, want = classify_command(flagged), classify_command(plain)
+                self.assertEqual((got.klass, got.category, got.boundary, got.workflow),
+                                 (want.klass, want.category, want.boundary, want.workflow))
+                self.assertEqual(got.argv, tuple(flagged.split()) if got.argv else got.argv)
+        self.assertEqual(classify_command('gh -R o/r workflow run x').workflow, 'x')
+        for command in ('gh pr list -R o/r', 'gh pr view -R o/r 7', 'gh release list --repo o/r'):
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'allow')
+        with tempfile.TemporaryDirectory() as state, mock.patch.dict(os.environ, {'XDG_STATE_HOME': state}):
+            for command in ('gh -R o/r pr merge 7 --admin', 'gh -R o/r release delete v1 -y'):
+                with self.subTest(hook=command):
+                    payload = {'cwd': state, 'tool_name': 'Bash', 'tool_input': {'command': command}}
+                    result = handle_event('PreToolUse', payload, mode='protect', armed=True, autonomy=True)
+                    self.assertEqual(result.output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
+
     def test_gh_api_write_forms(self):
         for command in ('gh api repos/o/r -f default_branch=x', 'gh api repos/o/r -F a=b', 'gh api repos/o/r --field a=b',
                         'gh api repos/o/r --raw-field a=b', 'gh api repos/o/r -fa=b', 'gh api repos/o/r --input=x.json',

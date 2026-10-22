@@ -4,6 +4,7 @@ Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
 ## 2.11.0 — 2026-10-22
 
+- **Fix, `gh -R` / `--repo`:** the repository flag no longer hides a `gh` command pair from the guard; `gh -R o/r pr merge 7`, `gh --repo o/r release delete v1` and the like get the verdict of the flag-free command (the flag was a gap since 2.10.0).
 - **Normal mode no longer blocks routine git work:** the new policy `guard_mode` defaults to `normal`, which warns or allows stash, wholesale `git add`, `commit -a`, amend, multi-ref and refspec pushes, and release actions without a question. `protect` keeps the strict verdicts and asks only while a run is active. An autonomous run, active or stopped with its report kept, is always strict. `classify` prints the strict verdict.
 - **Autonomous runs open, review and approve pull requests:** the run pushes its own branches, stacks pull requests with `base TASK`, records them with `pr URL --task ID` and never merges to the default branch, deletes tags or releases. `complete` waits for a verified pull request.
 - **"approved" runs the merges:** when the run has stopped, the owner types `approved` in the session. The `UserPromptSubmit` hook records a receipt and prints one `gh pr merge` command per pull request, in order and pinned to the recorded head. The merge guard allows only those commands. Until then a stopped run's report keeps an unattended lock: releases, merges, scheduler tools, settings edits and `start --new-run` stay denied.
