@@ -95,6 +95,42 @@ class WorkflowIntegration(unittest.TestCase):
                                '--actor',actor,'--lease',lease or self.lease,
                                'release','fixture-remote','main'],capture_output=True,text=True,timeout=10)
 
+    def test_pr_reviewed_follows_a_clean_review_of_the_pull_request_head(self):
+        """G4: after gate, review and commit the head equals a clean review's artifact head; a later commit unsets `reviewed`."""
+        from unittest import mock
+        url='https://github.example/o/r/pull/7'
+        gh=self.root/'fake gh'
+        gh.mkdir()
+        (gh/'gh.py').write_text('import json, sys\nprint(json.dumps(json.load(open(sys.argv[0].replace("gh.py", "view.json")))))\n')
+        wrapper=gh/'gh'
+        wrapper.write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n'%(sys.executable,gh/'gh.py'))
+        wrapper.chmod(0o755)
+
+        def view():
+            head=self.git('rev-parse','refs/heads/feat/x')
+            (gh/'view.json').write_text(json.dumps(dict(number=7,state='OPEN',baseRefName='main',headRefName='feat/x',
+                                                        headRefOid=head,isCrossRepository=False)))
+            return head
+
+        def commit(name):
+            (self.repo/name).write_text(name)
+            self.git('add',name)
+            self.git('commit','-qm',name)
+        self.git('switch','-qc','feat/x')
+        commit('one.txt')
+        with mock.patch.dict(os.environ,PATH=str(gh)+os.pathsep+os.environ['PATH']):
+            self.cli('gate','fixture','--',*self.check,lease=True)
+            self.review([],True)
+            head=view()
+            entry=self.cli('pr',url,lease=True)[1]['pull_requests'][0]
+            self.assertEqual((entry['head_sha'],entry['reviewed']),(head,True))
+            commit('two.txt')
+            head=view()
+            entry=self.cli('pr',url,lease=True)[1]['pull_requests'][0]
+            self.assertEqual((entry['head_sha'],entry['reviewed']),(head,False))
+            self.review([],True)
+            self.assertTrue(self.cli('pr',url,lease=True)[1]['pull_requests'][0]['reviewed'])
+
     def test_release_rejects_wrong_actor_and_stale_lease_before_execution(self):
         flag=self.root/'release executed'
         self.configure_local_release([sys.executable,'-c',f'from pathlib import Path; Path({str(flag)!r}).touch()'])
