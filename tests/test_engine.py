@@ -5710,6 +5710,20 @@ class StaleAutonomyTests(AutonomyFixture):
         self.assertFalse(self.engine.stop_stale_autonomy('NIGHT', now=self.mtime() + 10 * self.stale()))
         self.assertTrue(self.auto()['active'])
 
+    def test_stop_stale_autonomy_raises_state_busy_within_lock_wait(self):
+        self.bound()
+        hook_engine = Engine(self.state, self.repo, clock=lambda: self.now[0], lock_wait=0.2)
+        handle = (self.state / 'state.lock').open('a+')
+        self.addCleanup(handle.close)
+        portable.lock(handle, exclusive=True)
+        started = time.monotonic()
+        with self.assertRaises(StateBusy):
+            hook_engine.stop_stale_autonomy('MORNING', now=self.mtime() + self.stale() + 1)
+        self.assertLess(time.monotonic() - started, 1.5)
+        portable.unlock(handle)
+        self.assertTrue(self.auto()['active'])
+        self.assertTrue(hook_engine.stop_stale_autonomy('MORNING', now=self.mtime() + self.stale() + 1))
+
     def test_stop_stale_autonomy_without_active_autonomy_or_state(self):
         self.assertFalse(self.engine.stop_stale_autonomy('MORNING', now=self.mtime() + 10 * self.stale()))
         self.assertFalse(Engine(self.root / 'empty', self.repo).stop_stale_autonomy('X'))

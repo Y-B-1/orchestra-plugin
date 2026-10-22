@@ -785,9 +785,9 @@ class HooksTest(unittest.TestCase):
         matcher = claude['hooks']['PreToolUse'][0]['matcher']
         self.assertEqual(matcher, RULES['tools']['claude_matcher'])
         for tool in ['Bash', 'PowerShell', 'Edit', 'Write', 'MultiEdit', 'Agent', 'Task', 'CronCreate', 'ScheduleWakeup',
-                     'RemoteTrigger']:
+                     'RemoteTrigger', 'SendMessage']:
             self.assertRegex(tool, '^(?:' + matcher + ')$')
-        for tool in ['Read', 'SendMessage']:
+        for tool in ['Read']:
             self.assertNotRegex(tool, '^(?:' + matcher + ')$')
         self.assertEqual(RULES['tools']['scheduler'], ['CronCreate', 'ScheduleWakeup', 'RemoteTrigger'])
 

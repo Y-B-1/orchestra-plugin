@@ -2457,12 +2457,13 @@ class Engine:
         """Stop an armed loop nobody is driving; True when this call stopped it. The Stop hook only fires in the
         running session, so a prompt from another session reaches here first. `deadline` when the ledger deadline has
         passed. `stale` when the run is bound to another harness session and `state.json` was last written more than
-        `worker_stale_seconds` before `now` (default: the engine clock). A no-op never rewrites `state.json`."""
+        `worker_stale_seconds` before `now` (default: the engine clock). A no-op never rewrites `state.json`. Gives up with
+        StateBusy after `lock_wait` when the state lock is held."""
         now = self._clock() if now is None else now
-        with self._state(False, block=True) as state:
+        with self._state(False) as state:
             if self._stale_reason(state, session_id, now) is None:
                 return False
-        with self._state(activity=False) as state:
+        with self._state(activity=False, wait=True) as state:
             reason = self._stale_reason(state, session_id, now)
             if reason is None:
                 return False

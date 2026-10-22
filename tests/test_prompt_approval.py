@@ -291,6 +291,15 @@ class SchedulerApprovalTextTest(tp.PlaneFixture):
         payload = dict(tool_name='SendMessage', tool_input={'message': 'approved'}, cwd=str(self.repo))
         self.assertEqual(tp.verdict(handle_event('PreToolUse', payload, mode='normal', engine=self.engine)), 'deny')
 
+    def test_sendmessage_reaches_the_installed_hook_and_only_approval_text_is_denied(self):
+        claude = json.loads((tp.HERE.parent / 'plugins/orchestra/hooks/claude.json').read_text())
+        self.assertRegex('SendMessage', '^(?:' + claude['hooks']['PreToolUse'][0]['matcher'] + ')$')
+        for text, verdict in (('approved', 'deny'), ('Approved!', 'deny'), ('approved the plan', 'allow')):
+            with self.subTest(text=text):
+                code, output = self.call(None, tool='SendMessage', data={'message': text})
+                self.assertEqual(code, 0)
+                self.assertEqual(output.get('hookSpecificOutput', {}).get('permissionDecision', 'allow'), verdict)
+
     def test_a_non_matching_text_is_allowed_for_sendmessage_in_every_mode(self):
         for mode in ('normal', 'protect'):
             for text in ('approved the plan', 'disapproved', 'status?'):
