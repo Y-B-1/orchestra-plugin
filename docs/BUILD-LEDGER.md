@@ -341,6 +341,32 @@ Source: the owner's audit request (autonomy that seems to stop with no sign on s
 | TypeScript to Rust | pingdotgg/ts-rust (`tsc-rs`) and Cloudflare's tsrs are type-checker ports. Orchestra type-checks nothing at run time, so neither applies. |
 | Not checked | claude.dev was unreachable from the sandbox (DNS), so its posts were read only through claude.com and secondary summaries. The band was not seen in a live interactive session; Windows and macOS still have no live run. |
 
+## 2.12.0 (2026-10-23)
+
+Source: a friction log kept while Orchestra coordinated its own 2.11.0 release (about 60 cards, 9 pre-PR reviews, 7 repairs). A critic challenged the plan before any builder started: it found three items that would have weakened evidence or lost work (a bare-sha review artifact, a whitespace-blind `git cherry` merge proof, and a `cd` into a nested repository) and three that no longer reproduced. All were corrected or dropped before building.
+
+| Friction | Cost seen | 2.12.0 |
+| --- | --- | --- |
+| A commit to other files made a finding too stale to start its repair; an older stale receipt voided a newer current one | Four reviewer runs to restate one finding; one detached-HEAD workaround | Fixed: newest receipt per category, stale kept |
+| One fix re-review covering two chains blocked both when it blamed one | One extra reviewer run | Fixed: per-chain |
+| The red-first run listed as a check blocked `accept` | One refused accept | Fixed: `"expect": "fail"` |
+| `dispatch` needed the worker name every time | One refused dispatch per card | Fixed: default `orchestra-TASK` |
+| Review receipts needed hand edits (artifact record, report-then-review order) | Three to four retries per receipt | Fixed: `"<sha> clean"` string and `review --token` |
+| A merged delete written with `cd repo &&` or `| tail -1` was refused | Two refused cleanup commands | Fixed: one literal `cd`, one read-only pipe |
+| A cherry-picked builder branch could not be deleted | One workaround per branch | Fixed: changed-path proof (`diff-tree`, no merge driver) |
+| Out-of-scope notes and empty `cleared` on non-final receipts; heredoc data written by `cat` | Seen under 2.10.0 | Already fixed in 2.11.0 at base |
+| A worktree builder started from the default branch, not the run branch | Hand fast-forward in two builders | Build skill: fast-forward to the named base |
+| Exit codes lost under zsh | Unreliable evidence lines | Build skill: `; echo EXIT=$?` on checks |
+
+Review of the merged-branch proof: the pre-PR review found that `git merge-tree` honors merge drivers, so a repository's `merge=keep` attribute with `merge.keep.driver=true` made an unmerged branch look merged (and ran the driver inside the hook). The proof was replaced by `git diff-tree` plumbing with `--no-ext-diff --no-textconv`. The fix re-review then found that `submodule.<name>.ignore=all` hid a gitlink change from `diff-tree`; `--ignore-submodules=none` closed it. The second fix re-review ran 25 attribute, config and environment variants with no false allow. Each case has a test that fails on the earlier code.
+
+Proposals for the owner (not built):
+- An app restart once ended a run although the harness session id was unchanged; resuming needed a hand replay of three reports. Proposal: `start` on such a run prints a resume block and re-accepts reports whose artifact is unchanged.
+- The repair ladder stops an unattended run at the first blocked fix re-review. Proposal: an autonomy ledger line that sets a repair budget per chain.
+- With release unset in the policy, a requested deploy leaves no trace in run state. Proposal: a merge permit the owner enables per run.
+- `accept TASK --ruling TEXT` for an unmet criterion the coordinator rules acceptable (never for a failing check).
+- Normal mode refuses `git add -A # note`; stripping comments before softening would be friendlier but was a bypass in 2.11 review.
+
 ## 2.11.0 (2026-10-22)
 
 Source: the owner's handoff (the code review post, a TypeScript check of the mods, pstack and mattpocock/skills gaps, a file budget, a transcript audit with live checks) and an audit of the parallel-work rules.
@@ -413,5 +439,5 @@ The real hook entry point (`run-hook.sh <Event> --harness claude`, hook JSON on 
 | N8 | The receipt-run predicate and the `gh` subprocess setup are duplicated across `approval.py`, `prompt_approval.py`, `orchestra.py` and the engine. |
 | N9 | The README's macOS live-check claim rests only on the 2026-10-22 stop-path check. |
 | N10 | The unattended lock matches provider deletes by text, so a command that also holds a real `rm` and quotes `gh release delete` is denied (fails closed). |
-| E1 | Engine: adding a repair card ignores findings in a final receipt made stale by a sibling chain's repair, so the second chain needs a new review. Let `add` accept those findings, or refuse the first repair until every blamed chain has its card. |
+| E1 | Fixed in 2.12.0. Engine: adding a repair card ignores findings in a final receipt made stale by a sibling chain's repair, so the second chain needs a new review. Let `add` accept those findings, or refuse the first repair until every blamed chain has its card. |
 | E2 | Engine: `report` and `accept` run from a linked worktree resolve another state directory ("Invalid assignment") and leave an empty one. Run engine commands from the main checkout. |

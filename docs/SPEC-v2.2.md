@@ -788,6 +788,16 @@ Proposals for 2.2 behavior are design, not claims. They are written as "New:".
 
 Not part of the 2.2.0 change set. After 2.2.0 is installed, an operator cleanup card deletes the `v2/*` branches (56 OBSERVED again in D3 by `git for-each-ref refs/heads/v2`; the handoff says 55; the card recounts, C3/N-7) first, while `feat/v2-roles-guard-mods` still provides covering evidence, then `feat/v2-roles-guard-mods` and `fix/agent-matcher`: children before covering branches (C5/R3-2). Each deletion is one plain `git branch -D <b>` the guard allows. Acceptance for that card: `git for-each-ref refs/heads/v2` prints nothing, and the card log shows each allow decision.
 
+### 5.20 Amendments in 2.12.0
+
+These change rules above; docs/hooks.md and the cli reference carry the current wording.
+
+1. **Repair precondition (5.2, line 319).** `add` of a repair reads the newest intact receipt per category for the original, keeping a stale one; a finding a newer CLEAN receipt superseded does not count. `final_findings` and `_final_blocks` read the same way. Acceptance is unchanged: a current CLEAN fix re-review.
+2. **Fix re-review (5.1 item 6).** A receipt counts for a chain when it covers the tip, is intact and current, and has no `task_findings` for any card of the chain (an absent key blames every covered card). `_kept_current` is unchanged.
+3. **Self-review.** A check may carry `expect` (`pass` or `fail`). An `expect: fail` check exits non-zero and is followed by the same command, without `expect: fail`, exiting 0.
+4. **5.14 item 2.** One leading `cd <literal path> &&` (same Git common directory; no `$`, `~`, backtick, glob or leading `-`) and one trailing pipe to `tail`, `head`, `grep` or `cat` without file operands do not count as extra segments. The proof of item 4 runs in the `cd` target.
+5. **5.14 item 4.5.** (d) For every path in `git diff-tree -r -z --no-renames --name-only $(git merge-base <default> <tip>) <tip>`, `git --literal-pathspecs diff-tree -r -z --no-renames <default> <tip> -- <paths>` prints nothing (an empty path list counts). No merge driver, diff driver or textconv runs; any git error or unparsable output is no proof.
+
 ## 6. Engine and state changes
 
 State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17 A). A missing key reads as its default.

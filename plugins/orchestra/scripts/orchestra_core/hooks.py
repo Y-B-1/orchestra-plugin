@@ -409,6 +409,11 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     command = data.get('command', data.get('cmd'))
     if not isinstance(command, str):
         return _deny('Missing shell command', True)
+    shaped = _cd_delete_shape(command, cwd)
+    if shaped:
+        found = classify_command(shaped[0])
+        if found.category == 'merged-delete' or (found.boundary == 'delete' and shaped[0].startswith('git branch ')):
+            command, cwd = shaped  # judged as the bare delete, in the directory the cd names
     decision = classify_command(command)
     klass = decision.klass
     if klass == 'deny':
@@ -922,21 +927,106 @@ def _first_parent_trees(repo, default):
     return {line for line in out.splitlines() if line and not line.startswith('commit ')} if code == 0 else set()
 
 
+def _git_raw(repo, *args, timeout=10):
+    """(returncode, raw stdout bytes) of a git command in repo, unstripped for -z output; spawn error or timeout is (1, b'')."""
+    timeout = _remaining(timeout)
+    if timeout <= 0 and _DEADLINE[0] is not None:
+        return 1, b''
+    try:
+        done = subprocess.run(['git', '-C', str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+        return done.returncode, done.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 1, b''
+
+
+def _changes_on_default(repo, tip, default):
+    """True when every path tip changed since its merge base with default holds the same entry (mode and object, or
+    absent) in default. Plain tree plumbing only: no merge driver, diff driver, textconv or external command runs, and
+    submodule ignore config cannot hide a gitlink change.
+    A branch that changed nothing loses nothing, so it counts. Any git error or unparsable output is no proof."""
+    code, base = _git_out(repo, 'merge-base', default, tip)
+    if code != 0 or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', base):
+        return False
+    code, out = _git_raw(repo, 'diff-tree', '-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv',
+                         '--ignore-submodules=none', '--name-only', base, tip, timeout=30)
+    if code != 0 or (out and not out.endswith(b'\0')):
+        return False
+    paths = out.split(b'\0')[:-1]
+    if not paths:
+        return True
+    if any(not path for path in paths):
+        return False
+    code, out = _git_raw(repo, '--literal-pathspecs', 'diff-tree', '-r', '-z', '--no-renames', '--no-ext-diff',
+                         '--no-textconv', '--ignore-submodules=none', default, tip, '--', *paths, timeout=30)
+    return code == 0 and out == b''
+
+
 def _branch_merged(repo, tip, default):
     """SPEC 5.14 item 4.5: tip is an ancestor of default, or its tree is a first-parent tree of default,
-    or tip is an ancestor of a local or remote-tracking ref whose tree is (evaluated afresh at each delete)."""
+    or tip is an ancestor of a local or remote-tracking ref whose tree is (evaluated afresh at each delete),
+    or every path tip changed already holds tip's entry in default (cherry-picks, squash merges after default
+    moved on in other files)."""
     if _git_out(repo, 'merge-base', '--is-ancestor', tip, default)[0] == 0:
         return True
     trees = _first_parent_trees(repo, default)
-    if not trees:
-        return False
-    code, tree = _git_out(repo, 'rev-parse', '--verify', '--quiet', tip + '^{tree}')
-    if code == 0 and tree in trees:
-        return True
-    code, out = _git_out(repo, 'for-each-ref', '--contains', tip, '--format=%(refname)%09%(tree)', 'refs/heads', 'refs/remotes', timeout=30)
-    if code != 0:
-        return False
-    return any(line.partition('\t')[2] in trees for line in out.splitlines() if '\t' in line)
+    if trees:
+        code, tree = _git_out(repo, 'rev-parse', '--verify', '--quiet', tip + '^{tree}')
+        if code == 0 and tree in trees:
+            return True
+        code, out = _git_out(repo, 'for-each-ref', '--contains', tip, '--format=%(refname)%09%(tree)', 'refs/heads', 'refs/remotes', timeout=30)
+        if code == 0 and any(line.partition('\t')[2] in trees for line in out.splitlines() if '\t' in line):
+            return True
+    return _changes_on_default(repo, tip, default)
+
+
+_CD_WORD = r'[A-Za-z0-9_./:+=@%,]'
+_CD_PATH = r"%s[A-Za-z0-9_./:+=@%%,-]*|\"%s[A-Za-z0-9_./:+=@%%, -]*\"|'%s[A-Za-z0-9_./:+=@%%, -]*'" % ((_CD_WORD,) * 3)
+_CD_DELETE = re.compile(r'(?:cd (?P<dir>%s) && )?(?P<delete>git (?:branch|push) [A-Za-z0-9_./:+=@%%, -]+?)'
+                        r'(?P<err> 2>&1)?(?: \| (?P<pipe>(?:tail|head|grep|cat)(?: [A-Za-z0-9_./:+=@%%,-]+)*))?' % _CD_PATH)
+_PIPE_LETTERS = {'cat': 'AbeEnstTuv', 'head': '0123456789ncqv', 'tail': '0123456789ncqv', 'grep': 'ivwxcnoqsEFGHhlLaI'}
+
+
+def _pipe_reader_ok(words):
+    """One read-only consumer of the delete's output: flags only, no file operand (grep takes its one pattern)."""
+    program, args = words[0], words[1:]
+    operands, i = [], 0
+    while i < len(args):
+        token = args[i]
+        if token.startswith('-'):
+            if not re.fullmatch(r'-[A-Za-z0-9]+', token) or any(c not in _PIPE_LETTERS[program] for c in token[1:]):
+                return False
+            if program in ('head', 'tail') and token[-1] in 'nc':
+                i += 1
+                if i >= len(args) or not re.fullmatch(r'\+?[0-9]+', args[i]):
+                    return False
+        else:
+            operands.append(token)
+        i += 1
+    return len(operands) == (1 if program == 'grep' else 0)
+
+
+def _common_dir(path):
+    code, out = _git_out(path, 'rev-parse', '--git-common-dir')
+    return os.path.realpath(os.path.join(path, out)) if code == 0 and out else None
+
+
+def _cd_delete_shape(command, cwd):
+    """SPEC 5.14: (the bare delete, the directory to judge it in) for `[cd DIR &&] git branch|push ... [2>&1]
+    [| tail|head|grep|cat FLAGS]`, else None. DIR is a literal path with no `$`, `~`, glob or leading `-`, and its Git
+    common directory is the session's own, so a nested repository or submodule is never judged as the session's."""
+    if cwd is None:
+        return None
+    found = _CD_DELETE.fullmatch(command.strip())
+    if not found or not (found['dir'] or found['err'] or found['pipe']):
+        return None
+    if found['pipe'] and not _pipe_reader_ok(found['pipe'].split()):
+        return None
+    where = found['dir'].strip('"\'') if found['dir'] else None
+    target = os.path.join(cwd, where) if where else cwd
+    if where and (not os.path.isdir(target) or _common_dir(target) is None or _common_dir(target) != _common_dir(cwd)):
+        return None
+    return found['delete'], str(target)
 
 
 def _remote_tip_matches(repo, remote, branch):

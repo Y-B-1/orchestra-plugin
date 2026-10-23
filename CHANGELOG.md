@@ -2,6 +2,18 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.12.0 — 2026-10-23
+
+Fixes for the friction met while using Orchestra to ship 2.11.0. None of them lets a card be accepted or a command run on less evidence than before.
+
+- **A stale finding starts a repair:** `add` of a repair reads the newest receipt per category for the original, keeping a stale one, so a commit to other files no longer erases the finding the repair answers. A finding a newer CLEAN receipt superseded does not count. Acceptance still needs a current CLEAN fix re-review.
+- **Fix re-review per chain:** a fix re-review that blames one chain no longer blocks accepting another chain it covers and does not blame.
+- **Red-first checks:** a `SELF_REVIEW` check may carry `"expect": "fail"` (the failing run before the fix); it must be followed by a passing run of the same command.
+- **`dispatch TASK [WORKER]`:** the worker defaults to `orchestra-<TASK>`.
+- **Recording a review:** a receipt's `artifact` may be the string `"<sha> clean"` when the sha is a prefix of HEAD, the scope is clean and the policy is unchanged since the review card was dispatched; the engine stores its own record. `review FILE --token TOKEN` reports the review card, records the final receipt and accepts the card in one step.
+- **Merged deletes:** `cd <path in this repository> && git push origin --delete B` and a trailing read-only `| tail`, `| head`, `| grep` or `| cat` are allowed for a merged delete; the merge proof runs in the `cd` target. A branch also counts as merged when every path it changed since its merge base holds the same entry on the default branch (`git diff-tree`, no merge driver runs), so a cherry-picked builder branch can be removed.
+- **Build skill:** fast-forward a worktree to the brief's starting commit before editing; list a red-first run with `"expect": "fail"`; capture exit codes with `; echo EXIT=$?` on checks only.
+
 ## 2.11.0 — 2026-10-22
 
 - **Fix, softening in compound commands:** in normal mode a softened item (wholesale add, `stash`, amend) no longer relaxes the other items of the same command; each keeps its own verdict. A softened command that holds a `#` comment or a `$'...'` string gets the strict verdict, because the split cannot read either.
