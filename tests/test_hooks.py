@@ -936,7 +936,7 @@ class MergedDeleteHookTest(unittest.TestCase):
 
     def test_merged_delete_allows_branch_covered_by_tree_equal_branch(self):
         self.side('x', 'x.txt', 'x\n')
-        self.side('cover', 'cover.txt', 'c\n', start='x')
+        self.side('cover', 'x.txt', 'c\n', start='x')  # rewrites x.txt, so x alone is no merge-tree no-op once cover is gone
         self.land_squash('cover')
         self.assertFalse(self.is_ancestor('x', 'origin/main'))
         self.assertNotIn(git(self.repo, 'rev-parse', 'x^{tree}'),
@@ -1178,6 +1178,116 @@ class MergedDeleteHookTest(unittest.TestCase):
         target = self.divergent_target()
         git(self.repo, 'config', 'url.%s.pushInsteadOf' % target, str(self.origin))
         self.assertDenied('git push origin --delete x', 'push URL')
+
+    def run_in(self, cwd, command):
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(cwd)}
+        return handle_event('PreToolUse', payload, harness='claude')
+
+    def test_cd_prefix_and_output_pipe_keep_a_merged_delete_allowed(self):
+        self.remote_branch()
+        root = str(self.repo)
+        for tail in ('git push origin --delete x', 'git push origin --delete x 2>&1',
+                     'git push origin --delete x | tail -1', 'git push origin --delete x 2>&1 | tail -1',
+                     'git push origin --delete x | head -n 1', 'git push origin --delete x | cat',
+                     'git push origin --delete x | grep -v zzz', 'git push origin --delete x 2>&1 | grep -i deleted'):
+            with self.subTest(tail=tail):
+                self.assertAllowed('cd %s && %s' % (root, tail))
+        self.assertAllowed('git push origin --delete x | tail -1')
+        self.assertAllowed('git branch -D x | tail -1')
+        self.assertAllowed('cd %s && git branch -D x' % root)
+        self.assertAllowed('cd %s && git branch -D x 2>&1 | tail -1' % root)
+        self.assertAllowed('cd %s && git branch -d x | tail -1' % root)
+        self.assertAllowed('cd %s/. && git branch -D x' % root)
+        self.assertAllowed('cd "%s" && git branch -D x | tail -1' % root)
+        self.assertAllowed("cd '%s' && git branch -D x" % root)
+
+    def test_cd_prefix_and_pipe_deny_what_the_rulings_exclude(self):
+        self.remote_branch()
+        root = str(self.repo)
+        nested = self.repo / 'vendor' / 'inner'
+        nested.mkdir(parents=True)
+        git(nested, 'init', '-q', '-b', 'main')
+        delete = 'git push origin --delete x'
+        denied = [
+            'cd %s; %s' % (root, delete), 'cd %s || %s' % (root, delete), 'cd %s && cd %s && %s' % (root, root, delete),
+            *['cd %s && %s' % (where, delete) for where in ('$HOME', '~', '~/x', '`pwd`', '-P', '-', '"$PWD"')],
+            'cd %s/* && %s' % (root, delete),
+            'cd %s && %s | tee out.txt' % (root, delete), 'cd %s && %s | sh' % (root, delete),
+            'cd %s && %s | tail out.txt' % (root, delete), 'cd %s && %s | tail -1 | cat' % (root, delete),
+            'cd %s && %s | grep -f patterns' % (root, delete), 'cd %s && %s | xargs echo' % (root, delete),
+            'cd %s && %s | tail -n 1 > out.txt' % (root, delete), 'cd %s && %s > out.txt' % (root, delete),
+            'cd %s && %s && echo done' % (root, delete), 'cd %s && %s; echo done' % (root, delete),
+            '%s | tee out.txt' % delete, '%s | sh' % delete, '%s | tail -1 | cat' % delete,
+            'cd %s && %s' % (nested, delete), 'cd %s && git branch -D x' % nested,
+            'cd %s && git branch -D x | tail -1' % nested,
+        ]
+        for command in denied:
+            with self.subTest(command=command):
+                self.assertEqual(decision_of(self.run_hook(command)), 'deny')
+
+    def test_cd_prefix_runs_the_merged_proof_in_the_cd_target(self):
+        self.remote_branch()
+        other = Path(self.temp.name) / 'wt-x'
+        git(self.repo, 'worktree', 'add', '-q', str(other), 'x')
+        self.assertAllowed('git branch -D x')  # the session checkout does not hold x
+        self.assertDenied('cd %s && git branch -D x' % other, 'checked out')
+        self.assertDenied('cd %s && git branch -D x | tail -1' % other, 'checked out')
+        result = self.run_in(other, 'cd %s && git branch -D x | tail -1' % self.repo)
+        self.assertEqual(result.output, {})  # x is not checked out in the target
+
+    def test_cd_prefix_to_a_missing_directory_is_denied(self):
+        self.remote_branch()
+        self.assertEqual(decision_of(self.run_hook('cd %s/nowhere && git branch -D x' % self.repo)), 'deny')
+
+    def test_cd_prefix_delete_of_an_unmerged_branch_is_still_denied(self):
+        self.side('y', 'y.txt', 'y\n')
+        root = str(self.repo)
+        self.assertDenied('cd %s && git branch -D y | tail -1' % root, 'Branch y is not merged')
+        self.assertDenied('cd %s && git branch -D y 2>&1' % root, 'Branch y is not merged')
+
+    def test_a_cherry_picked_branch_counts_as_merged(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.commit('other.txt', 'other\n')
+        git(self.repo, 'cherry-pick', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.assertFalse(self.is_ancestor('x', 'origin/main'))
+        self.assertNotEqual(git(self.repo, 'rev-parse', 'x^{tree}'), git(self.repo, 'rev-parse', 'origin/main^{tree}'))
+        self.assertAllowed('git branch -D x')
+
+    def test_a_squash_merged_branch_counts_as_merged_after_main_advanced(self):
+        self.side('x', 'x.txt', 'x\n')
+        self.commit('other.txt', 'other\n')  # main moves before the squash, so x's tree never appears on main
+        self.land_squash('x')
+        self.commit('later.txt', 'later\n')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        trees = git(self.repo, 'rev-list', '--first-parent', '--format=%T', 'origin/main').split()
+        self.assertNotIn(git(self.repo, 'rev-parse', 'x^{tree}'), trees)
+        self.assertAllowed('git branch -D x')
+
+    def test_a_branch_that_differs_only_in_whitespace_is_not_merged(self):
+        self.commit('app.py', 'if a:\n    pass\n')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        git(self.repo, 'checkout', '-q', '-b', 'x')
+        self.commit('app.py', 'if a:\n    pass\n    b()\n')
+        git(self.repo, 'checkout', '-q', 'main')
+        self.commit('app.py', 'if a:\n    pass\nb()\n')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        self.assertTrue(all(row.startswith('-') for row in git(self.repo, 'cherry', 'origin/main', 'x').splitlines()))  # cherry calls it merged
+        self.assertDenied('git branch -D x', 'Branch x is not merged into origin/main')
+
+    def test_merge_proof_is_absent_on_a_git_without_write_tree(self):
+        from orchestra_core import hooks as h
+        self.side('x', 'x.txt', 'x\n')
+        self.commit('other.txt', 'other\n')
+        git(self.repo, 'cherry-pick', 'x')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        real = h._git_out
+
+        def old_git(repo, *args, **kw):
+            return (129, '') if args[:1] == ('merge-tree',) else real(repo, *args, **kw)
+
+        with mock.patch.object(h, '_git_out', old_git):
+            self.assertDenied('git branch -D x', 'Branch x is not merged into origin/main')
 
     def remove_default_refs(self):
         """No real default ref: origin/HEAD, origin/main and the local main are all absent."""
