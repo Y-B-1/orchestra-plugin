@@ -11,7 +11,7 @@ Fixes for the friction met while using Orchestra to ship 2.11.0. None of them le
 - **Red-first checks:** a `SELF_REVIEW` check may carry `"expect": "fail"` (the failing run before the fix); it must be followed by a passing run of the same command.
 - **`dispatch TASK [WORKER]`:** the worker defaults to `orchestra-<TASK>`.
 - **Recording a review:** a receipt's `artifact` may be the string `"<sha> clean"` when the sha is a prefix of HEAD, the scope is clean and the policy is unchanged since the review card was dispatched; the engine stores its own record. `review FILE --token TOKEN` reports the review card, records the final receipt and accepts the card in one step.
-- **Merged deletes:** `cd <path in this repository> && git push origin --delete B` and a trailing read-only `| tail`, `| head`, `| grep` or `| cat` are allowed for a merged delete; the merge proof runs in the `cd` target. A branch also counts as merged when `git merge-tree --write-tree <default> <tip>` yields the default branch's own tree (git 2.38 or later), so a cherry-picked builder branch can be removed.
+- **Merged deletes:** `cd <path in this repository> && git push origin --delete B` and a trailing read-only `| tail`, `| head`, `| grep` or `| cat` are allowed for a merged delete; the merge proof runs in the `cd` target. A branch also counts as merged when every path it changed since its merge base holds the same entry on the default branch (`git diff-tree`, no merge driver runs), so a cherry-picked builder branch can be removed.
 - **Build skill:** fast-forward a worktree to the brief's starting commit before editing; list a red-first run with `"expect": "fail"`; capture exit codes with `; echo EXIT=$?` on checks only.
 
 ## 2.11.0 — 2026-10-22

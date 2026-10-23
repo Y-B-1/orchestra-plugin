@@ -796,7 +796,7 @@ These change rules above; docs/hooks.md and the cli reference carry the current 
 2. **Fix re-review (5.1 item 6).** A receipt counts for a chain when it covers the tip, is intact and current, and has no `task_findings` for any card of the chain (an absent key blames every covered card). `_kept_current` is unchanged.
 3. **Self-review.** A check may carry `expect` (`pass` or `fail`). An `expect: fail` check exits non-zero and is followed by the same command, without `expect: fail`, exiting 0.
 4. **5.14 item 2.** One leading `cd <literal path> &&` (same Git common directory; no `$`, `~`, backtick, glob or leading `-`) and one trailing pipe to `tail`, `head`, `grep` or `cat` without file operands do not count as extra segments. The proof of item 4 runs in the `cd` target.
-5. **5.14 item 4.5.** (d) `git merge-tree --write-tree <default> <tip>` exits 0 and prints `<default>^{tree}`. Absent on git older than 2.38.
+5. **5.14 item 4.5.** (d) For every path in `git diff-tree -r -z --no-renames --name-only $(git merge-base <default> <tip>) <tip>`, `git --literal-pathspecs diff-tree -r -z --no-renames <default> <tip> -- <paths>` prints nothing (an empty path list counts). No merge driver, diff driver or textconv runs; any git error or unparsable output is no proof.
 
 ## 6. Engine and state changes
 

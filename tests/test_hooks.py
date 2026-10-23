@@ -1275,18 +1275,60 @@ class MergedDeleteHookTest(unittest.TestCase):
         self.assertTrue(all(row.startswith('-') for row in git(self.repo, 'cherry', 'origin/main', 'x').splitlines()))  # cherry calls it merged
         self.assertDenied('git branch -D x', 'Branch x is not merged into origin/main')
 
-    def test_merge_proof_is_absent_on_a_git_without_write_tree(self):
+    def driver_branch(self, committed):
+        """drv rewrites lock.txt, main rewrites it differently; a keep-ours merge driver would hide drv's change."""
+        self.commit('lock.txt', 'base\n')
+        git(self.repo, 'checkout', '-q', '-b', 'drv')
+        if committed:
+            self.commit('.gitattributes', 'lock.txt merge=keep\n')
+        self.commit('lock.txt', 'branch work that is not on main\n')
+        git(self.repo, 'checkout', '-q', 'main')
+        self.commit('lock.txt', 'main change\n')
+        if committed:
+            self.commit('.gitattributes', 'lock.txt merge=keep\n')
+        else:
+            (self.repo / '.git' / 'info' / 'attributes').write_text('lock.txt merge=keep\n')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        git(self.repo, 'config', 'merge.keep.driver', 'true')
+
+    def assert_driver_branch_unmerged(self):
+        from orchestra_core import hooks as h
+        from orchestra_core.paths import state_location
+        self.assertFalse(h._branch_merged(self.repo, 'drv', 'refs/remotes/origin/main'))
+        self.assertDenied('git branch -D drv', 'Branch drv is not merged into origin/main')
+        state = state_location(self.repo)
+        state.mkdir(parents=True, exist_ok=True)
+        (state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
+        self.assertDenied('git branch -D drv', 'Branch drv is not merged into origin/main')
+
+    def test_a_merge_driver_does_not_make_a_branch_merged(self):
+        self.driver_branch(committed=False)
+        self.assert_driver_branch_unmerged()
+
+    def test_a_committed_merge_driver_does_not_make_a_branch_merged(self):
+        self.driver_branch(committed=True)
+        self.assert_driver_branch_unmerged()
+
+    def test_the_merged_proof_runs_no_merge_driver(self):
+        self.driver_branch(committed=False)
+        marker = Path(self.temp.name) / 'driver-ran'
+        git(self.repo, 'config', 'merge.keep.driver', 'touch %s' % marker)
+        self.run_hook('git branch -D drv')
+        self.assertFalse(marker.exists())
+
+    def test_merge_proof_fails_closed_on_a_git_error(self):
         from orchestra_core import hooks as h
         self.side('x', 'x.txt', 'x\n')
         self.commit('other.txt', 'other\n')
         git(self.repo, 'cherry-pick', 'x')
         git(self.repo, 'push', '-q', 'origin', 'main')
-        real = h._git_out
+        self.assertAllowed('git branch -D x')
+        real = h._git_raw
 
-        def old_git(repo, *args, **kw):
-            return (129, '') if args[:1] == ('merge-tree',) else real(repo, *args, **kw)
+        def broken_git(repo, *args, **kw):
+            return (128, b'') if args[:1] == ('diff-tree',) else real(repo, *args, **kw)
 
-        with mock.patch.object(h, '_git_out', old_git):
+        with mock.patch.object(h, '_git_raw', broken_git):
             self.assertDenied('git branch -D x', 'Branch x is not merged into origin/main')
 
     def remove_default_refs(self):

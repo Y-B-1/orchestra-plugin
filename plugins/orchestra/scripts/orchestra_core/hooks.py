@@ -927,20 +927,45 @@ def _first_parent_trees(repo, default):
     return {line for line in out.splitlines() if line and not line.startswith('commit ')} if code == 0 else set()
 
 
-def _merge_tree_proof(repo, tip, default):
-    """True when merging tip into default changes nothing: `git merge-tree --write-tree` exits 0 and its tree is
-    default's own. Git before 2.38 has no --write-tree, so there the proof is absent."""
-    code, out = _git_out(repo, 'merge-tree', '--write-tree', default, tip, timeout=30)
-    if code != 0 or not out:
+def _git_raw(repo, *args, timeout=10):
+    """(returncode, raw stdout bytes) of a git command in repo, unstripped for -z output; spawn error or timeout is (1, b'')."""
+    timeout = _remaining(timeout)
+    if timeout <= 0 and _DEADLINE[0] is not None:
+        return 1, b''
+    try:
+        done = subprocess.run(['git', '-C', str(repo), *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                              stdin=subprocess.DEVNULL, timeout=timeout)
+        return done.returncode, done.stdout
+    except (OSError, subprocess.SubprocessError):
+        return 1, b''
+
+
+def _changes_on_default(repo, tip, default):
+    """True when every path tip changed since its merge base with default holds the same entry (mode and object, or
+    absent) in default. Plain tree plumbing only: no merge driver, diff driver, textconv or external command runs.
+    A branch that changed nothing loses nothing, so it counts. Any git error or unparsable output is no proof."""
+    code, base = _git_out(repo, 'merge-base', default, tip)
+    if code != 0 or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', base):
         return False
-    code, tree = _git_out(repo, 'rev-parse', '--verify', '--quiet', default + '^{tree}')
-    return code == 0 and bool(tree) and out.splitlines()[0] == tree
+    code, out = _git_raw(repo, 'diff-tree', '-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--name-only',
+                         base, tip, timeout=30)
+    if code != 0 or (out and not out.endswith(b'\0')):
+        return False
+    paths = out.split(b'\0')[:-1]
+    if not paths:
+        return True
+    if any(not path for path in paths):
+        return False
+    code, out = _git_raw(repo, '--literal-pathspecs', 'diff-tree', '-r', '-z', '--no-renames', '--no-ext-diff',
+                         '--no-textconv', default, tip, '--', *paths, timeout=30)
+    return code == 0 and out == b''
 
 
 def _branch_merged(repo, tip, default):
     """SPEC 5.14 item 4.5: tip is an ancestor of default, or its tree is a first-parent tree of default,
     or tip is an ancestor of a local or remote-tracking ref whose tree is (evaluated afresh at each delete),
-    or merging tip into default is a no-op (cherry-picks, squash merges after default moved on)."""
+    or every path tip changed already holds tip's entry in default (cherry-picks, squash merges after default
+    moved on in other files)."""
     if _git_out(repo, 'merge-base', '--is-ancestor', tip, default)[0] == 0:
         return True
     trees = _first_parent_trees(repo, default)
@@ -951,7 +976,7 @@ def _branch_merged(repo, tip, default):
         code, out = _git_out(repo, 'for-each-ref', '--contains', tip, '--format=%(refname)%09%(tree)', 'refs/heads', 'refs/remotes', timeout=30)
         if code == 0 and any(line.partition('\t')[2] in trees for line in out.splitlines() if '\t' in line):
             return True
-    return _merge_tree_proof(repo, tip, default)
+    return _changes_on_default(repo, tip, default)
 
 
 _CD_WORD = r'[A-Za-z0-9_./:+=@%,]'
