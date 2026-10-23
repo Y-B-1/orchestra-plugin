@@ -2,6 +2,7 @@ import ast
 import hashlib
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -375,6 +376,77 @@ class SoftenAndGhRulesTest(unittest.TestCase):
                     payload = {'cwd': state, 'tool_name': 'Bash', 'tool_input': {'command': command}}
                     result = handle_event('PreToolUse', payload, mode='protect', armed=True, autonomy=True)
                     self.assertEqual(result.output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
+
+    def test_gh_flags_anywhere_do_not_hide_the_pair(self):
+        """Any flag, `--flag=value` or clustered short form may stand before or between the subcommand words."""
+        pairs = [('gh --squash=true pr merge 31', 'gh pr merge 31'), ('gh pr --admin=true merge 7', 'gh pr merge 7'),
+                 ('gh -dRo/r release create v1', 'gh release create v1'), ('gh --repo=o/r -d pr merge 7', 'gh pr merge 7'),
+                 ('gh --x y pr merge 7', 'gh pr merge 7'), ('gh -x y release delete v1 -y', 'gh release delete v1 -y'),
+                 ('gh --state=closed pr -q merge 7', 'gh pr merge 7'), ('gh -dR o/r release create v1', 'gh release create v1'),
+                 ('gh --x=1 api -X POST repos/o/r/pulls/7/merge', 'gh api -X POST repos/o/r/pulls/7/merge'),
+                 ('gh --x=1 workflow --y=2 run deploy.yml', 'gh workflow run deploy.yml'),
+                 ('gh pr --x=1 edit 7 --base main', 'gh pr edit 7 --base main')]
+        for flagged, plain in pairs:
+            with self.subTest(command=flagged):
+                got, want = classify_command(flagged), classify_command(plain)
+                self.assertNotEqual(want.klass, 'allow')
+                self.assertEqual((got.klass, got.category, got.boundary), (want.klass, want.category, want.boundary))
+                self.assertEqual(got.argv, tuple(flagged.split()) if got.argv else got.argv)
+        for command in ('gh pr list -R o/r', 'gh pr view 7 --json x', 'gh release list --repo o/r', 'gh --state=closed pr list',
+                        'gh -sclosed pr list', 'gh --state closed pr list', 'gh pr --state=closed list', 'gh --help',
+                        'gh --x=1 api repos/o/r/pulls', 'gh api -X GET repos/o/r/pulls'):
+            with self.subTest(command=command):
+                self.assertEqual(classify_command(command).klass, 'allow')
+
+    def test_arithmetic_shift_is_not_a_heredoc(self):
+        nl = chr(10)
+        tail = nl + 'gh release create v1' + nl + 'x'
+        for head in ('echo $((1<<x))', 'echo $(( 1 <<x ))', 'echo $((a<<EOF))', '((y=1<<x))', 'echo $((1<<x)) $((2<<y))',
+                     'echo ' + chr(92) + nl + '$((1<<x))'):
+            with self.subTest(command=head):
+                self.assertEqual(classify_command(head + tail).klass, 'release-multi')
+        self.assertEqual(classify_command('echo $(echo $((1<<x))' + tail + nl + ')').klass, 'release-multi')
+        body = 'cat <<x' + nl + 'gh release create v1' + nl + 'x'
+        self.assertEqual(classify_command(body).klass, 'allow')
+
+    def test_respelling_keeps_the_verdict(self):
+        """A command spelled another way that bash reads the same must classify at least as strictly (same class, or deny).
+        Skipped, because the respelling would change what bash runs: (a) and (b) skip a command with a word that holds a
+        character outside the plain-word set (quote, glob, `$`, backslash, redirection, group, newline, comment), an
+        operator other than && || | ;, a word that begins with NAME= (an assignment stops being one once quoted) or a
+        shell reserved word; (c) skips a command whose first word holds such a character; (d) and (e) skip a command
+        that does not start with the word gh followed by a subcommand word."""
+        plain = re.compile(r'[A-Za-z0-9_./:@%+=,-]+')
+        assignment = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\+?=')
+        reserved = {'if', 'then', 'elif', 'else', 'fi', 'while', 'until', 'do', 'done', 'case', 'esac', 'for', 'in', 'time',
+                    'function', 'coproc', 'select'}
+        operators = {'&&', '||', '|', ';'}
+
+        def respellings(case):
+            command = case['input']['command']
+            words = command.split(' ')
+            out = []
+            if all(x and (x in operators or (plain.fullmatch(x) and not assignment.match(x) and x not in reserved)) for x in words):
+                for quote in ("'", '"'):
+                    out.append(('quoted', ' '.join(x if x in operators else quote + x + quote for x in words)))
+            if plain.fullmatch(words[0]) and len(words) > 1:
+                out.append(('continued', words[0] + chr(92) + chr(10) + ' ' + ' '.join(words[1:])))
+            if words[0] == 'gh' and len(words) > 2 and not words[1].startswith('-') and plain.fullmatch(words[1]):
+                out.append(('gh', ' '.join(['gh', '-R', 'o/r'] + words[1:])))
+                out.append(('gh', ' '.join(words[:2] + ['-R', 'o/r'] + words[2:])))
+                out.append(('gh', ' '.join(['gh', '--x=y'] + words[1:])))
+            return out
+
+        checked = 0
+        for case in CORPUS:
+            if 'command' not in case['input'] or case['class'] not in ('deny', 'release', 'release-multi', 'boundary'):
+                continue
+            for kind, respelled in respellings(case):
+                with self.subTest(case=case['id'], kind=kind, command=respelled):
+                    got = classify_command(respelled)
+                    self.assertIn(got.klass, (case['class'], 'deny'), case['input']['command'])
+                    checked += 1
+        self.assertGreater(checked, 400)
 
     def test_line_continuation_is_joined(self):
         nl = chr(10)

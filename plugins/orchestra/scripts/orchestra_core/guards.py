@@ -235,6 +235,7 @@ def _strip_heredocs(command):
     tick = False  # Inside a backtick substitution.
     parens, no_start = [], -1  # Open `(` as (kind, index); the index where a `#` cannot start a word.
     cases, start = [], True  # Open `case` as [state, len(parens)]; at a command position (SPEC A5, O27).
+    arith = 0  # The index where the arithmetic span now open ends: `<<` before it is a shift.
     while i < n:
         char = command[i]
         if escaped:
@@ -253,6 +254,8 @@ def _strip_heredocs(command):
             quote, start = char, False
         elif char == '(':
             top = cases[-1] if cases and cases[-1][1] == len(parens) else None
+            if i >= arith and command.startswith('((', i):
+                arith = max(arith, _arith_end(command, i))
             if not (top and top[0] == 'pattern'):  # In a case pattern the opening parenthesis is optional.
                 sub = i and (command[i - 1] in '$<>=' or (command[i - 1] == '(' and parens and parens[-1] == ('sub', i - 1)))
                 parens.append(('sub' if sub else 'plain', i))  # `=(` opens an array assignment, inside a word.
@@ -286,7 +289,7 @@ def _strip_heredocs(command):
             out.append(_COMMENT_BLANK.sub(' ', command[i:end]))
             i = end
             continue
-        elif char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<'):
+        elif char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<') and i >= arith:
             match = _HEREDOC.match(command, i)
             # An all-digit word is shell arithmetic (1 << 2), not a heredoc.
             if match and not match.group(2).isdigit():
@@ -840,7 +843,7 @@ _GH_CONFIG_REASON = 'gh aliases and extensions add commands the guard cannot rea
 
 def _gh_without_repo(words):
     """The gh words without every -R/--repo flag and its value, so the pair table sees the command it names. A flag with
-    no value is dropped alone."""
+    no value is dropped alone. hooks.py reads this for the unattended deletion check; the classifier uses _gh_readings."""
     kept, i = [], 0
     while i < len(words):
         word = words[i]
@@ -850,6 +853,57 @@ def _gh_without_repo(words):
             kept.append(word)
         i += 1
     return kept
+
+
+_GH_READING_CAP = 64
+
+
+def _gh_readings(words):
+    """Every way gh can read the words: the first two words that are not flags, then the flags and values skipped on the
+    way, then the rest. A flag without `=` may take the next word as its value, so both readings are listed (-R and
+    --repo always do). `gh api` keeps its argument order. None past the cap."""
+    out = []
+
+    def walk(i, picked, skipped):
+        if len(out) > _GH_READING_CAP:
+            return
+        if i == len(words) or len(picked) == 2 or picked == ['api']:
+            tail = words[i:]
+            out.append(['gh'] + picked + (tail + skipped if picked == ['api'] else skipped + tail))
+        elif words[i].startswith('-') and words[i] != '-':
+            if words[i] in ('-R', '--repo'):
+                walk(min(i + 2, len(words)), picked, skipped + words[i:i + 2])
+                return
+            walk(i + 1, picked, skipped + [words[i]])
+            if '=' not in words[i] and i + 1 < len(words):
+                walk(i + 2, picked, skipped + words[i:i + 2])
+        else:
+            walk(i + 1, picked + [words[i]], skipped)
+
+    walk(1, [], [])
+    return out if len(out) <= _GH_READING_CAP else None
+
+
+def _gh_reading_decision(words, argv):
+    if _is_release('gh', words):
+        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv)
+    if (found := _gh(words)) is not None:
+        return replace(found, argv=argv) if found.argv else found
+    if words[1:3] in _BOUNDARY['gh']:
+        return _boundary('delete', 'Deletion is a boundary action')
+    return Decision()
+
+
+def _gh_decision(words):
+    """The strictest verdict over the readings of _gh_readings. A reading whose first word is no gh command counts only
+    when no reading starts with one."""
+    argv = tuple(words)
+    readings = _gh_readings(words)
+    if readings is None:
+        return Decision('release', 'Too many gh flags before the subcommand to read; the owner runs it', 'ghcustom', argv=argv)
+    known = any(r[1:2] and r[1] in _GH_BUILTIN for r in readings)
+    kept = [r for r in readings if not (known and r[1:2] and r[1] not in _GH_BUILTIN)]
+    return _first_by_severity([_gh_reading_decision(r, argv) for r in kept], Decision())
 
 
 def _gh(words):
@@ -924,14 +978,11 @@ def _classify_segment(words, depth):
         return _git(words)
     argv = tuple(words)
     if name == 'gh':
-        words = _gh_without_repo(words)
+        return _gh_decision(words)
     if _is_release(name, words):
         return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv)
-    if name == 'gh' and (found := _gh(words)) is not None:
-        return replace(found, argv=argv) if found.argv else found
     base = Decision()
-    if (name in _BOUNDARY['delete_commands'] or (name == 'find' and _BOUNDARY['find_delete_flag'] in words[1:]) or
-            (name == 'gh' and words[1:3] in _BOUNDARY['gh'])):
+    if name in _BOUNDARY['delete_commands'] or (name == 'find' and _BOUNDARY['find_delete_flag'] in words[1:]):
         base = _boundary('delete', 'Deletion is a boundary action')
     if name == 'find':
         return _first_by_severity(_find_exec(words, depth), base)
@@ -1264,6 +1315,7 @@ def _balanced_end(text, i):
     cases = []  # One [state, depth] per open `case`; state is 'head', 'pattern' or 'body'.
     pending = []  # Heredoc (dash, delimiter) pairs whose bodies start after the next newline (SPEC A5, O20).
     start = True  # At a command position, where `case` is a keyword.
+    arith = 0  # The index where the arithmetic span now open ends: `<<` before it is a shift.
     while i < n:
         char = text[i]
         if char == '\\' and quote != "'":
@@ -1290,6 +1342,8 @@ def _balanced_end(text, i):
         elif char in ' \t':
             pass
         elif char == '(':
+            if i >= arith and text.startswith('((', i):
+                arith = max(arith, _arith_end(text, i))
             if not (top and top[0] == 'pattern'):  # In a case pattern the opening parenthesis is optional.
                 depth += 1
             start = True
@@ -1302,7 +1356,7 @@ def _balanced_end(text, i):
                     return i + 1
             start = True
         elif char == '<' and text.startswith('<<', i) and not text.startswith('<<<', i) and (
-                i == 0 or text[i - 1] != '<') and _HEREDOC.match(text, i):
+                i == 0 or text[i - 1] != '<') and i >= arith and _HEREDOC.match(text, i):
             found = _HEREDOC.match(text, i)
             pending.append((bool(found.group(1)), found.group(2).strip('"\'\\')))
             i = found.end()
@@ -1427,6 +1481,13 @@ def _scan_ops(text):
                 parens.pop()
     herestrings.extend((before + ' ' + text[end:], word) for before, word, end in pending)
     return herestrings, procsubs
+
+
+def _arith_end(text, i):
+    """Index just past the `))` of the arithmetic that opens with the `((` at text[i], else -1. `<<` inside it is a
+    shift, never a heredoc. Like _is_arithmetic: `((cmd) )` is a group, and a span never closed runs to the end."""
+    inner = _balanced_end(text, i + 2)
+    return len(text) if inner < 0 else inner + 1 if text[inner:inner + 1] == ')' else -1
 
 
 def _is_arithmetic(text, i):
@@ -2210,6 +2271,7 @@ def _join_continuations(command, literal=True, heredocs=False):
     an unquoted one loses them and its delimiter line is matched after that. None when the scan cannot decide."""
     out, quote, i, n = [], None, 0, len(command)
     pending = []  # (word, strip tabs, quoted) of each heredoc opened on the current line.
+    arith = 0  # The index where the arithmetic span now open ends: `<<` before it is a shift.
     while i < n:
         char = command[i]
         if char == '\\' and quote != "'":
@@ -2229,7 +2291,9 @@ def _join_continuations(command, literal=True, heredocs=False):
             out.append(command[i:end])
             i = end
             continue
-        elif heredocs and char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<'):
+        elif char == '(' and heredocs and i >= arith and command.startswith('((', i):
+            arith = max(arith, _arith_end(command, i))
+        elif heredocs and char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<') and i >= arith:
             match = _HEREDOC.match(command, i)
             if match and not match.group(2).isdigit():
                 word = match.group(2)
