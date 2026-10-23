@@ -513,6 +513,15 @@ class PlaneTest(PlaneFixture):
         self.assertIsNone(self.hook('git push origin --delete stack'))  # origin/feat/a holds the same tip
         self.assertEqual(self.hook('git push origin --delete ' + self.default_branch), 'deny')
 
+    def test_cd_prefix_and_output_pipe_keep_the_covered_run_branch_rules(self):
+        self.add_origin_branches()
+        repo = '"%s"' % self.repo  # the fixture path holds spaces
+        self.assertIsNone(self.hook('cd %s && git push origin --delete feat/a 2>&1 | tail -1' % repo))
+        self.assertEqual(self.hook('cd %s && git push origin --delete feat/b | tail -1' % repo), 'deny')
+        self.assertEqual(self.hook('cd %s; git push origin --delete feat/a' % repo), 'deny')
+        self.assertEqual(self.hook('cd %s && git push origin --delete feat/a | tee out' % repo), 'deny')
+        self.assertEqual(self.hook('cd "%s" && git branch -D feat/b | tail -1' % self.wt, cwd=self.repo), 'deny')
+
     def test_unpushed_or_unknown_branches_stay_under_the_merged_rule(self):
         self.branch('old')
         self.arm()
