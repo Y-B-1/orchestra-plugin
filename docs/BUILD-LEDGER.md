@@ -353,10 +353,12 @@ Source: a friction log kept while Orchestra coordinated its own 2.11.0 release (
 | `dispatch` needed the worker name every time | One refused dispatch per card | Fixed: default `orchestra-TASK` |
 | Review receipts needed hand edits (artifact record, report-then-review order) | Three to four retries per receipt | Fixed: `"<sha> clean"` string and `review --token` |
 | A merged delete written with `cd repo &&` or `| tail -1` was refused | Two refused cleanup commands | Fixed: one literal `cd`, one read-only pipe |
-| A cherry-picked builder branch could not be deleted | One workaround per branch | Fixed: merge-tree proof |
+| A cherry-picked builder branch could not be deleted | One workaround per branch | Fixed: changed-path proof (`diff-tree`, no merge driver) |
 | Out-of-scope notes and empty `cleared` on non-final receipts; heredoc data written by `cat` | Seen under 2.10.0 | Already fixed in 2.11.0 at base |
 | A worktree builder started from the default branch, not the run branch | Hand fast-forward in two builders | Build skill: fast-forward to the named base |
 | Exit codes lost under zsh | Unreliable evidence lines | Build skill: `; echo EXIT=$?` on checks |
+
+Review of the merged-branch proof: the pre-PR review found that `git merge-tree` honors merge drivers, so a repository's `merge=keep` attribute with `merge.keep.driver=true` made an unmerged branch look merged (and ran the driver inside the hook). The proof was replaced by `git diff-tree` plumbing with `--no-ext-diff --no-textconv`. The fix re-review then found that `submodule.<name>.ignore=all` hid a gitlink change from `diff-tree`; `--ignore-submodules=none` closed it. The second fix re-review ran 25 attribute, config and environment variants with no false allow. Each case has a test that fails on the earlier code.
 
 Proposals for the owner (not built):
 - An app restart once ended a run although the harness session id was unchanged; resuming needed a hand replay of three reports. Proposal: `start` on such a run prints a resume block and re-accepts reports whose artifact is unchanged.

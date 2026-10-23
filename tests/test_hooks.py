@@ -936,7 +936,7 @@ class MergedDeleteHookTest(unittest.TestCase):
 
     def test_merged_delete_allows_branch_covered_by_tree_equal_branch(self):
         self.side('x', 'x.txt', 'x\n')
-        self.side('cover', 'x.txt', 'c\n', start='x')  # rewrites x.txt, so x alone is no merge-tree no-op once cover is gone
+        self.side('cover', 'x.txt', 'c\n', start='x')  # rewrites x.txt, so x's change is not on main once cover is gone
         self.land_squash('cover')
         self.assertFalse(self.is_ancestor('x', 'origin/main'))
         self.assertNotIn(git(self.repo, 'rev-parse', 'x^{tree}'),
