@@ -35,11 +35,11 @@ A test that breaks under a behavior-preserving refactor asserts implementation. 
 
 ## Bug fixes
 
-The reproducing test fails at the starting commit, in its own assertion. An import error, fixture error or environment error is a defect in the test: correct it once or drop it. Then fix. The report records both runs: fails before the fix, passes after. When you force the red by editing code or a fixture, diff against an untouched copy to show the edit applied before you trust the failure.
+The reproducing test fails at the starting commit, in its own assertion. An import error, fixture error or environment error is a defect in the test: correct it once or drop it. Then fix. The report records both runs: fails before the fix, passes after. In `SELF_REVIEW`, list the red run with `"expect": "fail"` directly before the same command's passing run. When you force the red by editing code or a fixture, diff against an untouched copy to show the edit applied before you trust the failure.
 
 ## Checks
 
-While iterating, run the single test and the type or lint check for the code you touch. Run the owned and derived checks the brief lists before you report. Run the full suite only when the brief names it. A check that passes at once or fails oddly points first at the observation: the wrong target, a cached result or a stale build. Rerun it on the real artifact.
+A worktree that is not at the brief's starting commit is fast-forwarded to it (`git merge --ff-only <sha>`) before the first edit; never reset. Capture a check's exit code with `; echo EXIT=$?` on the check itself, never on a push or delete. While iterating, run the single test and the type or lint check for the code you touch. Run the owned and derived checks the brief lists before you report. Run the full suite only when the brief names it. A check that passes at once or fails oddly points first at the observation: the wrong target, a cached result or a stale build. Rerun it on the real artifact.
 
 ## Stuck
 
