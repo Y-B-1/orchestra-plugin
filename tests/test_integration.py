@@ -95,6 +95,42 @@ class WorkflowIntegration(unittest.TestCase):
                                '--actor',actor,'--lease',lease or self.lease,
                                'release','fixture-remote','main'],capture_output=True,text=True,timeout=10)
 
+    def test_pr_reviewed_follows_a_clean_review_of_the_pull_request_head(self):
+        """G4: after gate, review and commit the head equals a clean review's artifact head; a later commit unsets `reviewed`."""
+        from unittest import mock
+        url='https://github.example/o/r/pull/7'
+        gh=self.root/'fake gh'
+        gh.mkdir()
+        (gh/'gh.py').write_text('import json, sys\nprint(json.dumps(json.load(open(sys.argv[0].replace("gh.py", "view.json")))))\n')
+        wrapper=gh/'gh'
+        wrapper.write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n'%(sys.executable,gh/'gh.py'))
+        wrapper.chmod(0o755)
+
+        def view():
+            head=self.git('rev-parse','refs/heads/feat/x')
+            (gh/'view.json').write_text(json.dumps(dict(number=7,state='OPEN',baseRefName='main',headRefName='feat/x',
+                                                        headRefOid=head,isCrossRepository=False)))
+            return head
+
+        def commit(name):
+            (self.repo/name).write_text(name)
+            self.git('add',name)
+            self.git('commit','-qm',name)
+        self.git('switch','-qc','feat/x')
+        commit('one.txt')
+        with mock.patch.dict(os.environ,PATH=str(gh)+os.pathsep+os.environ['PATH']):
+            self.cli('gate','fixture','--',*self.check,lease=True)
+            self.review([],True)
+            head=view()
+            entry=self.cli('pr',url,lease=True)[1]['pull_requests'][0]
+            self.assertEqual((entry['head_sha'],entry['reviewed']),(head,True))
+            commit('two.txt')
+            head=view()
+            entry=self.cli('pr',url,lease=True)[1]['pull_requests'][0]
+            self.assertEqual((entry['head_sha'],entry['reviewed']),(head,False))
+            self.review([],True)
+            self.assertTrue(self.cli('pr',url,lease=True)[1]['pull_requests'][0]['reviewed'])
+
     def test_release_rejects_wrong_actor_and_stale_lease_before_execution(self):
         flag=self.root/'release executed'
         self.configure_local_release([sys.executable,'-c',f'from pathlib import Path; Path({str(flag)!r}).touch()'])
@@ -345,6 +381,10 @@ class LinkedWorktreeHook(unittest.TestCase):
 
     def test_push_from_linked_worktree_follows_the_main_checkout_run(self):
         command='git push origin side'
+        state=self.root/'protect state'  # T2a1: normal mode never asks, so this run selects protect in its policy file
+        state.mkdir()
+        (state/'policy.json').write_text(json.dumps({'schema_version':1,'guard_mode':'protect'}))
+        self.env['ORCHESTRA_STATE_DIR']=str(state)
         self.assertIsNone(self.hook(self.linked,command))
         lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--size','medium'],env=self.env,
                                         capture_output=True,text=True,check=True).stdout)['lease']
@@ -461,6 +501,7 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.assertIn('state.json',refused)
         self.assertNotIn('Stop or finish',refused)
         self.assertFalse((self.state/'history').exists())
+        (self.state/'policy.json').write_text(json.dumps({'schema_version':1,'guard_mode':'protect'}))  # T2a1: normal never asks
         push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
         self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'ask')  # the run stays armed; the user is asked
 
@@ -519,6 +560,7 @@ class AutonomyIntegration(unittest.TestCase):
 
     def setUp(self):
         HarnessSessionIntegration.setUp(self)
+        subprocess.run(['git','-C',str(self.repo),'switch','-qc','work'],check=True,capture_output=True)  # arm refuses on the default branch
         self.lease=self.cli('start')['lease']
 
     def test_arm_needs_no_lease_writes_the_template_then_arms_and_reports_preconditions(self):
@@ -576,7 +618,8 @@ class AutonomyIntegration(unittest.TestCase):
 
     def test_cli_pr_records_the_pull_request_for_the_brief(self):
         url='https://example.invalid/sandbox/pull/1'
-        self.assertEqual(self.cli('--lease',self.lease,'pr',url),{'pull_requests':[url]})
+        recorded=self.cli('--lease',self.lease,'pr',url)['pull_requests']  # gh cannot see the sandbox URL: recorded unverified
+        self.assertEqual([(e['url'],e['verified_at'],e['autonomous'],e['tasks']) for e in recorded],[(url,None,False,[])])
         self.assertIn('http(s) URL',self.cli('--lease',self.lease,'pr','nope',expected=2))
         self.cli('pr',url,expected=2)  # the lease is required
         self.cli('--lease',self.lease,'interrupt')

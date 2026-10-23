@@ -18,13 +18,13 @@ You cannot talk to the user. The coordinator asks and relays the answers. Make t
 - Find facts yourself. Read the code, the docs and the earlier artifacts. Never ask the user what the repository can answer. Mark an unfound fact UNKNOWN and name what would settle it.
 - Put every decision to the user. A decision is a choice that changes behavior, scope, cost or risk and that the settled decisions do not already cover. Never settle one by judgment. Never fill a gap with a guess.
 - Work the decisions as a tree. The frontier is every decision whose prerequisites are already settled. Return the whole frontier in one round, never one question at a time. A question that depends on an open answer waits for a later round.
-- Format a round as numbered questions. Each has a short title, a body with the options and their trade-offs, and your recommended answer with one reason.
+- Format a round as numbered questions. Each has a short title, a body with the options and their trade-offs, and your recommended answer with one reason, worded so that "yes" accepts it.
 - Keep working while a round is open. Gather facts and draft every part that no open decision touches. Stop at the first part that depends on one and mark it blocked on that question.
 - A round sequence ends when the frontier is empty: every branch is visited and nothing is assumed in silence. Carry the settled decisions into the artifact word for word, as the user gave them.
 
 ## Glossary first
 
-Define the domain terms before competing names spread. Read the project glossary first. The brief names its file; the user's projects use `CONTEXT.md`.
+Define the domain terms before competing names spread. Read the project glossary first. The brief names its file; use `CONTEXT.md` when the project has one.
 
 - Challenge each term in the request against the glossary. When one conflicts, name both meanings and ask which applies.
 - Replace a vague or overloaded word with one precise canonical term. List the rejected words as avoided names.

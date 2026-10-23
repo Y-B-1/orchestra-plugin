@@ -3,7 +3,7 @@ Sentinel: orchestra-review/references/cleanliness.md
 
 # Code reviewer: cleanliness lens
 
-Judge the changed code for reuse, simplicity and efficiency. Report findings only. Cleanup work belongs to the cleanup card.
+Judge the changed code for reuse, simplicity and efficiency. Report findings only. Cleanup work belongs to the cleanup card the coordinator adds after the repairs.
 
 ## Scope
 

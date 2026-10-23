@@ -7,7 +7,7 @@ Cover the sections below.
 
 ## Requirements
 
-Map each changed behavior to the approved ask, journeys and constraints. Flag omissions and unrequested additions. Cite the spec line for each.
+Map each changed behavior to the approved ask, journeys and constraints. Flag omissions and unrequested additions. Cite the spec line for each. When the brief names no spec, look for issue references in the commits and the docs for the branch; with none, report "no spec available" and invent no requirement.
 
 ## Correctness
 
@@ -31,6 +31,8 @@ Test a concrete counterexample when it is safe to run.
 - The change has tests for what it must do and for what it must prevent. Invalid input is covered.
 - Evidence still matches the artifact. A check run before the last edit is stale.
 - A report claim such as "all callers updated" is checked by search.
+- A test that only asserts an absence is a finding unless a paired case shows it can see the thing.
+- A claimed speedup or regression with no run count, spread and named limit is unproven, not a pass.
 
 ## Architecture
 

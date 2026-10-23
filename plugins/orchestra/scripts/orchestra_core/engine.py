@@ -50,6 +50,7 @@ REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
+PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop loop gives up as `stalled`
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
 GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which an unattended run stops
 LARGE_FILE_BYTES = 64 * 1024 * 1024  # Files over this are bound by size, mtime and sampled content, not read whole
@@ -69,6 +70,15 @@ DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
 DEFAULT_2_3 = dict(max_workers=20, required_checks=[], required_review_categories=CATEGORIES,
                    gate_timeout_seconds=300, secret_scan=dict(required=False, argv=[]),
                    release=dict(enabled=False, remote=None, target=None, argv=[]))
+MAX_WORKTREES = 3  # Running builder cards that are not inline; policy.max_worktrees overrides
+# Every key the engine reads or still loads from the older schema. `start` refuses any other, so a typo cannot turn a
+# setting off in silence.
+POLICY_KEYS = frozenset(DEFAULT) | frozenset(DEFAULT_2_3) | {
+    'schema_version', 'max_worktrees', 'reserved_ports', 'denied_tools', 'worker_stale_seconds', 'file_budget_bytes', 'file_budget_waivers', 'check_commands',
+    'release_timeout_seconds', 'guard_mode', 'release_workflows'}
+GUARD_MODES = ('normal', 'protect')  # `guard_mode` is read live by the hook, so it is left out of the policy hash
+RUN_ID = re.compile(r'[0-9a-f]{16}')
+PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
 CONTRACT_HASH_2_3 = '7e12cdf268d85df0aac178c92f1577a3ce2ffbf686fbc536204b4677dfe3a942'
 
 
@@ -100,13 +110,13 @@ def _contracts():
 AUTONOMY_TEMPLATE = PACKAGE_ROOT / 'config' / 'autonomy-template.md'
 AUTONOMY_FIXED = (
     '- Release: no release, permit or deploy.',
-    '- Merge: no pull request merge, and no local merge on the default branch.',
-    '- Push: push only a feature branch for a pull request; never the default branch.',
-    '- Deletion: no deletion of files, branches or tags.',
+    '- Merge: no merge into the default or a protected branch; a pull request whose base is a run branch may merge.',
+    '- Push: push any branch except the default, protected branches and tags; never force.',
+    '- Deletion: delete only what the run created: its run branches and worktrees, and files inside a linked worktree; '
+    'never tags, the default branch or other branches.',
     '- Credential entry: never enter credentials.',
     '- Engine-gated actions: nothing that needs a permit.',
 )
-AUTONOMY_LEGACY_PUSH = '- Push: no push to any branch.'  # a 2.5 ledger's line; stricter, so still accepted
 AUTONOMY_KEEP_AWAKE = 'User step: enable keep-awake in Claude Desktop (or keep the machine awake) for an overnight run.'
 CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
 PARKABLE = ('queued', 'running', 'reported')
@@ -210,14 +220,19 @@ def parse_ledger(text, now):
     pair = re.fullmatch(r'- Release: pre-authorized ([^\s]+) ([^\s]+)', releases[0]) if len(releases) == 1 else None
     if len(releases) != 1 or (releases[0] != AUTONOMY_FIXED[0] and not pair):
         raise EngineError('Approval boundaries need exactly one Release line')
+    refill = EngineError('Ledger uses the pre-2.11 Approval boundaries: copy the Merge, Push and Deletion lines '
+                         'from the template, then arm again')
+    if '- Push: no push to any branch.' in boundaries:  # the 2.5 line would be read as permission to push, not as a ban
+        raise refill
     for line in AUTONOMY_FIXED[1:]:
-        if line not in boundaries and not (line.startswith('- Push:') and AUTONOMY_LEGACY_PUSH in boundaries):
+        if line not in boundaries:
+            if line.startswith(('- Merge:', '- Push:', '- Deletion:')) and any(
+                    b.startswith(line.partition(':')[0] + ':') for b in boundaries):
+                raise refill
             raise EngineError('Approval boundaries must keep the fixed line: ' + line)
     caps = {k: fields[k] for k in ('max_passes', 'max_stalls') if k in fields}
     release = dict(release=dict(remote=pair.group(1), target=pair.group(2))) if pair else {}
-    # The 2.5 Push line forbids every push, so only the current line allows a feature-branch pull request.
-    pull_requests = AUTONOMY_FIXED[2] in boundaries and AUTONOMY_LEGACY_PUSH not in boundaries
-    return dict(goal=fields['goal'], deadline=fields['deadline'], checks=checks, pull_requests=pull_requests,
+    return dict(goal=fields['goal'], deadline=fields['deadline'], checks=checks, pull_requests=True,
                 **caps, **release)
 
 
@@ -334,6 +349,9 @@ class Engine:
             legacy.update(copy.deepcopy(policy))
         if isinstance(self.policy['max_workers'], bool) or not isinstance(self.policy['max_workers'], int) or self.policy['max_workers'] < 1:
             raise EngineError('Invalid worker capacity')
+        worktrees = self.policy.get('max_worktrees', MAX_WORKTREES)
+        if isinstance(worktrees, bool) or not isinstance(worktrees, int) or worktrees < 1:
+            raise EngineError('max_worktrees must be a positive integer')
         timeout = self.policy['gate_timeout_seconds']
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
             raise EngineError('Gate timeout must be positive and finite')
@@ -355,8 +373,23 @@ class Engine:
         minimum = self.policy['standards_min_lines']
         if isinstance(minimum, bool) or not isinstance(minimum, int) or minimum < 0:
             raise EngineError('standards_min_lines must be a non-negative integer')
+        budget = self.policy.get('file_budget_bytes')  # off when absent or null
+        if budget is not None and (isinstance(budget, bool) or not isinstance(budget, int) or budget < 1):
+            raise EngineError('file_budget_bytes must be a positive integer')
+        waivers = self.policy.get('file_budget_waivers', {})
+        if not isinstance(waivers, dict) or any(not isinstance(g, str) or not g or not isinstance(r, str) or not r.strip()
+                                                 for g, r in waivers.items()):
+            raise EngineError('file_budget_waivers must map globs to reasons')
+        if 'guard_mode' in self.policy and (not isinstance(self.policy['guard_mode'], str)
+                                            or self.policy['guard_mode'] not in GUARD_MODES):
+            raise EngineError('Invalid guard mode: use normal or protect')
+        workflows = self.policy.get('release_workflows', [])
+        if not isinstance(workflows, list) or any(not isinstance(g, str) or not g for g in workflows):
+            raise EngineError('release_workflows must be a list of globs')
+        legacy.pop('guard_mode', None)
         self.modes, self.contract_hash = _contracts()
-        self.policy_hash = _digest(dict(policy=self.policy, contracts=self.contract_hash))
+        hashed = {k: v for k, v in self.policy.items() if k != 'guard_mode'}
+        self.policy_hash = _digest(dict(policy=hashed, contracts=self.contract_hash))
         self._policy_hash_2_3 = _digest(dict(policy=legacy, contracts=CONTRACT_HASH_2_3))
         if Path(self._git('rev-parse', '--show-toplevel').decode().strip()).resolve() != self.repo:
             raise EngineError('repo must name repository root')
@@ -500,20 +533,21 @@ class Engine:
         return _digest(entries)
 
     @contextlib.contextmanager
-    def _state(self, write=True, block=False, activity=True):
+    def _state(self, write=True, block=False, activity=True, wait=False):
         """`block` makes a read wait for the lock even when `lock_wait` is set (records that must not be dropped).
         A write bumps the `activity` counter the Stop signature reads, unless `activity` is False (the Stop hook's own
-        bookkeeping, arming and harness rebinds are not progress)."""
+        bookkeeping, arming and harness rebinds are not progress). `wait` lets a write give up with StateBusy after
+        `lock_wait` instead of blocking; other writes block."""
         if _contracts()[1] != self.contract_hash:
             raise EngineError('Role or method instructions changed; start a new run')
         with (self.state_dir / 'state.lock').open('a+') as lock:
-            if write or block or self.lock_wait is None:
+            if (write and not wait) or block or self.lock_wait is None:
                 portable.lock(lock, exclusive=write)
             else:
                 end = time.monotonic() + self.lock_wait
                 while True:
                     try:
-                        portable.lock(lock, exclusive=False, blocking=False)
+                        portable.lock(lock, exclusive=write, blocking=False)
                         break
                     except OSError:
                         if time.monotonic() >= end:
@@ -676,8 +710,20 @@ class Engine:
             cls._walk(state['tasks'], task, 'repair_of')
             cls._walk(state['tasks'], task, 'repaired_by')
         prs = state.get('pull_requests', [])
-        if not isinstance(prs, list) or any(not isinstance(u, str) or not u for u in prs):
+        if not isinstance(prs, list) or any(
+                not (isinstance(u, str) and u) and not (isinstance(u, dict) and isinstance(u.get('url'), str) and u['url'])
+                for u in prs):
             raise EngineError('Invalid pull_requests state')
+        if 'run_id' in state and not (isinstance(state['run_id'], str) and RUN_ID.fullmatch(state['run_id'])):
+            raise EngineError('Invalid run state run_id')
+        history = state.get('approval_history', [])
+        if ('approval' in state and not isinstance(state['approval'], dict)) or not isinstance(history, list) or any(
+                not isinstance(h, dict) for h in history):
+            raise EngineError('Invalid run state approval')
+        for key in ('local_branches_at_arm', 'remote_branches_at_arm'):
+            names = (auto or {}).get(key, [])
+            if not isinstance(names, list) or any(not isinstance(n, str) or not n for n in names):
+                raise EngineError('Invalid autonomy state')
         findings = state.get('findings', [])
         if not isinstance(findings, list) or any(
                 not isinstance(f, dict) or any(not isinstance(f.get(k), str) for k in ('id', 'fingerprint', 'text', 'reason', 'at'))
@@ -866,6 +912,7 @@ class Engine:
             lenses = self._required_lenses(state)
             changed = self._run_changed(state)
             lines = changed[1] if changed is not None else None
+            file_budget = self._file_budget(base, changed[0]) if changed is not None else None
         size, asks = session.get('size'), session.get('asks')
         budget = TIER_GUIDE[size] * asks if size in TIER_GUIDE else None
         over = budget is not None and lines is not None and lines > budget
@@ -874,7 +921,45 @@ class Engine:
         warning = ('Size warning: declared %s with %d ask(s) budgets %d changed lines; the diff has %d. Run route --size TIER '
                    '--reason TEXT if the work grew.' % (size, asks, budget, lines)) if over else None
         return dict(base=base, changed_lines=lines, size=size, asks=asks, budget=budget, over_budget=over,
-                    reviewer=reviewer, agent=agent, lenses=lenses, warning=warning)
+                    reviewer=reviewer, agent=agent, lenses=lenses, warning=warning, file_budget=file_budget)
+
+    def _file_budget(self, base, paths):
+        """Policy `file_budget_bytes`: the run's changed text files now over the budget and larger than at `base` (a
+        renamed file compares with its old path), and the waived ones with their reasons. None when no budget is set.
+        Sizes come from stat and `git ls-tree -l`; only the first 8000 bytes are read, to skip binary files."""
+        budget = self.policy.get('file_budget_bytes')
+        if budget is None:
+            return None
+        waivers = self.policy.get('file_budget_waivers', {})
+        base_sizes = {}
+        for row in self._git('ls-tree', '-r', '-l', '-z', base).split(b'\0'):
+            if row:
+                meta, name = row.split(b'\t', 1)
+                size = meta.split()[-1]
+                base_sizes[os.fsdecode(name)] = int(size) if size.isdigit() else 0
+        renamed = {}
+        fields = self._git('diff', '-z', '--name-status', '-M', base, '--').split(b'\0')
+        for i, field in enumerate(fields):
+            if field.startswith(b'R') and i + 2 < len(fields):
+                renamed[os.fsdecode(fields[i + 2])] = os.fsdecode(fields[i + 1])
+        grew, waived = [], []
+        for name in paths:
+            path = self.repo / name
+            if path.is_symlink() or not path.is_file():
+                continue  # deleted, a directory or a link
+            size = path.stat().st_size
+            was = base_sizes.get(renamed.get(name, name), 0)
+            if size <= budget or size <= was:
+                continue
+            with path.open('rb') as handle:
+                if b'\0' in handle.read(8000):
+                    continue  # binary, as git judges it
+            reason = next((r for g, r in waivers.items() if self._glob_regex(g).fullmatch(name)), None)
+            if reason is not None:
+                waived.append(dict(path=name, reason=reason))
+            else:
+                grew.append(dict(path=name, base_bytes=was, bytes=size))
+        return dict(bytes=budget, grew=grew, waived=waived)
 
     def _required_lenses(self, state):
         """Contract item 6: the review categories completion needs. An explicit policy list overrides the derived set;
@@ -909,14 +994,19 @@ class Engine:
     def _asks_ok(asks):
         return type(asks) is int and asks >= 1
 
-    @classmethod
-    def _check_start(cls, size, asks, owner_request):
+    def _check_policy_keys(self):
+        unknown = sorted(set(self.policy) - POLICY_KEYS)
+        if unknown:
+            raise EngineError('Unknown policy key: ' + ', '.join(unknown))
+
+    def _check_start(self, size, asks, owner_request):
         """Contract item 2: what a new run must state. The CLI runs it before archiving an ended run."""
+        self._check_policy_keys()
         if size is None:
             raise EngineError('A new run needs --size tiny, medium or large')
         if size not in SIZES:
             raise EngineError('Size must be tiny, medium or large')
-        if asks is not None and not cls._asks_ok(asks):
+        if asks is not None and not self._asks_ok(asks):
             raise EngineError(ASKS_ERROR)
         if size == 'large' and not owner_request:
             raise EngineError('A new run starts at tiny or medium; escalate with route --size large --reason TEXT, '
@@ -957,10 +1047,13 @@ class Engine:
             if prior is not None and (size is not None or asks is not None or owner_request):
                 raise EngineError('--size, --asks and --owner-request apply to a new run; use start --new-run, or route --size '
                                   'to change the tier')
+            if prior is None:
+                self._check_policy_keys()
             if prior is None and items is None and (require_size or size is not None or asks is not None or owner_request):
                 self._check_start(size, asks, owner_request)
             state['session'] = dict(actor=actor, lease=lease, active=True)
             if prior is None:
+                state['run_id'] = uuid.uuid4().hex[:16]
                 state['session']['base'] = self._git('rev-parse', 'HEAD').decode().strip()
                 state['session']['baseline'], state['session']['baseline_lines'] = self._dirty_baseline()
                 if items is not None:
@@ -1018,9 +1111,9 @@ class Engine:
     def interrupt(self, actor, lease):
         with self._state() as state:
             self._lease(state, actor, lease)
+            self._end_run(state, 'interrupted')
             state['session']['active'] = False
             state['permits'] = []
-            self._write_brief(state, 'interrupted')
             state['autonomy'] = self._kept_autonomy(state)
 
     def interrupt_active(self):
@@ -1031,11 +1124,20 @@ class Engine:
         with self._state() as state:
             if not (state['session'] and state['session']['active']):
                 return False
+            self._end_run(state, 'interrupted')
             state['session']['active'] = False
             state['permits'] = []
-            self._write_brief(state, 'interrupted')
             state['autonomy'] = self._kept_autonomy(state)
             return True
+
+    def _end_run(self, state, reason):
+        """Write the run brief for a session that ends. Active autonomy stops with `reason` instead, so the morning
+        report exists and `start --new-run` stays refused until the owner approves or disarms. Call before the session
+        is marked inactive."""
+        if self._autonomy_on(state):
+            self._stop_autonomy(state, reason)
+        else:
+            self._write_brief(state, reason)
 
     @staticmethod
     def _stopped_report_kept(state):
@@ -1060,10 +1162,10 @@ class Engine:
         with self._state() as state:
             if not self._bound_to(state, session_id):
                 return False
+            self._end_run(state, 'ended')
             state['session'].update(active=False, outcome='ended')
             state['session'].pop('pending_rebind', None)  # harness_session stays as a record
             state['permits'] = []
-            self._write_brief(state, 'ended')
             state['autonomy'] = self._kept_autonomy(state)
             return True
 
@@ -1221,18 +1323,145 @@ class Engine:
         verdicts = self._review_verdicts(state, {}, task_id=task_id)
         return any(r.get('repair_check') and self._task_findings(r, task_id) for r in verdicts.values())
 
-    def record_pr(self, actor, lease, url):
-        """Record a pull request the run opened, so the run brief asks the owner to review and merge it."""
+    @staticmethod
+    def _pull_requests(state):
+        """The recorded pull requests as objects; a 2.10 state holds bare URL strings."""
+        return [dict(url=e, autonomous=False, verified_at=None) if isinstance(e, str) else e
+                for e in state.get('pull_requests', [])]
+
+    def _stamp(self):
+        return datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')
+
+    def _gh_view(self, url):
+        """The fields `gh pr view` reports for a pull request, or None when gh is missing, fails or answers oddly."""
+        gh = shutil.which('gh')
+        if not gh:
+            return None
+        try:
+            done = subprocess.run([gh, 'pr', 'view', url, '--json',
+                                   'number,state,baseRefName,headRefName,headRefOid,isCrossRepository'],
+                                  cwd=self.repo, capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
+                                  env=dict(os.environ, GH_PROMPT_DISABLED='1'))
+            data = json.loads(done.stdout) if done.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return None
+        ok = isinstance(data, dict) and type(data.get('number')) is int and all(
+            isinstance(data.get(k), str) and data[k] for k in ('state', 'baseRefName', 'headRefName', 'headRefOid'))
+        return data if ok else None
+
+    def _local_branch(self, name):
+        try:
+            return self._git('rev-parse', '--verify', '-q', 'refs/heads/' + name).decode().strip()
+        except EngineError:
+            return None
+
+    def _default_branch(self, auto):
+        """The default branch: the one a remote reported at arm, else origin/HEAD, else a local `main` or `master`."""
+        defaults = (auto or {}).get('remote_defaults') or {}
+        if defaults:
+            return defaults.get('origin') or sorted(defaults.values())[0]
+        try:
+            ref = self._git('symbolic-ref', '--short', '-q', 'refs/remotes/origin/HEAD').decode().strip()
+            if ref.startswith('origin/'):
+                return ref[len('origin/'):]
+        except EngineError:
+            pass
+        for name in ('main', 'master'):
+            if self._local_branch(name):
+                return name
+        raise EngineError('The default branch is unknown: no remote reported one and there is no main or master')
+
+    def _run_branches(self, auto, prs):
+        """Branches the run made: local branches absent at arm, and the head of every recorded pull request."""
+        made = set()
+        if auto and 'local_branches_at_arm' in auto:
+            known = set(auto['local_branches_at_arm']) | set(auto.get('remote_branches_at_arm', []))
+            made = set(self._git('for-each-ref', '--format=%(refname:short)', 'refs/heads').decode().split()) - known
+        return made | {e['head_ref'] for e in prs if e.get('head_ref')}
+
+    def record_pr(self, actor, lease, url, tasks=None):
+        """Record a pull request the run opened, so the run brief asks the owner to review and merge it. `gh pr view`
+        (no lock held) must find it open, from this repository, based on the default or a run branch, and headed by the
+        tip of the local branch; without gh the entry is recorded unverified. A rerun refreshes the entry in place."""
         url = url.strip() if isinstance(url, str) else ''
         parts = urllib.parse.urlsplit(url) if url and not any(c.isspace() for c in url) else None
         if not parts or parts.scheme not in ('http', 'https') or not parts.hostname:
             raise EngineError('A pull request is recorded by its http(s) URL with a host')
+        tasks = list(tasks or [])
+        with self._state(False) as state:
+            self._lease(state, actor, lease)
+            unknown = [t for t in tasks if t not in state['tasks']]
+            if unknown:
+                raise EngineError('Unknown task: ' + ', '.join(map(str, unknown)))
+            auto, seen = copy.deepcopy(state['autonomy']), self._pull_requests(state)
+        match = PR_URL.fullmatch(url)
+        number, repo = (int(match.group(2)), match.group(1)) if match else (None, None)
+        view = self._gh_view(url)
+        if view:
+            number = view['number']
+            if view['state'] != 'OPEN':
+                raise EngineError('Pull request %s is not open (%s)' % (url, view['state']))
+            if view.get('isCrossRepository') is True:
+                raise EngineError('Pull request %s comes from another repository' % url)
+            base, head = view['baseRefName'], view['headRefName']
+            if base != self._default_branch(auto) and base not in self._run_branches(auto, seen):
+                raise EngineError('Pull request base %s is neither the default branch nor a run branch' % base)
+            tip = self._local_branch(head)
+            if tip is None:
+                raise EngineError('Pull request head %s has no local branch' % head)
+            if tip != view['headRefOid']:
+                raise EngineError('Pull request head %s is not the local tip of %s' % (view['headRefOid'][:12], head))
         with self._state() as state:
             self._lease(state, actor, lease)
-            prs = state.setdefault('pull_requests', [])
-            if url not in prs:
-                prs.append(url)
-            return dict(pull_requests=list(prs))
+            prs = self._pull_requests(state)
+            now = self._stamp()
+            entry = next((e for e in prs if e['url'] == url or (number is not None and e.get('number') == number
+                                                              and e.get('repo') == repo)), None)
+            if entry is None:
+                entry = dict(url=url, number=number, repo=repo, head_ref=None, head_sha=None, base_ref=None,
+                             autonomous=False, tasks=[], reviewed=False, verified_at=None, recorded_at=now)
+                prs.append(entry)
+            if view:
+                sha = view['headRefOid']
+                entry.update(number=number, head_ref=view['headRefName'], head_sha=sha, base_ref=view['baseRefName'],
+                             verified_at=now, reviewed=any(
+                                 not r['findings'] and r['artifact'].get('head') == sha and self._intact(r)
+                                 for r in state['reviews']))
+            entry['autonomous'] = bool(entry.get('autonomous')) or self._autonomy_on(state)
+            entry['tasks'] = list(dict.fromkeys([*entry.get('tasks', []), *tasks]))
+            state['pull_requests'] = prs
+            return copy.deepcopy(prs)
+
+    def base(self, task_id):
+        """The branch a card's pull request should be based on (read-only, no lease). The nearest dependency cards with a
+        recorded run pull request that is still open are the parents: none gives the default branch, one gives its head
+        branch, two or more defer the card until they merge."""
+        with self._state(False) as state:
+            tasks = state['tasks']
+            if task_id not in tasks:
+                raise EngineError('Unknown task: ' + str(task_id))
+            prs, parents, queue, seen = self._pull_requests(state), {}, list(tasks[task_id].get('dependencies', [])), set()
+            while queue:
+                dep = queue.pop(0)
+                if dep in seen or dep not in tasks:
+                    continue
+                seen.add(dep)
+                entry = next((e for e in prs if e.get('autonomous') and dep in e.get('tasks', [])), None)
+                if entry:
+                    parents[entry['url']] = entry  # the nearest one; its own parents are behind it
+                else:
+                    queue.extend(tasks[dep].get('dependencies', []))
+            default = self._default_branch(state['autonomy'])
+        open_ = []
+        for entry in parents.values():
+            view = self._gh_view(entry['url'])
+            if view is None:
+                raise EngineError('Could not read pull request %s: run gh auth status, then try again' % (entry.get('number') or entry['url']))
+            if view['state'] == 'OPEN':
+                open_.append((view['number'], view['headRefName']))
+        if len(open_) > 1:
+            raise EngineError('deferred: wait for pull request(s) %s to merge' % ', '.join(str(n) for n, _ in sorted(open_)))
+        return open_[0][1] if open_ else default
 
     def hold(self, actor, lease, task_id, finding):
         """End the repair ladder: move the whole chain to `held` and log it (SPEC 5.2 item 2)."""
@@ -1445,6 +1674,11 @@ class Engine:
                 self._check_route(state, task, inline, helper)
             if task and task['role'] == 'builder' and task['mode'] == 'repair':
                 self._check_accept_before_repair(state, task)
+            if (task and task['role'] == 'builder' and not inline and sum(
+                    t['role'] == 'builder' and t['state'] == 'running' and not t.get('inline')
+                    for t in state['tasks'].values()) >= self.policy.get('max_worktrees', MAX_WORKTREES)):
+                raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report'
+                                  % self.policy.get('max_worktrees', MAX_WORKTREES))
             if task_id not in self._ready(state):
                 raise EngineError('Task is not ready or capacity is exhausted')
             self._check_contract(state['tasks'][task_id])
@@ -1509,7 +1743,10 @@ class Engine:
             if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
                 raise EngineError('A review covers this report; route a change through a repair card')
             self._lease(state, state['session']['actor'], task['lease'])
-            blocked = next((line[len('BLOCKED:'):].strip() for line in report.splitlines() if line.startswith('BLOCKED:')), '')
+            lines = report.splitlines()
+            blocked = next((line[len('BLOCKED:'):].strip() for line in lines if line.startswith('BLOCKED:')), '')
+            if not blocked and lines and lines[0].startswith('STATUS: BLOCKED'):
+                blocked = lines[0][len('STATUS: BLOCKED'):].strip() or 'worker reported STATUS: BLOCKED'
             if blocked and not replacing:
                 # A worker that cannot do the card says so instead of faking a self-review: the card is parked with the
                 # reason, and the coordinator decides (unpark with a changed card, or cancel it).
@@ -1780,6 +2017,22 @@ class Engine:
             raise EngineError('Current ' + kind + ' review evidence is missing or altered')
         return verdicts
 
+    def _fix_rechecked(self, state, cache, task):
+        """A repair, or an ancestor under repair, that a final review blamed (current or stale) waits for a CLEAN review
+        of the chain's tip repair at the current artifact: a fix re-review (`repair_check: true`) or a later final review."""
+        if task['state'] == 'held':
+            return True  # the chain left the repair ladder; a clean review of it accepts it
+        tip, chain = task, [task['id']]
+        while tip.get('repaired_by'):
+            tip = state['tasks'][tip['repaired_by']]
+            chain.append(tip['id'])
+        chain += [t['id'] for t in self._walk(state['tasks'], tip, 'repair_of')]
+        reviews = state['reviews'][task.get('review_since', 0):]
+        if not any(r['final'] and any(self._task_findings(r, i) for i in chain) for r in reviews):
+            return True
+        return any((r.get('repair_check') or r['final']) and not r['findings'] and tip['id'] in r['tasks'] and self._intact(r)
+                   and self._same(r['artifact'], self._artifact_cached(cache, r.get('scope'))) for r in reviews)
+
     def _accept_refusal(self, state, cache, task_id):
         """Why `accept` would refuse this card now, or None when every accept check passes."""
         task = state['tasks'].get(task_id)
@@ -1792,6 +2045,9 @@ class Engine:
             return 'Task has current review findings'
         if task.get('repaired_by') and state['tasks'][task['repaired_by']]['state'] != 'accepted':
             return 'Task repair must be accepted first'
+        if (task['role'] == 'builder' and (task['mode'] == 'repair' or task.get('repaired_by'))
+                and not self._fix_rechecked(state, cache, task)):
+            return 'A repair needs a clean fix re-review at the current artifact before accept'
         if task['role'] == 'builder':
             review = task.get('self_review')
             if review is None:
@@ -2031,9 +2287,9 @@ class Engine:
         with self._state() as state:
             self._lease(state, actor, lease)
             artifact = self._completion_evidence(state)
+            self._end_run(state, 'finished' if self._autonomy_on(state) else 'closed')
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []
-            self._write_brief(state, 'closed')
             state['autonomy'] = self._kept_autonomy(state)
             return artifact
 
@@ -2093,16 +2349,32 @@ class Engine:
             lease = state['session']['lease']
         remote_heads, remote_defaults = ensure_remote_heads(self.repo)  # outside the state lock: it may reach the network
         remote_push_urls = {r: push_url_digest(url) for r in remote_defaults if (url := effective_push_url(self.repo, r))}
+        current = self._git('branch', '--show-current').decode().strip()  # '' on a detached HEAD
+        trunk = {*remote_defaults.values(), 'main', 'master'}
+        if current in trunk:
+            raise EngineError('Autonomy does not run on the default branch %s: switch to a work branch first '
+                              '(git switch -c NAME), then arm again' % current)
+        local = sorted(self._git('for-each-ref', '--format=%(refname:short)', 'refs/heads').decode().split())
+        remotes = sorted(self._git('remote').decode().split(), key=len, reverse=True)
+        remote_branches = set()
+        for ref in self._git('for-each-ref', '--format=%(refname:lstrip=2)', 'refs/remotes').decode().split():
+            remote = next((r for r in remotes if ref.startswith(r + '/')), None)
+            if remote and ref[len(remote) + 1:] != 'HEAD':
+                remote_branches.add(ref[len(remote) + 1:])
         with self._state(activity=False) as state:
             self._refuse_rearm(state)  # A second arm may have won while the remotes were asked
             fields, snapshot = self._armable(state, path)
             if state['session']['lease'] != lease:
                 raise EngineError('The coordinator session changed while arming; arm again')
+            if 'approval' in state:  # a receipt never survives a re-arm
+                state.setdefault('approval_history', []).append(state.pop('approval'))
+            state.setdefault('run_id', uuid.uuid4().hex[:16])  # a state written before 2.11 has none
             state['autonomy'] = dict(
                 active=True, ledger=snapshot, passes=0, stalls=0, armed_at=self._clock(),
                 armed_gates=len(state['gates']), armed_reviews=len(state['reviews']),
                 accepted=self._accepted(state), remote_defaults=remote_defaults,
-                remote_push_urls=remote_push_urls, **fields)
+                remote_push_urls=remote_push_urls, local_branches_at_arm=local,
+                remote_branches_at_arm=sorted(remote_branches), **fields)
         preconditions = autonomy_preconditions(self.repo, home)
         preconditions['remote_heads'] = remote_heads
         return dict(active=True, ledger=str(path), preconditions=preconditions)
@@ -2149,6 +2421,69 @@ class Engine:
             auto.pop('report', None)  # clear the report shown from the previous stop
             return dict(was_active=False)
 
+    RECEIPT_PR_KEYS = {'order': int, 'number': int, 'repo': str, 'url': str, 'head_ref': str, 'head_sha': str, 'base_ref': str}
+
+    def record_owner_approval(self, prs, excluded, evidence):
+        """Write the owner's receipt for the stopped run and return it. The only writer: the prompt hook calls it in
+        process and no CLI subcommand reaches it. A later call replaces the receipt. Refused while autonomy is active
+        and for a run that never stopped (no kept report and no earlier receipt), so approval never pre-authorizes a
+        run in progress. `prs` are the merge order, bottom of the stack first; `evidence` carries a prompt hash, never
+        the prompt text."""
+        if not (isinstance(prs, list) and all(
+                isinstance(p, dict) and all(type(p.get(k)) is t for k, t in self.RECEIPT_PR_KEYS.items()) for p in prs)):
+            raise EngineError('Approval prs must be a list of pull request entries with order, number, repo, url, head_ref, '
+                              'head_sha and base_ref')
+        if not (isinstance(excluded, list) and all(
+                isinstance(e, dict) and type(e.get('number')) is int and isinstance(e.get('reason'), str) for e in excluded)):
+            raise EngineError('Approval excluded must be a list of entries with number and reason')
+        if not isinstance(evidence, dict):
+            raise EngineError('Approval evidence must be an object')
+        with self._state(activity=False, wait=True) as state:
+            auto = state['autonomy'] or {}
+            if auto.get('active'):
+                raise EngineError('Approval is refused while autonomy is active')
+            run = state.get('run_id')
+            if run is None or ('report' not in auto and (state.get('approval') or {}).get('run') != run):
+                raise EngineError('Approval is refused: the run never stopped')
+            try:
+                default = self._default_branch(auto)
+            except EngineError:
+                default = None
+            state['approval'] = dict(version=1, run=run, recorded_at=self._clock(), evidence=copy.deepcopy(evidence),
+                                     default_branch=default, prs=copy.deepcopy(prs), excluded=copy.deepcopy(excluded))
+            return copy.deepcopy(state['approval'])
+
+    def stop_stale_autonomy(self, session_id, now=None):
+        """Stop an armed loop nobody is driving; True when this call stopped it. The Stop hook only fires in the
+        running session, so a prompt from another session reaches here first. `deadline` when the ledger deadline has
+        passed. `stale` when the run is bound to another harness session and `state.json` was last written more than
+        `worker_stale_seconds` before `now` (default: the engine clock). A no-op never rewrites `state.json`. Gives up with
+        StateBusy after `lock_wait` when the state lock is held."""
+        now = self._clock() if now is None else now
+        with self._state(False) as state:
+            if self._stale_reason(state, session_id, now) is None:
+                return False
+        with self._state(activity=False, wait=True) as state:
+            reason = self._stale_reason(state, session_id, now)
+            if reason is None:
+                return False
+            self._stop_autonomy(state, reason)
+            return True
+
+    def _stale_reason(self, state, session_id, now):
+        auto = state['autonomy']
+        if not (auto and auto['active']):
+            return None
+        if now >= datetime.fromisoformat(auto['deadline']).timestamp():
+            return 'deadline'
+        if (state['session'] or {}).get('harness_session') == session_id:
+            return None
+        try:
+            written = self.state_path.stat().st_mtime
+        except OSError:
+            return None
+        return 'stale' if now - written > self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS) else None
+
     def _silent_workers(self, state):
         """Running background cards with no report for longer than `worker_stale_seconds`."""
         stale_after = self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS)
@@ -2158,7 +2493,8 @@ class Engine:
     def autonomy_status(self):
         """Read-only. `running` counts background workers, `silent` names those past `worker_stale_seconds`: the Stop
         hook that stops a stalled run fires only at the end of a turn, so a session idle on a lost worker is seen here,
-        by the status band, and nowhere else."""
+        by the status band, and nowhere else. A run that stopped on `gate-failing` (a required gate failed three times
+        in a row) shows it in `last_stop_reason`."""
         with self._state(False) as state:
             auto = state['autonomy'] or {}
             parked = [dict(id=t['id'], reason=t.get('parked_reason', ''))
@@ -2240,11 +2576,15 @@ class Engine:
         needs = list(parked)
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
-        needs += ['review and merge pull request ' + url for url in state.get('pull_requests', [])]
+        needs += ['review and merge pull request ' + entry['url'] for entry in self._pull_requests(state)]
+        if reason == 'stalled' and (auto or {}).get('pr_gap'):
+            needs.append('publish the work: ' + auto['pr_gap'])
         gate = self._failing_gate(state) if reason == 'gate-failing' else None
         if gate:
-            needs.append('required gate %s failed %d times in a row -- read its log, fix the cause, then arm again' % (gate, GATE_FAILURE_LIMIT))
-        if (reason in ('closed', 'complete') and not any(self._is_release(t) for t in tasks.values())
+            log = [g['path'] for g in state['gates'] if g['name'] == gate][-1]
+            needs.append('required gate %s failed %d times in a row -- read its log %s, fix the cause, then arm again'
+                         % (gate, GATE_FAILURE_LIMIT, log))
+        if (reason in ('closed', 'finished', 'complete') and not any(self._is_release(t) for t in tasks.values())
                 and not (auto or {}).get('release')):
             needs.append('ready to release')
         cleared_by = {}
@@ -2366,7 +2706,20 @@ class Engine:
         if self._clock() >= datetime.fromisoformat(auto['deadline']).timestamp():
             return 'deadline', None
         if self._complete(state):
-            return 'complete', None
+            gap = self._publication_gap(state)
+            if gap is None:
+                return 'complete', None
+            passes = auto.get('pr_passes', 0)
+            if passes >= PR_CONTINUATIONS:
+                auto['stalls'] += 1
+                auto['pr_gap'] = gap
+                return 'stalled', None
+            auto.update(pr_passes=passes + 1, accepted=self._accepted(state))
+            auto['passes'] += 1
+            return None, 'Autonomy pass %d: %s; push the branch, open the pull request, then record it with `pr URL`.' % (
+                auto['passes'], gap)
+        auto.pop('pr_passes', None)  # consecutive means no other work came between
+        auto.pop('pr_gap', None)
         parked = any(t['state'] == 'parked' for t in tasks)
         held = (not any(t['state'] == 'parked' and not self._is_release(t) for t in tasks)
                 and any(t['state'] == 'held' and not t.get('repaired_by') and not self._final_receipts(state, t['id'])
@@ -2390,9 +2743,10 @@ class Engine:
         if silent and not (running or actionable or held or final_open or final_owed):
             auto['accepted'] = self._accepted(state)
             names = ', '.join(t['id'] for t in silent)
-            message = ('the worker for %s has been silent for over %d minutes and may be gone: park the card with `park CARD '
+            span = '%d minutes' % round(stale_after / 60) if stale_after >= 60 else '%d seconds' % round(stale_after)
+            message = ('the worker for %s has been silent for over %s and may be gone: park the card with `park CARD '
                        '--reason lost-worker`, `unpark` it and dispatch it again, or wait if it is a long task.'
-                       % (names, round(stale_after / 60)))
+                       % (names, span))
             signature = self._signature(state)
             if signature == auto.get('signature'):
                 auto['stalls'] += 1
@@ -2424,6 +2778,20 @@ class Engine:
         auto['passes'] += 1
         return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
 
+    def _publication_gap(self, state):
+        """Why finished work is not yet published, or None: the branch holds commits beyond the session base and no
+        verified pull request the run opened has the current head."""
+        base = (state['session'] or {}).get('base')
+        try:
+            head = self._git('rev-parse', 'HEAD').decode().strip()
+            ahead = base is None or int(self._git('rev-list', '--count', base + '..HEAD').decode()) > 0
+        except (EngineError, ValueError):
+            return 'the work branch cannot be compared with its base'
+        if not ahead or any(e.get('autonomous') and e.get('verified_at') and e.get('head_sha') == head
+                            for e in self._pull_requests(state)):
+            return None
+        return 'every card is accepted and the checks passed, but the branch holds commits and no verified pull request has head ' + head[:12]
+
     def _failing_gate(self, state):
         """The name of a required gate whose last GATE_FAILURE_LIMIT receipts all failed, else None: an unattended run
         stops instead of repeating it until the deadline."""
@@ -2439,7 +2807,11 @@ class Engine:
 
     def hook_stop(self):
         """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm, an
-        idle run and a stall with no worker running (`stalled`). Caller identifiers do not authenticate."""
+        idle run, a required gate that failed three times in a row (`gate-failing`) and a stall with no worker running
+        (`stalled`). When every worker is silent past `worker_stale_seconds` the turn continues once with a message to
+        park or re-dispatch the lost card, then stops as `stalled`. Finished work counts as `complete` only once a
+        verified pull request has the current head or nothing lies beyond the base; two nudges to push and open it
+        come first. Caller identifiers do not authenticate."""
         with self._state(False) as state:
             if not self._autonomy_on(state):
                 return None  # Read-only unless autonomy is active in a session

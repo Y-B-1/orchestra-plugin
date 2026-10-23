@@ -740,7 +740,7 @@
    "input": {
     "command": "cat <<EOF\ngit reset --hard\nEOF"
    },
-   "class": "deny"
+   "class": "allow"
   },
   {
    "id": "allow-heredoc-3",
@@ -1439,7 +1439,7 @@
    "input": {
     "command": "cat <<'EOF'\ngit reset --hard\nEOF"
    },
-   "class": "deny"
+   "class": "allow"
   },
   {
    "id": "deny-heredoc-20",
@@ -1453,7 +1453,7 @@
    "input": {
     "command": "cat <<'EOF'\ngit reset \\\n--hard\nEOF"
    },
-   "class": "deny"
+   "class": "allow"
   },
   {
    "id": "allow-heredoc-8",
@@ -11510,6 +11510,444 @@
    },
    "class": "boundary",
    "category": "delete"
+  },
+  {
+   "id": "allow-heredoc-cat-file",
+   "input": {
+    "command": "cat > f.md <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-cat-unquoted",
+   "input": {
+    "command": "cat <<EOF\ngit stash\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-gh-body-file",
+   "input": {
+    "command": "gh pr create --body-file - <<'EOF'\ngit stash\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-heredoc-git-commit-F",
+   "input": {
+    "command": "git commit -F - <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-quote-apostrophe-1",
+   "input": {
+    "command": "echo \"$(echo \"it's\")\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-quote-apostrophe-2",
+   "input": {
+    "command": "echo \"$(grep -c \"it's\" f)\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "allow-quote-apostrophe-3",
+   "input": {
+    "command": "VAR=\"$(cmd | tr -d '\"')\""
+   },
+   "class": "allow"
+  },
+  {
+   "id": "deny-heredoc-shell-bash",
+   "input": {
+    "command": "bash <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-sh-c",
+   "input": {
+    "command": "sh -c cat <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-cat-pipe-bash",
+   "input": {
+    "command": "cat <<'EOF' | bash\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-ssh",
+   "input": {
+    "command": "ssh host <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-source-stdin",
+   "input": {
+    "command": "source /dev/stdin <<'EOF'\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-process-subst",
+   "input": {
+    "command": "cat <<'EOF' > >(bash)\ngit reset --hard\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-heredoc-shell-unquoted-subst",
+   "input": {
+    "command": "cat <<EOF\n$(git reset --hard)\nEOF"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-quote-force-push",
+   "input": {
+    "command": "echo \"$(git push --force origin x)\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "deny-quote-unbalanced",
+   "input": {
+    "command": "echo \"$(unbalanced\""
+   },
+   "class": "deny"
+  },
+  {
+   "id": "soften-stash",
+   "input": {
+    "command": "git stash"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "soften-add-all",
+   "input": {
+    "command": "git add -A"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "soften-commit-all",
+   "input": {
+    "command": "git commit -am done"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "soften-amend",
+   "input": {
+    "command": "git commit --amend"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "soften-push-tags",
+   "input": {
+    "command": "git push --tags origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "soften-push-refspec-colon",
+   "input": {
+    "command": "git push origin :x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "nosoften-push-prune",
+   "input": {
+    "command": "git push --prune origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "nosoften-push-mirror",
+   "input": {
+    "command": "git push --mirror origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "nosoften-stash-then-reset",
+   "input": {
+    "command": "git stash; git reset --hard"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "nosoften-stash-then-force-push",
+   "input": {
+    "command": "git stash && git push --force origin x"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "nosoften-push-tags-extra-refspec",
+   "input": {
+    "command": "git push --tags origin a b"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "nosoften-push-tags-prune",
+   "input": {
+    "command": "git push --tags --prune origin"
+   },
+   "class": "deny"
+  },
+  {
+   "id": "workflow-run-release",
+   "input": {
+    "command": "gh workflow run release.yml"
+   },
+   "class": "release"
+  },
+  {
+   "id": "workflow-run-flags-first",
+   "input": {
+    "command": "gh workflow run -f env=prod --ref main deploy.yml"
+   },
+   "class": "release"
+  },
+  {
+   "id": "api-write-refs",
+   "input": {
+    "command": "gh api -X POST repos/o/r/git/refs -f ref=refs/heads/x -f sha=abc"
+   },
+   "class": "release"
+  },
+  {
+   "id": "api-write-pulls-n",
+   "input": {
+    "command": "gh api -X PATCH repos/o/r/pulls/12 -f base=main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "api-write-contents",
+   "input": {
+    "command": "gh api -X PUT repos/o/r/contents/f.txt -f message=m -f content=Yw=="
+   },
+   "class": "release"
+  },
+  {
+   "id": "api-write-dispatches",
+   "input": {
+    "command": "gh api -X POST repos/o/r/actions/workflows/x.yml/dispatches -f ref=main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "api-get-allows",
+   "input": {
+    "command": "gh api repos/o/r/pulls"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "api-get-explicit-with-fields-allows",
+   "input": {
+    "command": "gh api -X GET repos/o/r/issues -f per_page=5"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "pr-edit-base-release",
+   "input": {
+    "command": "gh pr edit 12 --base main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "pr-edit-base-short-release",
+   "input": {
+    "command": "gh pr edit 12 -B main"
+   },
+   "class": "release"
+  },
+  {
+   "id": "pr-edit-title-allows",
+   "input": {
+    "command": "gh pr edit 12 --title x"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "gh-custom-release",
+   "input": {
+    "command": "gh prm 12"
+   },
+   "class": "release"
+  },
+  {
+   "id": "gh-alias-set-boundary-config",
+   "input": {
+    "command": "gh alias set prm \"pr merge\""
+   },
+   "class": "boundary",
+   "category": "config"
+  },
+  {
+   "id": "gh-extension-boundary-config",
+   "input": {
+    "command": "gh extension install o/r"
+   },
+   "class": "boundary",
+   "category": "config"
+  },
+  {
+   "id": "gh-pr-review-approve-allows",
+   "input": {
+    "command": "gh pr review 12 --approve"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "gh-builtin-pr-list-allows",
+   "input": {
+    "command": "gh pr list --state all"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "gh-version-flag-allows",
+   "input": {
+    "command": "gh --version"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "api-delete-repo",
+   "input": {
+    "command": "gh api -X DELETE repos/o/r"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-patch-repo-default-branch",
+   "input": {
+    "command": "gh api -X PATCH repos/o/r -f default_branch=x"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-delete-ruleset",
+   "input": {
+    "command": "gh api -X DELETE repos/o/r/rulesets/1"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-write-query-string-not-allow-list",
+   "input": {
+    "command": "gh api -X POST 'repos/o/r/transfer?x=/issues/1/comments' -f new_owner=x"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-delete-method-equals",
+   "input": {
+    "command": "gh api --method=DELETE repos/o/r"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-delete-attached-x",
+   "input": {
+    "command": "gh api -XDELETE repos/o/r"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-comment-path-needs-one-segment",
+   "input": {
+    "command": "gh api repos/o/r/issues/1/2/comments -f body=x"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-comment-path-dotdot",
+   "input": {
+    "command": "gh api repos/o/r/issues/../transfer/comments -f body=x"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-implicit-post-by-input",
+   "input": {
+    "command": "gh api repos/o/r/hooks --input hook.json"
+   },
+   "class": "release",
+   "decision_category": "apiwrite"
+  },
+  {
+   "id": "api-post-pulls-create-allowed",
+   "input": {
+    "command": "gh api -X POST repos/o/r/pulls -f title=t -f head=h -f base=main"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "api-post-issue-comment-allowed",
+   "input": {
+    "command": "gh api repos/o/r/issues/3/comments -f body=hi"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "api-post-pr-review-allowed",
+   "input": {
+    "command": "gh api -X POST repos/o/r/pulls/3/reviews -f event=COMMENT"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "api-post-pr-review-comment-allowed",
+   "input": {
+    "command": "gh api -X POST repos/o/r/pulls/3/comments -f body=hi -f path=a -f commit_id=c"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "api-get-repo-allowed",
+   "input": {
+    "command": "gh api repos/o/r"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "api-graphql-read-allowed",
+   "input": {
+    "command": "gh api graphql -f query='query{viewer{login}}'"
+   },
+   "class": "allow"
+  },
+  {
+   "id": "api-graphql-mutation-stays-release",
+   "input": {
+    "command": "gh api graphql -f query='mutation{x}'"
+   },
+   "class": "release"
   }
  ]
 }

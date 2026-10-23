@@ -27,7 +27,7 @@ The value is in tokens (100000 to 1000000). Claude Code caps it at the model's w
 
 No installer changes application instructions, resumes old work, grants release rights or writes hook trust. Existing project rules still apply. If a project carries older Orchestra enforcement of its own, port it separately to avoid two competing coordinators.
 
-CI runs the whole test suite on Linux (Python 3.11 and 3.13), `macos-latest` and `windows-latest` on every pull request. No platform has been checked with a live Claude Code session except Linux.
+`scripts/check.sh` runs every check locally on Python 3.11 and 3.13. CI runs the same suite on Linux, `macos-latest` and `windows-latest` only when started by hand. No platform has been checked with a live Claude Code session except Linux and macOS.
 
 ### Windows
 
@@ -37,7 +37,7 @@ Windows works with Git for Windows and Python 3.11 or later. Install Python from
 - The guard reads the POSIX shell syntax of Claude Code's Bash tool, which is Git Bash on Windows. A command run through the PowerShell tool is read with the same rules, so Git, release and deploy commands are caught but PowerShell-only commands (`Remove-Item`, `Invoke-WebRequest`) are not. Protected-path checks ignore case.
 - File locks on Windows are exclusive, so concurrent readers of the run state take turns. A gate runs in a job object, so a gate that times out, or leaves a process running, is stopped there too.
 - The function-hook module (below) stays inert on Windows paths, so the Python hooks guard every call.
-- CI runs the whole test suite on `windows-latest` on every pull request (three shards, because the Windows runner is slow). It has not been checked with Claude Code on a real Windows machine.
+- CI runs the whole test suite on `windows-latest` when started by hand (three shards, because the Windows runner is slow). Start it before a release that changes path or shell handling. It has not been checked with Claude Code on a real Windows machine.
 
 ### Function hooks (optional)
 
@@ -106,9 +106,9 @@ For unattended work, the same flow runs inside a ledger:
 2. `arm` snapshots the ledger and prints a preconditions report, including a keep-awake step only you can take.
 3. The Stop hook drives the loop. It continues a turn only when the coordinator can act now (see [Autonomous mode](#autonomous-mode)).
 4. At an approval boundary the coordinator parks the card with `park TASK --reason TEXT` and moves on to other cards.
-5. When every card is accepted, the coordinator commits, runs the final review and the completion gates on that commit, then pushes a feature branch and opens a pull request with `gh pr create` in the same turn. You merge it after the run. It may also delete branches and worktrees already merged into the default branch.
-6. The run ends at the deadline, at completion or at another stop, and writes the run brief. You read it at the next session start.
-7. In the morning, `unpark TASK` returns parked cards to the queue, and you settle any held chain before `finish`.
+5. When every card is accepted, the coordinator commits, runs the final review and the completion gates on that commit, then pushes a feature branch and opens a pull request with `gh pr create` in the same turn, and records it with `pr URL`. A card that depends on an open pull request gets that pull request's branch from `orchestra.py base TASK`, so pull requests stack. Cleanup of the run's own branches and worktrees is allowed.
+6. The run ends at the deadline, at completion or at another stop, and writes the run brief. You read it at the next session start. Until you approve, the run stays locked: releases, merges, scheduler tools and `start --new-run` are denied.
+7. In the morning, type `approved` in your own session. The hook records a receipt for the pull requests that are open at their recorded head with a clean review, and prints one `gh pr merge N --merge --delete-branch --match-head-commit SHA` per pull request, in order. Run them one at a time; the merge guard refuses another order, another head or another form. `unpark TASK` returns parked cards to the queue, and you settle any held chain before `finish`.
 
 ## Roles and models
 
@@ -128,23 +128,28 @@ Workers never delegate, never own coordinator state and never release outside an
 
 ## Guards
 
-The PreToolUse hook classifies shell, edit and agent calls, then applies the run state.
+The PreToolUse hook classifies shell, edit, agent, scheduler and `SendMessage` calls, then applies the guard mode and the run state. `guard_mode` in `policy.json` is `normal` (default) or `protect`. Normal mode does not block routine git work. An autonomous run, active or stopped with its report kept until you approve it, is always strict, whatever the mode.
 
-| | No run active | Run active (interactive) | Autonomy armed |
+| | `normal` | `protect` | Autonomous run, or stopped and waiting for you |
 | --- | --- | --- | --- |
-| Destructive Git: `stash` (every form), `reset --hard`, `clean -f`, `branch -D` (unless provably merged), `git add .`/`-A`/`--all`, `commit -a`, `--amend`, force push, wholesale restore | Denied | Denied | Denied |
-| Release actions: `git push`, `gh pr merge`, a `gh api` merge call, a `gh api graphql` mutation or body read from a file, `gh release create`, npm, pnpm or cargo publish, deploy tools, `az` deployments | Allowed | Runs when a current engine permit matches; otherwise Claude Code asks you | Denied; the coordinator parks the card. Exception: a ledger `- Release: pre-authorized <remote> <target>` line that matches `policy.release` |
-| Feature-branch push and `gh pr create` | Allowed | Push as above; `gh pr create` allowed | Allowed: exactly `git push [-u] <remote> <refspec>` with a configured remote name (no `remote.<name>.push` or `pushurl` set), a local branch as source, and one destination branch that is not the remote's default branch, `main` or `master` (case-insensitive); `HEAD` or `@` is the current branch. `autonomy arm` asks every remote for its current default branch (`git remote set-head --auto`) and the push is checked against that answer, never a local cache; a remote that does not answer gets no pull request push until autonomy is armed again. Never the configured release target, and never under a 2.5 ledger whose Push line is `no push to any branch`. |
-| Merge: `gh pr merge`, a `gh api` merge, local merge, pull, rebase or cherry-pick on the default branch | Allowed | `gh pr merge` and `gh api` merges as a release; local merges allowed | Denied; the coordinator parks the card. You merge the PR after the run |
-| Push to the default branch | Allowed | As a release | Denied, except the pre-authorized release |
-| Deletion: `rm`, branch or tag deletion, `git worktree remove` | Allowed (`branch -D` and remote branch deletes only when provably merged) | Same | Denied, except merged cleanup |
-| Merged cleanup: `git branch -d\|-D <b>`, `git push <remote> --delete <b>`, `git worktree remove <path>` without `--force`, `git worktree prune`, each as a plain single command | As deletion | As deletion | Allowed when the branch is provably merged into the default branch; a removed worktree must be a linked worktree of this repository, not the session's directory or the main worktree. `rm` stays denied |
+| `git stash`, amend, multi-ref or refspec push | Allowed with a warning; a push that deletes a tag, the default or a protected branch stays denied | Denied | Denied |
+| `git add .`, `commit -a` | Allowed | Denied | Denied |
+| Force or mirror push, `reset --hard`, `clean -f`, wholesale restore, `--prune` | Denied | Denied | Denied |
+| Release actions: `git push`, `gh pr merge`, a `gh api` merge call, `gh release create`, package publish, deploy tools | Allowed | During a run, a current engine permit or a question to you | Denied, except the pull request push, the merge guard's allow and the pre-authorized release |
+| `gh workflow run`, `gh pr edit --base`, a `gh api` write beyond pull request creation, comments and reviews | Release class, so allowed | Release class | Denied |
+| Run's own branch push, `gh pr create`, `gh pr review` | Allowed | Allowed | Allowed: exactly `git push [-u] <remote> <refspec>` with a configured remote name, a local branch as source and one destination branch other than the default, a protected branch or the release target |
+| Merge into the default branch | Allowed | As a release | Only after you type `approved`, in the receipt's order, at the recorded head (see [Autonomous mode](#autonomous-mode)) |
+| Deletion | Branch and remote branch deletes only when provably merged | Same | The run's own branches and worktrees, files inside a linked worktree, and provably merged branches; each as a plain single command |
+| Scheduler tools (`CronCreate`, `ScheduleWakeup`, `RemoteTrigger`), settings edits | Allowed | Allowed | Denied |
+| A scheduler or `SendMessage` call whose text is only the word `approved` | Denied | Denied | Denied |
 | Credential entry | Not detected | Not detected | Forbidden by procedure, not detected |
-| Agent types | Any; workers cannot delegate | Only `orchestra:*` agents may be started; workers cannot delegate | Same |
-| Reviewer and critic test runs | Not checked | Denied while a gate receipt is current: they cite it instead | Same |
+| Agent types | During a run, a non-`orchestra:*` agent is warned about; workers cannot delegate | During a run, only `orchestra:*` agents; workers cannot delegate | Same as protect |
+| Reviewer and critic test runs | Warned while a gate receipt is current | Denied while a gate receipt is current | Same as protect |
 | Run state and installed config files | Protected | Protected | Protected |
 
-Guards are best effort, not a sandbox. Native hooks cover supported tool calls and recognizable commands. They do not stop encoded payloads, alias or variable indirection, interpreter one-liners, `gh api` calls other than recognizable merges, or MCP and terminal tools that push or merge; using those to get around the guard is forbidden by procedure, not enforced. While autonomy is active the guard refuses to set or unset the Git configuration that routes or rewrites a push (aliases, `remote.*`, `url.*`, `push.*`, includes, `submodule.*`, `http.*`, `credential*`, `core.sshCommand`, `core.gitProxy`, `core.hooksPath`), through `-c`, `--config-env` or `git config`, and refuses `git config` forms it does not recognize and `git remote add`, `set-url`, `rename` and `remove`. It does not resolve an alias that already exists, so one defined earlier can still run a push or merge under another name. The run is found from the session directory, so a `git -C <run repo> push` issued from outside that repository is not seen as part of the run. Agent types are routing hints, not authentication. Use host sandboxing, branch protection and tool policy for stronger isolation. Details: [hook policy](docs/hooks.md).
+`orchestra.py classify "COMMAND"` prints the protect verdict whatever the mode.
+
+Guards are best effort, not a sandbox. Native hooks cover supported tool calls and recognizable commands. They do not stop encoded payloads, alias or variable indirection, interpreter one-liners, MCP and terminal tools that push or merge; using those to get around the guard is forbidden by procedure, not enforced. While autonomy is active the guard refuses to set or unset the Git configuration that routes or rewrites a push (aliases, `remote.*`, `url.*`, `push.*`, includes, `submodule.*`, `http.*`, `credential*`, `core.sshCommand`, `core.gitProxy`, `core.hooksPath`), through `-c`, `--config-env` or `git config`, and refuses `git config` forms it does not recognize and `git remote add`, `set-url`, `rename` and `remove`. It does not resolve an alias that already exists, so one defined earlier can still run a push or merge under another name. Agent types are routing hints, not authentication. The prompt hook cannot prove a human typed `approved`: a prompt scheduled before the stop that fires after it, another owner session, shell schedulers (`crontab`, `at`, `claude -p`) and a hostile agent are not contained. Known gap: a command run from a directory outside the repository and its worktrees finds no run and gets neither the allowances nor the lock. Use host sandboxing and tool policy for stronger isolation, and a server-side ruleset on the host (protect the default branch and tags, require pull requests, block deletion and force pushes), which is the only backstop that does not depend on the agent. Details: [hook policy](docs/hooks.md).
 
 ## Autonomous mode
 
@@ -154,20 +159,22 @@ Guards are best effort, not a sandbox. Native hooks cover supported tool calls a
 
 ```text
 - Release: no release, permit or deploy.
-- Merge: no pull request merge, and no local merge on the default branch.
-- Push: push only a feature branch for a pull request; never the default branch.
-- Deletion: no deletion of files, branches or tags.
+- Merge: no merge into the default or a protected branch; a pull request whose base is a run branch may merge.
+- Push: push any branch except the default, protected branches and tags; never force.
+- Deletion: delete only what the run created: its run branches and worktrees, and files inside a linked worktree; never tags, the default branch or other branches.
 - Credential entry: never enter credentials.
 - Engine-gated actions: nothing that needs a permit.
 ```
 
-You may replace the Release line with `- Release: pre-authorized <remote> <target>`, which must equal the configured `policy.release`. It overrides Push and Engine-gated actions for that remote and target only. A placeholder left in the ledger, or a field that does not parse, refuses `arm` and names the field. Any edit after `arm` stops the loop. Old `max_passes` and `max_stalls` fields are recorded and shown, never enforced.
+You may replace the Release line with `- Release: pre-authorized <remote> <target>`, which must equal the configured `policy.release`. It overrides Push and Engine-gated actions for that remote and target only. A ledger with the pre-2.11 Merge, Push or Deletion lines is refused at `arm` with a re-fill message. A placeholder left in the ledger, or a field that does not parse, refuses `arm` and names the field. Any edit after `arm` stops the loop. Old `max_passes` and `max_stalls` fields are recorded and shown, never enforced.
 
 **Loop.** The Stop hook continues a turn only when the coordinator can act now: a ready card, a reported card waiting for review, an open final finding, a held chain owed its final review, or, with every card accepted, the final review, gates and pull request still owed. Then it sends one line, `Autonomy pass N: ...`. While only background workers are running, the turn ends quietly and Claude Code wakes the session when a worker finishes. A continuation is never repeated for an unchanged board; that turn counts as a stall. A stall with workers running just ends the turn; a stall with none running stops the run `stalled`, since nothing would wake it.
 
-**Stops.** `deadline`, `complete`, `ledger-tampered`, `disarmed`, `stalled`, `parked-only` and `no-ready-card`. No count of passes or stalls stops the run. `complete` needs every card accepted, no open finding, full review coverage, the gates and the triage. A stop is final for that arm; you re-arm. Arm only a run started with `start --harness-session`: then ending the session ends autonomy. A run started without it stays active and armed after the session ends.
+**Stops.** `deadline`, `complete`, `ledger-tampered`, `disarmed`, `stalled`, `gate-failing`, `stale`, `interrupted`, `ended`, `finished`, `parked-only` and `no-ready-card`. Each keeps the morning report. No count of passes or stalls stops the run. `complete` needs every card accepted, no open finding, full review coverage, the gates, the triage and, when the branch holds commits, a verified pull request for the current head. A stop is final for that arm; you re-arm. Arm only a run started with `start --harness-session`: then ending the session ends autonomy. A run started without it stays active and armed after the session ends.
 
-**Boundaries.** Merge, pushes to the default branch, any other release, deletion and credential entry are hard; the coordinator parks the card and continues. Two exceptions: the pull request push in the table above, and cleanup of branches and worktrees provably merged into the default branch. Open the pull request in the same turn as the last accept: once `complete` holds, the loop sends no further turn. `permit` and `release` are refused while autonomy is active, except for the one pre-authorized pair. Without pre-authorization an armed run adds no release card; the brief says "ready to release". `arm` reports the permission mode and a keep-awake reminder and changes neither.
+**Boundaries.** The run never merges to the default branch, pushes to it or to a tag, releases or enters credentials; the coordinator parks the card and continues. It may push its own branches, open, review and stack pull requests, and clean up what it created. `permit` and `release` are refused while autonomy is active, except for the one pre-authorized pair. Without pre-authorization an armed run adds no release card; the brief says "ready to release". `arm` reports the permission mode and a keep-awake reminder and changes neither.
+
+**After the run.** A stopped run whose report is kept without your approval is locked, and `orchestra.py start --new-run` is refused until you type `approved` or run `orchestra.py autonomy disarm` in a terminal. `approved` must be the whole prompt. The receipt keeps a hash of the prompt, never its text. GitHub does not let an account approve its own pull request, so the run's approval is an Orchestra review record, not a GitHub approval. If a later pull request still shows a run branch as its base after its parent merged, run `gh pr edit N --base DEFAULT` first, then the printed command. Details: [hook policy](docs/hooks.md).
 
 ## Commands
 
@@ -191,7 +198,7 @@ python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project board
 | `finding add\|list`, `hold TASK --finding TEXT` | Findings ledger; end a repair ladder |
 | `park TASK --reason TEXT`, `unpark TASK`, `cancel TASK --reason TEXT` | Set a card aside at a boundary; return it; drop one that should never run |
 | `start --recover --harness-session ID` | Take back a lost coordinator lease |
-| `pr URL` | Record a pull request the run opened; the brief lists it for you to review and merge |
+| `pr URL [--task ID]`, `base TASK` | Verify and record a pull request the run opened; print the branch a card's pull request targets |
 | `autonomy arm\|disarm\|status`, `brief` | Autonomous mode; print the newest run brief |
 | `permit REMOTE TARGET`, `release REMOTE TARGET` | Release under configured policy |
 | `classify "COMMAND"` | Print the guard verdict for a command without running it |
@@ -337,15 +344,13 @@ End any active run first (`orchestra.py finish` or `interrupt`), then run `claud
 
 To publish a release: raise the version in the manifests and `tests/test_packaging.py`, add `docs/release-notes/v<version>.md`, merge, then run the [Release workflow](.github/workflows/release.yml) from main (Actions, Release, Run workflow), or push the tag `v<version>`. Either way it checks that the commit is on main, that the tag matches `plugin.json` and that the notes exist, then builds the archives and publishes the release with their checksums. Run by hand, it creates the tag itself.
 
-Every pull request and every push to main runs [CI](.github/workflows/ci.yml): the generator check and the test suite on Python 3.11 and 3.13, then the strict plugin and marketplace validation and the mod tests. To run the same checks locally:
+All checks run locally. Before a push, run:
 
 ```sh
-python3.11 -m unittest discover -s tests
-python3.11 plugins/orchestra/scripts/generate.py --check
-claude plugin validate --strict plugins/orchestra
-claude plugin validate --strict .claude-plugin/marketplace.json
-python3.11 scripts/build_release.py
+scripts/check.sh
 ```
+
+It runs the unit suite on Python 3.11 and 3.13 (3.13 through `uv` when it is not on `PATH`), the generator and mod fixture checks, the mod type check, the strict plugin and marketplace validation, and the mod tests. It lists any check it could not run as SKIPPED. Use `scripts/check.sh --quick` while you work; it skips the unit suite. [CI](.github/workflows/ci.yml) adds macOS and Windows and runs only when started by hand (Actions, CI, Run workflow). To build the release archives locally, run `python3.11 scripts/build_release.py`.
 
 [Source comparison](docs/source-parity.md), [hook policy](docs/hooks.md), and [validation evidence](docs/VALIDATION.md) record what was preserved, changed, checked and not established. GitHub supplies an installable marketplace and release archives. Public directory listing requires a separate host submission; publishing this repository does not claim marketplace approval.
 

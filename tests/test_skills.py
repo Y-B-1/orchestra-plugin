@@ -19,7 +19,7 @@ TABLE = {
                   'references/triage.md', 'references/handoff.md', 'references/parallel.md',
                   'references/worktrees.md', 'references/finishing.md', 'references/repair-rounds.md',
                   'references/final-review.md', 'references/audit-axes.md', 'references/autonomy.md',
-                  'references/wayfinder.md'],
+                  'references/approval.md', 'references/wayfinder.md'],
     'orchestra-worker': ['SKILL.md'],
     'orchestra-investigate': ['SKILL.md', 'references/code.md', 'references/docs.md'],
     'orchestra-design': ['SKILL.md', 'references/design.md', 'references/plan.md', 'references/product.md'],

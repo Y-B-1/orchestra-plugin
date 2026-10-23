@@ -24,7 +24,7 @@ Run the project's required checks against the assigned repository and artifact, 
 
 | Claim | Needs | Does not count |
 | --- | --- | --- |
-| Tests pass | Full test command, zero failures | An earlier run, one file |
+| Tests pass | The derived impact set, or the full suite when the brief asks; zero failures | An earlier run, one file |
 | Build passes | Build command, exit 0 | Lint passing |
 | Lint or scan clean | The tool's own exit code 0 | A different tool's pass |
 | Bug fixed | The reproducing test passes | Code changed |

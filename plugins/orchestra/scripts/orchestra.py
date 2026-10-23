@@ -114,6 +114,9 @@ def parser():
     hold.add_argument('--finding', required=True)
     pr = sub.add_parser('pr', help='Record a pull request the run opened; the run brief lists it for the owner')
     pr.add_argument('url')
+    pr.add_argument('--task', action='append', help='A card this pull request carries; repeat for more than one')
+    base = sub.add_parser('base', help='Print the branch a card\'s pull request is based on; no lease, read-only')
+    base.add_argument('task_id')
     classify = sub.add_parser('classify')
     classify.add_argument('shell_command')
     return p
@@ -147,6 +150,12 @@ def archive_inactive(state,engine):
             if old.get('repo') != str(engine.repo) or not engine.binds(old):
                 raise EngineError(ACTIVE_MISMATCH)  # O35: same recovery as the engine gives
             raise EngineError('Stop or finish the active run before starting another')
+        auto = old.get('autonomy')
+        approval = old.get('approval')
+        if (isinstance(auto,dict) and 'report' in auto and old.get('run_id') is not None
+                and not (isinstance(approval,dict) and approval.get('run') == old['run_id'])):
+            raise EngineError('New run refused: autonomy kept a report for run %s and the owner has not approved it; type approved '
+                              "in the owner's session, or run orchestra.py autonomy disarm in a terminal" % old['run_id'])
         archive = {'state':old,'policy':load_policy(state)}
         atomic(state/'history'/('run-'+uuid.uuid4().hex+'.json'),json.dumps(archive,indent=2).encode())
         source.unlink()  # Receipts and logs remain at their existing immutable paths.
@@ -198,6 +207,9 @@ def execute(args):
     if args.command=='brief':  # lease-free and read-only, like status
         text=engine.brief()
         return ({'brief':text} if text else {'brief':None,'message':'No run brief yet'}),0
+    if args.command=='base':  # lease-free and read-only; one plain line, exit 2 when the card must wait
+        print(engine.base(args.task_id))
+        return None,0
     if args.command=='autonomy':  # O8: no lease, so the ledger is armed from outside the run
         if args.action=='arm':
             return engine.arm_autonomy(),0
@@ -321,7 +333,7 @@ def execute(args):
         engine.unpark(args.actor,args.lease,args.task_id)
         return {'unparked':args.task_id},0
     if args.command=='pr':
-        return engine.record_pr(args.actor,args.lease,args.url),0
+        return {'pull_requests':engine.record_pr(args.actor,args.lease,args.url,tasks=args.task)},0
     if args.command=='hold':
         return engine.hold(args.actor,args.lease,args.task_id,args.finding),0
     if args.command=='route':

@@ -16,8 +16,9 @@ from pathlib import Path
 
 from orchestra_core.paths import push_url_digest
 from orchestra_core import portable
-from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, autonomy_preconditions, ensure_remote_heads
+from orchestra_core.engine import AUTONOMY_FIXED, ENGINE_TASK_KEYS, Engine, EngineError, StateBusy, autonomy_preconditions, ensure_remote_heads
 
+ROOT = SCRIPTS.parents[2]
 STATE_2_3 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.3.json'
 STATE_2_4 = pathlib.Path(__file__).resolve().parent / 'fixtures/state-2.4.json'
 
@@ -1336,6 +1337,8 @@ class AutonomyFixture(EngineFixture):
 
     def setUp(self):
         super().setUp()
+        self.default_branch = self.git('branch', '--show-current')
+        self.git('switch', '-qc', 'work')  # arming refuses on the default branch
         self.now = [T0]
         self.state = self.root / 'state'
         self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
@@ -1593,6 +1596,8 @@ class AutonomyArmTests(AutonomyFixture):
         self.assertNotIn('max_stalls', template)
         self.assertIn('The Release line overrides Push and Engine-gated actions for that remote and target only.', template)
         self.assertEqual(len(AUTONOMY_FIXED), 6)
+        for old in ('no deletion of files, branches or tags', 'push only a feature branch', 'no pull request merge'):
+            self.assertNotIn(old, template)  # the pre-2.11 Merge, Push and Deletion lines are gone
 
 
 class AutonomyLoopTests(AutonomyFixture):
@@ -1604,8 +1609,10 @@ class AutonomyLoopTests(AutonomyFixture):
         with self.assertRaisesRegex(EngineError, 'lease|Lease|coordinator'):
             self.engine.record_pr('main', 'wrong', 'https://example.invalid/pull/1')
         url = 'https://example.invalid/pull/1'
-        self.assertEqual(self.engine.record_pr('main', self.lease, url), dict(pull_requests=[url]))
-        self.assertEqual(self.engine.record_pr('main', self.lease, url + ' '), dict(pull_requests=[url]))  # once
+        with mock.patch('orchestra_core.engine.shutil.which', return_value=None):  # no gh: recorded, unverified
+            first = self.engine.record_pr('main', self.lease, url)
+            self.assertEqual([e['url'] for e in first], [url])
+            self.assertEqual(self.engine.record_pr('main', self.lease, url + ' '), first)  # once
         self.engine.disarm_autonomy()
         self.assertIn('  - review and merge pull request ' + url, self.engine.status()['last_brief']['text'])
 
@@ -1920,18 +1927,22 @@ class AutonomyBoundaryTests(AutonomyFixture):
         self.engine.interrupt('main', self.lease)
         self.assertFalse(self.engine.autonomy_active())
 
-    def test_interrupt_finish_and_session_end_clear_autonomy(self):
+    def test_interrupt_and_session_end_stop_autonomy_and_keep_the_report(self):
+        def stopped(reason):
+            auto = self.auto()
+            self.assertEqual((auto['active'], auto['last_stop_reason'], auto['report']['reason']), (False, reason, reason))
+
         self.arm()
         self.engine.interrupt('main', self.lease)
-        self.assertIsNone(self.auto())
+        stopped('interrupted')
         self.engine.open_session('main', harness_session='S')
-        self.arm()
+        self.arm()  # a new arm replaces the kept report
         self.engine.end_harness_session('S')
-        self.assertIsNone(self.auto())
+        stopped('ended')
         self.engine.open_session('main')
         self.arm()
         self.engine.interrupt_active()
-        self.assertIsNone(self.auto())
+        stopped('interrupted')
 
 
 class AutonomyReportTests(AutonomyFixture):
@@ -2484,6 +2495,17 @@ class FixReviewTests(EngineFixture):
         for name in ('B1', 'B2'):
             with self.assertRaisesRegex(EngineError, 'current review findings'):
                 self.engine.accept('main', self.lease, name)
+
+    def test_repair_and_ancestor_wait_for_a_clean_fix_re_review_after_a_later_commit(self):
+        self.blocked_chain()
+        self.git('add', 'B1')
+        self.git('commit', '-qm', 'repair committed')  # the final receipt is now stale
+        for name, message in (('R1', 'fix re-review'), ('B1', 'repair must be accepted first')):
+            with self.assertRaisesRegex(EngineError, message):
+                self.engine.accept('main', self.lease, name)
+        self.reviewed('check', ['R1', 'B1'], repair_check=True)
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
 
     def test_clean_fix_re_review_accepts_the_chain_and_keeps_the_final_review_current(self):
         self.blocked_chain()
@@ -3447,6 +3469,110 @@ class PrePrTests(EngineFixture):
         self.assertEqual(out['warning'], result.stderr.strip())
 
 
+class FileBudgetTests(EngineFixture):
+    """prepr lists the run's changed text files that grew past policy `file_budget_bytes`, against the run base."""
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / 'old.txt').write_text('o' * 150)
+        (self.repo / 'small.txt').write_text('s' * 10)
+        self.git('add', 'old.txt', 'small.txt')
+        self.git('commit', '-qm', 'files')
+
+    def run_with(self, policy, name='state-budget'):
+        engine = Engine(self.root / name, self.repo, policy=policy)
+        engine.open_session('main', size='medium', require_size=True)
+        return engine
+
+    def budget(self, engine):
+        return engine.prepr()['file_budget']
+
+    def test_no_budget_means_no_listing(self):
+        engine = self.run_with(None)
+        (self.repo / 'new.txt').write_text('n' * 500)
+        self.assertIsNone(self.budget(engine))
+        self.assertIsNone(self.budget(self.run_with({'file_budget_bytes': None}, 'state-null')))
+
+    def test_invalid_budget_is_refused(self):
+        for value in (0, -1, True, 1.5, '100'):
+            with self.subTest(value), self.assertRaisesRegex(EngineError, 'file_budget_bytes must be a positive integer'):
+                Engine(self.root / 'bad', self.repo, policy={'file_budget_bytes': value})
+
+    def test_waiver_needs_a_glob_and_a_reason(self):
+        for waivers in ([], {'gen/**': ''}, {'gen/**': '  '}, {'gen/**': None}, {'': 'generated'}):
+            with self.subTest(waivers), self.assertRaisesRegex(EngineError, 'file_budget_waivers must map globs to reasons'):
+                Engine(self.root / 'bad', self.repo, policy={'file_budget_bytes': 100, 'file_budget_waivers': waivers})
+
+    def test_new_file_over_budget_is_listed(self):
+        engine = self.run_with({'file_budget_bytes': 100})
+        (self.repo / 'new.txt').write_text('n' * 101)
+        (self.repo / 'fits.txt').write_text('f' * 100)
+        self.assertEqual({'bytes': 100, 'grew': [{'path': 'new.txt', 'base_bytes': 0, 'bytes': 101}], 'waived': []},
+                         self.budget(engine))
+
+    def test_over_budget_file_that_grows_is_listed(self):
+        engine = self.run_with({'file_budget_bytes': 100})
+        (self.repo / 'old.txt').write_text('o' * 151)
+        self.assertEqual([{'path': 'old.txt', 'base_bytes': 150, 'bytes': 151}], self.budget(engine)['grew'])
+
+    def test_file_that_crosses_the_budget_is_listed(self):
+        engine = self.run_with({'file_budget_bytes': 100})
+        (self.repo / 'small.txt').write_text('s' * 120)
+        self.assertEqual([{'path': 'small.txt', 'base_bytes': 10, 'bytes': 120}], self.budget(engine)['grew'])
+
+    def test_shrinking_unchanged_and_deleted_files_are_not_listed(self):
+        engine = self.run_with({'file_budget_bytes': 100})
+        (self.repo / 'old.txt').write_text('o' * 140)  # over budget, but smaller than at the base
+        (self.repo / 'small.txt').unlink()
+        self.assertEqual([], self.budget(engine)['grew'])
+        (self.repo / 'old.txt').write_text('o' * 150)  # back to the base content: unchanged
+        self.assertEqual([], self.budget(engine)['grew'])
+
+    def test_a_rename_compares_with_the_old_path(self):
+        engine = self.run_with({'file_budget_bytes': 100})
+        self.git('mv', 'old.txt', 'moved.txt')
+        self.assertEqual([], self.budget(engine)['grew'])
+        (self.repo / 'moved.txt').write_text('o' * 149 + 'x' * 5)
+        self.assertEqual([{'path': 'moved.txt', 'base_bytes': 150, 'bytes': 154}], self.budget(engine)['grew'])
+
+    def test_waived_files_are_named_with_their_reason(self):
+        engine = self.run_with({'file_budget_bytes': 100, 'file_budget_waivers': {'gen/**': 'generated by make gen'}})
+        (self.repo / 'gen').mkdir()
+        (self.repo / 'gen/out.txt').write_text('g' * 500)
+        out = self.budget(engine)
+        self.assertEqual([], out['grew'])
+        self.assertEqual([{'path': 'gen/out.txt', 'reason': 'generated by make gen'}], out['waived'])
+
+    def test_binary_files_are_skipped(self):
+        engine = self.run_with({'file_budget_bytes': 100})
+        (self.repo / 'image.bin').write_bytes(b'\x89PNG\0' + b'x' * 500)
+        self.assertEqual([], self.budget(engine)['grew'])
+
+    def test_a_large_file_is_measured_without_reading_it_whole(self):
+        engine = self.run_with({'file_budget_bytes': 100})
+        (self.repo / 'huge.txt').write_text('h' * 300_000)
+        real = Path.read_bytes
+
+        def guarded(path):
+            if path.name == 'huge.txt':
+                raise AssertionError('read a large file whole')
+            return real(path)
+
+        with mock.patch('orchestra_core.engine.LARGE_FILE_BYTES', 1000), mock.patch.object(Path, 'read_bytes', guarded):
+            self.assertEqual([{'path': 'huge.txt', 'base_bytes': 0, 'bytes': 300_000}], self.budget(engine)['grew'])
+
+    def test_work_already_in_the_tree_at_start_is_not_listed(self):
+        (self.repo / 'old.txt').write_text('o' * 400)  # dirty before the run starts
+        engine = self.run_with({'file_budget_bytes': 100})
+        self.assertEqual([], self.budget(engine)['grew'])
+
+    def test_a_run_without_a_base_has_no_listing(self):
+        state, _ = load_2_3_state(self.root, self.repo)
+        engine = Engine(state, self.repo)
+        engine.policy['file_budget_bytes'] = 100  # a 2.3 state binds its own policy hash; set the budget after
+        self.assertIsNone(engine.prepr()['file_budget'])
+
+
 class LegacyStateTests(EngineFixture):
     """Contract item 3: a run state written by the 2.3 engine loads under 2.4; a real policy change still refuses."""
 
@@ -3986,6 +4112,15 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.assertIsNone(self.engine.hook_stop())  # nothing changed since the nudge: stop and brief
         self.assertEqual(self.last_stop(), 'stalled')
 
+    def test_a_sub_minute_stale_limit_is_worded_in_seconds(self):
+        self.fresh({'worker_stale_seconds': 30})
+        self.arm(deadline=iso(T0 + 20000))
+        self.worker_running('busy')
+        self.now[0] = T0 + 40
+        message = self.engine.hook_stop()
+        self.assertIn('silent for over 30 seconds', message)
+        self.assertNotIn('0 minutes', message)
+
     def test_status_names_running_workers_and_a_silent_one_before_any_stop_event(self):
         # The Stop hook never fires while the session idles on a lost worker, so the status read the band polls
         # has to say it: running counts background cards, silent names those past the limit with their minutes.
@@ -4021,6 +4156,8 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.last_stop(), 'gate-failing')
         self.assertIn('required gate fixture failed 3 times in a row', self.engine.brief())
+        log = self.engine.status()['gates'][-1]['path']
+        self.assertIn('read its log %s' % log, self.engine.brief())  # the owner gets the path, not a search
 
     def test_hook_stop_never_stops_on_pass_count(self):
         self.arm()
@@ -4431,14 +4568,15 @@ class AutonomyHarnessTests(AutonomyFixture, HoldFixture):
         self.arm()
         self.assertIs(self.auto()['pull_requests'], True)
         self.assertIs(self.engine.autonomy_status()['pull_requests'], True)
+
+    def test_ledger_legacy_push_line_refused(self):
         legacy = [l for l in AUTONOMY_FIXED if not l.startswith('- Push:')] + ['- Push: no push to any branch.']
-        self.engine.disarm_autonomy()
-        self.arm(boundaries=legacy)
-        self.assertIs(self.auto()['pull_requests'], False)
-        self.assertIs(self.engine.autonomy_status()['pull_requests'], False)
-        self.engine.disarm_autonomy()
-        self.arm(boundaries=list(AUTONOMY_FIXED) + ['- Push: no push to any branch.'])  # the stricter line wins
-        self.assertIs(self.auto()['pull_requests'], False)
+        for boundaries in (legacy, list(AUTONOMY_FIXED) + ['- Push: no push to any branch.']):
+            with self.subTest(boundaries=boundaries):
+                self.ledger(boundaries=boundaries)
+                with self.assertRaisesRegex(EngineError, 'pre-2.11 Approval boundaries'):
+                    self.engine.arm_autonomy()
+                self.assertIsNone(self.auto())
 
     def test_state_armed_before_pull_requests_reads_false(self):
         self.arm()
@@ -4632,6 +4770,68 @@ class RunHygieneTests(EngineFixture):
         self.assertIn('API key', task['parked_reason'])
         self.engine.unpark('main', self.lease, 'a')
 
+    def test_a_status_blocked_first_line_parks_a_card_that_needs_no_self_review(self):
+        self.task('a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'wa')
+        self.engine.report('wa', token, 'STATUS: BLOCKED\nNo credentials for the API.')
+        task = self.engine.status()['tasks']['a']
+        self.assertEqual(task['state'], 'parked')
+        self.assertIn('STATUS: BLOCKED', task['parked_reason'])
+        self.task('b', role='investigator', mode='code')
+        token = self.engine.dispatch('main', self.lease, 'b', 'wb')
+        self.engine.report('wb', token, 'STATUS: BLOCKED')
+        self.assertEqual(self.engine.status()['tasks']['b']['state'], 'parked')
+
+    def test_a_status_blocked_line_below_the_first_does_not_park(self):
+        self.task('a', role='investigator', mode='code')
+        token = self.engine.dispatch('main', self.lease, 'a', 'wa')
+        self.engine.report('wa', token, 'Looked.\nSTATUS: BLOCKED is the marker for a stuck worker.')
+        self.assertEqual(self.engine.status()['tasks']['a']['state'], 'reported')
+
+    def test_max_worktrees_caps_running_non_inline_builder_cards(self):
+        engine = Engine(self.root / 'wt', self.repo, {'schema_version': 1, 'max_worktrees': 2})
+        lease = engine.open_session('main')
+        add = lambda name, **kw: engine.add_task('main', lease, dict(
+            id=name, role='builder', mode='implementation', inputs=['spec'], acceptance=['x'], files=[name],
+            resources=[], dependencies=[], **kw))
+        for name in ('b1', 'b2', 'b3'):
+            add(name)
+        engine.add_task('main', lease, dict(id='inv', role='investigator', mode='code', inputs=['s'], acceptance=['x'],
+                                            files=[], resources=[], dependencies=[]))
+        engine.dispatch('main', lease, 'b1', 'w1')
+        engine.dispatch('main', lease, 'b2', 'w2')
+        with self.assertRaisesRegex(EngineError, 'Worktree cap: 2'):
+            engine.dispatch('main', lease, 'b3', 'w3')
+        engine.dispatch('main', lease, 'inv', 'wi')  # read-only roles do not count
+        engine.start_inline('main', lease, 'b3')  # inline cards do not count
+        self.assertEqual(engine.status()['tasks']['b3']['state'], 'running')
+
+    def test_max_worktrees_defaults_to_three_and_must_be_a_positive_integer(self):
+        for name in ('b1', 'b2', 'b3', 'b4'):
+            self.task(name)
+        for name in ('b1', 'b2', 'b3'):
+            self.engine.dispatch('main', self.lease, name, 'w' + name)
+        with self.assertRaisesRegex(EngineError, 'Worktree cap: 3'):
+            self.engine.dispatch('main', self.lease, 'b4', 'wb4')
+        for value in (0, -1, True, 1.5, '3'):
+            with self.assertRaisesRegex(EngineError, 'max_worktrees must be a positive integer'):
+                Engine(self.root / 'bad', self.repo, {'max_worktrees': value})
+        default = json.loads((ROOT / 'plugins/orchestra/config/policy.default.json').read_text())
+        self.assertEqual(default['max_worktrees'], 3)
+
+    def test_start_refuses_an_unknown_policy_key_by_name(self):
+        engine = Engine(self.root / 'typo', self.repo, {'schema_version': 1, 'file_budget_byte': 5000})
+        with self.assertRaisesRegex(EngineError, 'Unknown policy key: file_budget_byte'):
+            engine.open_session('main', size='medium')
+        with self.assertRaisesRegex(EngineError, 'Unknown policy key: file_budget_byte'):
+            engine._check_start('medium', None, False)
+
+    def test_start_accepts_every_key_of_the_older_schema(self):
+        old = {'schema_version': 1, 'required_review_categories': ['correctness'], 'worker_stale_seconds': 60,
+               'file_budget_bytes': 5000, 'file_budget_waivers': {}, 'check_commands': {}, 'release_timeout_seconds': 5,
+               **json.loads((ROOT / 'plugins/orchestra/config/policy.default.json').read_text())}
+        Engine(self.root / 'old', self.repo, old).open_session('main', size='medium')
+
     def test_a_lost_lease_is_taken_back_by_the_owning_session_only(self):
         engine, lease = self.fresh(harness_session='H1')
         engine.add_task('main', lease, dict(id='a', role='builder', mode='implementation', inputs=['s'], acceptance=['x'],
@@ -4693,3 +4893,838 @@ class RunHygieneTests(EngineFixture):
         self.assertEqual(push_url_digest('https://user:secret@example.invalid/r.git')[:7], 'sha256:')
         self.assertNotIn('secret', push_url_digest('https://user:secret@example.invalid/r.git'))
 
+
+
+GOLDEN_POLICY_2_10 = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
+                          secret_scan=dict(required=False, argv=[]),
+                          release=dict(enabled=False, remote=None, target=None, argv=[]),
+                          sensitive_paths=['**/auth/**', '**/security/**', '**/*secret*', '**/hooks/**', '**/guard*',
+                                           '**/migrations/**', '.github/**'],
+                          standards_min_lines=200)
+GOLDEN_CONTRACT_2_10 = '7b1f34b2bf297e6e95cdd59306a697f5a2b7410f5a84bc71feb7ffe0213439ed'
+GOLDEN_HASH_2_10 = '4b1d85568cf17dffc8adb272d1df95decfaf2a03c18c9176ff17190e4d5fb74d'  # computed at HEAD 8ae926f, before the new keys
+
+
+def run_cli(fixture, *args):
+    """The real CLI against the fixture's repository and state; returns (exit code, stdout, stderr)."""
+    done = subprocess.run([sys.executable, str(SCRIPTS / 'orchestra.py'), '--repo', str(fixture.repo),
+                           '--state', str(fixture.engine.state_dir), *args], capture_output=True, text=True, timeout=60)
+    return done.returncode, done.stdout, done.stderr
+
+
+class GuardPolicyTests(EngineFixture):
+    """The policy keys `guard_mode` and `release_workflows`."""
+
+    def engine_with(self, policy, name='other'):
+        return Engine(self.root / name, self.repo, policy)
+
+    def test_guard_mode_default_normal_protect_accepted_strict_refused(self):
+        self.assertNotIn('guard_mode', self.engine.policy)  # absent means normal; the hook reads the file itself
+        for mode in ('normal', 'protect'):
+            self.assertEqual(self.engine_with(dict(guard_mode=mode)).policy['guard_mode'], mode)
+        for bad in ('strict', 'Protect', '', None, True, ['protect']):
+            with self.subTest(mode=bad), self.assertRaisesRegex(EngineError, 'Invalid guard mode'):
+                self.engine_with(dict(guard_mode=bad))
+
+    def test_guard_mode_change_keeps_policy_hash(self):
+        normal = self.engine_with(dict(guard_mode='normal'), 'a')
+        protect = self.engine_with(dict(guard_mode='protect'), 'b')
+        self.assertEqual(normal.policy_hash, protect.policy_hash)
+        self.assertEqual(self.engine_with(None, 'c').policy_hash, protect.policy_hash)
+        lease = normal.open_session('main')  # a run started under one mode goes on under the other
+        Engine(self.root / 'a', self.repo, dict(guard_mode='protect')).validate_lease('main', lease)
+        self.assertNotEqual(self.engine_with(dict(guard_mode='protect', max_workers=3), 'd').policy_hash, normal.policy_hash)
+
+    def test_release_workflows_validated(self):
+        ok = ['release*', 'publish*']
+        self.assertEqual(self.engine_with(dict(release_workflows=ok)).policy['release_workflows'], ok)
+        self.assertEqual(self.engine_with(dict(release_workflows=[])).policy['release_workflows'], [])
+        for bad in ('release*', [''], [1], ['ok', None], {'a': 'b'}, None):
+            with self.subTest(value=bad), self.assertRaisesRegex(EngineError, 'release_workflows must be a list of globs'):
+                self.engine_with(dict(release_workflows=bad))
+
+    def test_start_accepts_both_new_keys_and_still_refuses_unknown(self):
+        engine = self.engine_with(dict(guard_mode='protect', release_workflows=['deploy*']))
+        self.assertTrue(engine.open_session('main'))
+        for extra in (dict(guard_mode='protect', bogus=1), dict(release_workflow=['x'])):
+            with self.subTest(policy=extra), self.assertRaisesRegex(EngineError, 'Unknown policy key'):
+                self.engine_with(extra, 'third').open_session('main')
+
+    def test_new_policy_keys_not_in_default_and_old_policy_hash_unchanged(self):
+        import orchestra_core.engine as engine_module
+        for key in ('guard_mode', 'release_workflows'):
+            self.assertNotIn(key, engine_module.DEFAULT)
+            self.assertIn(key, engine_module.POLICY_KEYS)
+            self.assertNotIn(key, json.loads((ROOT / 'plugins/orchestra/config/policy.default.json').read_text()))
+        self.assertEqual(self.engine.policy, GOLDEN_POLICY_2_10)
+        modes = engine_module._contracts()[0]
+        with mock.patch.object(engine_module, '_contracts', return_value=(modes, GOLDEN_CONTRACT_2_10)):
+            plain = Engine(self.root / 'golden', self.repo)
+            both = Engine(self.root / 'golden2', self.repo, dict(guard_mode='protect', release_workflows=['x*']))
+        self.assertEqual(plain.policy_hash, GOLDEN_HASH_2_10)  # a policy with neither key hashes as it did before
+        self.assertNotEqual(both.policy_hash, GOLDEN_HASH_2_10)  # release_workflows binds; guard_mode does not
+
+
+class RunIdTests(EngineFixture):
+    """`state['run_id']`: minted for a new run, stable after, archived with it."""
+
+    def run_id(self, engine=None):
+        return (engine or self.engine).status().get('run_id')
+
+    def test_run_id_minted_on_new_run_stable_across_resume_and_recover(self):
+        first = self.run_id()
+        self.assertRegex(first, r'^[0-9a-f]{16}$')
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main', 'S1')  # resume
+        self.assertEqual(self.run_id(), first)
+        self.engine.recover_lease('main', 'S1')
+        self.assertEqual(self.run_id(), first)
+        other = Engine(self.root / 'other', self.repo)
+        other.open_session('main')
+        self.assertNotEqual(self.run_id(other), first)
+
+    def test_run_id_archived_with_new_run(self):
+        first = self.run_id()
+        self.engine.interrupt('main', self.lease)
+        self.assertEqual(run_cli(self, 'start', '--new-run', '--size', 'tiny')[0], 0)
+        archived = [json.loads(p.read_text()) for p in (self.engine.state_dir / 'history').glob('run-*.json')]
+        self.assertEqual([a['state']['run_id'] for a in archived], [first])
+        second = self.run_id()
+        self.assertRegex(second, r'^[0-9a-f]{16}$')
+        self.assertNotEqual(second, first)
+
+    def test_a_malformed_run_id_refuses(self):
+        raw = json.loads(self.engine.state_path.read_text())
+        for bad in ('xyz', 5, '', 'ABCDEF0123456789'):
+            raw['run_id'] = bad
+            self.engine.state_path.write_text(json.dumps(raw))
+            with self.subTest(run_id=bad), self.assertRaisesRegex(EngineError, 'Invalid run state run_id'):
+                self.engine.status()
+
+
+GH_SCRIPT = '''import json, os, sys
+args = sys.argv[1:]
+with open(os.environ['FAKE_GH_LOG'], 'a') as log:
+    log.write(json.dumps(args) + '\\n')
+data = json.load(open(os.environ['FAKE_GH_DATA']))
+if args[:2] != ['pr', 'view'] or len(args) < 3 or args[2] not in data:
+    sys.stderr.write('no pull request found\\n')
+    sys.exit(1)
+print(json.dumps(data[args[2]]))
+'''
+
+
+class FakeGh:
+    """A `gh` on PATH from a temp directory: `gh pr view URL` answers from a JSON file keyed by URL; every call is logged."""
+
+    def __init__(self, root):
+        self.dir = Path(root) / 'fake-gh'
+        self.dir.mkdir()
+        self.data = self.dir / 'data.json'
+        self.log = self.dir / 'calls.log'
+        script = self.dir / 'gh.py'
+        script.write_text(GH_SCRIPT)
+        if os.name == 'nt':
+            (self.dir / 'gh.cmd').write_text('@"%s" "%s" %%*\r\n' % (sys.executable, script))
+        else:
+            wrapper = self.dir / 'gh'
+            wrapper.write_text('#!/bin/sh\nexec "%s" "%s" "$@"\n' % (sys.executable, script))
+            wrapper.chmod(0o755)
+        self.log.write_text('')
+        self.set({})
+
+    def set(self, views):
+        self.data.write_text(json.dumps(views))
+
+    def calls(self):
+        return [json.loads(line) for line in self.log.read_text().splitlines()]
+
+    def env(self):
+        return mock.patch.dict(os.environ, PATH=str(self.dir) + os.pathsep + os.environ.get('PATH', ''),
+                               FAKE_GH_DATA=str(self.data), FAKE_GH_LOG=str(self.log))
+
+
+class PullRequestFixture(AutonomyFixture, HoldFixture):
+    URL = 'https://github.example/o/r/pull/7'
+
+    def setUp(self):
+        super().setUp()
+        self.git('switch', '-qc', 'feat/x')
+        self.commit('x.txt', 'one')
+        self.gh = FakeGh(self.root)
+        patcher = self.gh.env()
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def commit(self, name, text):
+        (self.repo / name).write_text(text)
+        self.git('add', name)
+        self.git('commit', '-qm', 'change ' + name)
+        return self.git('rev-parse', 'HEAD')
+
+    def view(self, url=None, number=7, **kw):
+        view = dict(number=number, state='OPEN', baseRefName=self.default_branch, headRefName='feat/x',
+                    isCrossRepository=False, headRefOid=self.git('rev-parse', 'refs/heads/feat/x'))
+        view.update(kw)
+        self.gh.set({url or self.URL: view})
+        return view
+
+    def add_view(self, url, **view):
+        views = json.loads(self.gh.data.read_text())
+        views[url] = view
+        self.gh.set(views)
+
+    def prs(self):
+        return self.engine.status().get('pull_requests', [])
+
+    def clean_review_here(self, name):
+        """A clean final review of the work as committed now."""
+        if 'c' not in self.engine.status()['tasks']:
+            self.built('c', files=['c.txt'])
+        return self.reviewed(name, ['c'], final=True)
+
+
+class PullRequestTests(PullRequestFixture):
+    def test_record_pr_stores_object_and_reads_legacy_string(self):
+        legacy = 'https://github.example/o/r/pull/3'
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['pull_requests'] = [legacy]  # a 2.10 state holds bare strings
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertEqual(self.engine.status()['pull_requests'], [legacy])
+        view = self.view()
+        entries = self.engine.record_pr('main', self.lease, self.URL)
+        self.assertEqual(entries[0], dict(url=legacy, autonomous=False, verified_at=None))
+        entry = entries[1]
+        self.assertEqual(set(entry), {'url', 'number', 'repo', 'head_ref', 'head_sha', 'base_ref', 'autonomous', 'tasks',
+                                      'reviewed', 'verified_at', 'recorded_at'})
+        self.assertEqual((entry['url'], entry['number'], entry['repo'], entry['head_ref'], entry['head_sha'], entry['base_ref']),
+                         (self.URL, 7, 'o/r', 'feat/x', view['headRefOid'], self.default_branch))
+        self.assertEqual((entry['autonomous'], entry['tasks'], entry['reviewed']), (False, [], False))
+        self.assertRegex(entry['verified_at'], r'^20\d\d-')
+        self.assertEqual(entries, self.prs())
+        self.engine.interrupt('main', self.lease)
+        brief = self.engine.brief()
+        self.assertIn('review and merge pull request ' + legacy, brief)
+        self.assertIn('review and merge pull request ' + self.URL, brief)
+        self.assertEqual(self.gh.calls(), [['pr', 'view', self.URL, '--json',
+                                           'number,state,baseRefName,headRefName,headRefOid,isCrossRepository']])
+
+    def test_pr_marks_autonomous_and_tasks_when_armed(self):
+        self.arm()
+        self.view()
+        self.task('t1')
+        entry = self.engine.record_pr('main', self.lease, self.URL, tasks=['t1'])[0]
+        self.assertEqual((entry['autonomous'], entry['tasks']), (True, ['t1']))
+        with self.assertRaisesRegex(EngineError, 'Unknown task: nope'):
+            self.engine.record_pr('main', self.lease, self.URL, tasks=['nope'])
+        with self.assertRaisesRegex(EngineError, 'coordinator lease'):
+            self.engine.record_pr('main', 'wrong', self.URL)
+        self.assertEqual(len(self.prs()), 1)
+
+    def test_pr_refuses_non_open_cross_repo_wrong_base_unpushed_head(self):
+        self.git('branch', 'dev')
+        self.arm()  # `dev` exists at arm, so it is not a run branch
+        stale = self.git('rev-parse', 'HEAD~1')
+        cases = [(dict(state='CLOSED'), 'not open'), (dict(state='MERGED'), 'not open'),
+                 (dict(isCrossRepository=True), 'another repository'),
+                 (dict(baseRefName='dev'), 'neither the default branch nor a run branch'),
+                 (dict(baseRefName='nowhere'), 'neither the default branch nor a run branch'),
+                 (dict(headRefOid=stale), 'not the local tip'),
+                 (dict(headRefName='gone'), 'no local branch')]
+        for change, text in cases:
+            with self.subTest(change=change):
+                self.view(**change)
+                with self.assertRaisesRegex(EngineError, text):
+                    self.engine.record_pr('main', self.lease, self.URL)
+                self.assertEqual(self.prs(), [])
+        self.view()
+        self.assertEqual(len(self.engine.record_pr('main', self.lease, self.URL)), 1)
+
+    def test_pr_base_may_be_a_recorded_head_or_a_branch_created_after_arm(self):
+        self.arm()
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.git('switch', '-qc', 'feat/y')
+        self.commit('y.txt', 'y')
+        tip = self.git('rev-parse', 'HEAD')
+        url2, url3 = 'https://github.example/o/r/pull/8', 'https://github.example/o/r/pull/9'
+        self.add_view(url2, number=8, state='OPEN', baseRefName='feat/x', headRefName='feat/y', isCrossRepository=False,
+                      headRefOid=tip)
+        self.assertEqual([e['base_ref'] for e in self.engine.record_pr('main', self.lease, url2)],
+                         [self.default_branch, 'feat/x'])
+        self.git('branch', 'run/z')  # created after arm: a run branch, though no pull request names it yet
+        self.add_view(url3, number=9, state='OPEN', baseRefName='run/z', headRefName='feat/y', isCrossRepository=False,
+                      headRefOid=tip)
+        self.assertEqual(len(self.engine.record_pr('main', self.lease, url3)), 3)
+
+    def test_pr_rerun_refreshes_head_and_reviewed(self):
+        self.view()
+        first = self.engine.record_pr('main', self.lease, self.URL)[0]
+        self.assertFalse(first['reviewed'])
+        self.clean_review_here('r1')
+        self.now[0] += 60
+        second = self.engine.record_pr('main', self.lease, self.URL)
+        self.assertEqual(len(second), 1)
+        self.assertTrue(second[0]['reviewed'])  # a clean review of exactly this head
+        self.assertGreater(second[0]['verified_at'], first['verified_at'])
+        self.assertEqual(second[0]['recorded_at'], first['recorded_at'])
+        tip = self.commit('x.txt', 'two')  # the head moves; the earlier review no longer covers it
+        self.view()
+        self.now[0] += 60
+        third = self.engine.record_pr('main', self.lease, self.URL)[0]
+        self.assertEqual((third['head_sha'], third['reviewed']), (tip, False))
+        self.clean_review_here('r2')
+        self.assertTrue(self.engine.record_pr('main', self.lease, self.URL)[0]['reviewed'])
+
+    def test_pr_review_with_findings_does_not_count(self):
+        self.view()
+        self.built('c', files=['c.txt'])
+        self.reviewed('blocked', ['c'], findings=['f'], task_findings={'c': ['f']}, final=True)
+        self.assertFalse(self.engine.record_pr('main', self.lease, self.URL)[0]['reviewed'])
+
+    def test_pr_gh_missing_records_unverified(self):
+        with mock.patch('orchestra_core.engine.shutil.which', return_value=None):
+            entry = self.engine.record_pr('main', self.lease, self.URL)[0]
+        self.assertEqual((entry['verified_at'], entry['head_sha'], entry['base_ref'], entry['reviewed']),
+                         (None, None, None, False))
+        self.assertEqual((entry['url'], entry['number'], entry['repo']), (self.URL, 7, 'o/r'))
+        other = 'https://github.example/o/r/pull/9'  # gh runs but cannot find the pull request: also unverified
+        self.assertIsNone(self.engine.record_pr('main', self.lease, other)[1]['verified_at'])
+        self.view()  # a later run of the same command verifies the same entry in place
+        entries = self.engine.record_pr('main', self.lease, self.URL)
+        self.assertEqual(len(entries), 2)
+        self.assertIsNotNone(entries[0]['verified_at'])
+
+
+class BaseTests(PullRequestFixture):
+    def stack(self):
+        self.arm()
+        self.task('a')
+        self.task('b', dependencies=['a'])
+        self.task('c', dependencies=['b'])
+
+    def record(self, number, task, head):
+        url = 'https://github.example/o/r/pull/%d' % number
+        self.git('switch', '-q' if self.git('branch', '--list', head) else '-qc', head)
+        self.add_view(url, number=number, state='OPEN', baseRefName=self.default_branch, headRefName=head,
+                      isCrossRepository=False, headRefOid=self.git('rev-parse', 'HEAD'))
+        self.engine.record_pr('main', self.lease, url, tasks=[task])
+        return url
+
+    def test_base_default_when_no_parent(self):
+        self.stack()
+        self.assertEqual(self.engine.base('a'), self.default_branch)
+        self.assertEqual(self.engine.base('c'), self.default_branch)  # no dependency has a pull request
+        with self.assertRaisesRegex(EngineError, 'Unknown task'):
+            self.engine.base('nope')
+
+    def test_base_one_open_parent_head_ref(self):
+        self.stack()
+        url = self.record(7, 'a', 'feat/a')
+        self.assertEqual(self.engine.base('b'), 'feat/a')
+        self.assertEqual(self.engine.base('c'), 'feat/a')  # walks past b, which has none
+        self.add_view(url, number=7, state='MERGED', baseRefName=self.default_branch, headRefName='feat/a',
+                      isCrossRepository=False, headRefOid=self.git('rev-parse', 'HEAD'))
+        self.assertEqual(self.engine.base('b'), self.default_branch)  # a merged parent no longer stacks
+        self.gh.set({})
+        with self.assertRaisesRegex(EngineError, 'Could not read pull request 7'):
+            self.engine.base('b')
+
+    def test_base_two_open_parents_exit_2_deferred(self):
+        self.arm()
+        self.task('a')
+        self.task('b')
+        self.task('c', dependencies=['a', 'b'])
+        self.record(7, 'a', 'feat/a')
+        self.record(8, 'b', 'feat/b')
+        with self.assertRaisesRegex(EngineError, r'^deferred: wait for pull request\(s\) 7, 8 to merge$'):
+            self.engine.base('c')
+        code, out, err = run_cli(self, 'base', 'c')
+        self.assertEqual((code, out), (2, ''))
+        self.assertIn('deferred: wait for pull request(s) 7, 8 to merge', err)
+        self.assertEqual(run_cli(self, 'base', 'a')[:2], (0, self.default_branch + '\n'))  # one plain line
+
+    def test_pr_cli_takes_task_and_prints_the_entries(self):
+        self.arm()
+        self.view()
+        self.task('t1')
+        code, out, err = run_cli(self, '--lease', self.lease, 'pr', self.URL, '--task', 't1')
+        self.assertEqual(code, 0, err)
+        entries = json.loads(out)['pull_requests']
+        self.assertEqual([(e['url'], e['tasks'], e['autonomous']) for e in entries], [(self.URL, ['t1'], True)])
+
+
+class LedgerLineTests(AutonomyFixture):
+    PRE_2_11 = ['- Merge: no pull request merge, and no local merge on the default branch.',
+                '- Push: push only a feature branch for a pull request; never the default branch.',
+                '- Deletion: no deletion of files, branches or tags.']
+    REFILL = (r'Ledger uses the pre-2\.11 Approval boundaries: copy the Merge, Push and Deletion lines from the template, '
+              r'then arm again')
+
+    def test_ledger_new_lines_arm(self):
+        self.assertEqual(AUTONOMY_FIXED[1:4], (
+            '- Merge: no merge into the default or a protected branch; a pull request whose base is a run branch may merge.',
+            '- Push: push any branch except the default, protected branches and tags; never force.',
+            '- Deletion: delete only what the run created: its run branches and worktrees, and files inside a linked '
+            'worktree; never tags, the default branch or other branches.'))
+        self.assertTrue(self.arm()['active'])
+        self.assertIs(self.auto()['pull_requests'], True)
+
+    def test_ledger_old_merge_push_deletion_lines_refused_with_refill_message(self):
+        for index, old in enumerate(self.PRE_2_11):
+            with self.subTest(line=old):
+                boundaries = list(AUTONOMY_FIXED)
+                boundaries[index + 1] = old
+                self.ledger(boundaries=boundaries)
+                with self.assertRaisesRegex(EngineError, self.REFILL):
+                    self.engine.arm_autonomy()
+                self.assertIsNone(self.auto())
+        self.ledger(boundaries=[AUTONOMY_FIXED[0], *self.PRE_2_11, *AUTONOMY_FIXED[4:]])
+        with self.assertRaisesRegex(EngineError, self.REFILL):
+            self.engine.arm_autonomy()
+        self.ledger(boundaries=[l for l in AUTONOMY_FIXED if not l.startswith('- Merge:')])  # a missing line keeps its message
+        with self.assertRaisesRegex(EngineError, 'must keep the fixed line: - Merge:'):
+            self.engine.arm_autonomy()
+
+    def test_ledger_legacy_push_line_refused(self):
+        boundaries = [('- Push: no push to any branch.' if line.startswith('- Push:') else line) for line in AUTONOMY_FIXED]
+        self.ledger(boundaries=boundaries)
+        with self.assertRaisesRegex(EngineError, self.REFILL):
+            self.engine.arm_autonomy()
+        import orchestra_core.engine as engine_module
+        self.assertFalse(hasattr(engine_module, 'AUTONOMY_LEGACY_PUSH'))
+
+
+class ArmRecordsTests(AutonomyFixture):
+    def remote(self, name='origin', default='main', extra=()):
+        bare = self.root / (name + '.git')
+        self.git('init', '-q', '--bare', '-b', default, str(bare))
+        self.git('remote', 'add', name, str(bare))
+        self.git('push', '-q', name, 'HEAD:refs/heads/' + default)
+        for branch in extra:
+            self.git('push', '-q', name, 'HEAD:refs/heads/' + branch)
+        self.git('fetch', '-q', name)
+
+    def test_arm_refuses_on_default_branch_with_switch_hint(self):
+        self.git('switch', '-q', self.default_branch)
+        self.ledger()
+        with self.assertRaisesRegex(EngineError, r'default branch .*git switch -c NAME'):
+            self.engine.arm_autonomy()
+        self.assertIsNone(self.auto())
+        self.git('switch', '-qc', 'develop')  # a remote that reports `develop` as its default makes it the default branch
+        self.remote(default='develop')
+        with self.assertRaisesRegex(EngineError, r'default branch develop.*git switch -c NAME'):
+            self.engine.arm_autonomy()
+        self.assertIsNone(self.auto())
+        self.git('switch', '-q', 'work')
+        self.assertTrue(self.engine.arm_autonomy()['active'])
+        self.engine.disarm_autonomy()
+        self.git('checkout', '-q', '--detach')  # no branch name, nothing to refuse
+        self.assertTrue(self.engine.arm_autonomy()['active'])
+
+    def test_arm_stores_local_branches_at_arm(self):
+        self.git('branch', 'feat/a')
+        self.arm()
+        self.assertEqual(self.auto()['local_branches_at_arm'], sorted([self.default_branch, 'feat/a', 'work']))
+
+    def test_arm_stores_remote_branches_at_arm(self):
+        self.remote(extra=('extra', 'feat/deep'))
+        self.arm()
+        self.assertEqual(self.auto()['remote_branches_at_arm'], ['extra', 'feat/deep', 'main'])  # no HEAD, no remote prefix
+
+    def test_arm_stores_an_empty_remote_list_without_a_remote(self):
+        self.arm()
+        self.assertEqual(self.auto()['remote_branches_at_arm'], [])
+
+    def test_arm_mints_run_id_for_old_state(self):
+        raw = json.loads(self.engine.state_path.read_text())
+        raw.pop('run_id')  # a state written before 2.11
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertIsNone(self.engine.status().get('run_id'))
+        self.arm()
+        minted = self.engine.status()['run_id']
+        self.assertRegex(minted, r'^[0-9a-f]{16}$')
+        self.engine.disarm_autonomy()
+        self.arm()
+        self.assertEqual(self.engine.status()['run_id'], minted)  # arm keeps an id that exists
+
+    def test_arm_clears_previous_receipt(self):
+        self.arm()
+        run = self.engine.status()['run_id']
+        receipt = dict(run=run, prs=[], excluded=[])
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['approval'] = receipt
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.engine.disarm_autonomy()
+        self.assertEqual(self.engine.status()['approval'], receipt)
+        self.arm()
+        status = self.engine.status()
+        self.assertNotIn('approval', status)
+        self.assertEqual(status['approval_history'], [receipt])
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['approval'] = dict(run=run, prs=[1], excluded=[])
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.engine.disarm_autonomy()
+        self.arm()
+        self.assertEqual(len(self.engine.status()['approval_history']), 2)
+
+
+class NewRunRefusalTests(AutonomyFixture):
+    def stopped(self):
+        """Armed, stopped by a disarm (its report is kept) and the session ended."""
+        self.arm()
+        self.engine.disarm_autonomy()
+        self.engine.interrupt('main', self.lease)
+
+    def start(self):
+        return run_cli(self, 'start', '--new-run', '--size', 'tiny')
+
+    def test_new_run_refused_while_report_kept_without_receipt(self):
+        self.stopped()
+        run = self.engine.status()['run_id']
+        code, _, err = self.start()
+        self.assertEqual(code, 2)
+        self.assertIn('New run refused: autonomy kept a report for run %s and the owner has not approved it; type approved '
+                      "in the owner's session, or run orchestra.py autonomy disarm in a terminal" % run, err)
+        self.assertEqual(self.engine.status()['run_id'], run)  # nothing archived
+        self.assertFalse((self.state / 'history').exists())
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['approval'] = dict(run='0' * 16, prs=[], excluded=[])  # a receipt for another run does not count
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertEqual(self.start()[0], 2)
+
+    def test_new_run_allowed_after_receipt_or_disarm(self):
+        self.stopped()
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['approval'] = dict(run=raw['run_id'], prs=[], excluded=[])
+        self.engine.state_path.write_text(json.dumps(raw))
+        self.assertEqual(self.start()[0], 0)
+        self.assertEqual(len(list((self.state / 'history').glob('run-*.json'))), 1)
+        self.fresh(None)
+        self.stopped()
+        self.assertEqual(self.start()[0], 2)
+        self.assertFalse(self.engine.disarm_autonomy()['was_active'])  # the second disarm pops the kept report
+        self.assertNotIn('report', self.auto() or {})
+        self.assertEqual(self.start()[0], 0)
+
+    def test_new_run_unaffected_for_unreadable_state_and_for_no_report(self):
+        self.engine.interrupt('main', self.lease)
+        self.assertEqual(self.start()[0], 0)  # no autonomy at all
+        self.fresh(None)
+        self.engine.state_path.write_text('{"version": 1, "autonomy": {"report"')  # truncated
+        self.assertEqual(self.start()[0], 0)
+        self.assertEqual(len(list((self.state / 'history').glob('unreadable-*.json'))), 1)
+
+
+class CompleteStopTests(PullRequestFixture):
+    """`complete` needs the work published: a verified autonomous pull request for the current head, or nothing beyond base."""
+
+    def passing_gate(self):
+        self.assertTrue(self.engine.run_gate('main', self.lease, 'fixture', PASS_ARGV)['passed'])
+
+    def finish_line(self):
+        self.built('B1')
+        self.reviewed('clean', ['B1'])
+        self.engine.accept('main', self.lease, 'B1')
+        self.reviewed('final', ['B1'], final=True, categories=self.ALL)
+        self.passing_gate()
+
+    def last_stop(self):
+        return self.auto().get('last_stop_reason')
+
+    def edit_entry(self, **fields):
+        raw = json.loads(self.engine.state_path.read_text())
+        raw['pull_requests'][0].update(fields)
+        self.engine.state_path.write_text(json.dumps(raw))
+
+    def test_complete_not_returned_with_unpushed_commits_and_no_verified_pr(self):
+        self.arm()
+        self.finish_line()
+        message = self.engine.hook_stop()
+        self.assertIn('Autonomy pass 1:', message)
+        self.assertIn('no verified pull request', message)
+        self.assertTrue(self.auto()['active'])
+        self.assertNotEqual(self.last_stop(), 'complete')
+
+    def test_complete_with_verified_pr_for_head(self):
+        self.arm()
+        self.finish_line()
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.last_stop(), 'complete')
+
+    def not_complete_with(self, **fields):
+        self.arm()
+        self.finish_line()
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.edit_entry(**fields)
+        self.assertIn('no verified pull request', self.engine.hook_stop())
+        self.assertTrue(self.auto()['active'])
+
+    def test_complete_ignores_an_unverified_pr(self):
+        self.not_complete_with(verified_at=None)
+
+    def test_complete_ignores_a_pr_the_run_did_not_open(self):
+        self.not_complete_with(autonomous=False)
+
+    def test_complete_ignores_a_pr_for_another_head(self):
+        self.not_complete_with(head_sha='0' * 40)
+
+    def test_complete_when_no_commits_beyond_base(self):
+        self.git('switch', '-q', 'work')  # the branch AutonomyFixture cut at the session base: no commits beyond it
+        self.arm()
+        self.finish_line()
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.last_stop(), 'complete')
+
+    def test_push_and_pr_continuation_stalls_after_two_passes(self):
+        self.arm()
+        self.finish_line()
+        self.assertIn('Autonomy pass 1:', self.engine.hook_stop())
+        self.assertIn('Autonomy pass 2:', self.engine.hook_stop())  # nothing changed, yet the continuation repeats once
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'stalled'))
+        self.assertIn('no verified pull request', self.engine.brief())
+
+    def test_recording_the_pr_after_one_continuation_completes(self):
+        self.arm()
+        self.finish_line()
+        self.assertIn('Autonomy pass 1:', self.engine.hook_stop())
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual(self.last_stop(), 'complete')
+
+
+class StopReasonTests(AutonomyFixture):
+    """A session that ends with autonomy active leaves the morning report and a reason."""
+
+    def restart(self, harness_session=None):
+        shutil.rmtree(self.state)
+        self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main', harness_session=harness_session)
+
+    def check(self, call, reason):
+        self.arm()
+        self.now[0] += 60
+        call()
+        auto = self.auto()
+        self.assertEqual((auto['active'], auto['last_stop_reason']), (False, reason))
+        self.assertEqual(auto['report']['reason'], reason)
+        self.assertIn('- stop reason: ' + reason, self.engine.autonomy_report()['text'])
+        self.assertEqual(self.engine.status()['last_brief']['reason'], reason)
+        self.assertEqual((self.state / 'progress.md').read_text().count('## Run brief'), 1)
+
+    def test_interrupt_end_close_with_autonomy_leave_report_and_reason(self):
+        with self.subTest('interrupt'):
+            self.check(lambda: self.engine.interrupt('main', self.lease), 'interrupted')
+        with self.subTest('interrupt_active'):
+            self.restart()
+            self.check(self.engine.interrupt_active, 'interrupted')
+        with self.subTest('ended'):
+            self.restart(harness_session='S')
+            self.check(lambda: self.engine.end_harness_session('S'), 'ended')
+        with self.subTest('finished'):
+            self.restart()
+            self.check(lambda: self.engine.close_session('main', self.lease), 'finished')
+
+    def test_a_close_without_autonomy_still_writes_closed(self):
+        self.engine.close_session('main', self.lease)
+        self.assertEqual(self.engine.status()['last_brief']['reason'], 'closed')
+        self.assertIsNone(self.auto())
+
+    def test_interrupt_then_new_run_refused_until_receipt_or_disarm(self):
+        self.arm()
+        self.engine.interrupt('main', self.lease)
+        run = self.engine.status()['run_id']
+        start = lambda: run_cli(self, 'start', '--new-run', '--size', 'tiny')
+        code, _, err = start()
+        self.assertEqual(code, 2)
+        self.assertIn('New run refused: autonomy kept a report for run ' + run, err)
+        self.assertEqual(self.engine.status()['run_id'], run)
+        self.assertFalse(self.engine.disarm_autonomy()['was_active'])  # pops the kept report
+        self.assertEqual(start()[0], 0)
+
+    def test_interrupt_then_a_receipt_lets_a_new_run_start(self):
+        self.arm()
+        self.engine.interrupt('main', self.lease)
+        self.engine.record_owner_approval([], [], dict(event='UserPromptSubmit'))
+        self.assertEqual(run_cli(self, 'start', '--new-run', '--size', 'tiny')[0], 0)
+
+
+
+class OwnerApprovalTests(AutonomyFixture):
+    """The receipt writer: only `Engine.record_owner_approval`, only for a stopped run."""
+
+    EVIDENCE = dict(event='UserPromptSubmit', session_id='S', prompt_id=None, prompt_sha256='a' * 64)
+
+    def pr(self, number=12, order=1):
+        return dict(order=order, number=number, repo='o/r', url='https://github.example/o/r/pull/%d' % number,
+                    head_ref='feat/%d' % number, head_sha='b' * 40, base_ref='main')
+
+    def stopped(self):
+        self.arm()
+        self.engine.disarm_autonomy()  # the stop that leaves the morning report
+
+    def raw(self):
+        return json.loads(self.engine.state_path.read_text())
+
+    def test_record_owner_approval_stores_the_receipt(self):
+        self.stopped()
+        excluded = [dict(number=13, reason='head moved')]
+        receipt = self.engine.record_owner_approval([self.pr()], excluded, self.EVIDENCE)
+        stored = self.raw()['approval']
+        self.assertEqual(receipt, stored)
+        self.assertEqual((stored['run'], stored['prs'], stored['excluded'], stored['evidence']),
+                         (self.engine.status()['run_id'], [self.pr()], excluded, self.EVIDENCE))
+        self.assertEqual((stored['version'], stored['recorded_at'], stored['default_branch']), (1, T0, self.default_branch))
+
+    def test_record_owner_approval_replaces_previous_receipt(self):
+        self.stopped()
+        self.engine.record_owner_approval([self.pr(12)], [], self.EVIDENCE)
+        self.now[0] += 60
+        self.engine.record_owner_approval([self.pr(12), self.pr(13, 2)], [], self.EVIDENCE)
+        stored = self.raw()
+        self.assertEqual([p['number'] for p in stored['approval']['prs']], [12, 13])
+        self.assertEqual(stored['approval']['recorded_at'], T0 + 60)
+        self.assertNotIn('approval_history', stored)
+
+    def test_record_owner_approval_with_no_prs(self):
+        self.stopped()
+        self.assertEqual(self.engine.record_owner_approval([], [], self.EVIDENCE)['prs'], [])
+        self.assertEqual(self.raw()['approval']['prs'], [])
+
+    def test_record_owner_approval_refused_while_autonomy_active(self):
+        self.arm()
+        with self.assertRaisesRegex(EngineError, 'autonomy is active'):
+            self.engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertNotIn('approval', self.raw())
+
+    def test_record_owner_approval_refused_when_run_never_stopped(self):
+        with self.assertRaisesRegex(EngineError, 'never stopped'):
+            self.engine.record_owner_approval([], [], self.EVIDENCE)  # no autonomy at all
+        self.arm()
+        self.engine.disarm_autonomy()
+        self.engine.disarm_autonomy()  # the second disarm pops the kept report
+        with self.assertRaisesRegex(EngineError, 'never stopped'):
+            self.engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertNotIn('approval', self.raw())
+
+    def test_record_owner_approval_refused_without_state(self):
+        engine = Engine(self.root / 'empty', self.repo)
+        with self.assertRaisesRegex(EngineError, 'never stopped'):
+            engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertFalse((self.root / 'empty' / 'state.json').exists())
+
+    def test_record_owner_approval_refuses_malformed_input(self):
+        self.stopped()
+        bad = [([], [], None), ([], [], 'prompt'), ({}, [], self.EVIDENCE), ([], 'x', self.EVIDENCE),
+               (['url'], [], self.EVIDENCE), ([{'number': 1}], [], self.EVIDENCE), ([], [{'number': 1}], self.EVIDENCE),
+               ([dict(self.pr(), number='12')], [], self.EVIDENCE)]
+        for prs, excluded, evidence in bad:
+            with self.subTest(prs=prs, excluded=excluded, evidence=evidence), self.assertRaises(EngineError):
+                self.engine.record_owner_approval(prs, excluded, evidence)
+        self.assertNotIn('approval', self.raw())
+
+    def test_start_new_run_archives_approval(self):
+        self.stopped()
+        self.engine.interrupt('main', self.lease)
+        run = self.engine.status()['run_id']
+        self.engine.record_owner_approval([self.pr()], [], self.EVIDENCE)
+        self.assertEqual(run_cli(self, 'start', '--new-run', '--size', 'tiny')[0], 0)
+        archived = json.loads(next((self.state / 'history').glob('run-*.json')).read_text())
+        self.assertEqual((archived['state']['run_id'], archived['state']['approval']['run']), (run, run))
+        self.assertNotIn('approval', self.raw())
+        self.assertNotEqual(self.raw()['run_id'], run)
+
+    def test_no_argparse_subcommand_writes_approval(self):
+        self.assertNotIn('record_owner_approval', (SCRIPTS / 'orchestra.py').read_text())
+        self.stopped()
+        for words in (('approval',), ('approve',), ('approved',), ('autonomy', 'approval'), ('autonomy', 'approve')):
+            with self.subTest(words=words):
+                self.assertEqual(run_cli(self, *words)[0], 2)  # argparse refuses an unknown command
+                self.assertNotIn('approval', self.raw())
+
+
+    def test_record_owner_approval_raises_state_busy_within_lock_wait(self):
+        self.stopped()
+        hook_engine = Engine(self.state, self.repo, clock=lambda: self.now[0], lock_wait=0.2)
+        handle = (self.state / 'state.lock').open('a+')
+        self.addCleanup(handle.close)
+        portable.lock(handle, exclusive=True)
+        started = time.monotonic()
+        with self.assertRaises(StateBusy):
+            hook_engine.record_owner_approval([], [], self.EVIDENCE)
+        self.assertLess(time.monotonic() - started, 1.5)
+        portable.unlock(handle)
+        self.assertNotIn('approval', self.raw())
+        hook_engine.record_owner_approval([], [], self.EVIDENCE)  # free again: it records
+        self.assertIn('approval', self.raw())
+
+
+class StaleAutonomyTests(AutonomyFixture):
+    """`stop_stale_autonomy`: a prompt from another session may end a run that stopped writing or ran out its deadline."""
+
+    def bound(self, session='NIGHT'):
+        shutil.rmtree(self.state)
+        self.engine = Engine(self.state, self.repo, clock=lambda: self.now[0])
+        self.lease = self.engine.open_session('main', harness_session=session)
+        self.arm()
+
+    def mtime(self):
+        return self.engine.state_path.stat().st_mtime
+
+    def stale(self):
+        return self.engine.policy.get('worker_stale_seconds', 3600)
+
+    def test_stop_stale_autonomy_deadline_passed(self):
+        self.bound()
+        self.assertFalse(self.engine.stop_stale_autonomy('MORNING', now=self.mtime() + 10))
+        self.assertTrue(self.auto()['active'])
+        self.now[0] += 7200
+        self.assertTrue(self.engine.stop_stale_autonomy('NIGHT'))  # even the bound session: the deadline ends the run
+        auto = self.auto()
+        self.assertEqual((auto['active'], auto['last_stop_reason']), (False, 'deadline'))
+        self.assertEqual(auto['report']['reason'], 'deadline')
+        self.assertFalse(self.engine.stop_stale_autonomy('NIGHT'))  # already stopped: nothing to do
+
+    def test_stop_stale_autonomy_other_session_and_old_mtime(self):
+        self.bound()
+        written = self.mtime()
+        self.assertTrue(self.engine.stop_stale_autonomy('MORNING', now=written + self.stale() + 1))
+        auto = self.auto()
+        self.assertEqual((auto['active'], auto['last_stop_reason']), (False, 'stale'))
+        self.assertIn('- stop reason: stale', self.engine.autonomy_report()['text'])
+
+    def test_stop_stale_autonomy_other_session_fresh_mtime_does_nothing(self):
+        self.bound()
+        before = self.engine.state_path.read_bytes()
+        self.assertFalse(self.engine.stop_stale_autonomy('MORNING', now=self.mtime() + self.stale() - 1))
+        self.assertEqual(before, self.engine.state_path.read_bytes())  # a no-op never rewrites state.json
+        self.assertTrue(self.auto()['active'])
+
+    def test_stop_stale_autonomy_bound_session_with_old_mtime_does_nothing(self):
+        self.bound()
+        self.assertFalse(self.engine.stop_stale_autonomy('NIGHT', now=self.mtime() + 10 * self.stale()))
+        self.assertTrue(self.auto()['active'])
+
+    def test_stop_stale_autonomy_raises_state_busy_within_lock_wait(self):
+        self.bound()
+        hook_engine = Engine(self.state, self.repo, clock=lambda: self.now[0], lock_wait=0.2)
+        handle = (self.state / 'state.lock').open('a+')
+        self.addCleanup(handle.close)
+        portable.lock(handle, exclusive=True)
+        started = time.monotonic()
+        with self.assertRaises(StateBusy):
+            hook_engine.stop_stale_autonomy('MORNING', now=self.mtime() + self.stale() + 1)
+        self.assertLess(time.monotonic() - started, 1.5)
+        portable.unlock(handle)
+        self.assertTrue(self.auto()['active'])
+        self.assertTrue(hook_engine.stop_stale_autonomy('MORNING', now=self.mtime() + self.stale() + 1))
+
+    def test_stop_stale_autonomy_without_active_autonomy_or_state(self):
+        self.assertFalse(self.engine.stop_stale_autonomy('MORNING', now=self.mtime() + 10 * self.stale()))
+        self.assertFalse(Engine(self.root / 'empty', self.repo).stop_stale_autonomy('X'))
+        self.assertFalse((self.root / 'empty' / 'state.json').exists())

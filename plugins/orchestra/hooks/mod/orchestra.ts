@@ -424,8 +424,9 @@ export const register: Register = (on: On) => {
       const command = String(raw);
       const d = classifyCommand(command);
       const klass = klassOf(d);
-      if (klass === 'deny') return blocked(d.reason !== '' ? d.reason : FAIL_CLOSED);
-      if (DELEGATED.includes(klass)) {
+      // A softened deny is mode-dependent (normal relaxes it) and the mod reads no policy: Python decides, like a release.
+      if (klass === 'deny' && !d.soften) return blocked(d.reason !== '' ? d.reason : FAIL_CLOSED);
+      if (klass === 'deny' || DELEGATED.includes(klass)) {
         const sid = lastSeen ?? '';
         const reason = await delegate($, tool, { command }, sid);
         if (reason !== null) return blocked(reason);

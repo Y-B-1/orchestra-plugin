@@ -19,4 +19,4 @@ Rules:
 - Do not state a post-cutoff API from memory. If no source is reachable, the claim is UNKNOWN, and the report names the source to read.
 - Resolve conflicts between sources by version and date, and report the conflict.
 
-The coordinator caches the report as RESEARCH.md and expires it with the sprint. Say in the report which version or date change makes it stale.
+Say in the report which version or date change makes it stale.

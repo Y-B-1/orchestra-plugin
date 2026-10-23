@@ -340,3 +340,78 @@ Source: the owner's audit request (autonomy that seems to stop with no sign on s
 | Packaging | Marketplace entry version removed; icon added (512 px PNG); `claude plugin validate --strict` passes for the plugin and the marketplace with no warning; CI on Claude Code 2.1.306. |
 | TypeScript to Rust | pingdotgg/ts-rust (`tsc-rs`) and Cloudflare's tsrs are type-checker ports. Orchestra type-checks nothing at run time, so neither applies. |
 | Not checked | claude.dev was unreachable from the sandbox (DNS), so its posts were read only through claude.com and secondary summaries. The band was not seen in a live interactive session; Windows and macOS still have no live run. |
+
+## 2.11.0 (2026-10-22)
+
+Source: the owner's handoff (the code review post, a TypeScript check of the mods, pstack and mattpocock/skills gaps, a file budget, a transcript audit with live checks) and an audit of the parallel-work rules.
+
+| Item | Evidence |
+| --- | --- |
+| Code review post | Read at claude.dev through WebFetch (reachable this time; in 2.10.0 it was not). Self-check, fresh-context review, CI, verifier vote and risk-scaled human approval are confirmed. The vote threshold is not stated ("enough" verifiers), and size scaling is an observation (most PRs over 1,000 lines get findings), not a rule. Orchestra already had each layer except the base-branch review-instruction file, which the pre-PR brief now carries. |
+| TypeScript in `hooks/mod/*.ts` | Nothing type-checks it: a type error passes `claude plugin test` and `claude plugin validate --strict`. A check step is an open owner decision. |
+| pstack and mattpocock/skills | pstack unchanged since the last read (88d4751). mattpocock/skills diffed from the three pins to 5beb35b. Rules adopted in Orchestra's words are listed in `docs/SKILL-SOURCES.md` 2.11.0 additions. Not adopted: multi-model arena, interrogate, reflect, automate-me, never-block-on-the-human. |
+| File budget | Policy `file_budget_bytes` (off by default) and `file_budget_waivers`; `prepr` lists the files that grew past it. 13 engine tests. |
+| Transcript audit | Read-only count over local transcripts and run-state directories (no text kept). CLI error rate 13.4 % of 848 calls; the top refusal is a missing `--lease` (11). No session-binding refusal was seen. The `stalled`, `gate-failing`, `parked-only` and `ledger-tampered` stops never occurred in a real run. |
+| Parallel-work rules | The size rules (medium inline, large plan-first) are prose; only the tiny `--helper` check is enforced. Benchmark: n=2 per arm, medium parallel about 14 % slower, large parallel at best 40 % faster. The skills now cap worktrees at three, allow read-only side workers at any size, escalate at about 600 lines per unit and send remaining units to builders near the context ceiling. Engine enforcement is an open owner decision. |
+
+### Live check of the stop paths (2026-10-22, Claude Code 2.1.306)
+
+The real hook entry point (`run-hook.sh <Event> --harness claude`, hook JSON on stdin) ran against a scratch repository with a bare remote and an isolated state root.
+
+| Observed | Result |
+| --- | --- |
+| `stalled` | A worker past `worker_stale_seconds` got one nudge, then the next Stop ended the run as `stalled` |
+| `gate-failing` | Two failing runs of a ledger check continued; the third stopped the run and the brief named the gate |
+| `parked-only` | With only a parked card left, Stop ended the run and the brief listed the card under Needs you |
+| `ledger-tampered` | One appended line in the armed ledger ended the run on the next Stop |
+| Band | `autonomy status` output fed to the band functions gives `stopped: <reason>` for each of the four |
+| Discovery | `claude -p --plugin-dir plugins/orchestra` ran `SessionStart:startup` (exit 0) with the Orchestra context |
+| Fixed | The `gate-failing` brief said "read its log" without the path; it now names the last receipt's log (engine test extended first, red, then green) |
+| Not fixed | With `worker_stale_seconds` under 30 the nudge says "over 0 minutes"; only a test policy hits this |
+| Not checked | The band in a live interactive session; the guard and Stop inside `claude -p` |
+
+### Guard modes and approval to merge (2.11.0)
+
+| Item | Evidence |
+| --- | --- |
+| Design | Normal mode warns or allows routine git work; protect and an autonomous run stay strict; the owner's typed `approved` records a receipt and the printed merges run in order. Specified in `docs/hooks.md` (Guard modes, Approval and the merge guard) and `skills/orchestra/references/approval.md`. |
+| Unit and integration coverage | `tests.test_guard_modes`, `test_guard_plane`, `test_merge_guard`, `test_prompt_approval`, `test_guard_corpus`, `test_engine` and `test_integration` cover the modes, the unattended lock, the receipt, the merge guard with a fake `gh`, and the engine refusals. |
+| Known gap | A command run from a directory outside the repository and its worktrees finds no run, so it gets neither the autonomy plane nor the unattended lock. The guard cannot close this. Recommendation: a server-side ruleset on the default branch (required pull request, no force push, no deletion), the only backstop that does not depend on the agent. |
+| Known gap | Heredoc write-then-run (`cat > f <<EOF`, then `sh f`) is allowed, the same as `echo` and `printf` into a file. Text scanning cannot contain it. The guard is not isolation; the default branch stays guarded at push and merge. |
+| Not contained | `UserPromptSubmit` does not prove a human typed the prompt. A prompt scheduled before the stop that fires after it, a message from another owner session, shell schedulers (`crontab`, `at`, `claude -p`) and a hostile agent are outside the guard. |
+| G5, not measured | The night-run state write cadence against `worker_stale_seconds`. |
+| G9, assumption | GitHub retargets a child pull request's base when the merge deletes its parent branch. It does not when the parent branch is checked out in a worktree. The guard denies a child still based on a merged parent's branch and names `gh pr edit N --base DEFAULT`; the approval reply prints the same sentence. |
+| L1, deferred to the post-install live check | Live firing of the `UserPromptSubmit` hook in an installed plugin session. Not run; unit tests cover the handler only. |
+| L2, deferred to the post-install live check | With real `gh` on a throwaway repository: a wrong-SHA merge is refused, and the child pull request is retargeted after the parent merges, including a parent branch checked out in a worktree. Not run. |
+| L3 observations, deferred to the post-install live check | Whether `UserPromptSubmit` carries exactly `approved` for a background task's output, a `ScheduleWakeup` prompt or a subagent's final text. Not observed; the full-match deny of the scheduler and `SendMessage` tools is the guard regardless. The deny scans every string in the tool input (`prompt` for `CronCreate` and `ScheduleWakeup`, `body` for `RemoteTrigger`, `message` for `SendMessage`); the field names are taken from the live tool schemas. |
+
+### Pre-PR review and repairs (2.11.0)
+
+| Item | Evidence |
+| --- | --- |
+| Normal-mode softening (R4) | A softened deny relaxed the whole compound command. Repair RA1 relaxes only the softened items; repair RA3 (second repair, approved by the owner) closes the comment and `$'...'` forms the RA1 splitter missed. Failing tests first in `tests.test_guard_modes.SoftenedCompoundTest`. |
+| Unattended lock (R3, R6) | A stopped run could still run `gh release delete` and `gh repo delete`. Repair RA2 denies both until the owner's receipt; local deletes (`rm`, `git tag -d`) keep their path after a disarm, and remote tag deletes were already denied. `tests.test_guard_plane.UnattendedLockTest`. |
+| `gh -R` / `--repo` (bug, present since 2.10.0) | The repository flag before or between the `gh` subcommand words hid the pair from the classifier, so `gh -R o/r pr merge 7 --admin` passed every mode, active autonomy included. Fixed in the classifier; `argv` keeps the flag so the merge guard still refuses it. `tests.test_guard_corpus.SoftenAndGhRulesTest`. |
+| Line continuation (bug) | A backslash-newline split a command for the classifier but not for bash, so a force push or a merge written across two lines passed every mode. The classifier now joins continuations outside single quotes. `tests.test_guard_corpus.SoftenAndGhRulesTest`. |
+| Retro: missing check | Both classifier bugs come from lexing that differs from bash. Strategic follow-up: a corpus test that, for every corpus command, classifies equivalent spellings (global flags moved, line continuations, comments) and requires the same verdict. |
+| R7 repairs | R7 at b7207e2 found two holes. A quoted-delimiter heredoc whose body line ends in a backslash hid the next command (a BG2 regression): repairs RB2 then RB3 make continuation joining heredoc-aware, and fix re-review FR7 ran 10,719 generated commands with no looser verdict. A quoted word (`gh 'release' delete`) passed the unattended lock: repairs RA4 then RA5 read the dequoted words and keep the raw-text check (FR4 found that RA4 alone let `find -exec gh release delete` through). The run ledger records the rulings for both second repairs. |
+| `gh` flags and arithmetic (BG3, HK1) | Any `gh` flag before or between the pair words hid it (`gh --x=1 release delete`), and `<<` inside `$((...))` opened a phantom heredoc that hid a later release. BG3 reads every way `gh` can parse its flags (past 64 readings the command counts as a release) and skips arithmetic spans; HK1 gives the unattended lock the same `gh` reading. |
+| Retro check built (BG3) | `test_respelling_keeps_the_verdict`: every strict corpus command keeps its verdict when its words are quoted, a line continuation is inserted, or a `gh` flag is added. It found the `gh --x=y` gap on first run (37 failures before BG3). |
+| By design | Outside an autonomous run, a lone `git branch -D` of an unmerged branch is a delete boundary and is allowed; under autonomy only merged or run branches may be deleted. |
+
+### Deferred to a follow-up (review notes at 63e0da8 and later)
+
+| Item | Note |
+| --- | --- |
+| N1 | `gh repo set-default` is allowed; the merge guard checks PR N with `-R slug`, but the merge it allows resolves the repository from the cwd remotes. Fix: deny `gh repo set-default` while a run is active or locked, or make the printed merge carry `-R slug`. |
+| N2 | The `UserPromptSubmit` worst case is about 14 s against the 10 s hook timeout; a killed hook records nothing and prints nothing. |
+| N3 | A lower-order receipt pull request closed without merge makes every later one deny with "merge pull request N first"; the message should say to type `approved` again. |
+| N4 | `record_pr` sets `reviewed` from any CLEAN intact review at the PR head, including a narrow scoped one (unchecked). |
+| N5 | The merge parser does not require `--merge`; non-interactive `gh` refuses a merge without a method anyway. |
+| N6 | `sort` as a heredoc data consumer can run `--compress-program`; the same class as the accepted `echo`/`printf` write-then-run. |
+| N7 | The settings-file lock covers edit tools only; shell writes pass (the guard is not isolation). |
+| N8 | The receipt-run predicate and the `gh` subprocess setup are duplicated across `approval.py`, `prompt_approval.py`, `orchestra.py` and the engine. |
+| N9 | The README's macOS live-check claim rests only on the 2026-10-22 stop-path check. |
+| N10 | The unattended lock matches provider deletes by text, so a command that also holds a real `rm` and quotes `gh release delete` is denied (fails closed). |
+| E1 | Engine: adding a repair card ignores findings in a final receipt made stale by a sibling chain's repair, so the second chain needs a new review. Let `add` accept those findings, or refuse the first repair until every blamed chain has its card. |
+| E2 | Engine: `report` and `accept` run from a linked worktree resolve another state directory ("Invalid assignment") and leave an empty one. Run engine commands from the main checkout. |

@@ -40,8 +40,67 @@ test('test_corpus_decision_category_matches: every case with decision_category m
   for (const c of named) {
     const d = classifyCommand((c.input as { command: string }).command);
     expect(d.category).toBe(c.decision_category);
-    expect(klassOf(d)).toBe('boundary');
+    expect(klassOf(d)).toBe(c.class);
+    expect(c.class === 'boundary' ? 'merged-delete' : 'apiwrite').toBe(c.decision_category);
   }
+});
+
+const SOFTEN: Record<string, string | null> = {
+  'soften-stash': 'warn', 'soften-add-all': 'allow', 'soften-commit-all': 'allow', 'soften-amend': 'warn',
+  'soften-push-tags': 'warn', 'soften-push-refspec-colon': 'warn',
+  'nosoften-push-prune': null, 'nosoften-push-mirror': null, 'nosoften-stash-then-reset': null,
+  'nosoften-stash-then-force-push': null, 'nosoften-push-tags-extra-refspec': null, 'nosoften-push-tags-prune': null,
+};
+
+test('D4 2.7: soften rides the deny decision; a hard deny anywhere drops it; two softened denies keep the stricter level', () => {
+  for (const [id, level] of Object.entries(SOFTEN)) {
+    const c = (CORPUS as Case[]).find((x) => x.id === id)!;
+    const d = classifyCommand((c.input as { command: string }).command);
+    expect([id, klassOf(d), d.soften]).toEqual([id, 'deny', level]);
+  }
+  for (const command of ['git status', 'git reset --hard', 'git push origin main']) expect(classifyCommand(command).soften).toBeNull();
+  expect(classifyCommand('git add -A && git stash').soften).toBe('warn');
+  expect(classifyCommand('git stash && git add -A').soften).toBe('warn');
+  expect(classifyCommand("bash -c 'git add -A' && git commit --amend").soften).toBe('warn');
+  expect(classifyCommand('git add -A; git commit -am x').soften).toBe('allow');
+  for (const command of ['git stash; git clean -f', "bash -c 'git stash; git checkout .'", 'echo $(git stash) $(git reset --hard)', 'git add -A && echo "$(git push --force origin x)"', 'git stash\ngit branch -D a b']) {
+    const d = classifyCommand(command);
+    expect([command, klassOf(d), d.soften]).toEqual([command, 'deny', null]);
+  }
+  expect(classifyCommand('git commit --amend').reason).toBe('Amend rewrites history; make a new commit instead');
+  expect(classifyCommand('git push --tags origin').reason).toBe('Push needs one explicit remote and refspec');
+  expect(classifyCommand('git push origin :x').reason).toBe('Push needs one non-deleting refspec');
+});
+
+test('D4 2.7: gh workflow run names, gh categories, config boundaries, builtins', () => {
+  for (const [command, name] of [['gh workflow run release.yml', 'release.yml'], ['gh workflow run -f env=prod --ref main deploy.yml', 'deploy.yml']] as const) {
+    const d = classifyCommand(command);
+    expect([klassOf(d), d.workflow]).toEqual(['release', name]);
+  }
+  expect(classifyCommand('gh workflow run').workflow).toBeNull();
+  expect(classifyCommand('gh api -X DELETE repos/o/r').workflow).toBeNull();
+  expect(classifyCommand('git status').workflow).toBeNull();
+  for (const [command, category] of [['gh prm 12', 'ghcustom'], ['gh pr edit 12 --base main', 'prbase'], ['gh pr edit 12 -Bmain', 'prbase'], ['gh pr edit 12 --base=main', 'prbase'], ['gh api -X DELETE repos/o/r', 'apiwrite'], ['gh api -X POST repos/o/r/git/refs -f ref=x', 'providerrelease']]) {
+    const d = classifyCommand(command!);
+    expect([command, klassOf(d), d.category]).toEqual([command, 'release', category]);
+  }
+  for (const command of ['gh alias set a b', 'gh alias import f', 'gh alias delete a', 'gh extension install o/r', 'gh ext list']) {
+    const d = classifyCommand(command);
+    expect([command, klassOf(d), d.boundary]).toEqual([command, 'boundary', 'config']);
+  }
+  for (const command of ['gh alias list', 'gh pr view 3', 'gh issue list', 'gh repo view', 'gh run view 1', 'gh auth status', 'gh', 'gh --help', 'gh -R o/r pr view']) {
+    expect([command, klassOf(classifyCommand(command))]).toEqual([command, 'allow']);
+  }
+});
+
+test('D4 2.7: gh api write forms are release, reads and the allow list are allow', () => {
+  const release = ['gh api repos/o/r -f default_branch=x', 'gh api repos/o/r -F a=b', 'gh api repos/o/r --field a=b', 'gh api repos/o/r --raw-field a=b', 'gh api repos/o/r -fa=b', 'gh api repos/o/r --input=x.json',
+    'gh api -X delete repos/o/r', 'gh api -iXDELETE repos/o/r', 'gh api -H "A: b" -X DELETE repos/o/r', 'gh api repos/o/r --method DELETE', 'gh api -X PATCH /repos/o/r', 'gh api -X PATCH https://api.github.com/repos/o/r',
+    'gh api -X POST repos/o/r/pulls/3/reviews%2e%2e/x -f a=b', 'gh api -X PUT repos/o/r/pulls', 'gh api -X POST -f a=b'];
+  for (const command of release) expect([command, klassOf(classifyCommand(command))]).toEqual([command, 'release']);
+  const allow = ['gh api repos/o/r', 'gh api -X GET repos/o/r -f a=b', 'gh api --method=get repos/o/r -F a=b', 'gh api -H "A: b" repos/o/r', 'gh api repos/o/r/issues/3/comments -f body=x', 'gh api -X POST /repos/o/r/pulls -f title=t',
+    'gh api -X POST https://api.github.com/repos/o/r/pulls?x=1 -f title=t', 'gh api graphql -f query=query', 'gh api -X POST repos/o/r/pulls/3/comments -f body=x'];
+  for (const command of allow) expect([command, klassOf(classifyCommand(command))]).toEqual([command, 'allow']);
 });
 
 test('merged-delete: kind, remote, branch and argv ride the decision; stand-alone denials hold', () => {
@@ -71,6 +130,17 @@ test('merged-delete: any git global option before the verb denies (R2 test_merge
     const d = classifyCommand(command);
     expect([klassOf(d), d.reason]).toEqual(['deny', 'Branch deletion must run plainly in the session repository']);
   }
+});
+
+test('heredoc data and apostrophe in a double-quoted substitution: the T5 corpus cases get the Python verdict', () => {
+  const t5 = /^(allow-heredoc-(cat-file|cat-unquoted|gh-body-file|git-commit-F)|allow-quote-apostrophe-[123]|deny-heredoc-shell-.+|deny-quote-(force-push|unbalanced)|deny-heredoc-(2r|19|21|18))$/;
+  const cases = (CORPUS as Case[]).filter((c) => t5.test(c.id));
+  expect(cases.length).toBe(20);
+  expect(run(cases)).toEqual([]);
+  expect(cases.filter((c) => ['deny-heredoc-2r', 'deny-heredoc-19', 'deny-heredoc-21'].includes(c.id)).map((c) => c.class)).toEqual(['allow', 'allow', 'allow']);
+  expect(klassOf(classifyCommand("cat <<'EOF' > >(bash)\ngit reset --hard\nEOF"))).toBe('deny');
+  expect(klassOf(classifyCommand('cat <<EOF\n$(git reset --hard)\nEOF'))).toBe('deny');
+  expect(klassOf(classifyCommand('echo "$(git push --force origin x)"'))).toBe('deny');
 });
 
 test('corpus parity: O17 cases (reserved words, groups, arithmetic, case patterns)', () => {

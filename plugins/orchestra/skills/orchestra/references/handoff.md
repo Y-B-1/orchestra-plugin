@@ -29,4 +29,4 @@ Write a handoff for a fresh agent into `$TMPDIR`, else `/tmp` (`%TEMP%` on Windo
 - Remaining work, in dependency order
 - Open risks and unavailable checks, the held chains and the run brief's Needs you
 
-Point to specs, plans, issues, commits and diffs by path or URL instead of copying them. Tailor the document to what the next session will do. Redact credentials, tokens and personal data. End with the ledger path and the artifact identity.
+Point to specs, plans, issues, commits and diffs by path or URL instead of copying them. Tailor the document to what the next session will do. Write each claim about code as of a commit ("as of <sha>"), never "currently", and mark an outdated claim superseded instead of editing it. Redact credentials, tokens and personal data. End with the ledger path and the artifact identity.

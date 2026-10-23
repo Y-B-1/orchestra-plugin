@@ -8,7 +8,7 @@ This is the first attempt at a ticket from a spec, a plan task or a bug diagnosi
 
 ## Seams
 
-A seam is the public boundary where a test observes behavior without reaching inside. Test at the seams the brief names. When it names none, pick the public interface of the module you change, then record the choice in your report. Do not test private functions or call order unless order is observable behavior.
+A seam is the public boundary where a test observes behavior without reaching inside. Test at the seams the brief names. When it names none, pick the public interface of the module you change, then record the choice in your report, with one line on what that seam catches and what it misses. Do not test private functions or call order unless order is observable behavior.
 
 ## What a good test is
 
@@ -19,6 +19,8 @@ A test reads like a specification of one capability and survives a refactor that
 - Mock only at system boundaries: external services, time, randomness, and sometimes the file system or database. Never mock your own modules. Inject boundary dependencies so a test can replace them.
 - Keep test-only code in test utilities, never in production classes.
 - Understand what a dependency does before you mock it.
+- A test that asserts something did not happen needs a paired case where it does, or it cannot fail.
+- For logic with many edge cases, also compare it with a simple reference implementation on generated inputs, and time one large input.
 
 ## Value bar
 
@@ -33,11 +35,11 @@ A test that breaks under a behavior-preserving refactor asserts implementation. 
 
 ## Bug fixes
 
-The reproducing test fails at the starting commit, in its own assertion. An import error, fixture error or environment error is a defect in the test: correct it once or drop it. Then fix. The report records both runs: fails before the fix, passes after.
+The reproducing test fails at the starting commit, in its own assertion. An import error, fixture error or environment error is a defect in the test: correct it once or drop it. Then fix. The report records both runs: fails before the fix, passes after. When you force the red by editing code or a fixture, diff against an untouched copy to show the edit applied before you trust the failure.
 
 ## Checks
 
-While iterating, run the single test and the type or lint check for the code you touch. Run the owned and derived checks the brief lists before you report. Run the full suite only when the brief names it.
+While iterating, run the single test and the type or lint check for the code you touch. Run the owned and derived checks the brief lists before you report. Run the full suite only when the brief names it. A check that passes at once or fails oddly points first at the observation: the wrong target, a cached result or a stale build. Rerun it on the real artifact.
 
 ## Stuck
 

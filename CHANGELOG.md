@@ -2,6 +2,25 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.11.0 — 2026-10-22
+
+- **Fix, softening in compound commands:** in normal mode a softened item (wholesale add, `stash`, amend) no longer relaxes the other items of the same command; each keeps its own verdict. A softened command that holds a `#` comment or a `$'...'` string gets the strict verdict, because the split cannot read either.
+- **Fix, `gh -R` / `--repo`:** the repository flag no longer hides a `gh` command pair from the guard; `gh -R o/r pr merge 7`, `gh --repo o/r release delete v1` and the like get the verdict of the flag-free command (the flag was a gap since 2.10.0).
+- **Fix, guard readings:** `gh` flags written anywhere before or between the subcommand words (`gh --squash=true pr merge 7`, `gh pr --admin=true merge 7`, `gh -dRo/r release create v1`) no longer hide the command from the guard; and `<<` inside `$((...))` or `((...))` is a shift, never a heredoc opener, so `echo $((1<<x))` no longer hides the lines after it. A corpus test now checks that quoting, line continuation and extra `gh` flags keep every strict verdict.
+- **Fix, line continuation:** a backslash-newline outside single quotes is joined before the guard reads a command, so `git \<newline>push --force` gets the verdict of `git push --force` (it was allowed). A quoted-delimiter heredoc body stays literal, as in bash, so a body line ending in a backslash no longer hides the next command.
+- **Fix, unattended lock:** the lock reads provider deletes from the words as bash reads them, so a quoted or escaped word, a `find -exec` payload or a `gh` flag in any position no longer passes it.
+- **Normal mode no longer blocks routine git work:** the new policy `guard_mode` defaults to `normal`, which warns or allows stash, wholesale `git add`, `commit -a`, amend, multi-ref and refspec pushes, and release actions without a question. `protect` keeps the strict verdicts and asks only while a run is active. An autonomous run, active or stopped with its report kept, is always strict. `classify` prints the strict verdict.
+- **Autonomous runs open, review and approve pull requests:** the run pushes its own branches, stacks pull requests with `base TASK`, records them with `pr URL --task ID` and never merges to the default branch, deletes tags or releases. `complete` waits for a verified pull request.
+- **"approved" runs the merges:** when the run has stopped, the owner types `approved` in the session. The `UserPromptSubmit` hook records a receipt and prints one `gh pr merge` command per pull request, in order and pinned to the recorded head. The merge guard allows only those commands. Until then a stopped run's report keeps an unattended lock: releases, merges, scheduler tools, settings edits and `start --new-run` stay denied.
+- **Checks run locally, CI is manual:** `scripts/check.sh` runs every check; `.github/workflows/ci.yml` starts only by hand.
+- **Guard and engine details:** the PreToolUse matcher now includes `CronCreate`, `ScheduleWakeup`, `RemoteTrigger` and `SendMessage`, and a call to one that carries only the word `approved` is denied in every mode. New policy keys `guard_mode`, `release_workflows` and `max_worktrees`; an unknown policy key is refused. A pre-2.11 ledger is refused at `arm` with a re-fill message. Known gaps and deferred live checks are in docs/BUILD-LEDGER.md.
+- **Docs:** README, docs/hooks.md and docs/cli.md describe the modes and the approval flow; the coordinator skill gains `references/approval.md`.
+- **Pre-PR review:** with policy `file_budget_bytes` set (off by default), `prepr` lists the changed files that grew past it against the run base, and the standards brief carries that list under `## Over file budget`; `file_budget_waivers` maps a glob to a reason.
+- **Parallel work:** at most three worktrees at once; read-only side workers run beside inline work at any size; a medium run escalates once two disjoint units each reach about 600 lines; near the context ceiling the remaining units go to builders; `max_workers` is the owner's device and usage limit.
+- **Worker results:** a short report is re-dispatched once, then recorded as an open gap; a dead worker gets at most two re-dispatches; the first of three or more similar tickets runs alone.
+- **Failing gate:** the brief after a `gate-failing` stop names the gate's last log path.
+- **Skills:** rules from Anthropic's code review posts, pstack and mattpocock/skills for briefs, triage, handoff, design, build, review and critic. Credits are in docs/SKILL-SOURCES.md.
+
 ## 2.10.0 — 2026-10-21
 
 - **Autonomy band:** after a stop the band stays as `stopped: <reason>` until you re-arm, disarm or start a new session; before, the reason showed only as a toast and the band cleared. While active it also shows the running background workers, stalls above zero and any worker silent past `worker_stale_seconds`. `orchestra.py autonomy status` gains `running` and `silent`.

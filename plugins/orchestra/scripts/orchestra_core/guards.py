@@ -43,6 +43,8 @@ _EXEC_FLAGS = set(_RUNNERS['watch_exec_flags'])
 _COMMAND_FLAGS = set(_RUNNERS['flock_command_flags'])
 _FIND_EXEC = set(_RUNNERS['find_exec_actions'])
 _MULTI = 'releasemulti'  # Decision.category of a release-class segment inside a multi-segment command.
+_SOFTEN = RULES['soften']
+_GH_BUILTIN = frozenset(RULES['gh_builtin'])
 
 
 def guard_digest(root=None):
@@ -71,6 +73,8 @@ class Decision:
     boundary: str | None = None  # 'delete' or 'merge' for class boundary; action stays allow.
     kind: str | None = None  # category merged-delete only: 'local' or 'remote' (SPEC 5.14).
     branch: str | None = None  # category merged-delete only: the one branch the command deletes.
+    soften: str | None = None  # 'warn' or 'allow': how far normal mode may relax this deny; protect mode keeps it.
+    workflow: str | None = None  # `gh workflow run` only: the workflow name or file, when the command names one.
 
     @property
     def klass(self):
@@ -83,7 +87,16 @@ class Decision:
 
 
 def _deny(reason, category='destructiveGit'):
+    _BUDGET['hard'] += 1
     return Decision('deny', reason, category)
+
+
+def _soft(reason, kind, category='destructiveGit'):
+    """A deny that normal mode may relax (rules `soften`). The call counts, so classify_command can tell a command
+    whose every deny is soft from one that also holds a hard deny."""
+    level = _SOFTEN[kind]
+    _BUDGET['warn'] = _BUDGET['warn'] or level == 'warn'
+    return Decision('deny', reason, category, soften=level)
 
 
 def _split(command):
@@ -222,6 +235,7 @@ def _strip_heredocs(command):
     tick = False  # Inside a backtick substitution.
     parens, no_start = [], -1  # Open `(` as (kind, index); the index where a `#` cannot start a word.
     cases, start = [], True  # Open `case` as [state, len(parens)]; at a command position (SPEC A5, O27).
+    arith = 0  # The index where the arithmetic span now open ends: `<<` before it is a shift.
     while i < n:
         char = command[i]
         if escaped:
@@ -240,6 +254,8 @@ def _strip_heredocs(command):
             quote, start = char, False
         elif char == '(':
             top = cases[-1] if cases and cases[-1][1] == len(parens) else None
+            if i >= arith and command.startswith('((', i):
+                arith = max(arith, _arith_end(command, i))
             if not (top and top[0] == 'pattern'):  # In a case pattern the opening parenthesis is optional.
                 sub = i and (command[i - 1] in '$<>=' or (command[i - 1] == '(' and parens and parens[-1] == ('sub', i - 1)))
                 parens.append(('sub' if sub else 'plain', i))  # `=(` opens an array assignment, inside a word.
@@ -273,7 +289,7 @@ def _strip_heredocs(command):
             out.append(_COMMENT_BLANK.sub(' ', command[i:end]))
             i = end
             continue
-        elif char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<'):
+        elif char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<') and i >= arith:
             match = _HEREDOC.match(command, i)
             # An all-digit word is shell arithmetic (1 << 2), not a heredoc.
             if match and not match.group(2).isdigit():
@@ -648,7 +664,7 @@ def _git_rules(words):
     flags = [x for x in options if x.startswith('-')]
     short = ''.join(x[1:] for x in flags if not x.startswith('--'))
     if verb == 'stash':
-        return _deny('Git stash shares state across worktrees; commit the work on a branch instead', 'stash')
+        return _soft('Git stash shares state across worktrees; commit the work on a branch instead', 'stash', 'stash')
     if verb == 'update-ref' and _raw_ref_delete(args):
         return _deny('Raw ref deletion is not allowed; use git branch -d')
     if verb == 'reset' and any(x == '--hard' or x.startswith('--hard=') for x in flags):
@@ -671,14 +687,14 @@ def _git_rules(words):
             return _deny('Wholesale restore discards work; restore named paths with `git restore <path>`')
     if verb == 'add' and (any(x in flags for x in _GIT['wholesale_add_flags']) or 'A' in short or 'u' in short or
                           any(x in _GIT['wholesale_add_pathspecs'] for x in args)):
-        return _deny('Stage explicit paths only: `git add <path> ...`', 'wholesaleStage')
+        return _soft('Stage explicit paths only: `git add <path> ...`', 'wholesaleAdd', 'wholesaleStage')
     if verb == 'commit':
         # A message beginning with a dash is still a message.
         opts = [x for x in options if not (x.startswith(('--message=', '--file=')) or x.startswith('-m'))]
         if '--all' in opts or any(x.startswith('-') and not x.startswith('--') and 'a' in x[1:] for x in opts):
-            return _deny('Commit explicit staged paths only: stage with `git add <path>`, then `git commit`', 'wholesaleStage')
+            return _soft('Commit explicit staged paths only: stage with `git add <path>`, then `git commit`', 'commitAll', 'wholesaleStage')
         if any(x in _GIT['commit_guarded_flags'] for x in opts):
-            return _deny('Amend rewrites history; make a new commit instead')
+            return _soft('Amend rewrites history; make a new commit instead', 'amend')
     if verb == 'push':
         if any(x.startswith('--force') or x == '--mirror' for x in flags) or 'f' in short or any(x.startswith('+') for x in args):
             return _deny('Force push rewrites remote history; push normally or ask the owner')
@@ -687,12 +703,17 @@ def _git_rules(words):
         if (('--delete' in flags or 'd' in short) and not dry_run and '--' not in args and
                 (merged := _merged_delete(verb, options, flags, short, words, not plain, args))):
             return merged
-        if len(positional) > 2 or any(x in flags for x in _GIT['push_multi_flags']) or 'd' in short:
+        multi = [x for x in flags if x in _GIT['push_multi_flags']] + (['--delete'] if 'd' in short else [])
+        if len(positional) > 2 or multi:
+            if len(positional) <= 2 and all(x in _GIT['push_soften_flags'] for x in multi):
+                return _soft('Push needs one explicit remote and refspec', 'pushMulti', 'release')
             return _deny('Push needs one explicit remote and refspec', 'release')
         remote, target = (positional + [None, None])[:2]
         source = target.split(':', 1)[0] if target else None
         if target:
             if target.startswith(':') or '*' in target or target.count(':') > 1:
+                if target.startswith(':') and '*' not in target and target.count(':') == 1:
+                    return _soft('Push needs one non-deleting refspec', 'pushRefspec', 'release')
                 return _deny('Push needs one non-deleting refspec', 'release')
             target = target.split(':')[-1].removeprefix('refs/heads/')
         if changed_repo:
@@ -724,6 +745,174 @@ def _is_release(name, words):
             (name in _RELEASE['package_tools'] and _RELEASE['package_verb'] in words[1:]) or
             (any(verb in words[1:] for verb in _RELEASE['tool_verbs'].get(name, ()))) or
             (name in _RELEASE['deploy_tools'] and any(x in words[1:] for x in _RELEASE['deploy_words'])))
+
+
+_GH_API_VALUE_LONG = frozenset(['--method', '--header', '--jq', '--template', '--preview', '--field', '--raw-field', '--input',
+                                '--cache', '--hostname'])
+_GH_API_FIELD_LONG = frozenset(['--field', '--raw-field', '--input'])
+_GH_API_VALUE_SHORT = 'XHqtpfF'
+_GH_URL = re.compile(r'https?://[^/]+/')
+
+
+def _gh_api_parse(args):
+    """(method, has_field, endpoint) of the words after `gh api`. method is upper case or None; endpoint is the first
+    operand or None. A value flag with no value ends the parse with endpoint None (doubt reads as a write)."""
+    method, field, endpoint, i, rest = None, False, None, 0, False
+    while i < len(args):
+        word = args[i]
+        i += 1
+        if rest or not word.startswith('-') or word == '-':
+            endpoint = endpoint if endpoint is not None else word
+        elif word == '--':
+            rest = True
+        elif word.startswith('--'):
+            name, eq, value = word.partition('=')
+            if name in _GH_API_VALUE_LONG:
+                if not eq:
+                    if i >= len(args):
+                        return method, field, None
+                    value = args[i]
+                    i += 1
+                if name == '--method':
+                    method = value.upper()
+                field = field or name in _GH_API_FIELD_LONG
+        else:
+            for k, char in enumerate(word[1:], 1):
+                if char in _GH_API_VALUE_SHORT:
+                    value = word[k + 1:]
+                    if not value:
+                        if i >= len(args):
+                            return method, field, None
+                        value = args[i]
+                        i += 1
+                    if char == 'X':
+                        method = value.upper()
+                    field = field or char in 'fF'
+                    break
+    return method, field, endpoint
+
+
+def _gh_api_path(endpoint):
+    """The endpoint path without scheme, host, leading slash and query string, and whether it is plain: no empty,
+    `.` or `..` segment and no percent escape, so the segments compare as written."""
+    url = _GH_URL.match(endpoint)
+    path = endpoint[url.end():] if url else endpoint
+    path = path.split('?', 1)[0].split('#', 1)[0].lstrip('/')
+    parts = path.split('/')
+    return path, '%' not in path and not any(x in ('', '.', '..') for x in parts)
+
+
+def _path_matches(pattern, path):
+    """`*` is one path segment; a trailing `**` is any rest, none included."""
+    want, have = pattern.split('/'), path.split('/')
+    if want[-1] == '**':
+        return len(have) >= len(want) - 1 and all(a in ('*', b) for a, b in zip(want[:-1], have))
+    return len(want) == len(have) and all(a in ('*', b) for a, b in zip(want, have))
+
+
+def _gh_api(words):
+    """A `gh api` call that writes is a release: providerrelease on a write endpoint, apiwrite elsewhere, and no
+    release on the short allow list (pull request, comment and review writes). `gh api graphql` has its own rule."""
+    method, field, endpoint = _gh_api_parse(words[2:])
+    if endpoint == 'graphql' or not (method not in (None, 'GET') or (method is None and field)):
+        return None
+    path, plain = _gh_api_path(endpoint) if endpoint is not None else ('', False)
+    argv = tuple(words)
+    if any(_path_matches(x, path) for x in _RELEASE['gh_api_write_endpoints']):
+        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv)
+    if plain and any(m == (method or 'POST') and _path_matches(p, path) for m, p in _RELEASE['gh_api_autonomy_allow']):
+        return None
+    return Decision('release', 'A gh api write outside the pull request and comment calls needs the owner', 'apiwrite', argv=argv)
+
+
+def _gh_operands(args, value_flags):
+    """The operands of a gh command: words that are not flags or flag values."""
+    out, i = [], 0
+    while i < len(args):
+        word = args[i]
+        i += 1
+        if word.startswith('-') and word != '-':
+            i += word in value_flags
+        else:
+            out.append(word)
+    return out
+
+
+_GH_CONFIG_REASON = 'gh aliases and extensions add commands the guard cannot read; the owner sets them'
+
+
+_GH_READING_CAP = 64
+
+
+def _gh_readings(words):
+    """Every way gh can read the words: the first two words that are not flags, then the flags and values skipped on the
+    way, then the rest. A flag without `=` may take the next word as its value, so both readings are listed (-R and
+    --repo always do). `gh api` keeps its argument order. None past the cap."""
+    out = []
+
+    def walk(i, picked, skipped):
+        if len(out) > _GH_READING_CAP:
+            return
+        if i == len(words) or len(picked) == 2 or picked == ['api']:
+            tail = words[i:]
+            out.append(['gh'] + picked + (tail + skipped if picked == ['api'] else skipped + tail))
+        elif words[i].startswith('-') and words[i] != '-':
+            if words[i] in ('-R', '--repo'):
+                walk(min(i + 2, len(words)), picked, skipped + words[i:i + 2])
+                return
+            walk(i + 1, picked, skipped + [words[i]])
+            if '=' not in words[i] and i + 1 < len(words):
+                walk(i + 2, picked, skipped + words[i:i + 2])
+        else:
+            walk(i + 1, picked + [words[i]], skipped)
+
+    walk(1, [], [])
+    return out if len(out) <= _GH_READING_CAP else None
+
+
+def _gh_reading_decision(words, argv):
+    if _is_release('gh', words):
+        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv)
+    if (found := _gh(words)) is not None:
+        return replace(found, argv=argv) if found.argv else found
+    if words[1:3] in _BOUNDARY['gh']:
+        return _boundary('delete', 'Deletion is a boundary action')
+    return Decision()
+
+
+def _gh_decision(words):
+    """The strictest verdict over the readings of _gh_readings. A reading whose first word is no gh command counts only
+    when no reading starts with one."""
+    argv = tuple(words)
+    readings = _gh_readings(words)
+    if readings is None:
+        return Decision('release', 'Too many gh flags before the subcommand to read; the owner runs it', 'ghcustom', argv=argv)
+    known = any(r[1:2] and r[1] in _GH_BUILTIN for r in readings)
+    kept = [r for r in readings if not (known and r[1:2] and r[1] not in _GH_BUILTIN)]
+    return _first_by_severity([_gh_reading_decision(r, argv) for r in kept], Decision())
+
+
+def _gh(words):
+    """Rules for gh beyond the pair table: api writes, a pull request base change, workflow runs, aliases and
+    extensions, and any command gh does not ship. None when none applies."""
+    sub = words[1] if len(words) > 1 else ''
+    if not sub or sub.startswith('-'):
+        return None
+    argv = tuple(words)
+    if sub == 'api':
+        return _gh_api(words)
+    if sub == 'pr' and words[2:3] == ['edit'] and any(x in ('--base', '-B') or x.startswith('--base=') or
+                                                      (x.startswith('-B') and not x.startswith('--')) for x in words[3:]):
+        return Decision('release', 'Changing a pull request base can land work on another branch', 'prbase', argv=argv)
+    if sub == 'workflow' and words[2:3] == ['run']:
+        names = _gh_operands(words[3:], ('-f', '-F', '-r', '-R', '--field', '--raw-field', '--ref', '--repo', '--json'))
+        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv,
+                        workflow=names[0] if names else None)
+    if sub in ('extension', 'extensions', 'ext') or (sub == 'alias' and words[2:3] in (['set'], ['import'], ['delete'])):
+        return _boundary('config', _GH_CONFIG_REASON)
+    if sub not in _GH_BUILTIN:
+        return Decision('release', 'A gh command that is not built in can run anything; the owner runs it', 'ghcustom', argv=argv)
+    return None
 
 
 def _find_exec(words, depth):
@@ -773,11 +962,13 @@ def _classify_segment(words, depth):
         return _scan_substitutions(text, depth) or decision
     if name == 'git':
         return _git(words)
+    argv = tuple(words)
+    if name == 'gh':
+        return _gh_decision(words)
     if _is_release(name, words):
-        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=tuple(words))
+        return Decision('release', 'Provider release needs structured authorization', 'providerrelease', argv=argv)
     base = Decision()
-    if (name in _BOUNDARY['delete_commands'] or (name == 'find' and _BOUNDARY['find_delete_flag'] in words[1:]) or
-            (name == 'gh' and words[1:3] in _BOUNDARY['gh'])):
+    if name in _BOUNDARY['delete_commands'] or (name == 'find' and _BOUNDARY['find_delete_flag'] in words[1:]):
         base = _boundary('delete', 'Deletion is a boundary action')
     if name == 'find':
         return _first_by_severity(_find_exec(words, depth), base)
@@ -1044,6 +1235,14 @@ def _dollar_decode(text):
             escaped = False
         elif char == '\\' and quote != "'":
             escaped = True
+        elif quote == '"' and text.startswith('$(', i):
+            end = _balanced_end(text, i + 2)
+            if end < 0:
+                out.append(text[i:])
+                break
+            out.append(text[i:end])
+            i = end
+            continue
         elif quote:
             if char == quote:
                 quote = None
@@ -1102,6 +1301,7 @@ def _balanced_end(text, i):
     cases = []  # One [state, depth] per open `case`; state is 'head', 'pattern' or 'body'.
     pending = []  # Heredoc (dash, delimiter) pairs whose bodies start after the next newline (SPEC A5, O20).
     start = True  # At a command position, where `case` is a keyword.
+    arith = 0  # The index where the arithmetic span now open ends: `<<` before it is a shift.
     while i < n:
         char = text[i]
         if char == '\\' and quote != "'":
@@ -1128,6 +1328,8 @@ def _balanced_end(text, i):
         elif char in ' \t':
             pass
         elif char == '(':
+            if i >= arith and text.startswith('((', i):
+                arith = max(arith, _arith_end(text, i))
             if not (top and top[0] == 'pattern'):  # In a case pattern the opening parenthesis is optional.
                 depth += 1
             start = True
@@ -1140,7 +1342,7 @@ def _balanced_end(text, i):
                     return i + 1
             start = True
         elif char == '<' and text.startswith('<<', i) and not text.startswith('<<<', i) and (
-                i == 0 or text[i - 1] != '<') and _HEREDOC.match(text, i):
+                i == 0 or text[i - 1] != '<') and i >= arith and _HEREDOC.match(text, i):
             found = _HEREDOC.match(text, i)
             pending.append((bool(found.group(1)), found.group(2).strip('"\'\\')))
             i = found.end()
@@ -1265,6 +1467,13 @@ def _scan_ops(text):
                 parens.pop()
     herestrings.extend((before + ' ' + text[end:], word) for before, word, end in pending)
     return herestrings, procsubs
+
+
+def _arith_end(text, i):
+    """Index just past the `))` of the arithmetic that opens with the `((` at text[i], else -1. `<<` inside it is a
+    shift, never a heredoc. Like _is_arithmetic: `((cmd) )` is a group, and a span never closed runs to the end."""
+    inner = _balanced_end(text, i + 2)
+    return len(text) if inner < 0 else inner + 1 if text[inner:inner + 1] == ')' else -1
 
 
 def _is_arithmetic(text, i):
@@ -1820,8 +2029,27 @@ def _stream_items(text, ops, depth):
     return items
 
 
-def _heredoc_items(docs, pipelines, depth):
-    """SPEC A5 rules (1) to (5): extra (decision, argv, counts) items for each heredoc body."""
+_DATA_CONSUMERS = {'cat', 'tee', 'gh', 'wc', 'head', 'tail', 'sort', 'uniq', 'cut', 'tr', 'base64', 'diff', 'grep'}
+_DATA_GIT_VERBS = {'commit', 'tag', 'notes', 'apply', 'am', 'hash-object', 'interpret-trailers'}
+
+
+def _data_consumer(segment):
+    """SPEC A5 rule (5): the segment is a command that only stores or shows its stdin."""
+    try:
+        words = _command_words(segment)
+    except ValueError:
+        return False
+    if not words:
+        return False
+    name = PurePosixPath(words[0]).name
+    if name == 'git':
+        return len(words) > 1 and words[1] in _DATA_GIT_VERBS
+    return name in _DATA_CONSUMERS
+
+
+def _heredoc_items(docs, pipelines, depth, process_sub=False):
+    """SPEC A5 rules (1) to (5): extra (decision, argv, counts) items for each heredoc body. process_sub: the
+    command has `<(` or `>(`, so no heredoc counts as data."""
     items = []
     found = {}  # heredoc index -> (pipeline, segment index) of its first marker: one pass, not one scan per heredoc
     for pipeline in pipelines:
@@ -1829,9 +2057,10 @@ def _heredoc_items(docs, pipelines, depth):
             for mark in _MARK_RE.finditer(segment):
                 found.setdefault(mark.group()[len('<<' + _MARK):-len(_MARK)], (pipeline, i))
     for index, (body, quoted) in enumerate(docs):
-        modes, argv = set(), ()
+        modes, argv, data = set(), (), False
         if str(index) in found:
             pipeline, where = found[str(index)]
+            data = not process_sub and all(_data_consumer(segment) for segment in pipeline[where:])
             argv = tuple(_MARK_RE.sub('<<HEREDOC', word) for word in _shlex_words(pipeline[where]))
             # Rules (1) to (3): the consumer and every later command of its pipeline.
             modes = {_consumer_mode(segment) for segment in pipeline[where:]}
@@ -1843,7 +2072,7 @@ def _heredoc_items(docs, pipelines, depth):
                 decision = classify_command(content, depth + 1)
                 if decision.klass != 'allow' and decision.category != 'malformed':
                     items.append((decision, argv, True))
-        decision = _scan_lines(body, depth)  # Rule (5)
+        decision = Decision() if data else _scan_lines(body, depth)  # Rule (5), except for data consumers
         if decision.action == 'deny':
             items.append((decision, argv, False))
     return items
@@ -1852,7 +2081,7 @@ def _heredoc_items(docs, pipelines, depth):
 _FOLD_LEVELS = 16  # Substitution nesting levels folded (O33); a substitution nested deeper denies (O34).
 _SUFFIX_CAP = 32  # Command readings after pure-substitution words in one segment (FX4); more denies.
 _READING_BUDGET = 1024  # Extra readings (O33 removed, wrapper twin, FX4 suffix) per call, nested shells included (FX6).
-_BUDGET = {'left': _READING_BUDGET}
+_BUDGET = {'left': _READING_BUDGET, 'hard': 0, 'warn': False}  # hard and warn: denies built in this call (soften)
 _RANK = {'deny': 4, 'release-multi': 3, 'release': 2, 'boundary': 1}
 
 
@@ -1909,9 +2138,9 @@ def _fold(text, subs):
             out.append(text[i:i + 2])
             i += 2
             continue
-        if quote:
+        if quote == "'" or (quote == '"' and not text.startswith('$(', i)):
             quote = None if char == quote else quote
-        elif char in "\"'":
+        elif quote is None and char in "\"'":
             quote = char
         elif text.startswith('$(', i):
             end = _balanced_end(text, i + 2)
@@ -1919,7 +2148,8 @@ def _fold(text, subs):
                 out.append(text[i:])
                 break
             out.append(_SMARK + str(len(subs)) + _SMARK)
-            subs.append(text[i + 2:end - 1])
+            inner = text[i + 2:end - 1]
+            subs.append(_dollar_decode(inner) if quote == '"' else inner)
             i = end
             continue
         out.append(char)
@@ -2009,12 +2239,94 @@ def runs_test_suite(command, _depth=0):
 def classify_command(command: str, _depth=0) -> Decision:
     if _depth:
         return _classify_command(command, _depth)
-    _BUDGET['left'] = _READING_BUDGET
+    _BUDGET.update(left=_READING_BUDGET, hard=0, warn=False)
     decision = _classify_command(command, 0)
-    return _deny('Malformed shell quoting', 'malformed') if _BUDGET['left'] < 0 else decision
+    if _BUDGET['left'] < 0:
+        return _deny('Malformed shell quoting', 'malformed')
+    if decision.soften and (_BUDGET['hard'] or _BUDGET['warn']):
+        # Every deny built while reading counts, a discarded one too: doubt keeps the protect verdict (fail closed).
+        return replace(decision, soften=None if _BUDGET['hard'] else 'warn')
+    return decision
 
 
-def _classify_command(command, _depth):
+def _join_continuations(command, literal=True, heredocs=False):
+    """Remove each backslash-newline pair outside single quotes, as bash does before it reads words. Inside single
+    quotes the pair stays; a comment runs to its newline untouched. With literal=False single quotes are not
+    tracked at all (a heredoc body or `$'...'` may hide a quote from this scan), so every pair is removed.
+    With heredocs=True heredoc bodies are read as bash reads them (FR5): a quoted-delimiter body keeps its pairs,
+    an unquoted one loses them and its delimiter line is matched after that. None when the scan cannot decide."""
+    out, quote, i, n = [], None, 0, len(command)
+    pending = []  # (word, strip tabs, quoted) of each heredoc opened on the current line.
+    arith = 0  # The index where the arithmetic span now open ends: `<<` before it is a shift.
+    while i < n:
+        char = command[i]
+        if char == '\\' and quote != "'":
+            if command.startswith('\n', i + 1):
+                i += 2
+                continue
+            out.append(command[i:i + 2])
+            i += 2
+            continue
+        if quote:
+            quote = None if char == quote else quote
+        elif char in "\"'":
+            quote = char if literal else '"' if char == '"' else None
+        elif char == '#' and (not out or out[-1][-1] in _WORD_START):
+            end = command.find('\n', i)
+            end = n if end < 0 else end
+            out.append(command[i:end])
+            i = end
+            continue
+        elif char == '(' and heredocs and i >= arith and command.startswith('((', i):
+            arith = max(arith, _arith_end(command, i))
+        elif heredocs and char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<') and i >= arith:
+            match = _HEREDOC.match(command, i)
+            if match and not match.group(2).isdigit():
+                word = match.group(2)
+                quoted = word[0] in '\'"\\'
+                pending.append((word[1:-1] if word[0] in '\'"' else word.removeprefix('\\'), match.group(1) == '-', quoted))
+                out.append(match.group())
+                i = match.end()
+                continue
+        elif char == '\n' and pending:
+            out.append(char)
+            i += 1
+            for word, strip, quoted in pending:
+                while True:
+                    if i >= n:
+                        return None  # The body never ends.
+                    end = command.find('\n', i)
+                    end = n if end < 0 else end
+                    line = command[i:end]
+                    while not quoted and end < n and (len(line) - len(line.rstrip('\\'))) % 2:
+                        nxt = command.find('\n', end + 1)  # Bash joins the pair in an unquoted body.
+                        nxt = n if nxt < 0 else nxt
+                        line, end = line[:-1] + command[end + 1:nxt], nxt
+                    i = end + 1
+                    out.append(line + '\n')
+                    if (line.lstrip('\t') if strip else line) == word:
+                        break
+            pending = []
+            continue
+        out.append(char)
+        i += 1
+    if heredocs and (quote or pending):
+        return None  # Open quote or a heredoc with no body: undecided.
+    return ''.join(out)
+
+
+def _classify_command(command, _depth, _joined=False):
+    if not _joined and isinstance(command, str) and '\\\n' in command and _RMARK not in command and _SMARK not in command:
+        texts = [_join_continuations(command)]
+        if '<<' in command or "$'" in command:
+            texts.append(_join_continuations(command, False))
+        if '<<' in command:  # A quoted-delimiter heredoc body keeps its pairs, so the unjoined text is read too.
+            texts.append(command)
+            texts.append(_join_continuations(command, heredocs=True))  # The bash reading (FR5); None if undecided.
+        texts = [text for text in dict.fromkeys(texts) if text and text.strip()]
+        if texts:
+            decisions = [_classify_command(text, _depth, True) for text in texts]
+            return max(decisions, key=lambda d: _RANK.get(d.klass, 0))
     if _BUDGET['left'] < 0:
         return _deny('Malformed shell quoting', 'malformed')  # The reading budget is spent (FX6).
     if isinstance(command, str) and len(command) > 131072:
@@ -2066,7 +2378,7 @@ def _classify_command(command, _depth):
                 decision = found if decision is None else _stricter(decision, found)
             if decision is not None:
                 items.append((decision, original, True))
-        items.extend(_heredoc_items(docs, _pipelines(text), _depth))
+        items.extend(_heredoc_items(docs, _pipelines(text), _depth, '<(' in text or '>(' in text))
         items.extend(_stream_items(text, _scan_ops(text), _depth))
         raw_hit = _raw_scan(text, _depth) or _backtick_scan(text, _depth)
         if raw_hit:

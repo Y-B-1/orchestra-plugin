@@ -20,7 +20,7 @@
             "timeout": 30
           }
         ],
-        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|Agent|Task"
+        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|Agent|Task|CronCreate|ScheduleWakeup|RemoteTrigger|SendMessage"
       }
     ],
     "SubagentStart": [
@@ -41,6 +41,17 @@
           {
             "type": "command",
             "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.sh\" Stop --harness claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.sh\" UserPromptSubmit --harness claude",
             "timeout": 10
           }
         ]

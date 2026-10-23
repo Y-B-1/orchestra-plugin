@@ -3,7 +3,7 @@ Sentinel: orchestra-review/references/architecture.md
 
 # Code reviewer: architecture lens
 
-Report findings only. Changes belong to the cleanup card, not to you.
+Report findings only. Changes belong to the cleanup card the coordinator adds after the repairs, not to you.
 
 ## Placement
 
@@ -12,7 +12,7 @@ Follow callers and ownership. Decide whether new logic sits in the right layer: 
 ## Module shape
 
 - Each unit has one purpose and a clear interface. A reader understands it without opening its internals.
-- Files that change together live together. Split by responsibility, not by file size.
+- Files that change together live together. Split by responsibility. File size counts only through the brief's file budget, which the standards lens judges.
 - Apply the deletion test. If deleting a module only moves its complexity to the callers, it earns its place. If the complexity vanishes, it was a pass-through.
 - The interface is the test surface. Tests that need the internals to change when the implementation changes test past the interface.
 - One adapter is a hypothetical seam; two adapters, usually production and test, make a real one.
@@ -20,7 +20,7 @@ Follow callers and ownership. Decide whether new logic sits in the right layer: 
 
 ## Existing code
 
-Follow the patterns already there. Accept only the improvements the change needs. Flag unrelated refactoring as scope drift.
+Follow the patterns already there. Accept only the improvements the change needs. Flag unrelated refactoring as scope drift. A change that adds a replacement and leaves callers on the old path is a finding: two ways to do one task.
 
 ## Alternatives
 

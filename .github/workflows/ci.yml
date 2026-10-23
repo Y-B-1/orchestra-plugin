@@ -1,11 +1,10 @@
-# Checks the Orchestra plugin on every pull request and on main. Runs in this repository only;
+# Checks the Orchestra plugin on Linux, macOS and Windows. Runs only when started by hand (Actions, CI,
+# Run workflow): every check runs locally first with scripts/check.sh. Runs in this repository only;
 # it is not part of the installed plugin (plugins/orchestra).
 name: CI
 
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read

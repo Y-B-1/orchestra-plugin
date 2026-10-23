@@ -14,7 +14,7 @@ Run the pre-PR review once, on the integrated, frozen PR candidate. It is the on
    - standards (standards, cleanup, with the cleanliness checklist), when the run's diff exceeds policy `standards_min_lines` changed lines.
 
    The changed set is the diff from the run's base commit to the working tree, untracked files included. A policy `required_review_categories` overrides the derived set. What each lens checks lives in the orchestra-review skill.
-3. Each brief carries the held log, the gate receipts and `## Known findings`. A lens attributes every blocking finding in `task_findings` to the chain tip whose change introduced it, and either blocks or clears every held tip (`cleared`, with a reason).
+3. Each brief carries the held log, the current gate receipt ids, `## Known findings`, and the project's review-instruction file when one exists, read from the base commit. The standards or combined brief adds `## Over file budget`: the `file_budget.grew` and `file_budget.waived` lists from `prepr`, or `none`. A lens attributes every blocking finding in `task_findings` to the chain tip whose change introduced it, and either blocks or clears every held tip (`cleared`, with a reason).
 
 A defect no card's change introduced is out of scope. So is a defect from a card that is not a builder (operator, designer-planner, an inline edit): it has no chain tip, so the lens raises it in `out_of_scope` naming that card. Triage each item with `orchestra.py finding add --kind out_of_scope --disposition inline|card|brief`. A non-builder cause goes to inline or card, never brief alone. Out-of-scope items never change a verdict, and completion needs each triaged.
 
@@ -24,7 +24,7 @@ Accept first: the lens cards, investigator cards and every acceptable chain. A h
 
 Add one Opus repair card per chain with a current attributed finding, then one fix re-review of the fix diff (references/repair-rounds.md). After a CLEAN fix re-review, the pre-PR review stays current when every file changed since it belongs to a repair the fix re-review covered. Otherwise re-gate and review again. A BLOCKED chain is held for the owner.
 
-Notes never start a repair. Add every lens card, let all report, then record: a receipt recorded before a later card of its set is added is stale for coverage.
+Notes never start a repair. Confirmed standards or cleanliness findings that are not defects go to one cleanup card (builder cleanup mode) after the repairs, with the finding ids in its brief. Add every lens card, let all report, then record: a receipt recorded before a later card of its set is added is stale for coverage.
 
 ## Specialists
 
