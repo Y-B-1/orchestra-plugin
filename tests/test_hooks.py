@@ -1316,6 +1316,34 @@ class MergedDeleteHookTest(unittest.TestCase):
         self.run_hook('git branch -D drv')
         self.assertFalse(marker.exists())
 
+    def gitlink_branch(self, gitmodules):
+        """sub only bumps gitlink m to a commit that is not on main; submodule ignore config would hide the bump."""
+        git(self.repo, 'update-index', '--add', '--cacheinfo', '160000,%s,m' % git(self.repo, 'rev-parse', 'HEAD'))
+        self.commit('.gitmodules', '[submodule "m"]\n\tpath = m\n\turl = ./m\n')
+        git(self.repo, 'checkout', '-q', '-b', 'sub')
+        other = git(self.repo, 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'not on main')
+        git(self.repo, 'update-index', '--cacheinfo', '160000,%s,m' % other)
+        git(self.repo, 'commit', '-qm', 'bump m')
+        git(self.repo, 'checkout', '-q', 'main')
+        self.commit('other.txt', 'other\n')
+        git(self.repo, 'push', '-q', 'origin', 'main')
+        if gitmodules:
+            (self.repo / '.gitmodules').write_text('[submodule "m"]\n\tpath = m\n\tignore = all\n')
+        else:
+            git(self.repo, 'config', 'submodule.m.ignore', 'all')
+
+    def test_submodule_ignore_config_does_not_make_a_branch_merged(self):
+        from orchestra_core import hooks as h
+        self.gitlink_branch(gitmodules=False)
+        self.assertFalse(h._branch_merged(self.repo, 'sub', 'refs/remotes/origin/main'))
+        self.assertDenied('git branch -D sub', 'Branch sub is not merged into origin/main')
+
+    def test_worktree_gitmodules_ignore_does_not_make_a_branch_merged(self):
+        from orchestra_core import hooks as h
+        self.gitlink_branch(gitmodules=True)
+        self.assertFalse(h._branch_merged(self.repo, 'sub', 'refs/remotes/origin/main'))
+        self.assertDenied('git branch -D sub', 'Branch sub is not merged into origin/main')
+
     def test_merge_proof_fails_closed_on_a_git_error(self):
         from orchestra_core import hooks as h
         self.side('x', 'x.txt', 'x\n')

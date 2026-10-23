@@ -942,13 +942,14 @@ def _git_raw(repo, *args, timeout=10):
 
 def _changes_on_default(repo, tip, default):
     """True when every path tip changed since its merge base with default holds the same entry (mode and object, or
-    absent) in default. Plain tree plumbing only: no merge driver, diff driver, textconv or external command runs.
+    absent) in default. Plain tree plumbing only: no merge driver, diff driver, textconv or external command runs, and
+    submodule ignore config cannot hide a gitlink change.
     A branch that changed nothing loses nothing, so it counts. Any git error or unparsable output is no proof."""
     code, base = _git_out(repo, 'merge-base', default, tip)
     if code != 0 or not re.fullmatch(r'[0-9a-f]{40}|[0-9a-f]{64}', base):
         return False
-    code, out = _git_raw(repo, 'diff-tree', '-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv', '--name-only',
-                         base, tip, timeout=30)
+    code, out = _git_raw(repo, 'diff-tree', '-r', '-z', '--no-renames', '--no-ext-diff', '--no-textconv',
+                         '--ignore-submodules=none', '--name-only', base, tip, timeout=30)
     if code != 0 or (out and not out.endswith(b'\0')):
         return False
     paths = out.split(b'\0')[:-1]
@@ -957,7 +958,7 @@ def _changes_on_default(repo, tip, default):
     if any(not path for path in paths):
         return False
     code, out = _git_raw(repo, '--literal-pathspecs', 'diff-tree', '-r', '-z', '--no-renames', '--no-ext-diff',
-                         '--no-textconv', default, tip, '--', *paths, timeout=30)
+                         '--no-textconv', '--ignore-submodules=none', default, tip, '--', *paths, timeout=30)
     return code == 0 and out == b''
 
 
