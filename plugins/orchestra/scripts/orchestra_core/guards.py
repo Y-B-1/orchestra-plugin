@@ -2236,6 +2236,8 @@ def _classify_command(command, _depth, _joined=False):
         texts = [_join_continuations(command)]
         if '<<' in command or "$'" in command:
             texts.append(_join_continuations(command, False))
+        if '<<' in command:  # A quoted-delimiter heredoc body keeps its pairs, so the unjoined text is read too.
+            texts.append(command)
         texts = [text for text in dict.fromkeys(texts) if text.strip()]
         if texts:
             decisions = [_classify_command(text, _depth, True) for text in texts]

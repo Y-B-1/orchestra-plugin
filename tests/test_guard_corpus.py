@@ -404,6 +404,20 @@ class SoftenAndGhRulesTest(unittest.TestCase):
                     result = handle_event('PreToolUse', payload, mode='protect', armed=True, autonomy=True)
                     self.assertEqual(result.output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
 
+    def test_quoted_heredoc_keeps_continuation(self):
+        # Bash keeps a backslash-newline inside a quoted-delimiter heredoc body, so the delimiter line closes it.
+        nl, bs = chr(10), chr(92)
+        for opener in ("<<'EOF'", '<<"EOF"', '<<' + bs + 'EOF'):
+            for command, klass in (('git reset --hard', 'deny'), ('gh release create v1', 'release'),
+                                   ('git push --force origin main', 'deny')):
+                # Bash runs `command`, then the stray `EOF` line; the body without its continuation reads the same.
+                text = 'cat ' + opener + nl + 'note ' + bs + nl + 'EOF' + nl + command + nl + 'EOF'
+                with self.subTest(opener=opener, command=command):
+                    got, want = classify_command(text), classify_command(text.replace(bs + nl, nl))
+                    self.assertEqual(classify_command(command).klass, klass)
+                    self.assertTrue(want.klass.startswith(klass), want.klass)
+                    self.assertEqual((got.klass, got.category, got.boundary), (want.klass, want.category, want.boundary))
+
     def test_gh_api_write_forms(self):
         for command in ('gh api repos/o/r -f default_branch=x', 'gh api repos/o/r -F a=b', 'gh api repos/o/r --field a=b',
                         'gh api repos/o/r --raw-field a=b', 'gh api repos/o/r -fa=b', 'gh api repos/o/r --input=x.json',
