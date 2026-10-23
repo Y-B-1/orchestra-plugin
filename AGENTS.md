@@ -8,7 +8,7 @@ Use Python 3.11+ standard library and Git. Test invalid inputs, stale evidence, 
 
 Commit each working iteration with explicit paths. Never stage wholesale, stash, force push, reset hard or remove unpreserved work. The only public target is this clean package repository. Keep feedback concise; detailed evidence belongs in docs/BUILD-LEDGER.md.
 
-Guard modes: `normal` (the default policy `guard_mode`) warns or allows routine git work; `protect`, and an autonomous run (active, or stopped with its report kept), are strict. An autonomous run pushes its own branches and opens, reviews and approves PRs. It never merges to the default branch, deletes tags or releases until the owner types `approved` in the session, which records the receipt that lets the printed merges run. Details: `docs/hooks.md`.
+Guard modes: `minimal` (the default policy `guard_mode`) leaves every ask-or-allow decision to Claude Code's permission mode and keeps only Orchestra's own denies: the autonomy and unattended locks, engine state and runtime protection, worker role limits and the approval-forgery check. `normal` and `protect` are opt-in and stricter. No Orchestra hook ever asks. An autonomous run pushes its own branches and opens, reviews and approves PRs. It never merges to the default branch, deletes tags or releases until the owner types `approved` in the session, which records the receipt that lets the printed merges run. Details: `docs/hooks.md`.
 
 Checks run locally with `scripts/check.sh` (`--quick` for the per-edit set). `.github/workflows/ci.yml` runs only when started by hand (`workflow_dispatch`).
 

@@ -2,6 +2,16 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.13.0 — 2026-10-24
+
+Parallel waves, a live Kanban board with native task sync, and a guard that leaves permission decisions to Claude Code.
+
+- **Guard mode `minimal`, the new default:** Orchestra stops second-guessing Claude Code's permission mode. Generic command rules (destructive git, `rm`, force push, reset, branch-delete proofs, chained or malformed shell, PowerShell rules) no longer run outside autonomy. Orchestra keeps only what Claude Code cannot know: the autonomy and unattended locks, engine state and runtime protection, worker role limits and the approval-forgery check. `normal` and `protect` stay as opt-in modes.
+- **No hook ever asks:** no Orchestra hook returns an ask, so no "Allow once" prompt comes from Orchestra in any mode. Protect mode's release check now denies and names the permit or the owner's `approved`.
+- **Parallel waves checkpoint:** `orchestra.py waves` prints reservation overlaps, dependency chains, the waves and the cards startable now. `wave [--inline ID] ID ...` starts a whole wave in one step, all or nothing. `dispatch` and `inline` refuse a lone start while another disjoint card could start beside it; `--serial REASON` overrides and is logged. Policy `parallel_waves: false` turns the refusal off.
+- **Live Kanban board:** `/orchestra-board` is a live pane with the columns queued, running, reported, repairing, held, parked and accepted. It refreshes on engine commands and worker events, links each card to its agent and Workflow run, and stacks the columns on a phone. `board --view` gives the same data as JSON without a lease and without hashing files.
+- **Native task sync:** when the session exposes `TaskCreate`, `TaskUpdate` and `TaskList`, the board mirrors each card as a native task with status, owner and blocked-by, so the app's task list matches the coordinator's board.
+
 ## 2.12.0 — 2026-10-23
 
 Fixes for the friction met while using Orchestra to ship 2.11.0. None of them lets a card be accepted or a command run on less evidence than before.
