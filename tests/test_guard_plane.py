@@ -310,8 +310,11 @@ class UnattendedLockTest(PlaneFixture):
                     'rm -rf build; bash -c ' + dq + 'gh release delete v1' + dq,
                     # FR4: a gh word past words[0] (find -exec payloads) still counts.
                     'find . -exec gh release delete v1 ' + bs + ';', 'find . -execdir gh repo delete o/r --yes ' + bs + ';',
-                    'nice -n 5 find . -ok gh release delete v1 +', 'xargs -I{} gh release delete {} <<< v1')
-        for command in commands[-4:]:
+                    'nice -n 5 find . -ok gh release delete v1 +', 'xargs -I{} gh release delete {} <<< v1',
+                    # HK1: a gh flag in any position, with a quoted word so the raw-text check misses it.
+                    'gh --x=1 ' + sq + 'release' + sq + ' delete v1 -y', 'gh release --x=1 ' + sq + 'delete' + sq + ' v1',
+                    'gh --x 1 ' + sq + 'repo' + sq + ' delete o/r --yes')
+        for command in commands[8:12]:
             with self.subTest(classify=command):
                 self.assertEqual(classify_command(command).boundary, 'delete')
         for mode in ('protect', 'normal'):

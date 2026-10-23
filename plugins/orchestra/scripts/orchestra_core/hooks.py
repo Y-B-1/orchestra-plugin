@@ -18,7 +18,7 @@ import time
 
 from . import portable
 from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
-from .guards import RULES, Decision, _command_words, _gh_without_repo, _pipelines, _segments, classify_command, guard_digest, runs_test_suite
+from .guards import RULES, Decision, _command_words, _gh_readings, _pipelines, _segments, classify_command, guard_digest, runs_test_suite
 
 _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
@@ -178,8 +178,10 @@ def _provider_delete(command):
             if name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.'}:
                 return True
             for i, word in enumerate(words):
-                if PurePosixPath(word).name == 'gh' and _gh_without_repo(words[i:])[1:3] in RULES['boundary']['gh']:
-                    return True
+                if PurePosixPath(word).name == 'gh':
+                    readings = _gh_readings(words[i:])  # every flag position (HK1); None past the cap counts
+                    if readings is None or any(r[1:3] in RULES['boundary']['gh'] for r in readings):
+                        return True
     except ValueError:
         return True
     return False
