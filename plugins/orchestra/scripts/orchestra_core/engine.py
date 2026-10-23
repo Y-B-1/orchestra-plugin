@@ -59,7 +59,7 @@ STALE_REVIEW = 'Review with findings is stale; re-review'
 # Keys the engine writes on a card; a task file never supplies them (repair_of only on a builder repair card).
 ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
                     'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
-                    'final_findings', 'helper_reason', 'started_at')
+                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -697,6 +697,8 @@ class Engine:
                 raise EngineError('Invalid task held_finding')
             if 'helper_reason' in task and (not isinstance(task['helper_reason'], str) or not task['helper_reason'].strip()):
                 raise EngineError('Invalid task helper_reason')
+            if 'dispatch_policy' in task and not isinstance(task['dispatch_policy'], str):
+                raise EngineError('Invalid task dispatch_policy')
             if 'size' in task and task['size'] not in CARD_SIZES:
                 raise EngineError('Invalid task size')
             if 'self_review' in task and not cls._self_review_ok(task['self_review']):
@@ -734,6 +736,8 @@ class Engine:
             for key in ('out_of_scope', 'gate_receipts'):
                 if key in review and (not isinstance(review[key], list) or any(not isinstance(v, str) for v in review[key])):
                     raise EngineError('Invalid reviews state')
+            if 'source_sha256' in review and not isinstance(review['source_sha256'], str):
+                raise EngineError('Invalid reviews state')
             if 'entries' in review and (not isinstance(review['entries'], dict)
                                         or any(not isinstance(k, str) or not isinstance(v, str) for k, v in review['entries'].items())):
                 raise EngineError('Invalid reviews state')
@@ -1265,11 +1269,11 @@ class Engine:
                     raise EngineError('Repair needs a reported builder without an existing repair')
                 if repair_of in task['dependencies']:
                     raise EngineError('repair_of replaces an accepted dependency on the original')
-                verdicts = self._review_verdicts(state, {}, task_id=repair_of)
-                if not any(self._task_findings(r, repair_of) for r in verdicts.values()):
+                newest = self._newest_receipts(state, repair_of)  # stale findings still start a repair
+                if not any(self._task_findings(r, repair_of) for r in newest.values()):
                     raise EngineError('Repair needs earlier checked coding findings')
                 self._check_repair_ladder(state, original)
-                final_findings = self._final_findings(state, repair_of)
+                final_findings = self._final_findings(state, repair_of, stale=True)
                 if final_findings:
                     task['final_round'] = self._next_final_round(state)
                     task['final_findings'] = final_findings
@@ -1288,26 +1292,37 @@ class Engine:
     def _check_repair_ladder(self, state, original):
         """The ladder ends in hold (SPEC 5.2 item 4): a repair of a repair, or of a card the repair-diff check
         blocked, needs the chain held or a current final receipt that blames it. 2.1 chains stay valid history."""
-        if original['state'] == 'held' or self._final_blocks(state, original['id']):
+        if original['state'] == 'held' or self._final_blocks(state, original['id'], stale=True):
             return
         if original['mode'] == 'repair':
             raise EngineError('Escalation ends at one repair; hold the chain')
         if self._blocked_by_repair_check(state, original['id']):
             raise EngineError('Repair-diff check blocked %s; hold the chain' % original['id'])
 
-    def _final_receipts(self, state, task_id):
-        """The current final receipts for the card. Coverage of cards added since is not required, so a round's
-        repairs, added together, each still see the receipts that blame their chains (SPEC 5.5 item 4)."""
-        verdicts = self._review_verdicts(state, {}, task_id=task_id)
+    def _newest_receipts(self, state, task_id):
+        """The newest intact receipt per category for the card, stale ones kept: a later receipt of a category, clean or
+        not, supersedes an earlier one. Findings only block, so a stale finding can start a repair but approve nothing."""
+        newest = {}
+        for review in state['reviews'][state['tasks'][task_id].get('review_since', 0):]:
+            if task_id in review['tasks'] and self._intact(review):
+                for category in review['categories']:
+                    newest[category] = review
+        return newest
+
+    def _final_receipts(self, state, task_id, stale=False):
+        """The current final receipts for the card (with `stale`, the newest per category even when stale). Coverage of
+        cards added since is not required, so a round's repairs, added together, each still see the receipts that blame
+        their chains (SPEC 5.5 item 4)."""
+        verdicts = self._newest_receipts(state, task_id) if stale else self._review_verdicts(state, {}, task_id=task_id)
         return [r for r in {r['id']: r for r in verdicts.values()}.values() if r['final']]
 
-    def _final_blocks(self, state, task_id):
+    def _final_blocks(self, state, task_id, stale=False):
         """A current final receipt with blocking findings attributed to the card."""
-        return any(self._task_findings(r, task_id) for r in self._final_receipts(state, task_id))
+        return any(self._task_findings(r, task_id) for r in self._final_receipts(state, task_id, stale))
 
-    def _final_findings(self, state, task_id):
+    def _final_findings(self, state, task_id, stale=False):
         """The blocking findings current final receipts attribute to the card, in order and without repeats."""
-        return list(dict.fromkeys(f for r in self._final_receipts(state, task_id) for f in self._task_findings(r, task_id)))
+        return list(dict.fromkeys(f for r in self._final_receipts(state, task_id, stale) for f in self._task_findings(r, task_id)))
 
     @staticmethod
     def _next_final_round(state):
@@ -1635,7 +1650,9 @@ class Engine:
             self._lease(state, actor, lease)
             return self._ready(state)
 
-    def dispatch(self, actor, lease, task_id, worker, helper=None):
+    def dispatch(self, actor, lease, task_id, worker=None, helper=None):
+        if worker is None:
+            worker = 'orchestra-' + str(task_id)
         return self._start_assignment(actor, lease, task_id, worker, inline=False, helper=helper)
 
     def start_inline(self, actor, lease, task_id):
@@ -1684,7 +1701,7 @@ class Engine:
             self._check_contract(state['tasks'][task_id])
             token = uuid.uuid4().hex
             state['tasks'][task_id].update(state='running', worker=worker, assignment=token, lease=lease, inline=inline,
-                                           started_at=self._clock())
+                                           started_at=self._clock(), dispatch_policy=self.policy_hash)
             if isinstance(helper, str) and helper.strip():
                 state['tasks'][task_id]['helper_reason'] = helper.strip()
             return token
@@ -1715,9 +1732,23 @@ class Engine:
         checks, criteria = review.get('checks'), review.get('criteria')
         return (isinstance(checks, list) and bool(checks) and isinstance(criteria, list) and bool(criteria)
                 and all(isinstance(c, dict) and isinstance(c.get('command'), str) and c['command'].strip()
-                        and type(c.get('exit_code')) is int for c in checks)
+                        and type(c.get('exit_code')) is int and c.get('expect', 'pass') in ('pass', 'fail') for c in checks)
                 and all(isinstance(c, dict) and isinstance(c.get('criterion'), str) and c['criterion'].strip()
                         and type(c.get('met')) is bool and isinstance(c.get('evidence'), str) for c in criteria))
+
+    @staticmethod
+    def _checks_pass(checks):
+        """Every check exits 0, except a red-first check (`expect: fail`): that one exits non-zero and a later check of the
+        same command, with no `expect`, exits 0 (the failing run, then the passing one)."""
+        for i, check in enumerate(checks):
+            if check.get('expect') == 'fail':
+                if check['exit_code'] == 0 or not any(
+                        later['command'] == check['command'] and later.get('expect', 'pass') == 'pass' and later['exit_code'] == 0
+                        for later in checks[i + 1:]):
+                    return False
+            elif check['exit_code'] != 0:
+                return False
+        return True
 
     @classmethod
     def _parse_self_review(cls, report):
@@ -1736,116 +1767,177 @@ class Engine:
         if not isinstance(report, str) or not report.strip():
             raise EngineError('Empty worker report')
         with self._state() as state:
-            task = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
-            replacing = bool(task) and task['state'] == 'reported'  # a repair needs a covering review, refused below
-            if not task or task['worker'] != worker or not (task['state'] == 'running' or replacing):
-                raise EngineError('Invalid assignment')
-            if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
-                raise EngineError('A review covers this report; route a change through a repair card')
-            self._lease(state, state['session']['actor'], task['lease'])
-            lines = report.splitlines()
-            blocked = next((line[len('BLOCKED:'):].strip() for line in lines if line.startswith('BLOCKED:')), '')
-            if not blocked and lines and lines[0].startswith('STATUS: BLOCKED'):
-                blocked = lines[0][len('STATUS: BLOCKED'):].strip() or 'worker reported STATUS: BLOCKED'
-            if blocked and not replacing:
-                # A worker that cannot do the card says so instead of faking a self-review: the card is parked with the
-                # reason, and the coordinator decides (unpark with a changed card, or cancel it).
-                self._set_aside(state, task, 'blocked: ' + blocked)
-                return
-            review = self._parse_self_review(report) if task['role'] == 'builder' else None
-            if task['role'] == 'builder' and not any(
-                    line.startswith('ARTIFACT:') and line[len('ARTIFACT:'):].strip() for line in report.splitlines()):
-                raise EngineError('Builder report needs a nonempty ARTIFACT line')
-            task.update(state='reported', report=report,
-                        report_artifact=self.artifact(self._scope_of(state, [task['id']])))
-            if review is not None:
-                task['self_review'] = review
-            for ancestor in self._walk(state['tasks'], task, 'repair_of'):
-                ancestor['state'] = 'reported'
-                ancestor['report_artifact'] = self.artifact(self._scope_of(state, [ancestor['id']]))  # the repair changed its files
+            self._report_in(state, worker, token, report)
 
-    def _snapshot(self, path, kind):
+    def _report_in(self, state, worker, token, report):
+        task = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
+        replacing = bool(task) and task['state'] == 'reported'  # a repair needs a covering review, refused below
+        if not task or task['worker'] != worker or not (task['state'] == 'running' or replacing):
+            raise EngineError('Invalid assignment')
+        if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
+            raise EngineError('A review covers this report; route a change through a repair card')
+        self._lease(state, state['session']['actor'], task['lease'])
+        lines = report.splitlines()
+        blocked = next((line[len('BLOCKED:'):].strip() for line in lines if line.startswith('BLOCKED:')), '')
+        if not blocked and lines and lines[0].startswith('STATUS: BLOCKED'):
+            blocked = lines[0][len('STATUS: BLOCKED'):].strip() or 'worker reported STATUS: BLOCKED'
+        if blocked and not replacing:
+            # A worker that cannot do the card says so instead of faking a self-review: the card is parked with the
+            # reason, and the coordinator decides (unpark with a changed card, or cancel it).
+            self._set_aside(state, task, 'blocked: ' + blocked)
+            return
+        review = self._parse_self_review(report) if task['role'] == 'builder' else None
+        if task['role'] == 'builder' and not any(
+                line.startswith('ARTIFACT:') and line[len('ARTIFACT:'):].strip() for line in report.splitlines()):
+            raise EngineError('Builder report needs a nonempty ARTIFACT line')
+        task.update(state='reported', report=report,
+                    report_artifact=self.artifact(self._scope_of(state, [task['id']])))
+        if review is not None:
+            task['self_review'] = review
+        for ancestor in self._walk(state['tasks'], task, 'repair_of'):
+            ancestor['state'] = 'reported'
+            ancestor['report_artifact'] = self.artifact(self._scope_of(state, [ancestor['id']]))  # the repair changed its files
+
+    def _snapshot(self, path, kind, normalized=None):
+        """Copy the file under the state directory. With `normalized` bytes the copy holds those instead, and the receipt
+        keeps `source_sha256` of the original so a changed original is still noticed."""
         path = Path(path).resolve()
         if not path.is_file() or not path.read_bytes().strip():
             raise EngineError('Evidence report must be a nonempty file')
         data = path.read_bytes()
+        kept = data if normalized is None else normalized
         target = self.state_dir / (kind + '-' + uuid.uuid4().hex)
         with target.open('xb') as out:
-            out.write(data)
+            out.write(kept)
             out.flush()
             os.fsync(out.fileno())
-        return dict(source=str(path), path=str(target), sha256=_hash(data))
+        evidence = dict(source=str(path), path=str(target), sha256=_hash(kept))
+        if normalized is not None:
+            evidence['source_sha256'] = _hash(data)
+        return evidence
 
     @staticmethod
     def _intact(receipt):
         for key in ('path', 'source'):
             if key in receipt:
                 p = Path(receipt[key])
-                if not p.is_file() or _hash(p.read_bytes()) != receipt['sha256']:
+                expected = receipt.get('source_sha256', receipt['sha256']) if key == 'source' else receipt['sha256']
+                if not p.is_file() or _hash(p.read_bytes()) != expected:
                     return False
         return True
 
     def record_review(self, actor, lease, reviewer, report_path, categories, task_ids=None, final=False, findings=None):
         with self._state() as state:
+            return self._record_review(state, actor, lease, reviewer, report_path, categories, task_ids, final, findings)
+
+    def _record_review(self, state, actor, lease, reviewer, report_path, categories, task_ids=None, final=False, findings=None):
+        self._lease(state, actor, lease)
+        ids = list(task_ids or [])
+        findings = findings or []
+        if not isinstance(findings, list) or any(not isinstance(f, str) or not f.strip() for f in findings):
+            raise EngineError('Invalid review findings')
+        if not isinstance(reviewer, str) or not reviewer.strip() or reviewer == actor:
+            raise EngineError('Review must be independent of coordinator')
+        if not isinstance(categories, list) or not categories or not set(categories) <= set(CATEGORIES):
+            raise EngineError('Invalid review categories')
+        if not final and not ids:
+            raise EngineError('Review needs task coverage')
+        if any(i not in state['tasks'] for i in ids):
+            raise EngineError('Unknown reviewed task')
+        if final and (len(ids) != len(set(ids)) or set(ids) not in (set(state['tasks']), self._pre_release_ids(state))):
+            raise EngineError('Final review must explicitly cover every task')
+        covered = [state['tasks'][i] for i in ids]
+        if any(t.get('worker') == reviewer and not self._read_review(t) for t in covered):
+            raise EngineError('Worker cannot review own artifact')
+        if any(t['state'] not in ('reported', 'accepted', 'held') for t in covered):
+            raise EngineError('Review covers incomplete work')
+        scope = None if final else self._scope_of(state, ids)
+        artifact = self.artifact(scope)
+        try:
+            body = json.loads(Path(report_path).read_text())
+        except (ValueError, OSError) as exc:
+            raise EngineError('Review report must be structured JSON') from exc
+        normalized = None
+        if isinstance(body, dict) and isinstance(body.get('artifact'), str):
+            # The string a reviewer saw: only "<HEAD sha, 7+ hex> clean". The engine's own record replaces it, so the
+            # receipt binds what is on disk now; anything else is refused as a mismatch below.
+            if self._saw_clean_head(state, body['artifact'], reviewer, artifact):
+                body = dict(body, artifact=artifact)
+                normalized = (json.dumps(body, indent=1, sort_keys=True) + '\n').encode()
+        expected = dict(reviewer=reviewer, categories=categories, tasks=ids, findings=findings,
+                        verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact, final=bool(final))
+        if not isinstance(body, dict) or any(body.get(k) != v for k, v in expected.items()):
+            raise EngineError('Review report metadata, verdict or artifact does not match')
+        if not isinstance(body.get('summary'), str) or not body['summary'].strip():
+            raise EngineError('Review needs a nonempty semantic summary')
+        task_findings = self._check_task_findings(state, body, ids, findings)
+        repair_check = self._check_repair_marker(body, final)
+        if not final and repair_check:
+            self._check_fix_review(state, covered)
+        elif not final and not any(t['role'] == 'critic' and t.get('worker') == reviewer for t in state['tasks'].values()):
+            raise EngineError('Only the pre-PR review and the fix re-review are recorded')
+        if not final and findings and (repair_check or any(t.get('repaired_by') for t in covered)):
+            self._check_chain_tips(state, covered, task_findings)
+        if final and findings and covered:
+            self._check_chain_tips(state, covered, task_findings, 'final')
+        cleared = self._check_cleared(state, body, final, task_findings)
+        notes = self._check_issues(body, findings, covered)
+        out_of_scope = self._check_out_of_scope(body, final)
+        gate_receipts = self._check_gate_receipts(state, body, findings)
+        evidence = self._snapshot(report_path, 'review', normalized)
+        receipt = dict(id=uuid.uuid4().hex, reviewer=reviewer, categories=categories,
+                       tasks=ids, final=bool(final), findings=findings, notes=notes, artifact=artifact,
+                       out_of_scope=out_of_scope, gate_receipts=gate_receipts, cleared=cleared,
+                       scope=scope, action='review', **evidence)
+        if task_findings is not None:
+            receipt['task_findings'] = task_findings
+        if repair_check:
+            receipt['repair_check'] = True
+        if final:
+            receipt['entries'] = self._entry_digests()  # lets a clean fix re-review tell which files changed since
+        state['reviews'].append(receipt)
+        return copy.deepcopy(receipt)
+
+    def _saw_clean_head(self, state, text, reviewer, artifact):
+        """Whether a reviewer's artifact string `<sha> clean` holds: the sha is a prefix of HEAD, nothing in the receipt's
+        scope is modified, and the policy is unchanged since the reviewer's newest card was dispatched."""
+        found = re.fullmatch(r'([0-9a-f]{7,40}) clean', text)
+        if not found or not artifact['head'].startswith(found.group(1)) or artifact['status'] != _hash(b''):
+            return False
+        cards = [t for t in state['tasks'].values()
+                 if t.get('worker') == reviewer and t['role'] in REVIEW_ROLES and 'started_at' in t]
+        card = max(cards, key=lambda t: t['started_at'], default=None)
+        return card is not None and card.get('dispatch_policy') == self.policy_hash
+
+    def review_with_token(self, actor, lease, token, report_path):
+        """Report the review card and record its final receipt in one transaction, then accept the card when every accept
+        check passes. The card is the one assigned TOKEN to the receipt's reviewer; the receipt file is its report."""
+        try:
+            text = Path(report_path).read_text()
+            body = json.loads(text)
+        except (ValueError, OSError) as exc:
+            raise EngineError('Review report must be structured JSON') from exc
+        missing = [k for k in ('reviewer', 'categories', 'tasks', 'final', 'findings') if not isinstance(body, dict) or k not in body]
+        if missing:
+            raise EngineError('Review report is missing: ' + ', '.join(missing))
+        with self._state() as state:
             self._lease(state, actor, lease)
-            ids = list(task_ids or [])
-            findings = findings or []
-            if not isinstance(findings, list) or any(not isinstance(f, str) or not f.strip() for f in findings):
-                raise EngineError('Invalid review findings')
-            if not isinstance(reviewer, str) or not reviewer.strip() or reviewer == actor:
-                raise EngineError('Review must be independent of coordinator')
-            if not isinstance(categories, list) or not categories or not set(categories) <= set(CATEGORIES):
-                raise EngineError('Invalid review categories')
-            if not final and not ids:
-                raise EngineError('Review needs task coverage')
-            if any(i not in state['tasks'] for i in ids):
-                raise EngineError('Unknown reviewed task')
-            if final and (len(ids) != len(set(ids)) or set(ids) not in (set(state['tasks']), self._pre_release_ids(state))):
-                raise EngineError('Final review must explicitly cover every task')
-            covered = [state['tasks'][i] for i in ids]
-            if any(t.get('worker') == reviewer and not self._read_review(t) for t in covered):
-                raise EngineError('Worker cannot review own artifact')
-            if any(t['state'] not in ('reported', 'accepted', 'held') for t in covered):
-                raise EngineError('Review covers incomplete work')
-            scope = None if final else self._scope_of(state, ids)
-            artifact = self.artifact(scope)
-            try:
-                body = json.loads(Path(report_path).read_text())
-            except (ValueError, OSError) as exc:
-                raise EngineError('Review report must be structured JSON') from exc
-            expected = dict(reviewer=reviewer, categories=categories, tasks=ids, findings=findings,
-                            verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact, final=bool(final))
-            if not isinstance(body, dict) or any(body.get(k) != v for k, v in expected.items()):
-                raise EngineError('Review report metadata, verdict or artifact does not match')
-            if not isinstance(body.get('summary'), str) or not body['summary'].strip():
-                raise EngineError('Review needs a nonempty semantic summary')
-            task_findings = self._check_task_findings(state, body, ids, findings)
-            repair_check = self._check_repair_marker(body, final)
-            if not final and repair_check:
-                self._check_fix_review(state, covered)
-            elif not final and not any(t['role'] == 'critic' and t.get('worker') == reviewer for t in state['tasks'].values()):
-                raise EngineError('Only the pre-PR review and the fix re-review are recorded')
-            if not final and findings and (repair_check or any(t.get('repaired_by') for t in covered)):
-                self._check_chain_tips(state, covered, task_findings)
-            if final and findings and covered:
-                self._check_chain_tips(state, covered, task_findings, 'final')
-            cleared = self._check_cleared(state, body, final, task_findings)
-            notes = self._check_issues(body, findings, covered)
-            out_of_scope = self._check_out_of_scope(body, final)
-            gate_receipts = self._check_gate_receipts(state, body, findings)
-            evidence = self._snapshot(report_path, 'review')
-            receipt = dict(id=uuid.uuid4().hex, reviewer=reviewer, categories=categories,
-                           tasks=ids, final=bool(final), findings=findings, notes=notes, artifact=artifact,
-                           out_of_scope=out_of_scope, gate_receipts=gate_receipts, cleared=cleared,
-                           scope=scope, action='review', **evidence)
-            if task_findings is not None:
-                receipt['task_findings'] = task_findings
-            if repair_check:
-                receipt['repair_check'] = True
-            if final:
-                receipt['entries'] = self._entry_digests()  # lets a clean fix re-review tell which files changed since
-            state['reviews'].append(receipt)
-            return copy.deepcopy(receipt)
+            card = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
+            if (not card or card['role'] not in REVIEW_ROLES or card['worker'] != body['reviewer']
+                    or card['state'] not in ('running', 'reported')):
+                raise EngineError('Invalid assignment')
+            if body['final'] is not True:
+                raise EngineError('review --token records final receipts only')
+            if card['state'] == 'running':
+                self._report_in(state, card['worker'], token, text)
+                if card['state'] != 'reported':
+                    raise EngineError('The review card did not take the report')
+            receipt = self._record_review(state, actor, lease, body['reviewer'], report_path, body['categories'],
+                                          body['tasks'], True, body['findings'])
+            refusal = self._accept_refusal(state, {}, card['id'])
+            if refusal is None:
+                card['state'] = 'accepted'
+            return dict(receipt=receipt, card=card['id'], accepted=refusal is None, refusal=refusal)
 
     def _check_task_findings(self, state, body, ids, findings):
         """Per-task findings (SPEC 5.1 item 4): covered keys only, and the ordered union equals `findings`."""
@@ -2030,7 +2122,9 @@ class Engine:
         reviews = state['reviews'][task.get('review_since', 0):]
         if not any(r['final'] and any(self._task_findings(r, i) for i in chain) for r in reviews):
             return True
-        return any((r.get('repair_check') or r['final']) and not r['findings'] and tip['id'] in r['tasks'] and self._intact(r)
+        # A receipt that blames another chain still clears this one: only findings for a card of this chain count.
+        return any((r.get('repair_check') or r['final']) and not any(self._task_findings(r, i) for i in chain)
+                   and tip['id'] in r['tasks'] and self._intact(r)
                    and self._same(r['artifact'], self._artifact_cached(cache, r.get('scope'))) for r in reviews)
 
     def _accept_refusal(self, state, cache, task_id):
@@ -2052,7 +2146,7 @@ class Engine:
             review = task.get('self_review')
             if review is None:
                 return SELF_REVIEW_ERROR
-            if any(c['exit_code'] != 0 for c in review['checks']) or not all(c['met'] for c in review['criteria']):
+            if not self._checks_pass(review['checks']) or not all(c['met'] for c in review['criteria']):
                 return 'Self-review has a failing check or unmet criterion'
         elif task.get('review_required', False):
             return None if verdicts else 'Task needs current independent review'

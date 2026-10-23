@@ -65,7 +65,7 @@ def parser():
     add.add_argument('task', help='Task JSON path')
     dispatch = sub.add_parser('dispatch')
     dispatch.add_argument('task_id')
-    dispatch.add_argument('worker')
+    dispatch.add_argument('worker', nargs='?', help='Worker name; default orchestra-TASK_ID')
     dispatch.add_argument('--helper', metavar='REASON', help='Why a helper does this builder card instead of the main session: '
                           'required for a tiny unit on a size run, and for a 2.4 inline route. 2.4 workflow route: a builder '
                           'card needs an accepted designer-planner plan card first')
@@ -79,6 +79,8 @@ def parser():
     accept.add_argument('task_id')
     review = sub.add_parser('review')
     review.add_argument('report', help='Structured review JSON path')
+    review.add_argument('--token', help='Assignment token of the final review card: report it, record the receipt and '
+                        'accept the card in one step (final receipts only)')
     gate = sub.add_parser('gate')
     gate.add_argument('name')
     gate.add_argument('--again', action='store_true', help='Rerun a gate that already passed on this artifact')
@@ -247,8 +249,9 @@ def execute(args):
         engine.add_task(args.actor,args.lease,read_json(args.task))
         return {'added':read_json(args.task)['id']},0
     if args.command=='dispatch':
-        token = engine.dispatch(args.actor,args.lease,args.task_id,args.worker,helper=args.helper)
-        return {'assignment':token,'task':args.task_id,'worker':args.worker},0
+        worker = args.worker if args.worker is not None else 'orchestra-'+args.task_id
+        token = engine.dispatch(args.actor,args.lease,args.task_id,worker,helper=args.helper)
+        return {'assignment':token,'task':args.task_id,'worker':worker},0
     if args.command=='accept':
         engine.accept(args.actor,args.lease,args.task_id)
         return {'accepted':args.task_id},0
@@ -259,6 +262,8 @@ def execute(args):
         missing = [k for k in ('reviewer','categories','tasks','final','findings') if k not in review]
         if missing:
             raise EngineError('Review report is missing: '+', '.join(missing))
+        if args.token:
+            return engine.review_with_token(args.actor,args.lease,args.token,args.report),0
         result = engine.record_review(args.actor,args.lease,review['reviewer'],args.report,
                                      review['categories'],review['tasks'],review['final'],review['findings'])
         return result,0

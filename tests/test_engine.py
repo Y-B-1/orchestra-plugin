@@ -1,3 +1,4 @@
+import hashlib
 import json
 import os
 import pathlib
@@ -2603,6 +2604,58 @@ class FixReviewTests(EngineFixture):
         with self.assertRaises(EngineError):
             self.engine.accept('main', self.lease, 'B')
 
+    def commit_elsewhere(self):
+        (self.repo / 'zz').write_text('unrelated')
+        self.git('add', 'zz')
+        self.git('commit', '-qm', 'unrelated')
+
+    def test_stale_final_finding_starts_a_repair_that_a_fix_re_review_accepts(self):
+        (self.repo / 'B1').write_text('first')
+        self.built('B1')
+        self.built('B2')
+        self.final('final', findings=['f'], task_findings={'B1': ['f'], 'B2': []})
+        self.commit_elsewhere()  # the final receipt is stale now
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        self.assertEqual(['f'], self.engine.status()['tasks']['R1']['final_findings'])
+        (self.repo / 'B1').write_text('repaired')
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), done('Repaired'))
+        with self.assertRaisesRegex(EngineError, 'fix re-review'):
+            self.engine.accept('main', self.lease, 'R1')
+        self.reviewed('check', ['R1', 'B1'], repair_check=True)
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
+
+    def test_stale_finding_a_newer_clean_receipt_superseded_starts_no_repair(self):
+        (self.repo / 'B1').write_text('first')
+        self.built('B1')
+        self.built('B2')
+        self.final('final', findings=['f'], task_findings={'B1': ['f'], 'B2': []})
+        self.reviewed('clean', ['B1'], categories=self.LENSES)
+        self.commit_elsewhere()
+        with self.assertRaisesRegex(EngineError, 'Repair needs earlier checked coding findings'):
+            self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+
+    def two_chains(self):
+        """B1 and B2 both blamed by the final review; R1 and R2 repair them and have reported."""
+        for name in ('B1', 'B2'):
+            (self.repo / name).write_text('first')
+            self.built(name)
+        self.final('final', findings=['f', 'g'], task_findings={'B1': ['f'], 'B2': ['g']})
+        for name in ('R1', 'R2'):
+            self.task(name, mode='repair', repair_of='B' + name[1], files=['B' + name[1]])
+        for name in ('R1', 'R2'):
+            (self.repo / ('B' + name[1])).write_text('repaired')
+            self.engine.report(name.lower(), self.engine.dispatch('main', self.lease, name, name.lower()), done('Repaired'))
+
+    def test_fix_re_review_blaming_one_chain_still_accepts_the_other(self):
+        self.two_chains()
+        self.reviewed('check', ['R1', 'B1', 'R2', 'B2'], findings=['h'], task_findings={'R2': ['h']}, repair_check=True)
+        self.engine.accept('main', self.lease, 'R1')
+        self.engine.accept('main', self.lease, 'B1')
+        for name in ('R2', 'B2'):
+            with self.assertRaises(EngineError):
+                self.engine.accept('main', self.lease, name)
+
     def test_repair_dispatch_refused_only_by_overlapping_acceptable_cards(self):
         for name, files in (('I1', ['docs/x.md']), ('I2', [])):
             self.built(name, role='investigator', mode='code', files=files)
@@ -2964,6 +3017,34 @@ class SelfReviewTests(EngineFixture):
             with self.subTest(label), self.assertRaisesRegex(EngineError, 'Self-review has a failing check or unmet criterion'):
                 self.engine.accept('main', self.lease, name)
             self.assertEqual('reported', self.engine.status()['tasks'][name]['state'])
+
+    def test_red_first_check_needs_the_same_command_passing_after_it(self):
+        red = {'command': 'pytest t', 'exit_code': 1, 'expect': 'fail'}
+        green = {'command': 'pytest t', 'exit_code': 0}
+        name = 'pair'
+        self.engine.report('w-' + name, self.running(name), done('Built.', checks=[red, green]))
+        self.engine.accept('main', self.lease, name)
+        self.assertEqual('accepted', self.engine.status()['tasks'][name]['state'])
+        refused = {'red alone': [red],
+                   'red then a different passing command': [red, {'command': 'ruff check', 'exit_code': 0}],
+                   'red then the same command failing': [red, dict(green, exit_code=1)],
+                   'green before red': [green, red],
+                   'red that exits 0': [dict(red, exit_code=0), green],
+                   'green marked fail': [red, dict(green, expect='fail')]}
+        for label, checks in refused.items():
+            name = label.replace(' ', '-')
+            self.engine.report('w-' + name, self.running(name), done('Built.', checks=checks))
+            with self.subTest(label), self.assertRaisesRegex(EngineError, 'Self-review has a failing check or unmet criterion'):
+                self.engine.accept('main', self.lease, name)
+
+    def test_expect_key_takes_only_pass_or_fail(self):
+        token = self.running()
+        for value in ('maybe', True, 1, None, ''):
+            checks = [{'command': 'pytest', 'exit_code': 0, 'expect': value}]
+            with self.subTest(value), self.assertRaisesRegex(EngineError, 'Builder report needs one SELF_REVIEW line'):
+                self.engine.report('w-a', token, done('Built.', checks=checks))
+        self.engine.report('w-a', token, done('Built.', checks=[{'command': 'pytest', 'exit_code': 0, 'expect': 'pass'}]))
+        self.engine.accept('main', self.lease, 'a')
 
     def test_builder_accepts_on_its_self_review_without_an_independent_review(self):
         token = self.running()
@@ -5728,3 +5809,182 @@ class StaleAutonomyTests(AutonomyFixture):
         self.assertFalse(self.engine.stop_stale_autonomy('MORNING', now=self.mtime() + 10 * self.stale()))
         self.assertFalse(Engine(self.root / 'empty', self.repo).stop_stale_autonomy('X'))
         self.assertFalse((self.root / 'empty' / 'state.json').exists())
+
+
+class DispatchDefaultTests(EngineFixture):
+    def test_dispatch_defaults_the_worker_to_orchestra_task(self):
+        self.task('x')
+        token = self.engine.dispatch('main', self.lease, 'x')
+        self.assertEqual('orchestra-x', self.engine.status()['tasks']['x']['worker'])
+        self.engine.report('orchestra-x', token, done('Built x.'))
+
+    def test_default_worker_is_still_reserved_and_never_the_coordinator(self):
+        self.task('x')
+        self.task('y')
+        self.engine.dispatch('main', self.lease, 'x')
+        with self.assertRaisesRegex(EngineError, 'Worker is already reserved'):
+            self.engine.dispatch('main', self.lease, 'y', 'orchestra-x')
+        with self.assertRaisesRegex(EngineError, 'Worker must differ from coordinator'):
+            self.engine.dispatch('main', self.lease, 'y', '')
+        self.task('main', files=['main'])
+        with self.assertRaisesRegex(EngineError, 'Worker must differ from coordinator'):
+            self.engine.dispatch('main', self.lease, 'main', 'main')
+
+    def test_cli_dispatch_without_a_worker_uses_the_default(self):
+        self.task('x')
+        code, out, err = run_cli(self, '--lease', self.lease, 'dispatch', 'x')
+        self.assertEqual((0, ''), (code, err), out)
+        self.assertEqual('orchestra-x', json.loads(out)['worker'])
+
+
+class ReviewRecordingTests(EngineFixture):
+    """The artifact string a reviewer saw, and `review FILE --token`."""
+
+    def setUp(self):
+        super().setUp()
+        (self.repo / 'B1').write_text('built')
+        self.git('add', 'B1')
+        self.git('commit', '-qm', 'B1')
+        self.task('B1')
+        self.engine.report('w-B1', self.engine.dispatch('main', self.lease, 'B1', 'w-B1'), done('Built B1.'))
+        self.task('C1', role='critic', mode='judge', files=[])
+        self.critic_token = self.engine.dispatch('main', self.lease, 'C1', 'orchestra-C1')
+        self.engine.report('orchestra-C1', self.critic_token, 'Judged.')
+        self.head = self.git('rev-parse', 'HEAD')
+
+    def receipt_file(self, name, artifact, reviewer='orchestra-C1', **kw):
+        path = self.root / name
+        self.review(path, reviewer=reviewer, **kw)
+        body = json.loads(path.read_text())
+        body['artifact'] = artifact
+        path.write_text(json.dumps(body, indent=1))
+        return path
+
+    def record(self, path, reviewer='orchestra-C1'):
+        return self.engine.record_review('main', self.lease, reviewer, path, ['correctness'], ['B1'])
+
+    def test_artifact_string_head_clean_records_the_engine_artifact(self):
+        for label, sha in (('full', self.head), ('seven', self.head[:7])):
+            path = self.receipt_file(label + '.json', sha + ' clean', tasks=['B1'])
+            before = path.read_bytes()
+            receipt = self.record(path)
+            self.assertEqual(self.engine.artifact(self.engine.scope_for(['B1'])), receipt['artifact'], label)
+            self.assertEqual(before, path.read_bytes())  # the reviewer's file is untouched
+            self.assertEqual(hashlib.sha256(before).hexdigest(), receipt['source_sha256'])
+            self.assertEqual(str(path.resolve()), receipt['source'])
+            self.assertEqual(self.engine.state_dir, Path(receipt['path']).parent)
+            self.assertEqual(json.loads(Path(receipt['path']).read_text())['artifact'], receipt['artifact'])
+        self.engine.accept('main', self.lease, 'B1')
+
+    def test_artifact_string_receipt_notices_a_changed_original(self):
+        path = self.receipt_file('r.json', self.head + ' clean', tasks=['B1'])
+        self.record(path)
+        path.write_text(path.read_text() + ' ')
+        with self.assertRaisesRegex(EngineError, 'missing or altered'):
+            self.engine.accept('main', self.lease, 'B1')
+
+    def test_only_the_head_clean_string_is_taken(self):
+        other = ('0' if self.head[0] != '0' else '1') * 40
+        cases = {'bare sha': self.head, 'short bare sha': self.head[:7], 'six characters': self.head[:6] + ' clean',
+                 'another commit': other + ' clean', 'dirty': self.head + ' dirty', 'extra word': self.head + ' clean now',
+                 'upper case': self.head.upper() + ' clean', 'not hex': 'zzzzzzz clean', 'a number': 7, 'a list': [self.head]}
+        for label, artifact in cases.items():
+            path = self.receipt_file('x.json', artifact, tasks=['B1'])
+            with self.subTest(label), self.assertRaisesRegex(EngineError, 'metadata, verdict or artifact does not match'):
+                self.record(path)
+        self.assertEqual([], self.engine.status()['reviews'])
+
+    def test_artifact_string_refused_when_the_scope_is_not_clean(self):
+        (self.repo / 'B1').write_text('edited after the commit')
+        path = self.receipt_file('x.json', self.head + ' clean', tasks=['B1'])
+        with self.assertRaisesRegex(EngineError, 'metadata, verdict or artifact does not match'):
+            self.record(path)
+
+    def test_artifact_string_needs_the_review_card_and_its_dispatch_policy(self):
+        path = self.receipt_file('x.json', self.head + ' clean', tasks=['B1'], reviewer='stranger')
+        with self.assertRaisesRegex(EngineError, 'metadata, verdict or artifact does not match'):
+            self.record(path, 'stranger')
+        state = json.loads(self.engine.state_path.read_text())
+        self.assertEqual(self.engine.policy_hash, state['tasks']['C1']['dispatch_policy'])
+        state['tasks']['C1']['dispatch_policy'] = 'older policy'
+        self.engine.state_path.write_text(json.dumps(state))
+        path = self.receipt_file('y.json', self.head + ' clean', tasks=['B1'])
+        with self.assertRaisesRegex(EngineError, 'metadata, verdict or artifact does not match'):
+            self.record(path)
+        self.assertEqual([], self.engine.status()['reviews'])
+        path = self.receipt_file('z.json', self.engine.artifact(self.engine.scope_for(['B1'])), tasks=['B1'])
+        self.record(path)  # the structured form binds the policy itself and is unchanged
+
+    def final_card(self):
+        self.task('V1', role='code-reviewer', mode='final', files=[], review_of=['B1'])
+        return self.engine.dispatch('main', self.lease, 'V1', 'orchestra-V1')
+
+    def final_file(self, name='f.json', **kw):
+        ids = sorted(self.engine.status()['tasks'])
+        return self.receipt_file(name, self.head + ' clean', reviewer='orchestra-V1', tasks=ids, final=True,
+                                 categories=ALL_CATEGORIES, **kw)
+
+    def test_review_token_reports_records_and_accepts_in_one_step(self):
+        self.engine.accept('main', self.lease, 'B1')
+        self.engine.accept('main', self.lease, 'C1')
+        token = self.final_card()
+        path = self.final_file()
+        result = self.engine.review_with_token('main', self.lease, token, path)
+        card = self.engine.status()['tasks']['V1']
+        self.assertEqual(('accepted', path.read_text()), (card['state'], card['report']))
+        self.assertEqual([result['receipt']['id']], [r['id'] for r in self.engine.status()['reviews']])
+        self.assertEqual((True, None, 'V1'), (result['accepted'], result['refusal'], result['card']))
+        self.engine.check_completion('main', self.lease)
+
+    def test_review_token_skips_the_report_of_an_already_reported_card(self):
+        token = self.final_card()
+        path = self.final_file()
+        self.engine.report('orchestra-V1', token, 'My own report.')
+        self.engine.review_with_token('main', self.lease, token, path)
+        self.assertEqual('My own report.', self.engine.status()['tasks']['V1']['report'])
+        self.assertEqual(1, len(self.engine.status()['reviews']))
+
+    def test_review_token_leaves_a_card_the_accept_checks_refuse_reported(self):
+        token = self.final_card()
+        path = self.final_file(findings=['f'], task_findings={'V1': ['f']})
+        result = self.engine.review_with_token('main', self.lease, token, path)
+        self.assertFalse(result['accepted'])
+        self.assertIn('current review findings', result['refusal'])
+        self.assertEqual('reported', self.engine.status()['tasks']['V1']['state'])
+        self.assertEqual(1, len(self.engine.status()['reviews']))
+
+    def test_review_token_refusals_change_nothing(self):
+        token = self.final_card()
+        good = self.final_file()
+        other = self.final_file('other.json')
+        body = json.loads(other.read_text())
+        body['reviewer'] = 'someone-else'
+        other.write_text(json.dumps(body))
+        nonfinal = self.receipt_file('nf.json', self.head + ' clean', reviewer='orchestra-V1', tasks=['B1'])
+        nosummary = self.final_file('ns.json')
+        body = json.loads(nosummary.read_text())
+        body['summary'] = ''
+        nosummary.write_text(json.dumps(body))
+        for label, tok, path, message in (('wrong token', 'nope', good, 'Invalid assignment'),
+                                          ('wrong reviewer', token, other, 'Invalid assignment'),
+                                          ('not final', token, nonfinal, 'final receipts only'),
+                                          ('invalid receipt', token, nosummary, 'semantic summary')):
+            with self.subTest(label), self.assertRaisesRegex(EngineError, message):
+                self.engine.review_with_token('main', self.lease, tok, path)
+            card = self.engine.status()['tasks']['V1']
+            self.assertEqual(('running', None, []), (card['state'], card.get('report'), self.engine.status()['reviews']))
+        with self.assertRaisesRegex(EngineError, 'lease'):
+            self.engine.review_with_token('main', 'not-the-lease', token, good)
+
+    def test_review_token_of_a_builder_card_is_refused(self):
+        token = self.engine.status()['tasks']['B1']['assignment']
+        with self.assertRaisesRegex(EngineError, 'Invalid assignment'):
+            self.engine.review_with_token('main', self.lease, token, self.final_file())
+
+    def test_cli_review_token(self):
+        token = self.final_card()
+        path = self.final_file()
+        code, out, err = run_cli(self, '--lease', self.lease, 'review', str(path), '--token', token)
+        self.assertEqual((0, ''), (code, err), out)
+        self.assertTrue(json.loads(out)['accepted'])
+        self.assertEqual('accepted', self.engine.status()['tasks']['V1']['state'])
