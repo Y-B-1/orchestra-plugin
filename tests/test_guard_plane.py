@@ -300,6 +300,31 @@ class UnattendedLockTest(PlaneFixture):
             with self.subTest(receipt=True, command=command):
                 self.assertIsNone(self.hook(command))  # the receipt rules are unchanged: the owner's receipt lets it run
 
+    def test_quoted_provider_delete_denied_while_unattended(self):
+        # R7: the lock reads the words as bash does, so quoting or escaping a word does not pass it.
+        sq, dq, bs = "'", '"', '\\'
+        commands = ('gh ' + sq + 'release' + sq + ' delete v1 -y', 'gh release ' + dq + 'delete' + dq + ' v1 -y',
+                    'gh -R o/r repo ' + sq + 'delete' + sq + ' --yes', 'gh re' + bs + 'lease delete v1',
+                    'rm -rf build && gh ' + sq + 'repo' + sq + ' delete o/r --yes',
+                    'gh release ' + bs + '\n' + 'delete v1 -y', 'X=delete; rm -rf build; gh release $X v1 -y',
+                    'rm -rf build; bash -c ' + dq + 'gh release delete v1' + dq)
+        for mode in ('protect', 'normal'):
+            for command in commands:
+                with self.subTest(mode=mode, command=command):
+                    output = self.decide(command, mode=mode, armed=True, unattended=True).output.get('hookSpecificOutput', {})
+                    self.assertEqual(output.get('permissionDecision'), 'deny')
+                    self.assertIn('Denied: ', output['permissionDecisionReason'])
+                    for word in WAY_OUT:
+                        self.assertIn(word, output['permissionDecisionReason'])
+            for command in ('rm -rf build', 'git tag -d v1', 'rm -rf build && gh release view v1'):
+                with self.subTest(mode=mode, command=command):
+                    self.assertEqual(self.decide(command, mode=mode, armed=True, unattended=True).output,
+                                     self.decide(command, mode=mode, armed=True).output)
+        self.stop()
+        for command in commands:
+            with self.subTest(hook=True, command=command):
+                self.assertEqual(self.hook(command), 'deny')
+
     def test_a_disarm_by_the_owner_ends_the_lock(self):
         self.stop()
         self.assertEqual(self.hook('git push origin main'), 'deny')

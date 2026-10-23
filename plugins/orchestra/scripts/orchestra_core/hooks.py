@@ -18,7 +18,7 @@ import time
 
 from . import portable
 from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
-from .guards import RULES, Decision, _command_words, _pipelines, _segments, classify_command, guard_digest, runs_test_suite
+from .guards import RULES, Decision, _command_words, _gh_without_repo, _pipelines, _segments, classify_command, guard_digest, runs_test_suite
 
 _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
@@ -159,9 +159,25 @@ def _starts_new_run(command):
     return _runs_orchestra(command, _NEW_RUN, lambda rest: 'start' in rest and '--new-run' in rest[rest.index('start') + 1:])
 
 
-# A release or repository delete on the provider (`gh release delete`, `gh repo delete`): the unattended lock denies it
-# like a release. Local deletes (`rm`, `git tag -d`) keep their ordinary path after the owner's disarm.
-_PROVIDER_DELETE = re.compile(r'\bgh\b[^|;&\n]*\b(?:%s)\b' % '|'.join(r'%s\s+%s' % tuple(pair) for pair in RULES['boundary']['gh']))
+def _provider_delete(command):
+    """A release or repository delete on the provider (`gh release delete`, `gh repo delete`), read from the words as bash
+    reads them, so quoting or escaping a word does not hide it (R7): the unattended lock denies it like a release. Text
+    the guard cannot read word by word (a substitution or expansion, a heredoc, a shell string, an unparsable command)
+    counts as one. Local deletes (`rm`, `git tag -d`) keep their ordinary path after the owner's disarm."""
+    command = re.sub(r'\\\r?\n', '', command)
+    if re.search(r'\$|`|<<|<\(|>\(', command):
+        return True
+    try:
+        for segment in _segments(command):
+            words = _command_words(segment)
+            name = PurePosixPath(words[0]).name if words else ''
+            if name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.'}:
+                return True
+            if name == 'gh' and _gh_without_repo(words)[1:3] in RULES['boundary']['gh']:
+                return True
+    except ValueError:
+        return True
+    return False
 
 
 LEDGER_LOCKED = ('The autonomy ledger and the autonomy switch belong to the owner while autonomy is armed: '
@@ -430,7 +446,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     if unattended and not active:
         if klass in {'release', 'release-multi'} or _starts_new_run(command) or _switches_autonomy(command, ('disarm',)) \
                 or (decision.boundary == 'merge' and _on_default_branch(cwd, engine)) \
-                or (decision.boundary == 'delete' and _PROVIDER_DELETE.search(re.sub(r'\\\r?\n', '', command))):
+                or (decision.boundary == 'delete' and _provider_delete(command)):
             return _deny(UNATTENDED_LOCKED + ' Denied: ' + (decision.reason or command.strip()[:80]))
     hint = _PARK_HINT if engine is not None else ('the run state is unreadable (%s); the owner starts over with '
                                                   '`orchestra.py start --new-run ...`, which keeps the old file under history/.'
