@@ -841,20 +841,6 @@ def _gh_operands(args, value_flags):
 _GH_CONFIG_REASON = 'gh aliases and extensions add commands the guard cannot read; the owner sets them'
 
 
-def _gh_without_repo(words):
-    """The gh words without every -R/--repo flag and its value, so the pair table sees the command it names. A flag with
-    no value is dropped alone. hooks.py reads this for the unattended deletion check; the classifier uses _gh_readings."""
-    kept, i = [], 0
-    while i < len(words):
-        word = words[i]
-        if word in ('-R', '--repo'):
-            i += 1
-        elif not (word.startswith('--repo=') or (word.startswith('-R') and not word.startswith('--'))):
-            kept.append(word)
-        i += 1
-    return kept
-
-
 _GH_READING_CAP = 64
 
 
