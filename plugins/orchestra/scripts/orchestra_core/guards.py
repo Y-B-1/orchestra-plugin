@@ -2202,11 +2202,14 @@ def classify_command(command: str, _depth=0) -> Decision:
     return decision
 
 
-def _join_continuations(command, literal=True):
+def _join_continuations(command, literal=True, heredocs=False):
     """Remove each backslash-newline pair outside single quotes, as bash does before it reads words. Inside single
     quotes the pair stays; a comment runs to its newline untouched. With literal=False single quotes are not
-    tracked at all (a heredoc body or `$'...'` may hide a quote from this scan), so every pair is removed."""
+    tracked at all (a heredoc body or `$'...'` may hide a quote from this scan), so every pair is removed.
+    With heredocs=True heredoc bodies are read as bash reads them (FR5): a quoted-delimiter body keeps its pairs,
+    an unquoted one loses them and its delimiter line is matched after that. None when the scan cannot decide."""
     out, quote, i, n = [], None, 0, len(command)
+    pending = []  # (word, strip tabs, quoted) of each heredoc opened on the current line.
     while i < n:
         char = command[i]
         if char == '\\' and quote != "'":
@@ -2226,8 +2229,39 @@ def _join_continuations(command, literal=True):
             out.append(command[i:end])
             i = end
             continue
+        elif heredocs and char == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (i == 0 or command[i - 1] != '<'):
+            match = _HEREDOC.match(command, i)
+            if match and not match.group(2).isdigit():
+                word = match.group(2)
+                quoted = word[0] in '\'"\\'
+                pending.append((word[1:-1] if word[0] in '\'"' else word.removeprefix('\\'), match.group(1) == '-', quoted))
+                out.append(match.group())
+                i = match.end()
+                continue
+        elif char == '\n' and pending:
+            out.append(char)
+            i += 1
+            for word, strip, quoted in pending:
+                while True:
+                    if i >= n:
+                        return None  # The body never ends.
+                    end = command.find('\n', i)
+                    end = n if end < 0 else end
+                    line = command[i:end]
+                    while not quoted and end < n and (len(line) - len(line.rstrip('\\'))) % 2:
+                        nxt = command.find('\n', end + 1)  # Bash joins the pair in an unquoted body.
+                        nxt = n if nxt < 0 else nxt
+                        line, end = line[:-1] + command[end + 1:nxt], nxt
+                    i = end + 1
+                    out.append(line + '\n')
+                    if (line.lstrip('\t') if strip else line) == word:
+                        break
+            pending = []
+            continue
         out.append(char)
         i += 1
+    if heredocs and (quote or pending):
+        return None  # Open quote or a heredoc with no body: undecided.
     return ''.join(out)
 
 
@@ -2238,7 +2272,8 @@ def _classify_command(command, _depth, _joined=False):
             texts.append(_join_continuations(command, False))
         if '<<' in command:  # A quoted-delimiter heredoc body keeps its pairs, so the unjoined text is read too.
             texts.append(command)
-        texts = [text for text in dict.fromkeys(texts) if text.strip()]
+            texts.append(_join_continuations(command, heredocs=True))  # The bash reading (FR5); None if undecided.
+        texts = [text for text in dict.fromkeys(texts) if text and text.strip()]
         if texts:
             decisions = [_classify_command(text, _depth, True) for text in texts]
             return max(decisions, key=lambda d: _RANK.get(d.klass, 0))

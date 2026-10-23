@@ -418,6 +418,31 @@ class SoftenAndGhRulesTest(unittest.TestCase):
                     self.assertTrue(want.klass.startswith(klass), want.klass)
                     self.assertEqual((got.klass, got.category, got.boundary), (want.klass, want.category, want.boundary))
 
+    def test_continued_command_after_quoted_heredoc(self):
+        # Bash closes a quoted-delimiter heredoc at the first delimiter line (its body keeps the backslash-newline),
+        # then joins the continued command after it. The verdict is that command's, or stricter.
+        nl, bs, tab = chr(10), chr(92), chr(9)
+        commands = (('git reset ' + bs + nl + '--hard', 'deny'), ('gh release ' + bs + nl + 'create v1', 'release'),
+                    ('gh release ' + bs + nl + 'delete v1', 'boundary'))
+        texts = []
+        for opener in ("<<'EOF'", '<<"EOF"', '<<' + bs + 'EOF'):
+            texts += [('cat ' + opener + nl + 'note ' + bs + nl + 'EOF' + nl + command + nl + 'EOF', command)
+                      for command, _ in commands]
+        texts += [("cat <<'A' <<'B'" + nl + 'a ' + bs + nl + 'A' + nl + 'b ' + bs + nl + 'B' + nl + commands[0][0] + nl + 'A' + nl + 'B',
+                   commands[0][0]),
+                  # The unquoted body joins `a \` with `A`, so the next `A` line closes it.
+                  ("cat <<A <<'B'" + nl + 'a ' + bs + nl + 'A' + nl + 'A' + nl + 'b ' + bs + nl + 'B' + nl + commands[2][0] + nl + 'B',
+                   commands[2][0]),
+                  ("cat <<-'EOF'" + nl + 'note ' + bs + nl + tab + 'EOF' + nl + commands[1][0] + nl + 'EOF', commands[1][0])]
+        for text, command in texts:
+            joined = command.replace(bs + nl, '')
+            with self.subTest(command=text):
+                got, want = classify_command(text), classify_command(joined)
+                self.assertEqual(want.klass, dict(commands)[command])
+                self.assertGreaterEqual(guards._RANK.get(got.klass, 0), guards._RANK[want.klass], got)
+                if want.boundary:
+                    self.assertIn(got.klass, ('boundary', 'release', 'release-multi', 'deny'))
+
     def test_gh_api_write_forms(self):
         for command in ('gh api repos/o/r -f default_branch=x', 'gh api repos/o/r -F a=b', 'gh api repos/o/r --field a=b',
                         'gh api repos/o/r --raw-field a=b', 'gh api repos/o/r -fa=b', 'gh api repos/o/r --input=x.json',
