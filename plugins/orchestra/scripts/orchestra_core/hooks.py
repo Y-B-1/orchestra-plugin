@@ -159,13 +159,17 @@ def _starts_new_run(command):
     return _runs_orchestra(command, _NEW_RUN, lambda rest: 'start' in rest and '--new-run' in rest[rest.index('start') + 1:])
 
 
+_PROVIDER_DELETE = re.compile(r'\bgh\b[^|;&\n]*\b(?:%s)\b' % '|'.join(r'%s\s+%s' % tuple(pair) for pair in RULES['boundary']['gh']))
+
+
 def _provider_delete(command):
-    """A release or repository delete on the provider (`gh release delete`, `gh repo delete`), read from the words as bash
-    reads them, so quoting or escaping a word does not hide it (R7): the unattended lock denies it like a release. Text
-    the guard cannot read word by word (a substitution or expansion, a heredoc, a shell string, an unparsable command)
-    counts as one. Local deletes (`rm`, `git tag -d`) keep their ordinary path after the owner's disarm."""
+    """A release or repository delete on the provider (`gh release delete`, `gh repo delete`): the unattended lock denies
+    it like a release. Either check counts: the raw text, or the words as bash reads them, so quoting or escaping a word
+    does not hide it (R7), and a `gh` word past the first (a `find -exec` payload) is read too. Text the guard cannot
+    read word by word (a substitution or expansion, a heredoc, a shell string, an unparsable command) counts as one.
+    Local deletes (`rm`, `git tag -d`) keep their ordinary path after the owner's disarm."""
     command = re.sub(r'\\\r?\n', '', command)
-    if re.search(r'\$|`|<<|<\(|>\(', command):
+    if _PROVIDER_DELETE.search(command) or re.search(r'\$|`|<<|<\(|>\(', command):
         return True
     try:
         for segment in _segments(command):
@@ -173,8 +177,9 @@ def _provider_delete(command):
             name = PurePosixPath(words[0]).name if words else ''
             if name in {'sh', 'bash', 'zsh', 'dash', 'ksh', 'eval', 'source', '.'}:
                 return True
-            if name == 'gh' and _gh_without_repo(words)[1:3] in RULES['boundary']['gh']:
-                return True
+            for i, word in enumerate(words):
+                if PurePosixPath(word).name == 'gh' and _gh_without_repo(words[i:])[1:3] in RULES['boundary']['gh']:
+                    return True
     except ValueError:
         return True
     return False

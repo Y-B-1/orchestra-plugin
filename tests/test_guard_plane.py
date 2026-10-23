@@ -20,7 +20,7 @@ sys.path.insert(0, str(HERE))
 import test_merge_guard as tm
 from orchestra_core import hooks as hooks_module
 from orchestra_core.engine import Engine
-from orchestra_core.guards import guard_digest
+from orchestra_core.guards import classify_command, guard_digest
 from orchestra_core.hooks import LEDGER_LOCKED, _raw_unattended, handle_event, main
 from orchestra_core.paths import state_location
 
@@ -307,7 +307,13 @@ class UnattendedLockTest(PlaneFixture):
                     'gh -R o/r repo ' + sq + 'delete' + sq + ' --yes', 'gh re' + bs + 'lease delete v1',
                     'rm -rf build && gh ' + sq + 'repo' + sq + ' delete o/r --yes',
                     'gh release ' + bs + '\n' + 'delete v1 -y', 'X=delete; rm -rf build; gh release $X v1 -y',
-                    'rm -rf build; bash -c ' + dq + 'gh release delete v1' + dq)
+                    'rm -rf build; bash -c ' + dq + 'gh release delete v1' + dq,
+                    # FR4: a gh word past words[0] (find -exec payloads) still counts.
+                    'find . -exec gh release delete v1 ' + bs + ';', 'find . -execdir gh repo delete o/r --yes ' + bs + ';',
+                    'nice -n 5 find . -ok gh release delete v1 +', 'xargs -I{} gh release delete {} <<< v1')
+        for command in commands[-4:]:
+            with self.subTest(classify=command):
+                self.assertEqual(classify_command(command).boundary, 'delete')
         for mode in ('protect', 'normal'):
             for command in commands:
                 with self.subTest(mode=mode, command=command):
