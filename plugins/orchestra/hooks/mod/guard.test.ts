@@ -193,6 +193,17 @@ test('FX6: a wrapper option substitution before a dash word is dropped as a read
   expect(klassOf(classifyCommand('sudo -u $(whoami) git ' + 'reset --hard'))).toBe('deny');
 });
 
+test('GF8: files under <state>/review-packages are writable; the directory entry and other state stay protected', () => {
+  const run = '/state/orchestra/0123456789abcdef01234567';
+  for (const env of [{ stateDir: '/s/state', xdg: '/state', home: '/home/u' }, { stateDir: null, xdg: '/state', home: '/home/u' }]) {
+    const root = env.stateDir ?? run;
+    expect(editDenied(root + '/review-packages/B1/diff.patch', '/work', env)).toBe(false);
+    expect(editDenied(root + '/review-packages', '/work', env)).toBe(true);
+    expect(editDenied(root + '/state.json', '/work', env)).toBe(true);
+    expect(editDenied(root + '/review-packages/../state.json', '/work', env)).toBe(true);
+  }
+});
+
 test('A8: settings.json is not protected; hooks.json, config.toml and .orchestra are', () => {
   const env = { stateDir: null, xdg: '/state', home: '/home/u' };
   for (const p of ['.claude/settings.json', '.claude/settings.local.json']) {
