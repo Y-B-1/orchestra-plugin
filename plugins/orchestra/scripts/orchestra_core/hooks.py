@@ -413,6 +413,10 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if _moves_default(shell, payload.get('cwd') if isinstance(payload.get('cwd'), str) else None, engine):
             return _deny(lock + 'no merge into or move of the default or a protected branch. '
                          + (_hint(engine, state_dir) if auto_on else 'Denied: ' + shell.strip()[:80]))
+    if not locked and isinstance(shell, str):
+        where = state_dir if state_dir is not None else getattr(engine, 'state_dir', None)
+        if isinstance(where, (str, os.PathLike)) and Path(where).is_dir() and _writes_state(shell, where, payload.get('cwd')):
+            return _deny(STATE_SHELL)  # engine state is protected in every mode, locked or not
     if mode == 'minimal' and name in _SHELL_TOOLS and role != 'subagent':
         # Generic command classification is Claude Code's permission mode; the state, runtime and release locks of an
         # autonomous or unattended run took the full path above (`locked`), and role limits cover only workers. The
@@ -454,8 +458,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     command = data.get('command', data.get('cmd'))
     if not isinstance(command, str):
         return _deny('Missing shell command', True)
-    if role == 'subagent' and str(payload.get('agent_type')).startswith('orchestra:') and 'orchestra.py' in command \
-            and _LEASE_FLAG.search(command):
+    if _worker_lease_call(payload, command):
         return _deny(LEASE_COORDINATOR_ONLY)  # a worker role limit in every mode
     if role == 'subagent' and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES) and runs_test_suite(command):
         gates = _gate_ids(engine)
@@ -553,6 +556,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     if klass in {'release', 'release-multi'} and (engine is not None or armed) and mode == 'protect':
         # Normal never releases without a question; protect: a current permit lets the release run, otherwise deny.
         problem = decision.reason
+        if klass == 'release' and decision.category == 'gitpush' and not locked and engine is not None and cwd is not None \
+                and _pull_request_push(command, cwd, engine, plain=True) is None:
+            return HookResult({})  # outside a lock a pull request push needs no permit; the owner merges it
         if klass == 'release' and engine is not None and decision.remote and decision.target:
             try:
                 if engine.check_release(decision.remote, decision.target, argv=list(decision.argv)):
@@ -760,7 +766,7 @@ _BRANCH = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._/-]*')
 _NOT_A_BRANCH = ('refs/', 'heads/', 'tags/', 'remotes/')
 
 
-def _pull_request_push(command, cwd, engine):
+def _pull_request_push(command, cwd, engine, plain=False):
     """Autonomy may push one feature branch for a pull request. Only the exact shape
     `git push [-u|--set-upstream] REMOTE REFSPEC` qualifies: no environment prefix, wrapper, Git option or other push
     option, a configured remote by name with no push mapping, and a refspec whose destination is one branch that is
@@ -798,6 +804,20 @@ def _pull_request_push(command, cwd, engine):
     if target != source:
         return ('A pull request push keeps the branch name: push %s to %s, not %s. '
                 'Rename the local branch first if the name is wrong.' % (source, source, target))
+    if plain:  # protect outside a lock: no autonomy state, so the default comes from the local remote-tracking head
+        code, head = _git_out(cwd, 'symbolic-ref', '--short', '-q', 'refs/remotes/%s/HEAD' % remote)
+        default = head[len(remote) + 1:] if code == 0 and head.startswith(remote + '/') else ''
+        if not default:
+            return 'The default branch of %s cannot be resolved; push by hand.' % remote
+        try:
+            release = engine.policy.get('release') or {}
+        except Exception:
+            return 'The run policy cannot be read; push by hand.'
+        if target.casefold() in {default.casefold(), *(x.casefold() for x in RULES['git']['autonomy_protected_branches'])}:
+            return 'Never push the default or a release branch; push a feature branch and open a pull request.'
+        if release.get('remote') == remote and str(release.get('target', '')).casefold() == target.casefold():
+            return 'That branch is the configured release target; a release needs a permit.'
+        return None
     try:
         auto = engine.status()['autonomy']
         allowed = auto.get('pull_requests') is True
@@ -866,6 +886,12 @@ def _foreign_subagent(payload):
 def _reviewer_call(payload):
     """A call made inside a reviewer or critic: the mod does not know the test-suite rule, so Python always guards it."""
     return bool(payload.get('agent_id')) and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES)
+
+
+def _worker_lease_call(payload, command):
+    """A call made inside an Orchestra worker whose shell command runs orchestra.py with --lease (coordinator-only)."""
+    return (bool(payload.get('agent_id')) and str(payload.get('agent_type')).startswith('orchestra:')
+            and isinstance(command, str) and 'orchestra.py' in command and bool(_LEASE_FLAG.search(command)))
 
 
 def _run_active(engine):
@@ -1402,6 +1428,53 @@ def _touches_state(command, state_dir, cwd):
     if any(re.search(re.escape(form.replace('\\', '/')) + r'(?![A-Za-z0-9._-])', text) for form in forms if form not in ('', '/', '.')):
         return True
     return bool(_STATE_NAMES.search(text) or (re.fullmatch(r'[0-9a-f]{24}', real.name) and real.name in text))
+
+
+_WRITE_VERBS = {'tee', 'rm', 'rmdir', 'unlink', 'shred', 'mv', 'cp', 'install', 'ln', 'truncate', 'dd', 'chmod', 'chown',
+                'set-content', 'add-content', 'out-file', 'remove-item', 'copy-item', 'move-item', 'new-item', 'clear-content'}
+_DEST_VERBS = {'cp', 'install', 'ln', 'copy-item', 'move-item'}  # the last word is the destination: a read copy is fine
+_WRAPPERS = {'sudo', 'command', 'exec', 'nohup', 'env', 'time', 'nice'}
+
+
+def _writes_state(command, state_dir, cwd):
+    """A shell command that writes into the state directory: an output redirect or tee, rm, mv, cp, install, ln, truncate,
+    dd, chmod or `sed -i` aimed at it. Reads and orchestra.py commands are not writes. Text only: best effort."""
+    if _cli_only(command) or not _touches_state(command, state_dir, cwd):
+        return False
+    text = re.sub(r'\d*>&\s*(?:\d+|-)', ' ', command)  # a descriptor copy writes no file
+    text = text.replace('&>', '>')
+    inside = False  # an earlier `cd` into the state directory
+    for piece in re.split(r'[;&|\n]+', text):
+        for target in re.findall(r'>>?\|?\s*((?:\'[^\']*\'|"[^"]*"|[^\s<>\'"])+)', piece):
+            target = target.replace("'", '').replace('"', '')
+            relative = not target.startswith(('/', '~', '$'))
+            if _touches_state(target, state_dir, cwd if relative else None) or (relative and inside):
+                return True
+        try:
+            words = shlex.split(piece.replace('>', ' '))
+        except ValueError:
+            words = piece.split()
+        while words and (words[0] in _WRAPPERS or re.fullmatch(r'[A-Za-z_]\w*=\S*', words[0])):
+            words = words[1:]
+        if not words:
+            continue
+        verb = PurePosixPath(words[0]).name.lower()
+        args = words[1:]
+        if verb == 'cd':
+            inside = inside or _touches_state(piece, state_dir, None)
+            continue
+        flagged = verb == 'sed' and any(re.match(r'-[A-Za-z]*i|--in-place', w) for w in args if w.startswith('-'))
+        if verb not in _WRITE_VERBS and not flagged:
+            continue
+        operands = [w for w in args if not w.startswith('-')] or args
+        if verb in _DEST_VERBS:
+            last = operands[-1] if operands else ''
+            relative = not last.startswith(('/', '~', '$'))
+            if _touches_state(last, state_dir, cwd if relative else None) or (relative and inside):
+                return True
+        elif inside or _touches_state(piece, state_dir, cwd):
+            return True
+    return False
 
 
 def _cli_only(command):
@@ -1957,6 +2030,8 @@ def _main(argv=None):
             and isinstance(payload, dict) and isinstance(payload.get('tool_name'), str)
             and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
             and not _foreign_subagent(payload)
+            and not _worker_lease_call(payload, (payload.get('tool_input') or {}).get('command')
+                                       if isinstance(payload.get('tool_input'), dict) else None)
             and not _release_call(payload)
             and not _soften_call(payload)
             and not _ledger_call(payload)
