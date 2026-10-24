@@ -2400,9 +2400,10 @@ class Engine:
     def review_with_token(self, actor, lease, token, report_path, defer_reason=None):
         """Report the review card and record its receipt in one transaction, then accept the card when every accept check
         passes. The card is the one assigned TOKEN to the receipt's reviewer; the receipt file is its report. A final
-        receipt also covers the other open final review cards of the same reviewed work (one pre-PR wave). A non-final
-        receipt is taken from a critic card or as a fix re-review (`repair_check`). With DEFER_REASON each out-of-scope
-        item is recorded as deferred to a brief, with that reason, in the same transaction."""
+        receipt also covers the other final review cards of the same reviewed work (one pre-PR wave), accepted ones
+        included. A non-final receipt is taken from a critic card or as a fix re-review (`repair_check`). With
+        DEFER_REASON each out-of-scope item is recorded as deferred to a brief, with that reason, in the same
+        transaction."""
         if defer_reason is not None and (not isinstance(defer_reason, str) or not defer_reason.strip()):
             raise EngineError('--defer-out-of-scope needs a nonempty reason')
         try:
@@ -2426,7 +2427,7 @@ class Engine:
             retasked = False
             if final and isinstance(ids, list):
                 siblings = [t['id'] for t in self._by_seq(state['tasks'].values())
-                            if t['id'] != card['id'] and t['id'] not in ids and t['state'] != 'accepted'
+                            if t['id'] != card['id'] and t['id'] not in ids
                             and t['role'] in REVIEW_ROLES and t['mode'] == card['mode'] == 'final'
                             and t.get('review_of') and set(t['review_of']) == set(card.get('review_of', []))]
                 retasked = bool(siblings)
