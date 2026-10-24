@@ -33,7 +33,7 @@ def _lines(items, empty):
     return '\n'.join('- ' + i for i in items) if items else empty
 
 
-def render(task, repo, base):
+def render(task, repo, base, prep=()):
     """The brief skeleton for a card: Mode line, objective, ownership, numbered acceptance lines repeated as the
     SELF_REVIEW criteria skeleton, Keep and Remove for a builder, the plugin root, the base commit and the report contract."""
     builder = task['role'] == 'builder'
@@ -48,6 +48,10 @@ def render(task, repo, base):
     if builder:
         parts += ['', KEEP_REMOVE[0], _lines(task.get('keep') or [DEFAULT_KEEP], '- none'),
                   '', KEEP_REMOVE[1], _lines(task.get('remove') or [], 'none')]
+    if prep:
+        parts += ['', '## Prep notes']
+        for prep_id, note in prep:
+            parts += ['', '### ' + prep_id, note]
     parts += ['', '## Starting point', '- Repository: ' + str(repo), '- Base commit: ' + base,
               '- Plugin root: %s (skills under <root>/skills/, CLI <root>/scripts/orchestra.py)' % PACKAGE_ROOT, '',
               '## Report contract', 'STATUS: PASS|ISSUES|BLOCKED', 'ARTIFACT: <full commit sha> <clean, or dirty-tree fingerprint>']
@@ -71,10 +75,17 @@ def _own_brief(engine, task):
     return path if path.is_absolute() else engine.repo / path
 
 
+def prep_notes(engine, task):
+    """(card id, report text without its SELF_REVIEW line) for each accepted card whose prep_for names this card."""
+    return [(t['id'], '\n'.join(l for l in t['report'].splitlines() if not l.startswith('SELF_REVIEW:')).strip())
+            for t in engine.status()['tasks'].values()
+            if t.get('prep_for') == task['id'] and t['state'] == 'accepted' and 'report' in t]
+
+
 def text_of(engine, task):
     """(brief text, path of the card's own brief or None). Refuses a brief without its Mode line."""
     own = _own_brief(engine, task)
-    text = own.read_text(errors='replace') if own is not None and own.is_file() else render(task, engine.repo, _head(engine))
+    text = own.read_text(errors='replace') if own is not None and own.is_file() else render(task, engine.repo, _head(engine), prep_notes(engine, task))
     if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', text, re.M):
         raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
     return text, own
