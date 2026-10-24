@@ -109,7 +109,9 @@ def parser():
     review = sub.add_parser('review')
     review.add_argument('report', help='Structured review JSON path')
     review.add_argument('--token', help='Assignment token of the final review card: report it, record the receipt and '
-                        'accept the card in one step (final receipts only)')
+                        'accept the card in one step (a final receipt, a critic receipt or a fix re-review)')
+    review.add_argument('--defer-out-of-scope', metavar='REASON', help='With --token: record each out-of-scope item as '
+                        'deferred to a brief, with REASON')
     gate = sub.add_parser('gate')
     gate.add_argument('name')
     gate.add_argument('--again', action='store_true', help='Rerun a gate that already passed on this artifact')
@@ -349,8 +351,10 @@ def execute(args):
         missing = [k for k in ('reviewer','categories','tasks','final','findings') if k not in review]
         if missing:
             raise EngineError('Review report is missing: '+', '.join(missing))
+        if args.defer_out_of_scope is not None and not args.token:
+            raise EngineError('--defer-out-of-scope needs --token')
         if args.token:
-            result = engine.review_with_token(args.actor,args.lease,args.token,args.report)
+            result = engine.review_with_token(args.actor,args.lease,args.token,args.report,args.defer_out_of_scope)
             without_entries(result['receipt'])
             return result,0
         result = engine.record_review(args.actor,args.lease,review['reviewer'],args.report,

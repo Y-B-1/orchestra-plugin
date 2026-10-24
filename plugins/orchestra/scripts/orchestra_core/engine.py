@@ -2268,7 +2268,8 @@ class Engine:
         with self._state() as state:
             return self._record_review(state, actor, lease, reviewer, report_path, categories, task_ids, final, findings)
 
-    def _record_review(self, state, actor, lease, reviewer, report_path, categories, task_ids=None, final=False, findings=None):
+    def _record_review(self, state, actor, lease, reviewer, report_path, categories, task_ids=None, final=False, findings=None,
+                       retasked=False):
         self._lease(state, actor, lease)
         ids = list(task_ids or [])
         findings = findings or []
@@ -2303,6 +2304,9 @@ class Engine:
             if self._saw_clean_head(state, body['artifact'], reviewer, artifact):
                 body = dict(body, artifact=artifact)
                 normalized = (json.dumps(body, indent=1, sort_keys=True) + '\n').encode()
+        if retasked and isinstance(body, dict):  # review --token added the sibling lens cards to the covered tasks
+            body = dict(body, tasks=ids)
+            normalized = (json.dumps(body, indent=1, sort_keys=True) + '\n').encode()
         expected = dict(reviewer=reviewer, categories=categories, tasks=ids, findings=findings,
                         verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact, final=bool(final))
         if not isinstance(body, dict) or any(body.get(k) != v for k, v in expected.items()):
@@ -2374,9 +2378,14 @@ class Engine:
         card = max(cards, key=lambda t: t['started_at'], default=None)
         return card is not None and card.get('dispatch_policy') == self.policy_hash
 
-    def review_with_token(self, actor, lease, token, report_path):
-        """Report the review card and record its final receipt in one transaction, then accept the card when every accept
-        check passes. The card is the one assigned TOKEN to the receipt's reviewer; the receipt file is its report."""
+    def review_with_token(self, actor, lease, token, report_path, defer_reason=None):
+        """Report the review card and record its receipt in one transaction, then accept the card when every accept check
+        passes. The card is the one assigned TOKEN to the receipt's reviewer; the receipt file is its report. A final
+        receipt also covers the other open final review cards of the same reviewed work (one pre-PR wave). A non-final
+        receipt is taken from a critic card or as a fix re-review (`repair_check`). With DEFER_REASON each out-of-scope
+        item is recorded as deferred to a brief, with that reason, in the same transaction."""
+        if defer_reason is not None and (not isinstance(defer_reason, str) or not defer_reason.strip()):
+            raise EngineError('--defer-out-of-scope needs a nonempty reason')
         try:
             text = Path(report_path).read_text()
             body = json.loads(text)
@@ -2391,14 +2400,27 @@ class Engine:
             if (not card or card['role'] not in REVIEW_ROLES or card['worker'] != body['reviewer']
                     or card['state'] not in ('running', 'reported')):
                 raise EngineError('Invalid assignment')
-            if body['final'] is not True:
+            final = body['final']
+            if final is not True and not (final is False and (body.get('repair_check') is True or card['role'] == 'critic')):
                 raise EngineError('review --token records final receipts only')
+            ids = body['tasks']
+            retasked = False
+            if final and isinstance(ids, list):
+                siblings = [t['id'] for t in self._by_seq(state['tasks'].values())
+                            if t['id'] != card['id'] and t['id'] not in ids and t['state'] != 'accepted'
+                            and t['role'] in REVIEW_ROLES and t['mode'] == card['mode'] == 'final'
+                            and t.get('review_of') and set(t['review_of']) == set(card.get('review_of', []))]
+                retasked = bool(siblings)
+                ids = ids + siblings
             if card['state'] == 'running':
                 self._report_in(state, card['worker'], token, text)
                 if card['state'] != 'reported':
                     raise EngineError('The review card did not take the report')
             receipt = self._record_review(state, actor, lease, body['reviewer'], report_path, body['categories'],
-                                          body['tasks'], True, body['findings'])
+                                          ids, final, body['findings'], retasked)
+            if defer_reason is not None:
+                for index in range(len(receipt['out_of_scope'])):
+                    self._add_finding(state, receipt['id'], 'out_of_scope', index, 'brief', defer_reason)
             refusal = self._accept_refusal(state, {}, card['id'])
             if refusal is None:
                 card['state'] = 'accepted'
@@ -2694,27 +2716,30 @@ class Engine:
         """Record the coordinator's disposition of one receipt item (SPEC 5.12). A rejection accepts no card."""
         with self._state() as state:
             self._lease(state, actor, lease)
-            review = next((r for r in state['reviews'] if r['id'] == review_id), None)
-            if review is None:
-                raise EngineError('Unknown review: ' + str(review_id))
-            if kind not in DISPOSITIONS:
-                raise EngineError('Finding kind must be finding or out_of_scope')
-            if disposition not in DISPOSITIONS[kind]:
-                raise EngineError('Disposition for %s must be one of %s' % (kind, ', '.join(DISPOSITIONS[kind])))
-            items = review['findings'] if kind == 'finding' else review.get('out_of_scope', [])
-            if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(items):
-                raise EngineError('Finding index does not name an item of that receipt')
-            if not isinstance(reason, str) or not reason.strip():
-                raise EngineError('Finding needs a reason')
-            if card is not None and (not isinstance(card, str) or not card.strip()):
-                raise EngineError('Finding card must be a nonempty id')
-            entry = dict(id=uuid.uuid4().hex, fingerprint=_fingerprint(items[index]), text=items[index],
-                         source=dict(review=review_id, kind=kind, index=index), disposition=disposition,
-                         reason=reason, at=datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds'))
-            if card is not None:
-                entry['card'] = card
-            state.setdefault('findings', []).append(entry)
-            return copy.deepcopy(entry)
+            return self._add_finding(state, review_id, kind, index, disposition, reason, card)
+
+    def _add_finding(self, state, review_id, kind, index, disposition, reason, card=None):
+        review = next((r for r in state['reviews'] if r['id'] == review_id), None)
+        if review is None:
+            raise EngineError('Unknown review: ' + str(review_id))
+        if kind not in DISPOSITIONS:
+            raise EngineError('Finding kind must be finding or out_of_scope')
+        if disposition not in DISPOSITIONS[kind]:
+            raise EngineError('Disposition for %s must be one of %s' % (kind, ', '.join(DISPOSITIONS[kind])))
+        items = review['findings'] if kind == 'finding' else review.get('out_of_scope', [])
+        if isinstance(index, bool) or not isinstance(index, int) or not 0 <= index < len(items):
+            raise EngineError('Finding index does not name an item of that receipt')
+        if not isinstance(reason, str) or not reason.strip():
+            raise EngineError('Finding needs a reason')
+        if card is not None and (not isinstance(card, str) or not card.strip()):
+            raise EngineError('Finding card must be a nonempty id')
+        entry = dict(id=uuid.uuid4().hex, fingerprint=_fingerprint(items[index]), text=items[index],
+                     source=dict(review=review_id, kind=kind, index=index), disposition=disposition,
+                     reason=reason, at=datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds'))
+        if card is not None:
+            entry['card'] = card
+        state.setdefault('findings', []).append(entry)
+        return copy.deepcopy(entry)
 
     def list_findings(self, for_brief=False):
         """Lease-free read of the ledger; for_brief renders the block reviewer briefs carry."""
