@@ -50,6 +50,8 @@ REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
+MODEL_FAMILIES = ('opus', 'sonnet', 'haiku', 'fable')
 PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop loop gives up as `stalled`
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
 GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which an unattended run stops
@@ -1757,6 +1759,8 @@ class Engine:
             size = task.get('size') or ('medium' if session['size'] == 'large' else session['size'])
             if size == 'tiny' and not inline and not (isinstance(helper, str) and helper.strip()):
                 raise EngineError('Tiny unit: the main session does this work; pass --helper REASON to dispatch a helper')
+            if inline and size != 'tiny':
+                Engine._check_model_fit(state, task)
             return
         route = session.get('route')
         if route is None or task['role'] != 'builder':
@@ -1767,6 +1771,65 @@ class Engine:
                 raise EngineError('Workflow route: accept the designer-planner plan card first')
         elif not inline and not (isinstance(helper, str) and helper.strip()):
             raise EngineError('Inline route: the main session does this work; pass --helper REASON to dispatch a helper')
+
+    @staticmethod
+    def card_model(task):
+        """(model, effort) a card runs on, from config/models.json: the role's preset for the card's mode, else the role."""
+        try:
+            roles = json.loads((PACKAGE_ROOT / 'config/models.json').read_text())['claude']
+        except (OSError, ValueError, KeyError):
+            return None, None
+        role = roles.get(task['role'])
+        if not isinstance(role, dict) or 'model' not in role:
+            return None, None
+        preset = (role.get('presets') or {}).get(task['mode']) or role
+        return preset.get('model', role['model']), preset.get('effort', role.get('effort'))
+
+    @staticmethod
+    def _family(model):
+        return next((f for f in MODEL_FAMILIES if isinstance(model, str) and f in model.lower()), None)
+
+    @staticmethod
+    def session_model(state):
+        """(model, effort) of the main session: the model the hooks recorded, the effort from $CLAUDE_EFFORT (the
+        engine runs under the session's Bash tool) or the recorded one. Either is None when unknown."""
+        session = state.get('session') or {}
+        effort = os.environ.get('CLAUDE_EFFORT') or session.get('effort')
+        return session.get('model'), effort if effort in EFFORTS else None
+
+    @staticmethod
+    def _check_model_fit(state, task):
+        """Inline work runs on the session's model and effort, which cannot change per card. A card whose models.json
+        model family differs, or whose effort is above the session's on the same model, goes to a worker. An unknown model refuses nothing."""
+        need_model, need_effort = Engine.card_model(task)
+        have_model, have_effort = Engine.session_model(state)
+        want, have = Engine._family(need_model), Engine._family(have_model)
+        low = (want and want == have and need_effort in EFFORTS and have_effort in EFFORTS
+               and EFFORTS.index(have_effort) < EFFORTS.index(need_effort))  # effort compares only within one model
+        if (want and have and want != have) or low:
+            raise EngineError('Model fit: %s needs %s %s and the main session runs %s %s; start it on a worker, '
+                              'which runs on the card\'s own model (`wave` or `dispatch`)'
+                              % (task['id'], need_model, need_effort, have_model or 'unknown', have_effort or 'unknown'))
+
+    def record_model(self, model=None, effort=None):
+        """Record the main session's model (SessionStart, PostModelSwitch or the transcript) and effort for an active run.
+        Hook bookkeeping, not progress: no lease and no activity bump. Returns True when the record changed."""
+        if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 100):
+            return False
+        if effort is not None and effort not in EFFORTS:
+            return False
+        if not self.state_path.exists():
+            return False
+        with self._state(activity=False, block=True) as state:
+            session = state.get('session')
+            if not isinstance(session, dict) or not session.get('active'):
+                return False
+            changed = False
+            for key, value in (('model', model), ('effort', effort)):
+                if value is not None and session.get(key) != value:
+                    session[key] = value
+                    changed = True
+            return changed
 
     def _start_checks(self, state, actor, task_id, worker, inline, helper=None, ready=None, cheap=False, contract=True):
         """Every refusal a start can make, with no change to the state. `ready` is a precomputed `_ready` list. `cheap`
@@ -2053,7 +2116,7 @@ class Engine:
             acceptable = [t['id'] for t in ordered if t['state'] == 'reported' and not t.get('repaired_by')
                           and t['id'] not in pending and not self._self_review_blocks(t)]
             return dict(
-                run_id=state.get('run_id'), session=dict(active=bool(run.get('active')), size=run.get('size')),
+                run_id=state.get('run_id'), session=dict(active=bool(run.get('active')), size=run.get('size'), model=run.get('model'), effort=run.get('effort')),
                 bound=session is not None and run.get('harness_session') == session,
                 autonomy=dict(active=self._autonomy_on(state)),
                 counts={s: sum(t['state'] == s for t in ordered) for s in states},
@@ -2503,7 +2566,28 @@ class Engine:
             refusal = self._accept_refusal(state, {}, card['id'])
             if refusal is None:
                 card['state'] = 'accepted'
-            return dict(receipt=receipt, card=card['id'], accepted=refusal is None, refusal=refusal)
+            chain = []
+            if refusal is None and body.get('repair_check') is True and not receipt['findings']:
+                chain = self._accept_chain(state, ids)
+            return dict(receipt=receipt, card=card['id'], accepted=refusal is None, refusal=refusal, chain_accepted=chain)
+
+    def _accept_chain(self, state, ids):
+        """F65: after a CLEAN fix re-review, accept the builder cards it names and their repair ancestors, newest first,
+        each only when `accept` would take it. Returns the ids accepted, in order."""
+        tasks, names = state['tasks'], set()
+        for task_id in ids:
+            while task_id in tasks and tasks[task_id]['role'] == 'builder' and task_id not in names:
+                names.add(task_id)
+                task_id = tasks[task_id].get('repair_of')
+        accepted, moved = [], True
+        while moved:
+            moved = False
+            for task in sorted((tasks[i] for i in names), key=lambda t: -t.get('seq', 0)):
+                if task['state'] != 'accepted' and self._accept_refusal(state, {}, task['id']) is None:
+                    task['state'] = 'accepted'
+                    accepted.append(task['id'])
+                    moved = True
+        return accepted
 
     def _check_task_findings(self, state, body, ids, findings):
         """Per-task findings (SPEC 5.1 item 4): covered keys only, and the ordered union equals `findings`."""
@@ -3022,8 +3106,20 @@ class Engine:
             self._lease(state, actor, lease)
             return self._completion_evidence(state)
 
-    def close_session(self, actor, lease):
-        """Check and close under one lock, keeping completion distinct from interruption."""
+    def close_session(self, actor, lease, accept_reported=False):
+        """Check and close under one lock, keeping completion distinct from interruption. With `accept_reported`, first
+        accept (in their own write, kept when the close refuses) every reported card whose accept passes, repeating
+        until none moves so a repair chain accepts in order; a card whose accept is refused stays reported."""
+        if accept_reported:
+            with self._state() as state:
+                self._lease(state, actor, lease)
+                moved = True
+                while moved:
+                    moved = False
+                    for task in self._by_seq(state['tasks'].values()):
+                        if task['state'] == 'reported' and not self._accept_refusal(state, {}, task['id']):
+                            task['state'] = 'accepted'
+                            moved = True
         with self._state() as state:
             self._lease(state, actor, lease)
             try:
