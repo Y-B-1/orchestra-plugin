@@ -320,6 +320,14 @@ def d3_mode_line(x, chk):
     chk('spawn without a Mode line refused', ag and ag[0]['error'] and 'mode' in ag[0]['text'].lower(), ag[0]['text'][:250] if ag else 'no call')
 
 
+def builder_tools_line():
+    """The value of the builder agent file's tools: line, or None when the file has no such line."""
+    for line in (PLUGIN / 'agents/builder.md').read_text().splitlines():
+        if line.startswith('tools:'):
+            return line[len('tools:'):].strip()
+    return None
+
+
 def d4_worker_limits(x, chk):
     """Proves: A worker cannot run a lease command or delegate, but can run lease-free status."""
     x.start('minimal')
@@ -339,8 +347,12 @@ def d4_worker_limits(x, chk):
     chk('worker lease-free status allowed', plain and not plain[0]['error'], plain[0]['text'][:150] if plain else 'not run')
     nested = [c for c in sub if c['tool'] in ('Agent', 'Task')]
     # A worker's tools: allowlist leaves out Agent, so Claude Code itself refuses the call; either refusal enforces it.
-    chk('worker delegation refused', nested and nested[0]['error'] and (orch_denied(nested[0]) or 'no such tool' in nested[0]['text'].lower()),
-        nested[0]['text'][:200] if nested else 'not attempted')
+    # With no call at all, the builder's tools: line is the proof: it must leave Agent out.
+    tools = builder_tools_line()
+    no_agent = not nested and tools is not None and 'Agent' not in tools.replace(',', ' ').split()
+    chk('worker delegation refused',
+        (nested and nested[0]['error'] and (orch_denied(nested[0]) or 'no such tool' in nested[0]['text'].lower())) or no_agent,
+        f'builder has no Agent tool (tools: {tools})' if no_agent else (nested[0]['text'][:200] if nested else 'not attempted'))
 
 
 def h1_stop_block(x, chk):
