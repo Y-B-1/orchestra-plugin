@@ -89,10 +89,14 @@ class LogUnits(unittest.TestCase):
         self.assertEqual([e['command'] for e in got], ['accept T3', 'accept T4'])
         self.assertEqual(cli_support.read_refusals(self.state/'none', 2), [])
 
-    def test_seen_signature_round_trip(self):
+    def test_seen_record_is_the_prompt_hook_shape(self):
         self.state.mkdir()
-        cli_support.store_seen(self.state, 'abc')
-        self.assertEqual(json.loads((self.state/'board-seen.json').read_text()), {'signature': 'abc'})
+        seen = view(A='queued')
+        cli_support.store_seen(self.state, seen)
+        delta.store(self.state, 'hook-seen.json', seen)
+        self.assertEqual(json.loads((self.state/'board-seen.json').read_text()),
+                         json.loads((self.state/'hook-seen.json').read_text()))
+        self.assertEqual(json.loads((self.state/'board-seen.json').read_text())['cards'], {'A': 'queued'})
 
 
 class CliRefusals(unittest.TestCase):
@@ -175,6 +179,7 @@ class CliRefusals(unittest.TestCase):
         _, dispatched = self.run_cli('dispatch', 'B1', 'worker-B1', '--helper', 'fixture helper', '--serial', 'one', lease=lease)
         self.assertIn('B1 queued>running', dispatched['board'])
         self.assertNotEqual(json.loads((self.state/'board-seen.json').read_text())['signature'], seen)
+        self.assertEqual(json.loads((self.state/'board-seen.json').read_text())['cards'], {'B1': 'running'})
         rep = self.root/'rep.txt'
         rep.write_text('Inspected fixture.\n'+SELF_REVIEW+'\n')
         _, reported = self.run_cli('report', 'worker-B1', dispatched['assignment'], str(rep))
@@ -187,6 +192,21 @@ class CliRefusals(unittest.TestCase):
             self.assertNotIn('board', out)
         self.run_cli('ready', lease=lease)
         self.assertFalse((self.state/'board-seen.json').exists())
+
+    def test_abbreviated_options_are_refused_and_full_spellings_still_parse(self):
+        lease = self.start()
+        for argv in (['--leas', lease, 'where'], ['--lea=' + lease, 'where'], ['refusals', '--la', '1'], ['finding', 'list', '--for']):
+            result = subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), '--state', str(self.state), *argv],
+                                    capture_output=True, text=True, timeout=25)
+            self.assertEqual(result.returncode, 2, argv)
+            self.assertIn('usage:', result.stderr, argv)
+        self.run_cli('where', lease=lease)
+        full = subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), '--state', str(self.state), '--lease=' + lease, 'where'],
+                              capture_output=True, text=True, timeout=25)
+        self.assertEqual(full.returncode, 0, full.stderr)
+        self.run_cli('status', '--full', lease=lease)
+        self.run_cli('refusals', '--last', '1')
+        self.run_cli('finding', 'list')
 
 
 if __name__ == '__main__':

@@ -1,9 +1,11 @@
 """CLI helpers: the refusal log and the stored board signature."""
 import json
-import os
 from pathlib import Path
 import shlex
 import time
+
+from . import delta
+from .paths import atomic
 
 LOG = 'refusals.jsonl'
 KEEP = 200
@@ -33,9 +35,7 @@ def log_refusal(state, argv, error):
                                command=shlex.join(without_lease(argv)), error=str(error)))
         lines = path.read_text().splitlines() if path.exists() else []
         lines = (lines+[line])[-KEEP:]
-        temporary = path.with_name(LOG+'.%d.tmp' % os.getpid())
-        temporary.write_text('\n'.join(lines)+'\n')
-        os.replace(temporary, path)
+        atomic(path, ('\n'.join(lines)+'\n').encode())
     except Exception:  # a failing log never changes the exit code or the error text
         pass
 
@@ -54,12 +54,9 @@ def read_refusals(state, last):
     return entries[-last:] if last > 0 else []
 
 
-def store_seen(state, signature):
-    """Record the board signature whose delta line was just printed."""
+def store_seen(state, view):
+    """Record the board whose delta line was just printed, in the shape the prompt hook stores."""
     try:
-        path = Path(state)/'board-seen.json'
-        temporary = path.with_name('board-seen.json.%d.tmp' % os.getpid())
-        temporary.write_text(json.dumps({'signature': signature}))
-        os.replace(temporary, path)
+        atomic(Path(state)/'board-seen.json', json.dumps(delta.record(view)).encode())
     except OSError:
         pass

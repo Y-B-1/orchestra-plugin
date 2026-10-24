@@ -25,7 +25,7 @@ Merge and dedupe findings that name the same cause. Check for conflicts between 
 
 ## Review package
 
-For each reported card write `<state>/review-packages/<card>/` (`package TASK` writes one from engine facts; `ledger` prints the BUILD-LEDGER rows): the brief, the report with its `SELF_REVIEW:` line, the base and head commits, the diff, and the command logs. The pre-PR reviewer reads the packages and the artifact, never the builder's conversation.
+For each reported card write `<state>/packages/<card>/` (`package TASK` writes one from engine facts, never `review-packages`; `ledger` prints the BUILD-LEDGER rows): the brief, the report with its `SELF_REVIEW:` line, the base and head commits, the diff, and the command logs. The pre-PR reviewer reads the packages and the artifact, never the builder's conversation.
 
 ## Plan execution
 

@@ -56,11 +56,16 @@ def read(directory, name):
         return {}
 
 
+def record(view):
+    """The board-seen record both writers store: the signature and each card's state."""
+    return {'signature': signature(view), 'cards': _states(view)}
+
+
 def store(directory, name, view):
     """Record the board signature and each card's state under `directory/name`; a failed write is ignored."""
     try:
         from .paths import atomic
-        atomic(Path(directory)/name, json.dumps({'signature': signature(view), 'cards': _states(view)}).encode())
+        atomic(Path(directory)/name, json.dumps(record(view)).encode())
     except Exception:
         pass
 

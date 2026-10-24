@@ -8,6 +8,7 @@ if os.name == 'nt' and not sys.flags.utf8_mode:
     # Windows opens text files in the locale encoding unless Python runs in UTF-8 mode: run again in it.
     raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.argv]))
 import argparse
+import functools
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,8 @@ from orchestra_core.paths import atomic, load_policy, main_checkout, repository,
 ROOT = Path(__file__).resolve().parents[1]
 # Commands that add one `board` line to their JSON when a card changed state.
 BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','review','park','cancel','unpark','hold'}
+# No parser takes an abbreviated option: `--leas` must not parse as `--lease`, which the refusal log strips.
+STRICT_PARSER = functools.partial(argparse.ArgumentParser, allow_abbrev=False)
 
 
 def read_json(path):
@@ -32,12 +35,12 @@ def read_json(path):
 
 
 def parser():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = STRICT_PARSER(description=__doc__)
     p.add_argument('--repo', default=os.getcwd())
     p.add_argument('--state', help='External run directory; defaults to user state for this repository')
     p.add_argument('--actor', default='main', help='Workflow identity, not an authenticated principal')
     p.add_argument('--lease', help='Coordinator lease returned by start')
-    sub = p.add_subparsers(dest='command', required=True)
+    sub = p.add_subparsers(dest='command', required=True, parser_class=STRICT_PARSER)
     start = sub.add_parser('start')
     start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
     start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
@@ -118,7 +121,7 @@ def parser():
     gate.add_argument('--timeout', type=float, help='Seconds for this run; overrides gate_timeout_seconds')
     gate.add_argument('argv', nargs=argparse.REMAINDER)
     finding = sub.add_parser('finding', help='Record or list dispositions of review findings')
-    findings = finding.add_subparsers(dest='finding_command', required=True)
+    findings = finding.add_subparsers(dest='finding_command', required=True, parser_class=STRICT_PARSER)
     fadd = findings.add_parser('add')
     fadd.add_argument('--review', required=True)
     fadd.add_argument('--kind', required=True, choices=['finding', 'out_of_scope'])
@@ -440,7 +443,7 @@ def execute(args):
 
 
 def add_board_line(args,result):
-    """Add the one-line `board` delta to a result when a card moved; return the signature to store, or None."""
+    """Add the one-line `board` delta to a result when a card moved; return the board view to store, or None."""
     if args.command not in BOARD_COMMANDS or not isinstance(result,dict) or args.board_before is None:
         return None
     try:
@@ -451,7 +454,7 @@ def add_board_line(args,result):
     if line is None:
         return None
     result['board'] = line
-    return delta.signature(after)
+    return after
 
 
 def refused_state(args):

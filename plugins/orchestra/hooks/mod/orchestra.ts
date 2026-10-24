@@ -96,7 +96,6 @@ export function blocked(reason: string): { deny: string } {
   return { deny: reason.startsWith('Orchestra') ? reason : `Orchestra guard: ${reason}` };
 }
 
-/** SPEC 5.16 item 4: the reason names the one failure class. `detail` is the spawn code or the exit status. */
 const MODE_LINE = /^[ \t]*Mode:[ \t]+\S/m;
 const BRIEF_PATH = /brief at (\/[^\s`'"]+)/;
 
@@ -115,6 +114,7 @@ export async function briefWithoutMode($: { fs: { read(path: string): Promise<st
   return MODE_LINE.test(text) ? null : path;
 }
 
+/** SPEC 5.16 item 4: the reason names the one failure class. `detail` is the spawn code or the exit status. */
 export function failClosed(kind: 'spawn' | 'exit' | 'timeout' | 'bad output', detail: string): string {
   const named = kind === 'spawn' ? `spawn: ${detail}` : kind === 'exit' ? `exit ${detail}` : kind;
   return `Orchestra guard error (${named}); failing closed`;
