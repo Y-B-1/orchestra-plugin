@@ -92,6 +92,15 @@ class StateShellWriteTest(LiveFixture):
                         self.assertIn(STATE_SHELL, out['permissionDecisionReason'])
                         self.assertNotIn('Autonomy is active', out['permissionDecisionReason'])
 
+    def test_a_file_name_starting_with_a_digit_is_not_a_descriptor_copy(self):
+        s = shlex.quote(str(self.state))
+        for command in ('cd %s && echo x >&1new.json' % s, 'echo x >& %s/9state.json' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+        for command in ('cd %s && echo x >&2' % s, 'echo x 2>&1', 'echo x >&-'):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'allow')
+
     def test_reads_and_engine_commands_stay_allowed(self):
         for mode in MODES:
             self.set_mode(mode)
@@ -169,6 +178,27 @@ class StateShellWriteTest(LiveFixture):
         s = shlex.quote(str(self.state))
         for command in ('echo x >> %s/progress.md' % s, 'echo x >> %s/standing-orders.md' % s,
                         'cd %s && echo x >> progress.md' % s, 'cd %s && echo x >> standing-orders.md' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'allow')
+
+
+    def test_more_state_write_spellings_are_denied_outside_a_lock(self):
+        s = shlex.quote(str(self.state))
+        for command in ('echo x >&%s/state.json' % s, 'echo x >& %s/state.json' % s,
+                        '(cd %s && echo x > state.json)' % s, '( cd %s; echo x > state.json )' % s,
+                        '{ cd %s; echo x > state.json; }' % s, 'pushd %s && echo x > state.json' % s,
+                        'builtin cd %s && echo x > state.json' % s, 'touch %s/x' % s, 'mkdir %s/x' % s,
+                        'cp -r d %s/progress.md' % s, 'cp -R d %s/progress.md' % s, 'cp -a d %s/progress.md' % s,
+                        'cd %s/reviews && echo x >> progress.md' % s, 'cd %s/.. && echo x >> progress.md' % s):
+            for mode in MODES:
+                with self.subTest(mode=mode, command=command):
+                    self.set_mode(mode)
+                    self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+
+    def test_descriptor_copies_and_other_directory_writes_stay_allowed(self):
+        s = shlex.quote(str(self.state))
+        for command in ('echo x >> %s/progress.md' % s, 'cd %s && echo x >> progress.md' % s, 'cat %s/state.json' % s,
+                        'echo x 2>&1', 'echo x >&2', '(cd /tmp && echo x > out.txt)'):
             with self.subTest(command=command):
                 self.assertEqual(self.verdict(command, session_id='s1'), 'allow')
 

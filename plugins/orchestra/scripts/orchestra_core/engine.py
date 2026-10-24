@@ -1292,6 +1292,8 @@ class Engine:
                     raise EngineError('Only an investigator card can use prep_for')
                 if task['prep_for'] == task['id'] or task['prep_for'] not in state['tasks']:
                     raise EngineError('prep_for must name another existing card')
+            if 'owner_approval' in task and (task['role'], task['mode']) != ('builder', 'repair'):
+                raise EngineError('owner_approval is only for a repair of a held chain')
             if task['role'] == 'builder' and task['mode'] == 'repair':
                 repair_of = task.get('repair_of')
                 if repair_of not in state['tasks'] or state['tasks'][repair_of]['role'] != 'builder':
@@ -1304,6 +1306,7 @@ class Engine:
                 newest = self._newest_receipts(state, repair_of)  # stale findings still start a repair
                 if not any(self._task_findings(r, repair_of) for r in newest.values()):
                     raise EngineError('Repair needs earlier checked coding findings')
+                self._check_owner_approval(state, task, original)
                 self._check_repair_ladder(state, original)
                 final_findings = self._final_findings(state, repair_of, stale=True)
                 if final_findings:
@@ -1320,6 +1323,24 @@ class Engine:
             task['rev'] = '2.2'
             task['seq'] = len(state['tasks'])  # state.json is saved with sorted keys, so add order is stored
             state['tasks'][task['id']] = task
+            if 'owner_approval' in task:
+                _append_progress(self.state_dir, '- owner approved repair %s of %s: %s'
+                                 % (task['id'], task['repair_of'], task['owner_approval']))
+
+    def _check_owner_approval(self, state, task, original):
+        """A repair of a held chain carries the owner's words; never while autonomy is armed (the owner is away). A held
+        chain that a current final receipt blames stays on the final-round path and needs none."""
+        held = original['state'] == 'held'
+        if 'owner_approval' in task:
+            words = task['owner_approval']
+            if not held:
+                raise EngineError('owner_approval is only for a repair of a held chain')
+            if not isinstance(words, str) or not words.strip() or len(words) > 1000:
+                raise EngineError('owner_approval must be a nonempty string of at most 1000 characters')
+            if self._autonomy_on(state):
+                raise EngineError('A held chain waits for the owner while autonomy is armed')
+        elif held and not self._final_blocks(state, original['id'], stale=True):
+            raise EngineError("A held chain needs the owner's approval: add owner_approval with the owner's words")
 
     def _check_repair_ladder(self, state, original):
         """The ladder ends in hold (SPEC 5.2 item 4): a repair of a repair, or of a card the repair-diff check
@@ -1711,7 +1732,8 @@ class Engine:
             return 'open dependencies: ' + ', '.join(deps)
         targets = [d for d in task.get('review_of', []) if tasks[d]['state'] not in ('reported', 'accepted', 'held')]
         if targets:
-            return 'review targets not reported: ' + ', '.join(targets)
+            names = ', '.join(targets)
+            return "review targets not reported: %s; if %s's worker finished, record its report with `report WORKER TOKEN FILE`" % (names, names)
         return 'its files or resources overlap a running, reported or repair card'
 
     def ready(self, actor, lease):
@@ -2027,6 +2049,9 @@ class Engine:
             prs = [{k: e.get(k) for k in ('url', 'number', 'base_ref', 'head_ref', 'autonomous', 'tasks', 'reviewed', 'verified_at')}
                    for e in self._pull_requests(state)]
             startable = plan['startable_now']
+            pending = {d for t in ordered if t['state'] in ('queued', 'running') for d in t.get('review_of', [])}
+            acceptable = [t['id'] for t in ordered if t['state'] == 'reported' and not t.get('repaired_by')
+                          and t['id'] not in pending and not self._self_review_blocks(t)]
             return dict(
                 run_id=state.get('run_id'), session=dict(active=bool(run.get('active')), size=run.get('size')),
                 bound=session is not None and run.get('harness_session') == session,
@@ -2034,7 +2059,7 @@ class Engine:
                 counts={s: sum(t['state'] == s for t in ordered) for s in states},
                 counts_note='running includes inline cards',
                 columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
-                cards=cards, startable_now=startable,
+                cards=cards, startable_now=startable, acceptable_now=acceptable,
                 next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],
                 latest_review=None if review is None else dict(
                     id=review['id'], verdict='BLOCKED' if review['findings'] else 'CLEAN',
@@ -2059,6 +2084,12 @@ class Engine:
             if not reserved or any(scope is None or self._paths_overlap(scope, reserved)
                                    for scope in self._evidence_scopes(state, other['id'])):
                 raise EngineError('Accept %s first; a repair would make its evidence stale' % other['id'])
+
+    @classmethod
+    def _self_review_blocks(cls, task):
+        """Whether a reported builder card's stored self-review fails, so `accept` refuses it until a ruling or a re-report."""
+        review = task.get('self_review')
+        return task['role'] == 'builder' and cls._self_review_ok(review) and bool(cls._self_review_failure(review))
 
     @staticmethod
     def _self_review_ok(review):
@@ -2335,8 +2366,9 @@ class Engine:
         covered = [state['tasks'][i] for i in ids]
         if any(t.get('worker') == reviewer and not self._read_review(t) for t in covered):
             raise EngineError('Worker cannot review own artifact')
-        if any(t['state'] not in ('reported', 'accepted', 'held') for t in covered):
-            raise EngineError('Review covers incomplete work')
+        unfinished = ['%s (%s)' % (t['id'], t['state']) for t in covered if t['state'] not in ('reported', 'accepted', 'held')]
+        if unfinished:
+            raise EngineError('Review covers incomplete work: ' + ', '.join(unfinished))
         scope = None if final else self._scope_of(state, ids)
         artifact = self.artifact(scope)
         try:
@@ -2416,7 +2448,7 @@ class Engine:
     def _saw_clean_head(self, state, text, reviewer, artifact):
         """Whether a reviewer's artifact string `<sha> clean` holds: the sha is a prefix of HEAD, nothing in the receipt's
         scope is modified, and the policy is unchanged since the reviewer's newest card was dispatched."""
-        found = re.fullmatch(r'([0-9a-f]{7,40}) clean', text)
+        found = re.match(r'([0-9a-f]{7,40}) clean(?:\s*\(.*)?\Z', text, re.DOTALL)
         if not found or not artifact['head'].startswith(found.group(1)) or artifact['status'] != _hash(b''):
             return False
         cards = [t for t in state['tasks'].values()
@@ -2553,6 +2585,10 @@ class Engine:
         cited = body.get('gate_receipts', [])
         if not isinstance(cited, list) or any(not isinstance(c, str) or not c for c in cited):
             raise EngineError('Invalid gate receipts')
+        tokens = [re.search(r'(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])', c) for c in cited]  # prose around the id is ignored
+        if not all(tokens):
+            raise EngineError('Invalid gate receipts: each entry needs a 32-hex receipt id')
+        cited = [t.group(0) for t in tokens]
         current = self.artifact() if cited else None
         failed = False
         for ident in cited:
@@ -2609,7 +2645,16 @@ class Engine:
             return None
         if any(review['artifact'][k] != self._artifact_cached(cache, None)[k] for k in ('repo', 'identity', 'policy')):
             return None
-        return {i for r in later for i in r['tasks']}
+        chain = {i for r in later for i in r['tasks']}
+        # An accepted fix re-review card of that chain is covered whatever its verdict: a BLOCKED one led to the repair
+        # the CLEAN one closed. It reviews a repair card of the chain, names only chain cards, and a recorded fix
+        # re-review receipt covers what it names; any other review card still needs its own final receipt.
+        checks = [set(r['tasks']) for r in state['reviews'][ids.index(review['id']) + 1:]
+                  if r.get('repair_check') and self._intact(r)]
+        return chain | {t['id'] for t in state['tasks'].values() if t['role'] == 'code-reviewer'
+                        and t['state'] == 'accepted' and set(t.get('review_of', [])) <= chain
+                        and set(t.get('review_of', [])) & repairs
+                        and any(set(t['review_of']) <= c for c in checks)}
 
     def _review_verdicts(self, state, cache, task_id=None, final=False, keep=False, strict=False):
         """Newest relevant verdict wins; altered evidence cannot restore an older verdict. With `keep`, a stale final

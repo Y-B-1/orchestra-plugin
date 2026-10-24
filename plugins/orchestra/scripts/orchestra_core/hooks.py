@@ -771,7 +771,10 @@ def _pull_request_push(command, cwd, engine, plain=False):
     `git push [-u|--set-upstream] REMOTE REFSPEC` qualifies: no environment prefix, wrapper, Git option or other push
     option, a configured remote by name with no push mapping, and a refspec whose destination is one branch that is
     not the remote's default branch, `main` or `master` (compared ignoring case). REFSPEC is BRANCH, HEAD or @
-    (the current branch), or SRC:DST where DST names the same branch as SRC (BRANCH or refs/heads/BRANCH). None allows; otherwise the reason.
+    (the current branch), or SRC:DST where DST names the same branch as SRC (BRANCH or refs/heads/BRANCH). `plain`
+    (protect mode, outside a lock, no autonomy state) takes the default branch from the local remote-tracking head
+    instead of the ledger and skips the ledger's Push line and push URL checks; the shape, branch and release rules stay.
+    None allows; otherwise the reason.
     Any doubt refuses, including a remote whose default branch the remote itself did not confirm at arm. The ledger must allow pull
     request pushes (the 2.6 Push line), and the configured release branch is never a pull request push."""
     shape = 'A pull request push is exactly `git push -u <remote> <branch>`, run as a command of its own.'
@@ -1431,11 +1434,12 @@ def _touches_state(command, state_dir, cwd):
 
 
 _WRITE_VERBS = {'tee', 'rm', 'rmdir', 'unlink', 'shred', 'mv', 'cp', 'install', 'ln', 'truncate', 'dd', 'chmod', 'chown',
-                'set-content', 'add-content', 'out-file', 'remove-item', 'copy-item', 'move-item', 'new-item', 'clear-content'}
+                'set-content', 'add-content', 'out-file', 'remove-item', 'copy-item', 'move-item', 'new-item', 'clear-content',
+                'touch', 'mkdir'}
 _DEST_VERBS = {'cp', 'install', 'ln', 'copy-item', 'move-item'}  # the last word is the destination: a read copy is fine
 _COPY_VERBS = {'cp', 'install'}  # these write their destination's content, so a coordinator note may be one
 _NOTES = tuple(name for name in _PROTECTED['state_root_exceptions'] if name != 'autonomy.md')  # the ledger stays denied
-_WRAPPERS = {'sudo', 'command', 'exec', 'nohup', 'env', 'time', 'nice'}
+_WRAPPERS = {'sudo', 'command', 'builtin', 'exec', 'nohup', 'env', 'time', 'nice'}
 
 
 def _target_dir(args):
@@ -1468,13 +1472,24 @@ def _is_state_note(target, state_dir, base):
     return resolved.parent == state and resolved.name in _NOTES
 
 
-def _lands_in_state(target, state_dir, cwd, inside, notes_ok=False):
+def _is_state_root(target, state_dir):
+    """True when `target` (a `cd` operand) is the state directory itself, as an absolute or home path."""
+    if target.startswith('$') or not target.startswith(('/', '~')):
+        return False
+    try:
+        return Path(target).expanduser().resolve() == Path(state_dir).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+
+
+def _lands_in_state(target, state_dir, cwd, inside, notes_ok=False, at_root=True):
     """True when a write to `target` lands in the state directory. `inside` is an earlier `cd` into it, so a relative
-    target names a file there. With `notes_ok`, a coordinator note at the state root does not count (the Write rule's list)."""
+    target names a file there; `at_root` says the last `cd` named the state root itself, the only place a relative note
+    resolves. With `notes_ok`, a coordinator note at the state root does not count (the Write rule's list)."""
     relative = not target.startswith(('/', '~', '$'))
     if not (_touches_state(target, state_dir, cwd if relative else None) or (relative and inside)):
         return False
-    if not notes_ok:
+    if not notes_ok or (relative and inside and not at_root):
         return True
     base = state_dir if relative and inside else (cwd if relative else None)
     return not _is_state_note(target, state_dir, base)
@@ -1486,13 +1501,16 @@ def _writes_state(command, state_dir, cwd):
     (redirects, tee, cp and install may write them). Reads and orchestra.py commands are not writes. Text only: best effort."""
     if _cli_only(command) or not _touches_state(command, state_dir, cwd):
         return False
-    text = re.sub(r'\d*>&\s*(?:\d+|-)', ' ', command)  # a descriptor copy writes no file
+    text = re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()])', ' ', command)  # a descriptor copy writes no file; `>&1new` is a file
     text = text.replace('&>', '>')
+    text = re.sub(r'>&(?=\s*[^\s&>])', '>', text)  # `>&FILE` sends stdout and stderr to a file
     inside = False  # an earlier `cd` into the state directory
+    at_root = False  # the last `cd` named the state root itself
     for piece in re.split(r'[;&\n]+|(?<!>)\|+', text):  # `>|` is a clobbering redirect, not a pipe
+        piece = re.sub(r'^[\s({]+', '', piece)  # a subshell or group opener is punctuation, not the verb
         for target in re.findall(r'>>?\|?\s*((?:\'[^\']*\'|"[^"]*"|[^\s<>\'"])+)', piece):
-            target = target.replace("'", '').replace('"', '')
-            if _lands_in_state(target, state_dir, cwd, inside, notes_ok=True):
+            target = target.replace("'", '').replace('"', '').rstrip(')}')
+            if _lands_in_state(target, state_dir, cwd, inside, notes_ok=True, at_root=at_root):
                 return True
         try:
             words = shlex.split(piece.replace('>', ' '))
@@ -1504,7 +1522,9 @@ def _writes_state(command, state_dir, cwd):
             continue
         verb = PurePosixPath(words[0]).name.lower()
         args = words[1:]
-        if verb == 'cd':
+        if verb in ('cd', 'pushd'):
+            named = [w for w in args if not w.startswith('-')]
+            at_root = bool(named) and _is_state_root(named[0], state_dir)
             inside = inside or _touches_state(piece, state_dir, None)
             continue
         flagged = verb == 'sed' and any(re.match(r'-[A-Za-z]*i|--in-place', w) for w in args if w.startswith('-'))
@@ -1515,10 +1535,11 @@ def _writes_state(command, state_dir, cwd):
             dest = _target_dir(args)
             if dest is None:
                 dest = operands[-1] if operands else ''
-            if _lands_in_state(dest, state_dir, cwd, inside, notes_ok=verb in _COPY_VERBS):
+            recursive = any(re.fullmatch(r'-[A-Za-z]*[rRa][A-Za-z]*|--recursive|--archive', w) for w in args)
+            if _lands_in_state(dest, state_dir, cwd, inside, notes_ok=verb in _COPY_VERBS and not recursive, at_root=at_root):
                 return True
         elif verb == 'tee':
-            if any(_lands_in_state(word, state_dir, cwd, inside, notes_ok=True) for word in operands):
+            if any(_lands_in_state(word, state_dir, cwd, inside, notes_ok=True, at_root=at_root) for word in operands):
                 return True
         elif inside or _touches_state(piece, state_dir, cwd):
             return True
@@ -1833,7 +1854,7 @@ def _board_stop(engine, payload):
         if payload.get('stop_hook_active') is True:
             return {}
         view = _board(engine)
-        if not delta.live(view) or not (delta.ids(view, 'reported') or view.get('startable_now')):
+        if not delta.live(view) or not delta.next_command(view):
             return {}
         directory = Path(engine.state_dir)
         if delta.read(directory, 'stop-seen').get('signature') == delta.signature(view):

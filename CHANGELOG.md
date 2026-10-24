@@ -2,6 +2,19 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.14.2 — 2026-10-24
+
+Fixes for the friction the 2.14.1 run hit, and the guard gaps its reviews found.
+
+- **Workflow reports are captured again:** Claude Code now starts a Workflow agent's transcript with a relayed copy of the user's request, so the `Assignment:` line moved to the second user message and `SubagentStop` capture filed every Workflow builder's report as `unmatched-<agent>.md`. Capture now reads every user message in the first 64 lines and uses the first assignment that names a running card (F62).
+- **The board names only cards `accept` takes:** `board --view` adds `acceptable_now`, the reported cards that are not under repair, not waiting on a queued or running review, and whose self-review passes. The Stop hook and the prompt board line name `accept` only for those (F60).
+- **A second repair needs the owner's words:** a repair of a held chain must carry `owner_approval`, the owner's quoted text; the engine stores it on the card and logs it in `progress.md`. It is refused while autonomy is armed (F61).
+- **`finish` after a clean fix re-review:** the fix re-review cards of a closed repair chain now count as covered by the final review they fix, so no extra final review is needed (F63).
+- **Clearer refusals:** "review targets not reported" names the `report WORKER TOKEN FILE` fallback, and "Review covers incomplete work" names the unfinished cards (F51, F62).
+- **Tolerant receipt fields:** a review `artifact` of `<sha> clean (a note)` and a `gate_receipts` entry with prose around its 32-hex id now record (F58, F64).
+- **State-write guard gaps closed:** `>&FILE`, `(cd <state> && ...)`, `{ cd <state>; ...; }`, `pushd`, `builtin cd`, `touch`, `mkdir` and `cp -r` onto a coordinator note are denied (D1, D2).
+- **Gate order:** `scripts/check.sh` runs the mod tests before the unit suites start, so their 5 s per-test limit no longer fails under load (F57b). `scripts/live-matrix.py` removes only scenario directories it made.
+
 ## 2.14.1 — 2026-10-24
 
 Fixes from the first live test of the installed plugin in real headless Claude Code sessions (`scripts/live-matrix.py`).

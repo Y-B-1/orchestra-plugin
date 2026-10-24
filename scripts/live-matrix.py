@@ -35,10 +35,30 @@ def sh(cmd, cwd, check=True, env=None):
     return r.stdout
 
 
+MARKER = '.live-matrix'  # written in every scenario directory this harness makes
+
+
+def clear_scenario_dir(path):
+    """Empty a scenario directory this harness made (it holds MARKER) and mark it again; refuse any other."""
+    path = Path(path)
+    if path.exists():
+        if not (path / MARKER).is_file():
+            raise SystemExit(f'refusing to remove {path}: it has no {MARKER} marker, so this harness did not make it')
+        shutil.rmtree(path)
+    path.mkdir(parents=True)
+    (path / MARKER).write_text('')
+
+
+def is_orchestra_status(command):
+    """A lease-free `orchestra.py status` command (d4); `git status` and lease commands do not count."""
+    words = command.split()
+    return any(w.endswith('orchestra.py') for w in words) and 'status' in words and '--lease' not in command
+
+
 class Ctx:
     def __init__(self, root, sid):
         self.dir = Path(root) / sid
-        shutil.rmtree(self.dir, ignore_errors=True)
+        clear_scenario_dir(self.dir)
         self.repo = self.dir / 'repo'
         self.repo.mkdir(parents=True)
         self.origin = self.dir / 'origin.git'
@@ -315,7 +335,7 @@ def d4_worker_limits(x, chk):
     sub = [c for c in ev['calls'] if c['sub']]
     lease = [c for c in sub if c['cmd'] and '--lease' in c['cmd']]
     chk('worker --lease command denied', lease and orch_denied(lease[0]), lease[0]['text'][:200] if lease else 'not run')
-    plain = [c for c in sub if c['cmd'] and '--lease' not in (c['cmd'] or '') and 'status' in (c['cmd'] or '')]
+    plain = [c for c in sub if c['cmd'] and is_orchestra_status(c['cmd'])]
     chk('worker lease-free status allowed', plain and not plain[0]['error'], plain[0]['text'][:150] if plain else 'not run')
     nested = [c for c in sub if c['tool'] in ('Agent', 'Task')]
     # A worker's tools: allowlist leaves out Agent, so Claude Code itself refuses the call; either refusal enforces it.
