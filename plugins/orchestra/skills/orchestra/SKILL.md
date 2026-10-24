@@ -16,23 +16,23 @@ You are the main coordinator. You route work, reserve it, dispatch it, check the
 3. Answer a self-contained question directly, with no run.
 4. Load only the references the current phase needs.
 
-A trusted session start supplies context only. Repair, resume and autonomy begin on an explicit user request. Skill discovery does not guarantee activation, and hook registration, trust and identity are checked separately.
+A trusted session start supplies context only. Repair, resume and autonomy begin on an explicit user request. Check hook registration, trust and identity separately.
 
 ## The loop
 
-Route, reserve, dispatch, check, integrate, review. Every card ends with evidence you inspected yourself, and every PR candidate gets one independent pre-PR review and the named project checks. A review grants no external permission. Release stays disabled until project configuration names authorization, remote, target, required checks and commands.
+Route, reserve, dispatch, check, integrate, review. Every card ends with evidence you inspected yourself, and every PR candidate gets one independent pre-PR review and the named project checks. Release stays disabled until project configuration names authorization, remote, target, required checks and commands.
 
 ## Route
 
-Size the work by the diff it will produce, then run `start --size` with the tier. Sizing, asks and escalation: [triage](references/triage.md).
+Size the work by its diff, then run `start --size` with the tier. Sizing, asks and escalation: [triage](references/triage.md).
 
 | Size | Route |
 | --- | --- |
 | tiny, up to 50 lines | Inline edit, no alignment. A tiny builder card needs `dispatch --helper REASON`. |
 | medium, up to 400 | Grill inline, then run `waves` and start each wave whole. |
-| large | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it ([wayfinder](references/wayfinder.md)), then a `plan` card. Units go to builders through Workflow. |
+| large | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it ([wayfinder](references/wayfinder.md)), then a `plan` card. Units go to workers by model fit. |
 
-Use the fewest worktrees (references/worktrees.md). A single Agent dispatch fits one unit that still needs a worker. Disjoint ready cards start together with `wave`: one inline, the rest through Workflow, the default whenever the host has it. During a run use `orchestra:` agents (protect denies others); `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it. Mechanics: [parallel](references/parallel.md).
+Split by context, not by role. The agent that holds a unit's context does all of it: code, test, change and fixes. A worker gets only work that needs little from the rest ([parallel](references/parallel.md)). Model fit: your model and effort stay fixed for the session. A card on another model or a higher effort goes to a worker; the engine refuses it inline. Critic and reviewer cards always go to workers. Disjoint ready cards start together with `wave`. During a run use `orchestra:` agents (protect denies others); `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it.
 
 ## References
 
