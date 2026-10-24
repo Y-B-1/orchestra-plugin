@@ -26,6 +26,20 @@ test('the marker directory defaults under HOME when XDG_STATE_HOME is unset', as
   expect(r.writes.map((w) => w.path)).toEqual(['/home/x/.local/state/orchestra/mods/sid-1.json']);
 });
 
+test('GF10: the marker directory follows an absolute ORCHESTRA_STATE_DIR', async ($, on) => {
+  const r = rig(on, { env: { XDG_STATE_HOME: '/state', HOME: '/home/x', ORCHESTRA_STATE_DIR: '/run/state' } });
+  await $.session.start(start);
+  expect(r.writes.map((w) => w.path)).toEqual(['/run/state/mods/sid-1.json']);
+});
+
+test('GF10: markerPath reads ORCHESTRA_STATE_DIR as Python does: absolute or ~/, else the state base', () => {
+  expect(markerPath('/x', '/home/x', 's', '/run/state')).toBe('/run/state/mods/s.json');
+  expect(markerPath('/x', '/home/x', 's', '~/run')).toBe('/home/x/run/mods/s.json');
+  expect(markerPath('/x', '/home/x', 's', 'relative/state')).toBe('/x/orchestra/mods/s.json');
+  expect(markerPath('/x', '/home/x', 's', '')).toBe('/x/orchestra/mods/s.json');
+  expect(markerPath(undefined, undefined, 's', '/run/state')).toBe('/run/state/mods/s.json');
+});
+
 test('one tick refreshes the marker every 5 seconds from the clock', async ($, on) => {
   const r = rig(on);
   await $.session.start(start);

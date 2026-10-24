@@ -18,11 +18,12 @@ import time
 
 from . import portable
 from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
-from .guards import RULES, Decision, _command_words, _gh_readings, _pipelines, _segments, classify_command, guard_digest, runs_test_suite
+from .guards import (RULES, Decision, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
+                     guard_digest, runs_test_suite)
 
 _PROTECTED = RULES['protected']
 _MARKER = RULES['marker']
-_MOD_TOOLS = {'Bash', 'Edit', 'Write', 'MultiEdit'}  # The mod guards only these; any other tool needs Python.
+_MOD_TOOLS = {'Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit'}  # The mod guards only these; any other tool needs Python.
 _EDIT_TOOLS = set(RULES['tools']['edit'])
 _SCHEDULERS = set(RULES['tools']['scheduler'])
 _APPROVAL_TEXT_TOOLS = _SCHEDULERS | {'SendMessage'}  # a call to one of these must never carry the approval word alone
@@ -32,8 +33,12 @@ STOP_LOCK_BUDGET = 8.0  # SPEC 5.16 item 4: seconds from hook start that a busy-
 LOCK_WAIT = 2.0  # SPEC 5.16 item 3: seconds a hook read waits for the state lock
 MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry'
 BUSY = 'Orchestra state is busy; retry'
-AGENT_GUARD = 'Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits)'
+AGENT_GUARD = ('Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits), because only '
+               'those get the worker brief, role limits and standing orders and return evidence the run can review')
 _REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
+AUTONOMY_STOPPED = 'Orchestra autonomy stopped: %s. The run brief is in %s.'
+STATE_SHELL = ('a shell command may not touch the Orchestra state directory; run orchestra.py for engine commands, and the '
+               'Write tool for review packages and progress notes')
 SUBAGENT_GUARD = ('Orchestra run active: this agent is not an orchestra:* agent; stop and report. '
                   'Start Agent and Workflow workers with an orchestra:<role> type')
 
@@ -86,6 +91,13 @@ def _prune_markers(current=None, now=None):
 
 
 def _marker_dir():
+    """`<ORCHESTRA_STATE_DIR>/mods` when that is absolute or starts with `~/` (marker.ts writes the same place), else
+    `<state home>/orchestra/mods`."""
+    override = os.environ.get('ORCHESTRA_STATE_DIR', '')
+    if override.startswith('~/'):
+        override = os.path.expanduser(override)
+    if override and os.path.isabs(override):
+        return (Path(override) / 'mods').resolve()
     from .paths import state_home
     return (state_home() / 'orchestra' / 'mods').resolve()
 
@@ -95,6 +107,10 @@ def _protected(path, cwd, state_dir):
     if state_dir:
         state = Path(state_dir).expanduser().resolve()
         if resolved == state or state in resolved.parents:
+            # Review packages are coordinator-authored too: their contents, never the directory entry itself.
+            inside = resolved.relative_to(state).parts
+            if len(inside) > 1 and inside[0] in _PROTECTED['state_dir_exceptions']:
+                return False
             # Coordinator-authored notes at the state root stay writable (A8).
             return not (resolved.parent == state and resolved.name in _PROTECTED['state_root_exceptions'])
     marker = _marker_dir()
@@ -277,7 +293,10 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             except Exception:
                 pass  # An unloadable state or changed contract never blocks the context
         if not worker and engine is not None:
-            context += _report_context(engine)
+            line, armed = _run_line(engine)
+            context += line
+            if not armed:
+                context += _report_context(engine)  # while autonomy is armed the last brief's stop reason is stale
             if _other_session(engine, session_id) and _run_active(engine):
                 context += (' An Orchestra run is active in this repository but bound to another session, so this session is not '
                             'its coordinator and may use any agent type. If that session is gone, the owner recovers it with '
@@ -331,8 +350,11 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if _other_session(engine, payload.get('session_id')):
             return HookResult({})  # O37: a Stop from another harness session neither continues nor spends a pass
         try:
+            armed_before = _armed_now(engine)
             reason = engine.hook_stop()
-            return HookResult({'decision': 'block', 'reason': reason}) if isinstance(reason, str) and reason else HookResult({})
+            if isinstance(reason, str) and reason:
+                return HookResult({'decision': 'block', 'reason': reason})
+            return HookResult(_stopped_note(engine) if armed_before and not _armed_now(engine) else {})
         except (OSError, ValueError, KeyError, RuntimeError, AttributeError):
             return HookResult({})  # Corrupt/unarmed state never creates continuation.
     if event != 'PreToolUse':
@@ -369,10 +391,20 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             notes.append(AGENT_GUARD)  # Row 33: normal warns
     if locked and name in _SCHEDULERS:
         return _deny(('Autonomy is active: ' if auto_on else UNATTENDED_LOCKED + ' ') + name + ' could schedule the run past its limits')
+    shell = data.get('command', data.get('cmd')) if name in _SHELL_TOOLS else None
+    if locked and isinstance(shell, str):
+        lock = 'Autonomy is active: ' if auto_on else UNATTENDED_LOCKED + ' '
+        where = state_dir if state_dir is not None else getattr(engine, 'state_dir', None)
+        if isinstance(where, (str, os.PathLike)) and _touches_state(shell, where, payload.get('cwd')) and not _cli_only(shell):
+            return _deny(lock + STATE_SHELL)
+        if _moves_default(shell, payload.get('cwd') if isinstance(payload.get('cwd'), str) else None, engine):
+            return _deny(lock + 'no merge into or move of the default or a protected branch. '
+                         + (_hint(engine, state_dir) if auto_on else 'Denied: ' + shell.strip()[:80]))
     if mode == 'minimal' and name in _SHELL_TOOLS and role != 'subagent':
         # Generic command classification is Claude Code's permission mode; the state, runtime and release locks of an
-        # autonomous or unattended run took the full path above (`locked`), and role limits cover only workers.
-        return HookResult({}) if isinstance(data.get('command', data.get('cmd')), str) else _deny('Missing shell command', True)
+        # autonomous or unattended run took the full path above (`locked`), and role limits cover only workers. The
+        # merge guard is Orchestra's own: after `approved` it checks the printed merges in every mode.
+        return _minimal_merge_gate(shell, payload, state_dir, engine) if isinstance(shell, str) else _deny('Missing shell command', True)
     if 'cwd' in payload:
         cwd = payload['cwd']
         if not isinstance(cwd, str):
@@ -389,7 +421,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             if name == 'apply_patch':
                 paths = _patch_paths(data.get('command', data.get('patch')))
             else:
-                path = data.get('file_path', data.get('path'))
+                path = data.get('notebook_path') if name == 'NotebookEdit' else data.get('file_path', data.get('path'))
                 if not isinstance(path, str) or not path:
                     raise ValueError('Missing file path')
                 paths = [path]
@@ -409,8 +441,16 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     command = data.get('command', data.get('cmd'))
     if not isinstance(command, str):
         return _deny('Missing shell command', True)
+    if role == 'subagent' and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES) and runs_test_suite(command):
+        gates = _gate_ids(engine)
+        if gates:  # a worker role limit: minimal keeps it like protect; normal warns (row 43)
+            reason = 'Cite gate receipt ' + ', '.join(gates) + '; reviewers do not rerun suites'
+            if mode != 'normal':
+                return _deny(reason)
+            notes.append(_guarded(reason))
     if mode == 'minimal':
-        return HookResult({})  # a worker's shell call: the role limits above applied; the rest is Claude Code's call
+        # A worker's shell call: the role limits above applied; the merge guard too; the rest is Claude Code's call.
+        return _minimal_merge_gate(command, payload, state_dir, engine)
     shaped = _cd_delete_shape(command, cwd)
     if shaped:
         found = classify_command(shaped[0])
@@ -449,22 +489,13 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             return _deny(('Autonomy is active: ' if auto_on else UNATTENDED_LOCKED + ' ' if unattended else '') + merged[1])
         if busy and mode == 'protect':
             return _deny(BUSY)  # Row 42: normal needs no engine state; autonomy forces protect
-    if role == 'subagent' and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES) and runs_test_suite(command):
-        gates = _gate_ids(engine)
-        if gates:
-            reason = 'Cite gate receipt ' + ', '.join(gates) + '; reviewers do not rerun suites'
-            if mode == 'protect':
-                return _deny(reason)
-            notes.append(_guarded(reason))  # Row 43
     active = auto_on
     if unattended and not active:
         if klass in {'release', 'release-multi'} or _starts_new_run(command) or _switches_autonomy(command, ('disarm',)) \
                 or (decision.boundary == 'merge' and _on_default_branch(cwd, engine)) \
-                or (decision.boundary == 'delete' and _provider_delete(command)):
+                or (decision.boundary == 'delete' and _provider_delete(command)) or _deletes_tag(command):
             return _deny(UNATTENDED_LOCKED + ' Denied: ' + (decision.reason or command.strip()[:80]))
-    hint = _PARK_HINT if engine is not None else ('the run state is unreadable (%s); the owner starts over with '
-                                                  '`orchestra.py start --new-run ...`, which keeps the old file under history/.'
-                                                  % (Path(state_dir) / 'state.json' if state_dir else 'state.json'))
+    hint = _hint(engine, state_dir)
     if active and (_switches_autonomy(command) or _starts_new_run(command)):
         return _deny(LEDGER_LOCKED)  # An agent never re-arms or disarms itself: that would rewrite its own boundaries
     if decision.category == 'merged-delete':
@@ -481,8 +512,14 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             return cleanup
         if engine is not None and _rm_in_worktrees(command, cwd):
             return HookResult({})  # Section 3.4: the run may delete files inside a linked worktree
+        if engine is not None and _deletes_only_ignored(command, cwd):
+            return HookResult({})  # Build output and caches Git ignores hold no work of the run
     if active:
         # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
+        if klass == 'release-multi':
+            push = _routine_push(command)
+            if push is not None and _pull_request_push(push, cwd, engine) is None:
+                return HookResult({})  # Routine git work, then one pull request push: judged by the push
         if klass == 'release' and decision.category == 'gitpush':
             refused = _pull_request_push(command, cwd, engine)
             if refused is None:
@@ -754,6 +791,13 @@ def _pull_request_push(command, cwd, engine):
 
 
 _PARK_HINT = 'park this card with `orchestra.py park TASK --reason ...` and continue with other cards.'
+
+
+def _hint(engine, state_dir):
+    """The way on under autonomy: park the card, or, when the state cannot be loaded, the owner's fresh start."""
+    return _PARK_HINT if engine is not None else ('the run state is unreadable (%s); the owner starts over with '
+                                                  '`orchestra.py start --new-run ...`, which keeps the old file under history/.'
+                                                  % (Path(state_dir) / 'state.json' if state_dir else 'state.json'))
 
 
 def _wait_for_lock(lock_path, started):
@@ -1302,6 +1346,309 @@ def _worktree_branch(cwd, path):
     return _deny('%s is not a worktree of this repository' % path)
 
 
+_STATE_NAMES = re.compile(r'(?:\.local/state|XDG_STATE_HOME\}?)/orchestra(?![A-Za-z0-9._-])|ORCHESTRA_STATE_DIR')
+_PYTHON_WORD = re.compile(r'python[0-9.]*')
+
+
+def _touches_state(command, state_dir, cwd):
+    """GF1: a shell command whose text names the run's state directory (as given or resolved, its 24-hex identity, the
+    state base or the ORCHESTRA_STATE_DIR variable), or that runs inside it. Text only: best effort, never isolation."""
+    text = command.replace('\\', '/')
+    state = Path(state_dir).expanduser()
+    try:
+        real = state.resolve()
+        forms = {str(state), str(real)}
+        if real.parent.name == 'orchestra':  # the default layout <base>/orchestra/<identity>: the base holds every run
+            forms |= {str(real.parent), str(state.parent)}
+        if isinstance(cwd, str) and cwd and (Path(cwd).resolve() == real or real in Path(cwd).resolve().parents):
+            return True
+    except (OSError, RuntimeError, ValueError):
+        return True
+    if any(re.search(re.escape(form.replace('\\', '/')) + r'(?![A-Za-z0-9._-])', text) for form in forms if form not in ('', '/', '.')):
+        return True
+    return bool(_STATE_NAMES.search(text) or (re.fullmatch(r'[0-9a-f]{24}', real.name) and real.name in text))
+
+
+def _cli_only(command):
+    """One plain `[python] orchestra.py ...` command: no chain, pipe, redirection or substitution beside it."""
+    if re.search(r'[;&|<>`\n\r]|\$\(', command):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if words and _PYTHON_WORD.fullmatch(PurePosixPath(words[0]).name):
+        words = words[1:]
+        while words and words[0] in ('-B', '-I', '-E', '-s', '-S', '-u', '-O'):
+            words = words[1:]
+    return bool(words) and PurePosixPath(words[0]).name == 'orchestra.py'
+
+
+def _git_argvs(command, depth=0):
+    """The words after `git` and its global options for each git command in `command`, a `sh -c` payload included;
+    None when the command cannot be read word by word."""
+    found = []
+    try:
+        for segment in _segments(re.sub(r'\\\r?\n', '', command)):
+            words = _command_words(segment)
+            if not words:
+                continue
+            name = PurePosixPath(words[0]).name
+            if name in {'sh', 'bash', 'zsh', 'dash', 'ksh'} or name == 'eval':
+                payload = ' '.join(words[1:]) if name == 'eval' else _shell_payload(words)
+                inner = _git_argvs(payload, depth + 1) if payload is not None and depth < 3 else []
+                if inner is None:
+                    return None
+                found.extend(inner)
+            elif name == 'git':
+                args = words[1:]
+                while args and args[0].startswith('-'):
+                    if args.pop(0) in RULES['git']['global_value_options'] and args:
+                        args.pop(0)
+                found.append(args)
+    except ValueError:
+        return None
+    return found
+
+
+def _default_names(cwd, engine):
+    """The casefolded names of the default and protected branches: the rules list, what the remote reported at arm and
+    what origin/HEAD names."""
+    names = {b.casefold() for b in RULES['git']['autonomy_protected_branches']}
+    names |= {v.casefold() for v in _armed_defaults(engine).values()}
+    if cwd is not None:
+        code, head = _git_out(cwd, 'symbolic-ref', '--short', 'refs/remotes/origin/HEAD')
+        if code == 0 and head:
+            names.add(head.split('/', 1)[-1].casefold())
+    return names
+
+
+def _moves_default(command, cwd, engine):
+    """GF2: a command that moves the default or a protected branch without a merge on it: a switch to it followed by a
+    merge, rebase, reset or commit; `git branch -f|-m|-c` naming it; `git checkout|switch -B|-C` onto it;
+    `git update-ref` of it (or of HEAD while on it, or from --stdin); `git fetch . SRC:DEFAULT`."""
+    argvs = _git_argvs(command)
+    if not argvs:
+        return False
+    names = None
+    for args in argvs:
+        if args and args[0] in ('switch', 'checkout', 'branch', 'update-ref', 'fetch'):
+            names = _default_names(cwd, engine)
+            break
+    if names is None:
+        return False
+
+    def named(ref):
+        return ref.removeprefix('refs/heads/').casefold() in names
+    switched = False
+    for args in argvs:
+        verb, rest = (args[0], args[1:]) if args else ('', [])
+        positional = [w for w in rest if not w.startswith('-')]
+        if verb in ('switch', 'checkout'):
+            i, target = 0, None
+            while i < len(rest):
+                word = rest[i]
+                if word in ('-C', '-B', '--force-create') and i + 1 < len(rest) and named(rest[i + 1]):
+                    return True
+                if word in ('-c', '-b', '-C', '-B', '--create', '--force-create', '--orphan'):
+                    i, target = i + 2, ''  # a new branch: not a switch to an existing one
+                    continue
+                if word == '--':
+                    break
+                if not word.startswith('-') and target is None:
+                    target = word
+                i += 1
+            switched = switched or bool(target) and named(target)
+        elif verb in ('merge', 'rebase', 'reset', 'commit', 'pull', 'cherry-pick', 'revert', 'am') and switched:
+            return True
+        elif verb == 'branch' and any(w in ('--force', '--move', '--copy') or re.fullmatch(r'-[A-Za-z]*[fmMcC][A-Za-z]*', w)
+                                      for w in rest) and any(named(w) for w in positional):
+            return True
+        elif verb == 'update-ref':
+            if '--stdin' in rest:
+                return True
+            refs = [w for w, before in zip(rest, [None] + rest) if not w.startswith('-') and before != '-m']
+            if refs and (named(refs[0]) if refs[0].startswith('refs/heads/') else refs[0] == 'HEAD' and _on_default_branch(cwd, engine)):
+                return True
+        elif verb == 'fetch' and positional and positional[0].startswith(('.', '/')) \
+                and any(named(w.lstrip('+').partition(':')[2]) for w in positional[1:] if ':' in w):
+            return True  # a fetch from a local repository into the default branch
+    return False
+
+
+def _deletes_tag(command):
+    """GF3: a `git tag -d|--delete` anywhere in the command; a command that cannot be read counts as one."""
+    argvs = _git_argvs(command)
+    if argvs is None:
+        return True
+    return any(args[:1] == ['tag'] and any(w == '--delete' or re.fullmatch(r'-[A-Za-z]*d[A-Za-z]*', w) for w in args[1:])
+               for args in argvs)
+
+
+def _minimal_merge_gate(command, payload, state_dir, engine):
+    """GF5: in `minimal` only the merge guard judges a shell call: after `approved` it checks the printed merges (order,
+    head, form); every other call is Claude Code's."""
+    cwd = payload.get('cwd') if isinstance(payload.get('cwd'), str) and payload.get('cwd') else None
+    if cwd is None:
+        try:
+            cwd = os.getcwd()
+        except OSError:
+            return HookResult({})
+    merged = _merge_gate(command, cwd, state_dir, engine)
+    return _deny(merged[1]) if merged is not None and merged[0] == 'deny' else HookResult({})
+
+
+def _routine_push(command):
+    """GF4: the push of `GIT ... && git push ...` when every command before the last `&&` is a plain `git VERB` (no
+    global option, wrapper or assignment) that the classifier allows; None otherwise."""
+    head, sep, push = command.strip().rpartition(' && ')
+    if not sep or not head.strip() or re.search(r'[$`<>|\n\r(){}#]', head):
+        return None
+    try:
+        for segment in _segments(head):
+            if not segment.strip():
+                continue
+            words = shlex.split(segment)
+            if len(words) < 2 or words[0] != 'git' or words[1].startswith('-') or classify_command(segment).klass != 'allow':
+                return None
+    except ValueError:
+        return None
+    return push.strip() if classify_command(head).klass == 'allow' else None
+
+
+_FIND_TESTS = {'-name': 1, '-iname': 1, '-path': 1, '-ipath': 1, '-type': 1, '-maxdepth': 1, '-mindepth': 1,
+               '-o': 0, '-or': 0, '-a': 0, '-and': 0, '-not': 0, '!': 0}
+_FIND_CAP = 20000
+
+
+def _find_matches(words, cwd, top):
+    """The paths `find ROOT... TESTS -delete` would delete, listed by running the same tests with -print0 instead.
+    Every root lies inside the repository at `top`; only name, path, type and depth tests are read. None for anything
+    else, a timeout or more than _FIND_CAP matches."""
+    i = 1
+    while i < len(words) and not words[i].startswith('-') and words[i] != '!':
+        i += 1
+    roots, expr = words[1:i] or ['.'], words[i:]
+    if expr[-1:] != ['-delete'] or expr.count('-delete') != 1 or any(re.search(r'[*?\[]', r) for r in roots):
+        return None
+    for root in roots:
+        path = (Path(cwd) / root).resolve()
+        if path != top and top not in path.parents:
+            return None
+    expr, j = expr[:-1], 0
+    while j < len(expr):
+        width = _FIND_TESTS.get(expr[j])
+        if width is None or j + width >= len(expr):
+            return None
+        if expr[j] == '-type' and expr[j + 1] not in ('f', 'd', 'l'):
+            return None
+        if expr[j] in ('-maxdepth', '-mindepth') and not expr[j + 1].isdigit():
+            return None
+        j += 1 + width
+    try:
+        done = subprocess.run(['find', *roots, *expr, '-print0'], cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = [p for p in done.stdout.decode(errors='replace').split('\0') if p]
+    return found if done.returncode == 0 and len(found) <= _FIND_CAP else None
+
+
+def _deletes_only_ignored(command, cwd):
+    """GF4: `rm [FLAGS] PATH...` or `find ROOT... TESTS -delete`, run as one plain command, where every path it removes
+    lies inside the session's repository outside `.git`, is ignored by Git and holds no tracked file. Anything Git
+    does not ignore, a glob, a variable, `~` or a path outside the repository keeps the boundary deny."""
+    if cwd is None or re.search(r'[;&|<>`$\n\r\\(){}~]', command):
+        return False
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    if words[:1] == ['rm']:
+        targets, options = [], True
+        for word in words[1:]:
+            if options and word == '--':
+                options = False
+            elif options and word.startswith('-'):
+                if not _RM_FLAGS.fullmatch(word):
+                    return False
+            elif re.search(r'[*?\[]', word):
+                return False
+            else:
+                targets.append(word)
+        if not targets:
+            return False
+    elif words[:1] != ['find']:
+        return False
+    code, top = _git_out(cwd, 'rev-parse', '--show-toplevel')
+    if code != 0 or not top:
+        return False
+    top = Path(top).resolve()
+    if words[0] == 'find':
+        targets = _find_matches(words, cwd, top)
+        if targets is None:
+            return False
+    rels = []
+    for target in targets:
+        if '..' in PurePosixPath(target).parts:
+            return False
+        joined = Path(os.path.normpath(Path(cwd) / target))
+        path = joined.parent.resolve() / joined.name  # rm removes a symlink itself, never what it points to
+        if path == top or top not in path.parents:
+            return False
+        rel = path.relative_to(top)
+        if any(part.casefold() == '.git' for part in rel.parts):
+            return False
+        rels.append(rel.as_posix())
+    if not rels:
+        return True  # find matched nothing: nothing is deleted
+    try:
+        done = subprocess.run(['git', '-C', str(top), 'check-ignore', '-z', '--stdin'], input=('\0'.join(rels) + '\0').encode(),
+                              stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if done.returncode != 0 or set(p for p in done.stdout.decode(errors='replace').split('\0') if p) != set(rels):
+        return False
+    for start in range(0, len(rels), 500):  # an ignored directory may still hold a force-added, tracked file
+        code, tracked = _git_out(top, '--literal-pathspecs', 'ls-files', '-z', '--', *rels[start:start + 500])
+        if code != 0 or tracked:
+            return False
+    return True
+
+
+def _armed_now(engine):
+    """Strict: True only when the engine says autonomy is active; any error is False (used to see autonomy end)."""
+    try:
+        return engine.autonomy_active() is True
+    except Exception:
+        return False
+
+
+def _stopped_note(engine):
+    """GF12: the Stop that ended autonomy says why, so the coordinator does not learn it from its next deny."""
+    try:
+        reason = (engine.status().get('autonomy') or {}).get('last_stop_reason') or 'unknown'
+        return {'systemMessage': AUTONOMY_STOPPED % (reason, Path(engine.state_dir) / 'progress.md')}
+    except Exception:
+        return {'systemMessage': AUTONOMY_STOPPED % ('unknown', 'progress.md')}
+
+
+def _run_line(engine):
+    """GF11: (one line naming a live run, whether autonomy is armed); ('', False) with no active session or any error."""
+    try:
+        status = engine.status()
+        session = status.get('session')
+        if not (isinstance(session, dict) and session.get('active') is True):
+            return '', False
+        auto = status.get('autonomy') if isinstance(status.get('autonomy'), dict) else {}
+        armed = auto.get('active') is True
+        line = ' Run active (size %s); %s; guard_mode %s; run orchestra.py status.' % (
+            session.get('size') or 'unset', 'autonomy armed until %s' % auto.get('deadline') if armed else 'autonomy off',
+            _guard_mode(engine.state_dir))
+        return line, armed
+    except Exception:
+        return '', False
+
+
 def _on_default_branch(cwd, engine=None):
     """SPEC 5.1: the branch is read from the payload cwd's own worktree; any doubt counts as the default branch. The default
     is what origin/HEAD names, else `main` or `master`; a default the remote reported when autonomy was armed counts too."""
@@ -1361,8 +1708,37 @@ def _ledger_call(payload):
     if name in _SHELL_TOOLS:
         command = data.get('command', data.get('cmd'))
         return isinstance(command, str) and (_switches_autonomy(command) or _starts_new_run(command))
-    paths = [data.get('file_path', data.get('path'))] if name != 'apply_patch' else [data.get('command', data.get('patch'))]
+    paths = ([data.get('command', data.get('patch'))] if name == 'apply_patch' else [data.get('notebook_path')]
+             if name == 'NotebookEdit' else [data.get('file_path', data.get('path'))])
     return any(isinstance(p, str) and ('autonomy.md' in p or _is_autonomy_file_text(p)) for p in paths)
+
+
+_LOCK_TEXT = re.compile(r'orchestra/[0-9a-f]{24}|\.local/state|_STATE_|state\.json|policy\.json|autonomy\.md|progress\.md'
+                        r'|review-packages|update-ref|\bbranch\b[^;&|\n]*\s-'
+                        r'|\b(?:switch|checkout)\b[^\n]*\b(?:merge|rebase|reset|commit|pull|cherry-pick|revert|am)\b'
+                        r'|\bfetch\b[^;&|\n]*:', re.I)
+
+
+def _lock_text_call(payload):
+    """A shell command whose text may touch the state directory or move the default branch (GF1, GF2): the mod does
+    not know the autonomy or unattended lock, so these always reach this hook. Over-matching only costs a Python call."""
+    data = payload.get('tool_input')
+    if payload.get('tool_name') not in _SHELL_TOOLS or not isinstance(data, dict):
+        return False
+    command = data.get('command', data.get('cmd'))
+    named = [os.environ.get(k, '') for k in ('ORCHESTRA_STATE_DIR', 'XDG_STATE_HOME')]
+    return isinstance(command, str) and bool(_LOCK_TEXT.search(command) or any(v and v in command for v in named))
+
+
+def _ledger_without_session(state_dir):
+    """GF1: a state that parses but holds no valid session while an autonomy ledger exists counts as armed with autonomy
+    unknown (fail closed), never as no run: a shell write of `{}` must not lift the lock."""
+    data = _raw_state(Path(state_dir) / 'state.json')
+    if not isinstance(data, dict):
+        return False  # unparseable: the raw autonomy flag already reads it as active
+    session = data.get('session')
+    valid = 'session' in data and (session is None or (isinstance(session, dict) and isinstance(session.get('active'), bool)))
+    return not valid and (Path(state_dir) / 'autonomy.md').is_file()
 
 
 def _mod_is_live(payload):
@@ -1441,6 +1817,7 @@ def _main(argv=None):
             and not _release_call(payload)
             and not _soften_call(payload)
             and not _ledger_call(payload)
+            and not _lock_text_call(payload)
             and _mod_is_live(payload)):
         print('{}')
         return 0
@@ -1472,7 +1849,7 @@ def _main(argv=None):
                     if not (busy and args.event != 'PreToolUse'):
                         engine = None  # A busy Stop or Interrupt keeps its engine: Stop polls the lock, Interrupt blocks on it
                     armed = _raw_session_active(state_dir / 'state.json')  # O35
-                    autonomy = _raw_autonomy_active(state_dir / 'state.json')
+                    autonomy = _raw_autonomy_active(state_dir / 'state.json') or _ledger_without_session(state_dir)
                 if args.event in {'PreToolUse', 'SubagentStart'} and not armed:
                     engine = None  # An inactive session is an unarmed run.
         except StateRootError:

@@ -469,11 +469,12 @@ class ModDelegationTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name).resolve()
         self.xdg, self.cwd = root / 'xdg', root / 'cwd'
-        (self.xdg / 'orchestra' / 'mods').mkdir(parents=True)
+        mods = root / 'state' / 'mods'  # GF10: with ORCHESTRA_STATE_DIR set the markers live under it
+        mods.mkdir(parents=True)
         self.cwd.mkdir()
         data = {'session_id': 's1', 'heartbeat_ms': int(time.time() * 1000), 'plugin_version': '2.0.0',
                 'rules_sha256': guard_digest()}
-        (self.xdg / 'orchestra' / 'mods' / 's1.json').write_text(json.dumps(data))
+        (mods / 's1.json').write_text(json.dumps(data))
         patcher = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.xdg), 'ORCHESTRA_STATE_DIR': str(root / 'state')})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -515,7 +516,7 @@ class ModDelegationTest(unittest.TestCase):
         code, output = self.call('git stash', '--from-mod')
         self.assertEqual(code, 0)
         self.assertNotIn('permissionDecision', output.get('hookSpecificOutput', {}))
-        (Path(os.environ['ORCHESTRA_STATE_DIR'])).mkdir()
+        (Path(os.environ['ORCHESTRA_STATE_DIR'])).mkdir(exist_ok=True)
         (Path(os.environ['ORCHESTRA_STATE_DIR']) / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
         code, output = self.call('git stash', '--from-mod')
         self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
@@ -683,6 +684,45 @@ class MinimalModeTest(RepoCase):
         payload = {'tool_name': 'Bash', 'tool_input': {'command': 'git reset --hard'}, 'agent_id': 'a1', 'cwd': str(self.repo)}
         self.assertEqual(handle_event('PreToolUse', payload, mode='minimal').output, {})
         self.assertEqual(handle_event('PreToolUse', {'tool_name': 'Agent', 'tool_input': {}}, mode='minimal').output, {})
+
+    def reviewer(self, command, kind='orchestra:code-reviewer', mode='minimal', gates=('g1',)):
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'agent_id': 'a1', 'agent_type': kind,
+                   'cwd': str(self.repo)}
+        return handle_event('PreToolUse', payload, mode=mode, engine=FakeEngine(gates=gates))
+
+    def test_gf6_a_reviewer_suite_rerun_is_a_role_limit_in_minimal(self):
+        for kind in ('orchestra:code-reviewer', 'orchestra:code-reviewer-final', 'orchestra:critic'):
+            for command in ('python3 -m unittest discover', 'npm test', 'pytest'):
+                with self.subTest(kind=kind, command=command):
+                    result = self.reviewer(command, kind)
+                    self.assertEqual(verdict(result), 'deny')
+                    self.assertIn('g1', result.output['hookSpecificOutput']['permissionDecisionReason'])
+        self.assertEqual(verdict(self.reviewer('npm test', gates=())), 'allow')  # no current receipt to cite
+        self.assertEqual(verdict(self.reviewer('npm test', 'orchestra:builder')), 'allow')
+        self.assertEqual(verdict(self.reviewer('python3 -m unittest tests.test_x.Case.test_y')), 'allow')  # a probe
+
+    def test_gf6_heredoc_text_is_not_a_suite_run(self):
+        from orchestra_core.guards import runs_test_suite
+        notes = "cat > notes.txt <<'EOF'\nnpm test\npytest\nEOF"
+        commit = "git commit -F - <<'EOF'\nFix the hook\n\nVerified with npm test and python3 -m unittest discover\nnpm test\nEOF"
+        for command in (notes, commit, 'cat <<EOF > routine.txt\nnpm test\nEOF', "tee a.txt <<-'X'\n\tgo test ./...\n\tX"):
+            with self.subTest(command=command):
+                self.assertFalse(runs_test_suite(command))
+                for mode in ('minimal', 'normal', 'protect'):
+                    self.assertEqual(verdict(self.reviewer(command, 'orchestra:critic', mode)), 'allow')
+        for command in ("bash <<'EOF'\nnpm test\nEOF", "npm test <<'EOF'\nx\nEOF", "cat > a <<'EOF'\nx\nEOF\nnpm test",
+                        "sh -s <<EOF\npytest\nEOF", "python3 - <<'EOF'\nimport os\nEOF\npytest"):
+            with self.subTest(command=command, suite=True):
+                self.assertTrue(runs_test_suite(command))
+
+    def test_gf7_a_foreign_agent_during_a_run_warns_with_the_reason(self):
+        payload = {'tool_name': 'Agent', 'tool_input': {'subagent_type': 'general-purpose'}, 'cwd': str(self.repo)}
+        result = handle_event('PreToolUse', payload, mode='minimal', engine=FakeEngine())
+        self.assertEqual(verdict(result), 'warn')
+        text = result.output['hookSpecificOutput']['additionalContext']
+        self.assertIn('orchestra:', text)
+        self.assertIn('because', text)
+        self.assertIn('standing orders', text)
 
     def test_no_mode_ever_asks(self):
         source = Path(hooks_module.__file__).read_text()

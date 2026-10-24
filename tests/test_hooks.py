@@ -1397,10 +1397,10 @@ class MarkerHandshakeTest(unittest.TestCase):
         self.xdg = Path(self.temp.name) / 'xdg'
         self.cwd = Path(self.temp.name) / 'cwd'
         self.cwd.mkdir()
-        self.mods = self.xdg / 'orchestra' / 'mods'
-        self.mods.mkdir(parents=True)
         self.state = Path(self.temp.name) / 'state'  # the marker handshake is about the full guard: pin protect
         self.state.mkdir()
+        self.mods = self.state / 'mods'  # GF10: with ORCHESTRA_STATE_DIR set the markers live under it
+        self.mods.mkdir(parents=True)
         (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
         self.env = {'XDG_STATE_HOME': str(self.xdg), 'ORCHESTRA_STATE_DIR': str(self.state)}
         self.sha = guard_digest()
@@ -2652,21 +2652,75 @@ class AutonomyHookTest(unittest.TestCase):
         self.add_card('c2')
         self.assertEqual(self.stop()['decision'], 'block')  # the old cap of 1 no longer stops the loop
         self.now[0] += 7200
-        self.assertEqual(self.stop(), {})
+        self.assertEqual(self.stop(), {'systemMessage': self.stopped('deadline')})
         self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'deadline')
+
+    def stopped(self, reason):
+        return hooks_module.AUTONOMY_STOPPED % (reason, self.state / 'progress.md')
 
     def test_stop_after_an_unchanged_continued_turn_with_nothing_running_stops_stalled(self):
         self.arm()
         self.add_card('c1')
         self.assertEqual(self.stop()['decision'], 'block')
-        self.assertEqual(self.stop(), {})  # no repeat, and nothing would wake the session
+        self.assertEqual(self.stop(), {'systemMessage': self.stopped('stalled')})  # no repeat, and nothing would wake the session
         self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'stalled')
 
     def test_stop_stops_at_the_deadline(self):
         self.arm()
         self.now[0] += 7200
-        self.assertEqual(self.stop(), {})
+        self.assertEqual(self.stop(), {'systemMessage': self.stopped('deadline')})
         self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'deadline')
+
+    def test_gf12_the_stop_that_ends_autonomy_names_its_reason(self):
+        self.arm()
+        output = self.stop_main(self.repo)  # no ready card: the run stops
+        self.assertNotIn('decision', output)
+        self.assertIn('no-ready-card', output['systemMessage'])
+        self.assertIn('Orchestra autonomy stopped', output['systemMessage'])
+        self.assertFalse(self.engine.autonomy_active())
+        self.assertEqual(self.stop_main(self.repo), {})  # already stopped: nothing to say again
+        self.arm()
+        self.add_card('c1')
+        self.engine.dispatch('main', self.lease, 'c1', 'w1')
+        self.assertEqual(self.stop(), {})  # only a worker running: the run stays armed
+        self.assertTrue(self.engine.autonomy_active())
+
+    def session_start(self, source='compact'):
+        payload = {'cwd': str(self.repo), 'session_id': 's-1', 'source': source}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            main(['SessionStart', '--harness', 'claude'])
+        return json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
+
+    def test_gf11_session_start_says_the_run_is_live_and_hides_a_stale_stop(self):
+        self.arm()
+        self.stop_main(self.repo)  # stops as no-ready-card and writes a brief
+        self.assertIn('Run brief (no-ready-card)', self.session_start('startup'))
+        self.add_card('c1')
+        self.arm()
+        deadline = self.engine.status()['autonomy']['deadline']
+        for source in ('compact', 'resume', 'startup'):
+            with self.subTest(source=source):
+                context = self.session_context_checked(source)
+                self.assertIn('Run active (size ', context)
+                self.assertIn('autonomy armed until ' + deadline, context)
+                self.assertIn('guard_mode minimal', context)
+                self.assertIn('orchestra.py status', context)
+                self.assertNotIn('no-ready-card', context)
+                self.assertNotIn('Run brief', context)
+
+    def session_context_checked(self, source):
+        context = self.session_start(source)
+        self.assertLess(len(context), 1200)
+        return context
+
+    def test_gf11_session_start_names_a_live_run_without_autonomy(self):
+        context = self.session_context_checked('startup')
+        self.assertIn('Run active (size ', context)
+        self.assertIn('autonomy off', context)
+        self.assertIn('guard_mode minimal', context)
+        self.engine.interrupt('main', self.lease)
+        self.assertNotIn('Run active', self.session_start('startup'))  # an ended run is not live
 
     def test_stop_without_autonomy_is_empty(self):
         self.assertEqual(self.stop(), {})
@@ -3005,8 +3059,9 @@ class PlanV24GuardTest(unittest.TestCase):
                 with self.subTest(tool=tool, kind=kind):
                     result = self.agent(kind, tool, self.engine())
                     self.assertEqual(decision_of(result), 'deny')
-                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                     'Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits)')
+                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'], hooks_module.AGENT_GUARD)
+                    self.assertTrue(hooks_module.AGENT_GUARD.startswith(
+                        'Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits)'))
 
     def test_orchestra_agent_allowed_during_run(self):
         self.assertEqual(self.agent('orchestra:builder', engine=self.engine()).output, {})
@@ -3102,6 +3157,82 @@ class PlanV24GuardTest(unittest.TestCase):
         engine = self.engine()
         engine.current_gate_ids = mock.Mock(side_effect=RuntimeError('x'))
         self.assertEqual(self.review_call('pytest', 'orchestra:critic', engine).output, {})
+
+
+class StateEditAndMarkerTest(unittest.TestCase):
+    """GF items 8 to 10: review packages, NotebookEdit and the marker directory under ORCHESTRA_STATE_DIR."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.state = self.root / 'state'
+        self.state.mkdir()
+        self.cwd = self.root / 'cwd'
+        self.cwd.mkdir()
+
+    def edit(self, tool, data, mode='minimal'):
+        payload = {'tool_name': tool, 'tool_input': data, 'cwd': str(self.cwd)}
+        return handle_event('PreToolUse', payload, mode=mode, state_dir=str(self.state))
+
+    def test_gf8_review_packages_are_writable_with_the_edit_tools(self):
+        package = self.state / 'review-packages' / 'B1'
+        for mode in ('minimal', 'normal', 'protect'):
+            for tool in ('Write', 'Edit', 'MultiEdit'):
+                for path in (package / 'diff.patch', package / 'nested' / 'report.md', self.state / 'review-packages' / 'index.md'):
+                    with self.subTest(mode=mode, tool=tool, path=str(path)):
+                        self.assertIsNone(decision_of(self.edit(tool, {'file_path': str(path)}, mode)))
+        (self.state / 'review-packages').mkdir(exist_ok=True)
+        (self.state / 'review-packages' / 'up').symlink_to(self.state)
+        for path in (self.state / 'review-packages' / '..' / 'state.json', self.state / 'review-packages',
+                     self.state / 'review-packages' / 'up' / 'state.json',
+                     self.state / 'review-packages-x' / 'a.md', self.state / 'history' / 'review-packages' / 'a.md',
+                     self.state / 'state.json', self.state / 'policy.json'):
+            with self.subTest(path=str(path)):
+                self.assertEqual(decision_of(self.edit('Write', {'file_path': str(path)})), 'deny')
+
+    def test_gf9_notebook_edit_is_guarded(self):
+        self.assertIn('NotebookEdit', hooks_module._MOD_TOOLS)
+        self.assertIn('NotebookEdit', RULES['tools']['edit'])
+        claude = json.loads((PLUGIN / 'hooks/claude.json').read_text())
+        self.assertRegex('NotebookEdit', '^(?:' + claude['hooks']['PreToolUse'][0]['matcher'] + ')$')
+        guarded = (PLUGIN / 'hooks/mod/orchestra.ts').read_text().split('const GUARDED = ', 1)[1].split(';', 1)[0]
+        self.assertIn("'NotebookEdit'", guarded)
+        for path in (self.state / 'n.ipynb', self.state / 'state.json'):
+            with self.subTest(path=path.name):
+                result = self.edit('NotebookEdit', {'notebook_path': str(path), 'new_source': 'x'})
+                self.assertEqual(decision_of(result), 'deny')
+        self.assertIsNone(decision_of(self.edit('NotebookEdit', {'notebook_path': str(self.cwd / 'n.ipynb'), 'new_source': 'x'})))
+        self.assertEqual(self.edit('NotebookEdit', {'new_source': 'x'}).exit_code, 2)
+
+    def test_gf9_the_native_hook_denies_a_notebook_edit_of_the_state(self):
+        env = {'XDG_STATE_HOME': str(self.root / 'xdg'), 'ORCHESTRA_STATE_DIR': str(self.state)}
+        payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': 'NotebookEdit',
+                   'tool_input': {'notebook_path': str(self.state / 'n.ipynb'), 'new_source': 'x'}}
+        self.assertEqual(run_main(payload, env=env)[1]['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_gf10_the_marker_directory_follows_orchestra_state_dir(self):
+        with mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': str(self.state), 'XDG_STATE_HOME': str(self.root / 'xdg')}):
+            self.assertEqual(hooks_module._marker_dir(), self.state / 'mods')
+        with mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': 'relative/state', 'XDG_STATE_HOME': str(self.root / 'xdg')}):
+            self.assertEqual(hooks_module._marker_dir(), self.root / 'xdg' / 'orchestra' / 'mods')
+        with mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root / 'xdg')}):
+            os.environ.pop('ORCHESTRA_STATE_DIR', None)
+            self.assertEqual(hooks_module._marker_dir(), self.root / 'xdg' / 'orchestra' / 'mods')
+
+    def test_gf10_a_marker_under_the_state_dir_is_live_and_one_under_xdg_is_not(self):
+        env = {'XDG_STATE_HOME': str(self.root / 'xdg'), 'ORCHESTRA_STATE_DIR': str(self.state)}
+        data = json.dumps({'session_id': 's1', 'heartbeat_ms': int(time.time() * 1000), 'plugin_version': '2.0.0',
+                           'rules_sha256': guard_digest()})
+        (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
+        payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': 'Bash', 'tool_input': {'command': 'git clean -fd'}}
+        xdg_mods = self.root / 'xdg' / 'orchestra' / 'mods'
+        xdg_mods.mkdir(parents=True)
+        (xdg_mods / 's1.json').write_text(data)
+        self.assertEqual(run_main(payload, env=env)[1]['hookSpecificOutput']['permissionDecision'], 'deny')
+        (self.state / 'mods').mkdir()
+        (self.state / 'mods' / 's1.json').write_text(data)
+        self.assertEqual(run_main(payload, env=env)[1], {})
 
 
 if __name__ == '__main__':

@@ -16,7 +16,7 @@ import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, 
 
 const DELEGATED = ['release', 'release-multi', 'boundary'];
 // SPEC 10.3: the tools the mod guards; known without loaded rules, so a not-ready guard still delegates them (O24).
-const GUARDED = ['Bash', 'Edit', 'Write', 'MultiEdit'];
+const GUARDED = ['Bash', 'Edit', 'Write', 'MultiEdit', 'NotebookEdit'];
 // Fallback for an unexpected error whose class is not known; `delegate` names its class with `failClosed`.
 const FAIL_CLOSED = 'Orchestra guard error; failing closed';
 const MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry';
@@ -455,6 +455,7 @@ export const register: Register = (on: On) => {
         await zeroPrev();
         const x = await $.env.get('XDG_STATE_HOME');
         const h = await $.env.get('HOME');
+        const o = await $.env.get('ORCHESTRA_STATE_DIR');
         const envXdg = x ? x : undefined;
         const envHome = h ? h : undefined;
         if (mine !== gen) return false;
@@ -483,13 +484,14 @@ export const register: Register = (on: On) => {
         digest = dig;
         const sx = xdg;
         const sh = home;
+        const so = o ? o : undefined;
         const id = await $.session.id();
         if (mine !== gen) return false;
         guardReady = true;
         retired.delete(id);
         lastSeen = id;
         const write = async (sid: string, heartbeat: number): Promise<void> => {
-          const path = markerPath(sx, sh, sid);
+          const path = markerPath(sx, sh, sid, so);
           if (path !== null) await $.fs.write(path, markerJson(sid, ver, dig, heartbeat));
         };
         const fresh = (sid: string) => async (): Promise<void> => {
@@ -655,7 +657,7 @@ export const register: Register = (on: On) => {
       return result;
     }
     if (editTools().includes(tool)) {
-      const target = input['file_path'] !== undefined ? input['file_path'] : input['path'];
+      const target = tool === 'NotebookEdit' ? input['notebook_path'] : input['file_path'] !== undefined ? input['file_path'] : input['path'];
       const cwd = await $.session.cwd();
       const stateDir = await $.env.get('ORCHESTRA_STATE_DIR');
       const path = target === undefined ? undefined : String(target);
