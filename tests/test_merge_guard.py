@@ -245,6 +245,38 @@ class StackOrderTest(MergeFixture):
         self.assertEqual(self.decide('gh pr merge 9 --merge')[0], 'deny')
 
 
+class MinimalModeMergeGuardTest(MergeFixture):
+    """GF item 5: after `approved` the printed merges are checked in the default `minimal` mode too."""
+
+    def setUp(self):
+        super().setUp()
+        self.arm()
+        self.open_pr(3)
+        self.open_pr(6)
+        self.approve([3, 6])
+
+    def hook(self, command, mode='minimal'):
+        from orchestra_core.hooks import handle_event
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo)}
+        output = handle_event('PreToolUse', payload, mode=mode, state_dir=str(self.state)).output
+        return output.get('hookSpecificOutput', {}).get('permissionDecision'), output
+
+    def test_wrong_order_head_or_form_denied_and_the_printed_merge_runs_in_minimal(self):
+        for command in (self.merge(6), self.merge(3, sha=False), self.merge(3, '--squash'), self.merge(3, '--merge --admin'),
+                        'gh pr merge 3 -R o/r --merge --delete-branch --match-head-commit ' + self.sha[3]):
+            with self.subTest(command=command):
+                decision, output = self.hook(command)
+                self.assertEqual(decision, 'deny')
+                self.assertTrue(output['hookSpecificOutput']['permissionDecisionReason'].startswith('Orchestra'))
+        self.assertEqual(self.hook(self.merge(3)), (None, {}))
+
+    def test_minimal_agrees_with_normal_and_protect(self):
+        for command in (self.merge(6), self.merge(3, sha=False), self.merge(3)):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command)[0], self.hook(command, 'normal')[0])
+                self.assertEqual(self.hook(command)[0], self.hook(command, 'protect')[0])
+
+
 class GhRunnerTest(MergeFixture):
     def test_timeout_is_six_seconds_or_less_and_slow_gh_denies(self):
         self.approved_pair()

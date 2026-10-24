@@ -27,8 +27,13 @@ export function stateBase(xdg: string | undefined, home: string | undefined): st
   return null;
 }
 
-/** <state base>/orchestra/mods/<session_id>.json, or null when there is no usable base. */
-export function markerPath(xdg: string | undefined, home: string | undefined, sessionId: string): string | null {
+/**
+ * <ORCHESTRA_STATE_DIR>/mods/<session_id>.json when that is absolute or starts with `~/` (hooks.py reads the same
+ * place), else <state base>/orchestra/mods/<session_id>.json, or null when there is no usable base.
+ */
+export function markerPath(xdg: string | undefined, home: string | undefined, sessionId: string, stateDir?: string): string | null {
+  const dir = stateDir && stateDir.startsWith('~/') && home ? `${home}${stateDir.slice(1)}` : stateDir;
+  if (dir && dir.startsWith('/')) return `${dir.replace(/\/+$/, '')}/mods/${sessionId}.json`;
   const base = stateBase(xdg, home);
   return base === null ? null : `${base}/orchestra/mods/${sessionId}.json`;
 }

@@ -397,6 +397,27 @@ test('O24: a guarded call during a start in progress waits, then is delegated wh
   expectDelegated(r, b, res, 'Bash', 'command', 'git stash');
 });
 
+test('GF9: a NotebookEdit is a guarded call, delegated while the guard is not ready', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  pythonDenies(r);
+  const res = await $.tool.call({ tool: 'NotebookEdit', tool_use_id: 't1', notebook_path: '/work/proj/n.ipynb' } as never);
+  expectDelegated(r, b, res, 'NotebookEdit', 'notebook_path', '/work/proj/n.ipynb');
+});
+
+test('GF9: with the guard ready a NotebookEdit of the state denies and an ordinary notebook passes', async ($, on) => {
+  const r = rig(on, { env: { XDG_STATE_HOME: '/state', HOME: '/home/x', ORCHESTRA_STATE_DIR: '/run/state' } });
+  const b = bottom(on, r);
+  await $.session.start(start);
+  for (const path of ['/run/state/n.ipynb', '/run/state/state.json', '/state/orchestra/mods/n.ipynb']) {
+    const denied = await $.tool.call({ tool: 'NotebookEdit', tool_use_id: 't1', notebook_path: path } as never);
+    expect('deny' in denied).toBe(true);
+  }
+  const ok = await $.tool.call({ tool: 'NotebookEdit', tool_use_id: 't2', notebook_path: '/work/proj/n.ipynb' } as never);
+  expect('deny' in ok).toBe(false);
+  expect(b.calls.length).toBe(1);
+});
+
 test('O24: a failed or unparseable delegation denies; an unguarded tool is not delegated', async ($, on) => {
   const r = rig(on, { files: { 'config/guard-rules.json': '{bad' } });
   const b = bottom(on, r);
