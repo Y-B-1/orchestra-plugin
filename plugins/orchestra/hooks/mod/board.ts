@@ -39,7 +39,8 @@ export type Link = { agentId?: string; workflowRunId?: string; spawnedAt: number
 
 export type NativeTask = { id: string; subject: string; status: string; owner?: string; blockedBy: string[] };
 export type Create = { cardId: string; subject: string; description: string };
-export type Update = { cardId: string; taskId: string; fields: { status?: string; owner?: string; addBlockedBy?: string[] } };
+export type NativeStatus = 'pending' | 'in_progress' | 'completed';
+export type Update = { cardId: string; taskId: string; fields: { status?: NativeStatus; owner?: string; addBlockedBy?: string[] } };
 
 function obj(v: unknown): Json | null {
   return v !== null && typeof v === 'object' && !Array.isArray(v) ? (v as Json) : null;
@@ -187,7 +188,7 @@ export function subjectOf(short: string, card: Card): string {
 }
 
 /** The native status a card state maps to; null leaves the task alone. */
-export function nativeStatus(state: string): 'pending' | 'in_progress' | 'completed' | null {
+export function nativeStatus(state: string): NativeStatus | null {
   if (state === 'queued' || state === 'held' || state === 'parked') return 'pending';
   if (state === 'running' || state === 'reported' || state === 'repairing') return 'in_progress';
   if (state === 'accepted') return 'completed';
