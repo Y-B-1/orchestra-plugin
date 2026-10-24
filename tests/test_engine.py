@@ -6320,6 +6320,5 @@ class RestartReceiptTests(EngineFixture):
     def test_recover_for_another_session_names_the_crash_route(self):
         self.engine.interrupt('main', self.lease)
         self.engine.open_session('main', harness_session='H1')
-        with self.assertRaisesRegex(EngineError, r'another session.*read session.lease from %s, then `interrupt --lease LEASE`'
-                                    % re.escape(str(self.engine.state_dir / 'state.json'))):
+        with self.assertRaisesRegex(EngineError, r'belongs to session H1; this session reads only.*--take-over'):
             self.engine.recover_lease('main', 'H2')

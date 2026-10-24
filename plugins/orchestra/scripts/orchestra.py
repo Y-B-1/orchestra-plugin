@@ -51,6 +51,8 @@ def parser():
     start.add_argument('--items', type=int, help='The 2.4 flag; refused, start with --size')
     start.add_argument('--recover', action='store_true', help='Take back the lease of the run this harness session already owns '
                        '(needs --harness-session); running cards keep their assignments')
+    start.add_argument('--take-over', action='store_true', help='With --recover: move an ended or interrupted run owned by another '
+                       'session to this one (logged in progress.md; arms nothing)')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
     for name in ['ready','interrupt','scan']:
@@ -245,10 +247,12 @@ def execute(args):
     if args.command=='start':
         if args.items is not None:
             raise EngineError('--items is the 2.4 flag; start with --size')
+        if args.take_over and not args.recover:
+            raise EngineError('--take-over needs --recover')
         if args.recover:
             if args.new_run or args.size or args.asks or args.owner_request:
                 raise EngineError('--recover takes only --harness-session')
-            return {'lease':engine.recover_lease(args.actor,args.harness_session),'state':str(state),'repo':str(repo)},0
+            return {'lease':engine.recover_lease(args.actor,args.harness_session,take_over=args.take_over),'state':str(state),'repo':str(repo)},0
         asks = parse_asks(args.asks)
         if args.new_run:  # refuse before archiving, so the ended run stays in place
             engine._check_start(args.size,asks,args.owner_request)

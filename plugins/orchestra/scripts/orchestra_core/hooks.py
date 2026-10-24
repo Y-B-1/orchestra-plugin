@@ -51,6 +51,7 @@ CONTEXT = (
     'artifact evidence, independent review and integration. Workers never delegate '
     'or change coordinator state. Session start injects context only; do not repair '
     'the repository, resume prior runs or arm autonomy without an explicit request. '
+    '`start --recover` of this session\'s own run is not a resume: it arms no autonomy. '
     'Release needs configured authorization and current evidence. Native hook '
     'identity and shell inspection are best effort, not hostile-worker isolation.'
 )
@@ -299,6 +300,11 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
                 engine.apply_harness_rebind(session_id)  # B-F5: the one SessionStart write
             except Exception:
                 pass  # An unloadable state or changed contract never blocks the context
+        if not worker and engine is not None and payload.get('source') != 'fork' and isinstance(session_id, str) and session_id:
+            try:
+                engine.revive_harness_session(session_id)  # A restart of the same conversation keeps its lease
+            except Exception:
+                pass
         if not worker:
             _record_model(engine, payload)  # Bookkeeping, not progress; any error is swallowed
         if not worker and engine is not None:
@@ -306,11 +312,11 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             context += line
             if not armed:
                 context += _report_context(engine)  # while autonomy is armed the last brief's stop reason is stale
+            context += _leftovers(engine, payload.get('transcript_path'))
             if _other_session(engine, session_id) and _run_active(engine):
                 context += (' An Orchestra run is active in this repository but bound to another session, so this session is not '
-                            'its coordinator and may use any agent type. If that session is gone, the owner recovers it with '
-                            '`orchestra.py --actor main --lease L interrupt`, L read from session.lease in '
-                            + str(engine.state_path) + '.')
+                            'its coordinator: it reads only and may use any agent type. To move the run here once that session '
+                            'has ended, run `orchestra.py start --recover --take-over --harness-session ' + str(session_id) + '`.')
         if not worker and isinstance(session_id, str) and session_id:
             context += ' Harness session id: ' + session_id + '. Pass --harness-session ' + session_id + ' to orchestra.py start.'
         return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': context}})
@@ -1003,11 +1009,83 @@ def _compact_brief(text):
     return '\n'.join(out).strip()
 
 
+_STATE_ORDER = ('queued', 'running', 'reported', 'repairing', 'parked', 'held', 'accepted')
+
+
+def _age(at):
+    """'Nm ago' or 'Nh ago' for an ISO time; 'at an unknown time' when it does not parse."""
+    try:
+        seconds = max(0, int(datetime.now(timezone.utc).timestamp() - datetime.fromisoformat(str(at)).timestamp()))
+    except (TypeError, ValueError):
+        return 'at an unknown time'
+    return '%dm ago' % (seconds // 60) if seconds < 7200 else '%dh ago' % (seconds // 3600)
+
+
+def _live_counts(status):
+    counts = {}
+    for task in (status.get('tasks') or {}).values():
+        counts[task.get('state')] = counts.get(task.get('state'), 0) + 1
+    return ', '.join('%s %d' % (s, counts[s]) for s in _STATE_ORDER if counts.get(s)) or 'no cards'
+
+
+def _live_transcripts(transcript_path):
+    """How many subagent transcripts of this conversation were written in the last LIVE_TRANSCRIPT_SECONDS: a worker
+    can outlive a restart, and a recently written transcript means one is still working. None when unknown."""
+    if not isinstance(transcript_path, str) or not transcript_path.endswith('.jsonl'):
+        return None
+    root = Path(transcript_path[:-len('.jsonl')]) / 'subagents'
+    try:
+        cutoff = time.time() - LIVE_TRANSCRIPT_SECONDS
+        return sum(1 for f in root.rglob('*.jsonl') if f.stat().st_mtime >= cutoff)
+    except OSError:
+        return None
+
+
+LIVE_TRANSCRIPT_SECONDS = 120
+
+
+def _leftovers(engine, transcript_path=None):
+    """After a restart: the running worker cards, how many worker transcripts are still being written (a worker can
+    outlive the restart), and the run worktrees that hold uncommitted work, so the coordinator knows what to resume
+    and does not start a second worker beside a live one. Empty when there is nothing; never raises."""
+    try:
+        status = engine.status()
+        running = [(i, t) for i, t in sorted((status.get('tasks') or {}).items())
+                   if t.get('state') == 'running' and not t.get('inline')]
+        parts = ['%s (worker %s, started %s)' % (i, t.get('worker'), _age(t.get('started_at'))) for i, t in running[:10]]
+        dirty = []
+        listing = subprocess.run(['git', '-C', str(engine.repo), 'worktree', 'list', '--porcelain'], capture_output=True,
+                                 text=True, timeout=5).stdout
+        for line in listing.splitlines():
+            if not line.startswith('worktree '):
+                continue
+            path = Path(line[len('worktree '):])
+            if '.claude/worktrees/' not in path.as_posix() or len(dirty) >= 10:
+                continue
+            changed = subprocess.run(['git', '-C', str(path), 'status', '--porcelain'], capture_output=True, text=True,
+                                     timeout=5).stdout.splitlines()
+            if changed:
+                dirty.append('%s (%d uncommitted)' % (path.name, len(changed)))
+    except Exception:
+        return ''
+    text = ''
+    if parts:
+        live = _live_transcripts(transcript_path)
+        alive = '' if live is None else (' %d worker transcript%s written in the last 2 minutes;' % (live, '' if live == 1 else 's'))
+        text += (' Running worker cards:' + alive + ' check each worker is gone before you redispatch its card: '
+                 + '; '.join(parts) + '.')
+    if dirty:
+        text += ' Run worktrees with uncommitted work: ' + ', '.join(dirty) + '.'
+    return text
+
+
 def _report_context(engine):
     try:
-        brief = engine.status().get('last_brief')
+        status = engine.status()
+        brief = status.get('last_brief')
         if isinstance(brief, dict) and isinstance(brief.get('text'), str):
-            return ' Run brief (' + str(brief.get('reason')) + '): ' + _compact_brief(brief['text'])[:2000] \
+            return ' Run brief (' + str(brief.get('reason')) + ', written ' + _age(brief.get('at')) + '; live board: ' \
+                + _live_counts(status) + '): ' + _compact_brief(brief['text'])[:2000] \
                 + ' Full report: ' + str(brief.get('path')) + '.'
         report = engine.autonomy_report()
     except Exception:

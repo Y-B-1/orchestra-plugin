@@ -1007,9 +1007,26 @@ class Engine:
     @staticmethod
     def _lease(state, actor, lease):
         session = state['session']
-        if not session or not session['active'] or session['actor'] != actor or session['lease'] != lease:
-            raise EngineError('Invalid or interrupted coordinator lease. If this session lost its lease, take it back with '
-                              '`start --recover --harness-session ID` (the id is in the SessionStart context)')
+        if session and session['active'] and session['actor'] == actor and session['lease'] == lease:
+            return
+        raise EngineError('Invalid or interrupted coordinator lease: ' + Engine._lease_refusal(session, actor))
+
+    @staticmethod
+    def _lease_refusal(session, actor):
+        """Why a lease is refused and the one command that fixes it, chosen from the run state."""
+        if not session or session.get('outcome') == 'completed':
+            return 'The run finished; use `start` for a new run'
+        owner = session.get('harness_session')
+        recover = ('`start --recover --harness-session %s` (it arms no autonomy and releases nothing)' % owner if owner
+                   else '`start --recover --harness-session ID`, ID from the SessionStart context')
+        if not session['active']:
+            return ('The coordinator lease of session %s was released when the run %s; that session takes it back with %s. '
+                    'Another session takes the run over with --take-over added' % (owner or 'unknown',
+                    'ended with its session' if session.get('outcome') == 'ended' else 'was interrupted', recover))
+        if session['actor'] != actor:
+            return 'This run is coordinated by actor %s, not %s' % (session['actor'], actor)
+        return 'This lease was replaced by a newer one held by session %s; if this session lost its lease, it takes a fresh one with %s' % (
+            owner or 'unknown', recover)
 
     def validate_lease(self, actor, lease):
         """Check coordinator consistency; caller identifiers are not authentication."""
@@ -1143,7 +1160,7 @@ class Engine:
         with self._state() as state:
             self._lease(state, actor, lease)
             self._end_run(state, 'interrupted')
-            state['session']['active'] = False
+            state['session'].update(active=False, outcome='interrupted')
             state['permits'] = []
             state['autonomy'] = self._kept_autonomy(state)
 
@@ -1156,7 +1173,7 @@ class Engine:
             if not (state['session'] and state['session']['active']):
                 return False
             self._end_run(state, 'interrupted')
-            state['session']['active'] = False
+            state['session'].update(active=False, outcome='interrupted')
             state['permits'] = []
             state['autonomy'] = self._kept_autonomy(state)
             return True
@@ -1198,6 +1215,23 @@ class Engine:
             state['session'].pop('pending_rebind', None)  # harness_session stays as a record
             state['permits'] = []
             state['autonomy'] = self._kept_autonomy(state)
+            return True
+
+    def revive_harness_session(self, session_id):
+        """A restart of the same conversation (same harness session id) reopens the run its end closed, with the same
+        lease. Only an `ended` run revives: an interrupt or a finish stays as it is. Arms nothing, issues nothing."""
+        def revivable(state):
+            session = state['session']
+            return bool(session and not session['active'] and session.get('outcome') == 'ended'
+                        and session.get('harness_session') == session_id)
+        with self._state(False) as state:
+            if not revivable(state):
+                return False
+        with self._state(activity=False) as state:
+            if not revivable(state):
+                return False
+            state['session'].update(active=True)
+            state['session'].pop('outcome', None)
             return True
 
     def mark_harness_rebind(self, session_id):
@@ -1632,7 +1666,7 @@ class Engine:
             state.setdefault('cancelled', []).append(dict(id=task_id, reason=reason.strip(), at=self._clock(),
                                                           was=task['state']))
 
-    def recover_lease(self, actor, harness_session):
+    def recover_lease(self, actor, harness_session, take_over=False):
         """Issue a fresh coordinator lease to the session that already owns the run. The lease is a consistency token, not
         a credential (README, Safety): when the coordinator has lost it (compaction, a restart) the same harness session,
         named by the SessionStart context, takes it back. Running cards keep their assignments."""
@@ -1641,11 +1675,25 @@ class Engine:
             raise EngineError('Recovering the lease needs --harness-session from the SessionStart context')
         with self._state() as state:
             session = state['session']
-            if not session or not session['active']:
-                raise EngineError('No active run to recover; use start')
-            if session['actor'] != actor or session.get('harness_session') != harness_session:
-                raise EngineError('This run belongs to another session; the owner ends it with interrupt or starts over. After a '
-                                  'crash, read session.lease from %s, then `interrupt --lease LEASE`' % self.state_path)
+            if not session or session.get('outcome') == 'completed':
+                raise EngineError('The run finished; nothing to recover: use `start` for a new run')
+            owner = session.get('harness_session')
+            if session['actor'] != actor:
+                raise EngineError('This run is coordinated by actor %s, not %s' % (session['actor'], actor))
+            if owner != harness_session:
+                if not take_over:
+                    raise EngineError('This run belongs to session %s; this session reads only. To move the run here, %s'
+                                      % (owner, 'stop that session first, then add --take-over' if session['active']
+                                         else 'add --take-over (logged; it arms no autonomy)'))
+                if session['active']:
+                    raise EngineError('Session %s still holds the run as active; --take-over needs it ended or interrupted'
+                                      % owner)
+                session['harness_session'] = harness_session
+                _append_progress(self.state_dir, '- session %s took over the run from %s (at %s)' % (
+                    harness_session, owner, datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')))
+            if not session['active']:
+                session.update(active=True)
+                session.pop('outcome', None)
             lease = uuid.uuid4().hex
             session['lease'] = lease
             for task in state['tasks'].values():

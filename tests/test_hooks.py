@@ -1740,7 +1740,7 @@ class BystanderSessionTest(SessionRepoFixture):
                 context = json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
                 self.assertEqual('bound to another session' in context, expected)
                 if expected:
-                    self.assertIn('session.lease', context)
+                    self.assertIn('start --recover --take-over', context)
 
 
 class UnreadableStateTest(SessionRepoFixture):
@@ -2838,7 +2838,7 @@ class RunBriefHookTest(unittest.TestCase):
     def test_session_start_shows_newest_brief_without_autonomy(self):
         self.engine.interrupt('main', self.lease)
         context = self.session_context()
-        self.assertIn('Run brief (interrupted): ', context)
+        self.assertIn('Run brief (interrupted, written ', context)
         self.assertIn('## Run brief', context)
         self.assertIn(str(self.state / 'progress.md'), context)
 
