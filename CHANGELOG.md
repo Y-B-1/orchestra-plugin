@@ -2,6 +2,45 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.14.0 — 2026-10-24
+
+Built from the audit proposals and the friction log of the 2.13 run: fewer hand steps between a worker's report and an accepted card, and a board the coordinator sees without asking.
+
+- **Widest dispatch (owner request).** An investigator card may carry `prep_for: ID` and start at once while its target is blocked; its accepted report appears in the target's brief under `## Prep notes`. `waves` and `wave` print `idle_workers` and `prep` (blocked builder cards nobody prepares). The coordinator and planner texts say to start every disjoint unit at once and to run read-only prep and lookahead research immediately.
+
+Audit proposals:
+- **Worker reports are captured:** a `SubagentStop` hook saves each `orchestra:` agent's final message to `<state>/reports/<token>.md` and records it as the card's report (P1).
+- **`accept` compares the reported commit:** scoped evidence binds a card's files, index, status and policy, not HEAD, so a commit that leaves those files alone no longer stales it (P2, F3).
+- **`wave --emit` and `card ID`:** the engine prints per card the agent type, model override, isolation, fast-forward flag, prompt with its `Assignment:` line and the `agent_call`, and renders the brief skeleton (P3, F33).
+- **`ledger` and `package TASK`:** BUILD-LEDGER rows and a reviewer package written from engine facts (P4).
+- **A report answers every acceptance line:** `report` refuses a builder report that leaves an acceptance line unanswered; `accept --ruling TEXT` records the coordinator's ruling on an unmet criterion (never for an inline card); `report --accept` closes an inline card in one call (P5, F20).
+- **`refusals [--last N]`:** a log of refused commands with a read command (P6).
+- **Refusals name the field:** `accept` names the failing check, and a receipt mismatch names each key with both values (P8, F31, F32).
+- **The board as a stone on the path:** a one-line `board` key on card-moving command output; a `PostToolUse` hook on `Agent|Task` delivers a pending change once; `UserPromptSubmit` adds a board line only when the board changed; `Stop` blocks once outside autonomy while a card waits (P9).
+
+Friction fixed:
+- **F1 resume:** `start` returns `resume` per requeued card, with the old worker and the saved report path.
+- **F7 linked worktree:** the CLI refuses from a linked worktree when the main checkout holds the run state, and leaves no empty state behind; `where` is exempt.
+- **Leftover worktrees:** the read-only `worktrees` command lists `.claude/worktrees/` entries with branch, card, landed and clean, and prints the removal commands; `board` shows `leftover_worktrees` and `finish` points to the command. `report` refuses a commit built on the wrong base (a base is recorded by `wave --emit`).
+- **F15 repairs per chain:** the autonomy ledger line `- Repairs: up to N per chain` (1 to 3, absent means 1).
+- **F30 sibling repair:** a repair with disjoint files no longer waits on a parent reservation.
+- **F2, F23, F28, F31 receipts:** an empty `cleared` means none; a one-task receipt gets `task_findings` filled; mismatch refusals name each key with both values. Loosening: out-of-scope items on a non-final receipt are kept as notes instead of refused.
+- **F4, F27 `review --token`:** covers sibling final lens cards that review the same cards, takes critic and repair_check receipts, and `--defer-out-of-scope REASON` records out-of-scope items as deferred.
+- **WDENY2 worker lease:** a worker's shell command carrying `orchestra.py ... --lease` is denied in every guard mode.
+- **F23 spawn without Mode:** the Kanban module refuses an `orchestra:` spawn whose brief has no `Mode:` line (TypeScript module only; the Python hooks have no equal).
+- **F34 branch deletion:** the refusal now reads "Run each branch deletion as its own command, not chained or batched with other calls".
+- **F12, F24, F25, F26, F28 text:** skill and `scripts/check.sh` text name the rules from the 2.13 run.
+- **Normal mode:** softening reads past a trailing shell comment.
+
+Skipped or deferred:
+- F35 (`finish` after a fix re-review): not reproducible; finish counts a clean fix re-review.
+- F6, F10, F36 (heredoc text read as a command), F22 (malformed quoting) and F24 (old, unittest rerun read as a suite): not reproducible at the base.
+- F18 (`pr merge` as a release kind): deferred; it changes release authority.
+- F21 (a second inline card): deferred; it weakens the one-inline rule.
+- `--lease @session`: dropped after the plan critic's finding 1.
+- Engine-owned worktrees and an `engine_worktrees` policy key: deferred for permission and guard risk; the engine only lists worktrees.
+- F38, F39, F40, F43 (amend a queued card, a waves overlap view, a sibling-fixture ruling): found during this run and queued.
+
 ## 2.13.1 — 2026-10-24
 
 - **`finish` works after a squash merge:** a reported commit also counts as landed when a commit the engine gated or reviewed contains it and `HEAD`'s last 50 first-parent commits hold that commit's tree, or its whole patch from their merge base. 2.13.0 refused every run whose work was squash-merged. Work that never merged is still refused.

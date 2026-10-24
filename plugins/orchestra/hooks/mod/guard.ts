@@ -708,7 +708,7 @@ const MERGED = 'merged-delete';
 const BRANCH_NAME = /^[A-Za-z0-9_][A-Za-z0-9._/+-]*$/;
 const REMOTE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 const PLAIN_REASON = 'Branch deletion must run plainly in the session repository';
-const SEPARATE_REASON = 'Execute branch deletions separately';
+const SEPARATE_REASON = 'Run each branch deletion as its own command, not chained or batched with other calls';
 
 /** SPEC 5.14 item 1: the exact merged-delete shapes, else null. `options` is what precedes `--` with abbreviated
  * long options spelled in full (5.15). A shape has one branch positional and no other option. */

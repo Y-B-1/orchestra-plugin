@@ -147,7 +147,7 @@ class NativeTests(unittest.TestCase):
         # Claude Code takes the version from plugin.json first; a second copy in the entry can only drift.
         self.assertNotIn('version', entry)
         self.assertEqual(len(set(versions.values())), 1, versions)
-        self.assertEqual(set(versions.values()), {'2.13.1'})
+        self.assertEqual(set(versions.values()), {'2.14.0'})
 
     def test_plugin_has_a_square_icon(self):
         icon = PLUGIN / '.claude-plugin/icon.png'

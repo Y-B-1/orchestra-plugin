@@ -36,7 +36,7 @@ With a single lens, set `categories` in the verdict to the row for your lens and
 ## Attribution
 
 - Put each blocking finding in `task_findings` under the chain tip whose change introduced it. A key that is not a chain tip is refused.
-- Address every held tip: a blocking finding under it, or an entry in `cleared` with a reason. The correctness lens judges the held finding itself. Another lens clears it with a reason scoped to its own categories, such as "no security defect".
+- Address every held tip: a blocking finding under it, or an entry in `cleared` with a reason. `cleared` is for held tips only. The correctness lens judges the held finding itself. Another lens clears it with a reason scoped to its own categories, such as "no security defect".
 - A defect no card's change introduced is out of scope. List it in `out_of_scope`, a list of strings that never changes the verdict. A defect from a card that is not a builder goes there too, naming that card.
 
 ## Verdict

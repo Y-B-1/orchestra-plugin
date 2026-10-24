@@ -15,8 +15,9 @@ Run a rules gate twice: before you slice, and again on the finished plan. Compar
 
 1. Map the files and resources the work touches and what each is responsible for. This locks the split. Group what changes together and separate what has one purpose.
 2. Cut vertical slices. Each slice is a narrow but complete path through every layer it needs, verifiable alone and small enough for one fresh context. The first ticket is the thinnest end-to-end slice. Do any prefactoring before the slices that need it, and remove what the change makes dead before the slices that build on it. For work judged by comparison (a migration, parity, performance), the first ticket records the pre-change baseline and the check that compares against it.
-3. A wide mechanical change, such as a rename across many call sites, is the exception. Sequence it as expand, migrate in batches by blast radius, then contract. Each batch is a ticket blocked by the expand, and the contract is blocked by every batch.
-4. Give every slice its class:
+3. Split a card whose brief lists more than three build items in one file into slices, each committed when green.
+4. A wide mechanical change, such as a rename across many call sites, is the exception. Sequence it as expand, migrate in batches by blast radius, then contract. Each batch is a ticket blocked by the expand, and the contract is blocked by every batch.
+5. Give every slice its class:
    - Spike: throwaway code that answers one question and reports what it proved, so a doubt becomes evidence. It is never merged.
    - Bounded: changes code whose flow already exists.
    - Architectural: adds a subsystem or changes an interface others depend on. Order it first by dependency.
@@ -40,6 +41,7 @@ Plans decide what an implementer cannot decide alone. Give a test its name and a
 - Two tickets that edit one resource share an owner, or one depends on the other. Never rely on edits that happen to commute.
 - Model the dependency graph. Check for cycles and unknown dependencies. Explain why the order holds.
 - Test readiness: from the accepted prerequisites alone, does each queued ticket become ready? Independent tickets can start at once.
+- Plan the widest first wave. For each ticket that must wait, add a read-only investigator prep ticket with `prep_for` that gathers its groundwork now, and add lookahead research tickets for later phases. Prep tickets reserve no files.
 - Pre-flight: for each ticket that consumes what an earlier ticket produces, write one row with both tickets, what one produces against what the other consumes, and what you found. Rule each conflict against the spec. If tickets share nothing, write one line that says so.
 
 ## Group into PRs and worktrees

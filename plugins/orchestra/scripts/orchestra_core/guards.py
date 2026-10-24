@@ -491,7 +491,7 @@ _MERGED = 'merged-delete'
 _BRANCH_NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._/+-]*')
 _REMOTE_NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9._-]*')
 _PLAIN_REASON = 'Branch deletion must run plainly in the session repository'
-_SEPARATE_REASON = 'Execute branch deletions separately'
+_SEPARATE_REASON = 'Run each branch deletion as its own command, not chained or batched with other calls'
 
 
 def _merged_delete(verb, options, flags, short, words, redirected, raw):

@@ -621,7 +621,7 @@ class FinalBlockerTests(EngineFixture):
         token = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
         self.assertEqual([], self.engine.ready('main', self.lease))  # RB still overlaps the running RA
         self.engine.report('repair-a', token, done('Repaired A'))
-        self.assertEqual([], self.engine.ready('main', self.lease))  # a reported repair still holds its files
+        self.assertEqual(['RB'], self.engine.ready('main', self.lease))  # F30: RA's own files are disjoint from RB's
 
     def test_repair_transfers_reservations_and_retains_history(self):
         self.release_setup()
@@ -1180,13 +1180,67 @@ class ScopedEvidenceTests(EngineFixture):
         with self.assertRaisesRegex(EngineError, 'independent review'):
             self.engine.accept('main', self.lease, 'a')
 
-    def test_new_commit_stales_scoped_verdict(self):
+    def test_new_commit_outside_the_scope_keeps_scoped_verdict_current(self):
+        # Q7: a scoped receipt binds its files, index, status and policy, not HEAD and tree.
         self.reported('a')
         self.checkpoint('a')
         (self.repo / 'b').write_text('committed elsewhere')
         self.git('commit', '-qam', 'elsewhere')
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
+    def test_new_commit_outside_the_scope_keeps_scoped_report_current(self):
+        self.reported('r', role='investigator', mode='code', files=['b'])
+        (self.repo / 'a').write_text('committed elsewhere')
+        self.git('commit', '-qam', 'elsewhere')
+        self.engine.accept('main', self.lease, 'r')
+        self.assertEqual('accepted', self.engine.status()['tasks']['r']['state'])
+
+    def test_commit_of_a_scoped_file_stales_scoped_verdict(self):
+        self.reported('a')
+        self.checkpoint('a')
+        (self.repo / 'a').write_text('committed inside the scope')
+        self.git('commit', '-qam', 'inside')
         with self.assertRaisesRegex(EngineError, 'independent review'):
             self.engine.accept('main', self.lease, 'a')
+
+    def test_staged_scoped_file_stales_scoped_verdict(self):
+        self.reported('a')
+        self.checkpoint('a')
+        (self.repo / 'a').write_text('staged inside the scope')
+        self.git('add', 'a')
+        with self.assertRaisesRegex(EngineError, 'independent review'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_untracked_scoped_file_stales_scoped_status(self):
+        (self.repo / 'd').mkdir()
+        (self.repo / 'd' / 'f').write_text('1')
+        self.git('add', 'd')
+        self.git('commit', '-qm', 'd')
+        base = self.engine.artifact(['d'])
+        (self.repo / 'd' / 'g').write_text('untracked inside the scope')
+        self.assertFalse(self.engine._same(base, self.engine.artifact(['d'])))
+
+    def test_changed_policy_stales_scoped_artifact(self):
+        base = self.engine.artifact(['a'])
+        self.assertTrue(self.engine._same(base, dict(base, head='moved', tree='moved')))
+        self.assertFalse(self.engine._same(base, dict(base, policy='another policy')))
+
+    def test_whole_repository_receipts_go_stale_on_any_new_commit(self):
+        gate = self.engine.run_gate('main', self.lease, 'check', [sys.executable, '-c', 'print("ok")'])
+        self.reported('a')
+        final = self.root / 'final.json'
+        ids = sorted(self.engine.status()['tasks'])
+        self.review(final, reviewer='final-reviewer', tasks=ids, final=True, task_findings={})
+        self.engine.record_review('main', self.lease, 'final-reviewer', final, ['correctness'], ids, final=True)
+        whole = self.engine.artifact()
+        self.assertTrue(self.engine._same(gate['artifact'], whole))
+        (self.repo / 'b').write_text('committed elsewhere')
+        self.git('commit', '-qam', 'elsewhere')
+        self.assertFalse(self.engine._same(gate['artifact'], self.engine.artifact()))
+        self.assertFalse(self.engine._same(whole, self.engine.artifact()))
+        with self.engine._state(False) as state:
+            self.assertEqual({}, self.engine._review_verdicts(state, {}, final=True))
 
     def test_scoped_report_artifact_survives_outside_edit_and_stales_inside(self):
         self.reported('r', role='investigator', mode='code', files=['b'])
@@ -2352,11 +2406,12 @@ class FindingsLedgerTests(EngineFixture):
         self.assertEqual([], self.engine.list_findings())
         self.engine.add_finding('main', self.lease, final['id'], 'out_of_scope', 0, 'card', 'later', card='X1')
 
-    def test_checkpoint_review_with_out_of_scope_is_refused(self):
+    def test_checkpoint_review_with_out_of_scope_folds_into_notes(self):
         self.reported()
-        with self.assertRaisesRegex(EngineError, 'raised only at the final review'):
-            self.record('r', ['a'], out_of_scope=['Dead code in util'])
-        self.assertEqual([], self.engine.status()['reviews'])
+        receipt = self.record('r', ['a'], out_of_scope=['Dead code in util'])
+        self.assertEqual([], receipt['out_of_scope'])
+        self.assertEqual(['out of scope: Dead code in util'], receipt['notes'])
+        self.assertEqual([], self.engine.list_findings())  # never enters the triage ledger
 
     def test_final_out_of_scope_does_not_block_verdict(self):
         receipt = self.final_with_items(['Dead code in util', 'Stale doc'])
@@ -2911,13 +2966,15 @@ class FinalReceiptTests(HoldFixture):
         self.assertEqual({}, found['cleared'])
 
     def test_final_receipt_with_falsy_cleared(self):
-        # Code decides: a final receipt's `cleared` must be an object, so a falsy non-object is refused;
-        # an empty object is the same as none. A non-final receipt treats any falsy value as empty.
+        # Code decides: a final receipt's `cleared` is an object, and `[]` means the same as `{}` (none); any other
+        # falsy non-object is refused. A held tip still has to be addressed. A non-final receipt treats any falsy value as empty.
         self.blocked_chain()
         self.engine.hold('main', self.lease, 'R1', 'g')
-        for name, falsy in (('list', []), ('none', None), ('empty-string', ''), ('zero', 0)):
+        for name, falsy in (('none', None), ('empty-string', ''), ('zero', 0)):
             with self.assertRaisesRegex(EngineError, 'Invalid cleared entries', msg=name):
                 self.reviewed('falsy-' + name, ['B1', 'R1'], final=True, mutate=lambda body, v=falsy: body.update(cleared=v))
+        with self.assertRaisesRegex(EngineError, 'Final receipt must address held tip R1'):
+            self.reviewed('empty-list', ['B1', 'R1'], final=True, mutate=lambda body: body.update(cleared=[]))
         with self.assertRaisesRegex(EngineError, 'Final receipt must address held tip R1'):
             self.reviewed('empty-object', ['B1', 'R1'], final=True, cleared={})
         receipt = self.reviewed('plain', ['B1', 'R1'], mutate=lambda body: body.update(cleared=[]))
@@ -2963,7 +3020,7 @@ class SelfReviewTests(EngineFixture):
     def test_builder_report_needs_exactly_one_self_review_line(self):
         token = self.running()
         good = {'checks': [{'command': 'pytest', 'exit_code': 0}],
-                'criteria': [{'criterion': 'c', 'met': True, 'evidence': 'e'}]}
+                'criteria': [{'criterion': 'check behavior', 'met': True, 'evidence': 'e'}]}
         line = 'SELF_REVIEW: ' + json.dumps(good)
         bad = {'no line': 'Built a.',
                'two lines': 'Built a.\n' + line + '\n' + line,
@@ -2986,7 +3043,7 @@ class SelfReviewTests(EngineFixture):
     def test_builder_report_needs_a_nonempty_artifact_line(self):
         token = self.running()
         line = 'SELF_REVIEW: ' + json.dumps({'checks': [{'command': 'pytest', 'exit_code': 0}],
-                                             'criteria': [{'criterion': 'c', 'met': True, 'evidence': 'e'}]})
+                                             'criteria': [{'criterion': 'check behavior', 'met': True, 'evidence': 'e'}]})
         for label, head in {'no line': 'Built a.', 'empty': 'ARTIFACT:\nBuilt a.', 'blank': 'ARTIFACT:   \nBuilt a.'}.items():
             with self.subTest(label), self.assertRaisesRegex(EngineError, 'Builder report needs a nonempty ARTIFACT line'):
                 self.engine.report('w-a', token, head + '\n' + line)
@@ -3076,7 +3133,7 @@ class SelfReviewTests(EngineFixture):
     def test_failing_check_or_unmet_criterion_refuses_accept(self):
         cases = {'failing check': dict(checks=[{'command': 'pytest', 'exit_code': 1}]),
                  'one of two checks failing': dict(checks=[{'command': 'a', 'exit_code': 0}, {'command': 'b', 'exit_code': 2}]),
-                 'unmet criterion': dict(criteria=[{'criterion': 'c', 'met': False, 'evidence': 'not done'}])}
+                 'unmet criterion': dict(criteria=[{'criterion': 'check behavior', 'met': False, 'evidence': 'not done'}])}
         for label, kw in cases.items():
             name = label.replace(' ', '-')
             token = self.running(name)
@@ -4982,7 +5039,7 @@ class RunHygieneTests(EngineFixture):
 
     def test_a_lost_lease_is_taken_back_by_the_owning_session_only(self):
         engine, lease = self.fresh(harness_session='H1')
-        engine.add_task('main', lease, dict(id='a', role='builder', mode='implementation', inputs=['s'], acceptance=['x'],
+        engine.add_task('main', lease, dict(id='a', role='builder', mode='implementation', inputs=['s'], acceptance=['check behavior'],
                                             files=['a'], resources=[], dependencies=[]))
         token = engine.dispatch('main', lease, 'a', 'wa')
         for who, session in (('main', 'H2'), ('other', 'H1'), ('main', None)):

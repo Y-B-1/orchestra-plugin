@@ -459,5 +459,29 @@ class ProvenanceTests(unittest.TestCase):
         self.assertLessEqual(found, set(files()))
 
 
+class FrictionTextTests(unittest.TestCase):
+    """2.14 SKIL: one-line rules that stop repeated friction (F12, F24, F25, F26, F28)."""
+
+    def text(self, rel):
+        return (ROOT / rel).read_text()
+
+    def test_check_script_names_the_worktree_typecheck_gap(self):
+        self.assertIn('GAP (git-ignored stubs: run from the main checkout)', self.text('scripts/check.sh'))
+
+    def test_a_report_without_self_review_is_never_final(self):
+        self.assertIn('without a `SELF_REVIEW` line is never final', self.text('plugins/orchestra/skills/orchestra-build/references/implementation.md'))
+
+    def test_plan_splits_a_card_with_more_than_three_items_in_one_file(self):
+        self.assertIn('more than three build items in one file', self.text('plugins/orchestra/skills/orchestra-design/references/plan.md'))
+
+    def test_cli_says_the_final_review_lists_itself(self):
+        self.assertIn('lists its own card', self.text('plugins/orchestra/skills/orchestra/references/cli.md'))
+
+    def test_final_review_cleared_is_for_held_tips_only(self):
+        self.assertIn('`cleared` is for held tips only', self.text('plugins/orchestra/skills/orchestra-review/references/final.md'))
+
+    def test_handoff_checks_the_process_before_the_transcript(self):
+        self.assertIn('the process first, then the transcript', self.text('plugins/orchestra/skills/orchestra/references/handoff.md'))
+
 if __name__ == '__main__':
     unittest.main()

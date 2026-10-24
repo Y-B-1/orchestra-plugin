@@ -110,7 +110,7 @@ test('merged-delete: kind, remote, branch and argv ride the decision; stand-alon
   const remote = classifyCommand('git push --delete origin x');
   expect([klassOf(remote), remote.category, remote.kind, remote.remote, remote.branch]).toEqual(['boundary', 'merged-delete', 'remote', 'origin', 'x']);
   for (const command of ['git branch -d y && git branch -D x', 'git branch -D a; git branch -D b', 'cd /o && git branch -D x']) {
-    expect(classifyCommand(command).reason).toBe('Execute branch deletions separately');
+    expect(classifyCommand(command).reason).toBe('Run each branch deletion as its own command, not chained or batched with other calls');
   }
   for (const command of ['git -C /o branch -D x', 'GIT_DIR=/o git branch -D x', 'sudo git branch -D x', 'xargs git branch -D x', 'echo $(git branch -D x)', "bash -c 'git branch -D x'"]) {
     expect(classifyCommand(command).reason).toBe('Branch deletion must run plainly in the session repository');

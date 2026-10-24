@@ -8,6 +8,7 @@ if os.name == 'nt' and not sys.flags.utf8_mode:
     # Windows opens text files in the locale encoding unless Python runs in UTF-8 mode: run again in it.
     raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.argv]))
 import argparse
+import functools
 import json
 import os
 from pathlib import Path
@@ -17,12 +18,16 @@ import subprocess
 import sys
 import uuid
 
-from orchestra_core import portable
+from orchestra_core import briefs, cli_support, delta, ledger, portable
 from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
-from orchestra_core.paths import atomic, load_policy, repository, state_location
+from orchestra_core.paths import atomic, load_policy, main_checkout, repository, state_location
 
 ROOT = Path(__file__).resolve().parents[1]
+# Commands that add one `board` line to their JSON when a card changed state.
+BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','review','park','cancel','unpark','hold'}
+# No parser takes an abbreviated option: `--leas` must not parse as `--lease`, which the refusal log strips.
+STRICT_PARSER = functools.partial(argparse.ArgumentParser, allow_abbrev=False)
 
 
 def read_json(path):
@@ -30,12 +35,12 @@ def read_json(path):
 
 
 def parser():
-    p = argparse.ArgumentParser(description=__doc__)
+    p = STRICT_PARSER(description=__doc__)
     p.add_argument('--repo', default=os.getcwd())
     p.add_argument('--state', help='External run directory; defaults to user state for this repository')
     p.add_argument('--actor', default='main', help='Workflow identity, not an authenticated principal')
     p.add_argument('--lease', help='Coordinator lease returned by start')
-    sub = p.add_subparsers(dest='command', required=True)
+    sub = p.add_subparsers(dest='command', required=True, parser_class=STRICT_PARSER)
     start = sub.add_parser('start')
     start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
     start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
@@ -56,7 +61,10 @@ def parser():
     board.add_argument('--view', action='store_true')
     board.add_argument('--session', help='With --view: the harness session id; `bound` says whether it owns the run (the id is never printed)')
     sub.add_parser('waves', help='Print overlaps, unmet prerequisites, ordered waves and the cards that can start now; no lease, read-only')
+    sub.add_parser('worktrees', help='Print leftover worktrees under .claude/worktrees (branch, card, landed, clean) and the removal commands for landed clean ones; no lease, read-only')
     sub.add_parser('brief', help='Print the newest run brief; no lease, read-only')
+    refusals = sub.add_parser('refusals', help='Print the newest refused commands (exit 2) from the refusal log; no lease, read-only')
+    refusals.add_argument('--last', type=int, default=10, help='How many entries (default 10)')
     art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
     art.add_argument('--tasks', help='Comma-separated task IDs')
     sub.add_parser('prepr', help='Print the pre-PR size check and reviewer choice; no lease, read-only')
@@ -84,23 +92,36 @@ def parser():
     wave.add_argument('--inline', metavar='ID', help='The card the main session runs')
     wave.add_argument('--helper', metavar='REASON', help='Why helpers do builder cards on a size run or inline route')
     wave.add_argument('--serial', metavar='REASON', help='Start a single card alone although others could start beside it; the reason is logged')
+    wave.add_argument('--emit', action='store_true', help='After the start, print per card the agent type, brief path, prompt and agent() call')
+    card = sub.add_parser('card', help='Print the brief skeleton for a card; no lease, read-only')
+    card.add_argument('task_id')
+    card.add_argument('--out', metavar='FILE', help='Write the brief to FILE')
+    ledger_ = sub.add_parser('ledger', help='Print BUILD-LEDGER rows for accepted cards from engine facts; no lease, read-only')
+    ledger_.add_argument('--cards', help='Comma-separated task IDs (default: every accepted card)')
+    package = sub.add_parser('package', help='Write brief, report, self-review and diff stat for a card under <state>/packages/TASK; no lease')
+    package.add_argument('task_id')
     report = sub.add_parser('report')
     report.add_argument('worker')
     report.add_argument('token')
     report.add_argument('report', help='Nonempty result file')
+    report.add_argument('--accept', action='store_true', help='Inline cards only: record the report and accept the card in one call; needs --lease')
+    report.add_argument('--lease', default=argparse.SUPPRESS, help='Coordinator lease, for --accept')
     accept = sub.add_parser('accept')
     accept.add_argument('task_id')
+    accept.add_argument('--ruling', metavar='TEXT', help='Accept a worker card whose only gap is an unmet criterion, with the coordinator reason')
     review = sub.add_parser('review')
     review.add_argument('report', help='Structured review JSON path')
     review.add_argument('--token', help='Assignment token of the final review card: report it, record the receipt and '
-                        'accept the card in one step (final receipts only)')
+                        'accept the card in one step (a final receipt, a critic receipt or a fix re-review)')
+    review.add_argument('--defer-out-of-scope', metavar='REASON', help='With --token: record each out-of-scope item as '
+                        'deferred to a brief, with REASON')
     gate = sub.add_parser('gate')
     gate.add_argument('name')
     gate.add_argument('--again', action='store_true', help='Rerun a gate that already passed on this artifact')
     gate.add_argument('--timeout', type=float, help='Seconds for this run; overrides gate_timeout_seconds')
     gate.add_argument('argv', nargs=argparse.REMAINDER)
     finding = sub.add_parser('finding', help='Record or list dispositions of review findings')
-    findings = finding.add_subparsers(dest='finding_command', required=True)
+    findings = finding.add_subparsers(dest='finding_command', required=True, parser_class=STRICT_PARSER)
     fadd = findings.add_parser('add')
     fadd.add_argument('--review', required=True)
     fadd.add_argument('--kind', required=True, choices=['finding', 'out_of_scope'])
@@ -193,6 +214,13 @@ def execute(args):
         except ValueError:
             mode = 'minimal'
         return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file(),'guard_mode':mode},0
+    if not args.state:  # F7: a linked worktree has no run of its own while the main checkout has one
+        main = main_checkout(repo)
+        if main and not (state/'state.json').exists() and (state_location(main)/'state.json').exists():
+            raise EngineError('This is a linked worktree with no run of its own; the run lives in the main checkout %s: '
+                              'run the command with --repo %s' % (main,shlex.quote(str(main))))
+    if args.command=='refusals':  # lease-free and read-only; reads the log and nothing else
+        return {'refusals':cli_support.read_refusals(state,args.last)},0
     if args.command=='start' and args.policy:
         policy = read_json(args.policy)
         if not isinstance(policy,dict) or policy.get('schema_version') != 1:  # the rule load_policy applies later
@@ -200,6 +228,13 @@ def execute(args):
     else:
         policy = load_policy(state)
     engine = Engine(state,repo,policy)
+    args.state_dir, args.board_before = state, None
+    if args.command in BOARD_COMMANDS:
+        try:
+            args.board_before = engine.view(args.actor)
+        except Exception:  # no readable board: the command reports its own error
+            pass
+    args.engine = engine
     if args.command=='start':
         if args.items is not None:
             raise EngineError('--items is the 2.4 flag; start with --size')
@@ -221,7 +256,7 @@ def execute(args):
             raise
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
-        return {'lease':lease,'state':str(state),'repo':str(repo),'requeued':engine.requeued},0
+        return {'lease':lease,'state':str(state),'repo':str(repo),'requeued':engine.requeued,'resume':engine.resume},0
     if args.command=='status':
         result = engine.status(lenses=True)
         if not args.full:
@@ -253,6 +288,18 @@ def execute(args):
     if args.command=='finding' and args.finding_command=='list':  # lease-free, like status
         result = engine.list_findings(args.for_brief)
         return ({'findings':result} if isinstance(result,str) else result),0
+    if args.command=='card':  # lease-free and read-only; --out writes only the file it names
+        text=briefs.card(engine,args.task_id)
+        if args.out:
+            atomic(Path(args.out).expanduser().resolve(),text.encode())
+            return {'path':str(Path(args.out).expanduser().resolve())},0
+        return {'brief':text},0
+    if args.command=='ledger':  # lease-free and read-only
+        return {'ledger':ledger.rows(engine,[i for i in (args.cards or '').split(',') if i] or None)},0
+    if args.command=='package':  # lease-free; writes only under <state>/packages
+        return {'package':str(ledger.package(engine,args.task_id))},0
+    if args.command=='worktrees':  # lease-free and read-only; prints the removal commands, never runs them
+        return engine.worktrees(),0
     if args.command=='waves':  # lease-free and read-only, like status
         return engine.waves(args.actor),0
     if args.command=='board' and args.view:  # lease-free; from an allowlist, no lenses or hashing
@@ -262,7 +309,14 @@ def execute(args):
         board = {}
         for card in cards:
             board.setdefault(card['role'],{}).setdefault(card['state'],[]).append(card['id'])
+        leftover = engine.worktrees()['leftover']
+        if leftover:
+            board['leftover_worktrees'] = leftover
         return board,0
+    if args.command=='report' and args.accept:
+        if not args.lease:
+            raise EngineError('report --accept needs --lease from start')
+        return engine.report_accept(args.actor,args.lease,args.worker,args.token,Path(args.report).read_text()),0
     if args.command=='report':
         engine.report(args.worker,args.token,Path(args.report).read_text())
         return {'reported':args.token},0
@@ -284,9 +338,14 @@ def execute(args):
         token = engine.dispatch(args.actor,args.lease,args.task_id,worker,helper=args.helper,serial=args.serial)
         return {'assignment':token,'task':args.task_id,'worker':worker},0
     if args.command=='wave':
-        return engine.wave(args.actor,args.lease,args.task_ids,inline=args.inline,helper=args.helper,serial=args.serial),0
+        prepared = briefs.prepare(engine,args.task_ids,args.inline) if args.emit else None  # refuses before any card starts
+        result = engine.wave(args.actor,args.lease,args.task_ids,inline=args.inline,helper=args.helper,serial=args.serial)
+        if prepared is not None:
+            engine.record_bases(args.actor,args.lease,args.task_ids if args.inline is None or args.inline in args.task_ids else [args.inline,*args.task_ids],prepared['base'])
+            result['emit'] = briefs.emit(engine,prepared,result)
+        return result,0
     if args.command=='accept':
-        engine.accept(args.actor,args.lease,args.task_id)
+        engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
         return {'accepted':args.task_id},0
     if args.command=='review':
         review = read_json(args.report)
@@ -295,8 +354,10 @@ def execute(args):
         missing = [k for k in ('reviewer','categories','tasks','final','findings') if k not in review]
         if missing:
             raise EngineError('Review report is missing: '+', '.join(missing))
+        if args.defer_out_of_scope is not None and not args.token:
+            raise EngineError('--defer-out-of-scope needs --token')
         if args.token:
-            result = engine.review_with_token(args.actor,args.lease,args.token,args.report)
+            result = engine.review_with_token(args.actor,args.lease,args.token,args.report,args.defer_out_of_scope)
             without_entries(result['receipt'])
             return result,0
         result = engine.record_review(args.actor,args.lease,review['reviewer'],args.report,
@@ -381,15 +442,46 @@ def execute(args):
     raise EngineError('Unsupported command')
 
 
+def add_board_line(args,result):
+    """Add the one-line `board` delta to a result when a card moved; return the board view to store, or None."""
+    if args.command not in BOARD_COMMANDS or not isinstance(result,dict) or args.board_before is None:
+        return None
+    try:
+        after = args.engine.view(args.actor)
+    except Exception:
+        return None
+    line = delta.delta(args.board_before,after)
+    if line is None:
+        return None
+    result['board'] = line
+    return after
+
+
+def refused_state(args):
+    """The state directory of a refused command, or None when it cannot be told."""
+    try:
+        return Path(args.state).expanduser().resolve() if args.state else state_location(repository(args.repo))
+    except Exception:
+        return None
+
+
 def main(argv=None):
-    args=parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    args=parser().parse_args(raw)
+    state=refused_state(args)
+    known=state is not None and state.is_dir()  # a command run before any state exists logs nothing and creates nothing
     try:
         result,code=execute(args)
+        seen=add_board_line(args,result)
     except (EngineError,ValueError,OSError,KeyError,TypeError,AttributeError,subprocess.SubprocessError) as exc:
         print(json.dumps({'error':str(exc)}),file=sys.stderr)
+        if known:
+            cli_support.log_refusal(state,raw,exc)
         return 2
     if result is not None:
         print(json.dumps(result,indent=2))
+    if seen is not None:
+        cli_support.store_seen(args.state_dir,seen)
     return code
 
 

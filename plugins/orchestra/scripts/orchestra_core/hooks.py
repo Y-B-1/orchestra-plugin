@@ -16,9 +16,9 @@ import sys
 import subprocess
 import time
 
-from . import portable
+from . import delta, portable
 from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
-from .guards import (RULES, Decision, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
+from .guards import (RULES, Decision, _WORD_START, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
                      guard_digest, runs_test_suite)
 
 _PROTECTED = RULES['protected']
@@ -36,6 +36,8 @@ BUSY = 'Orchestra state is busy; retry'
 AGENT_GUARD = ('Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits), because only '
                'those get the worker brief, role limits and standing orders and return evidence the run can review')
 _REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
+_LEASE_FLAG = re.compile(r'(?<![\w-])--lease(?![\w-])')  # not --force-with-lease
+LEASE_COORDINATOR_ONLY = 'The coordinator lease is coordinator-only: a worker never runs orchestra.py with --lease'
 AUTONOMY_STOPPED = 'Orchestra autonomy stopped: %s. The run brief is in %s.'
 STATE_SHELL = ('a shell command may not touch the Orchestra state directory; run orchestra.py for engine commands, and the '
                'Write tool for review packages and progress notes')
@@ -313,6 +315,15 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if _run_active(engine):  # SubagentStart cannot block; the PreToolUse deny below enforces
             return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': SUBAGENT_GUARD}})
         return HookResult({})
+    if event == 'SubagentStop':
+        from .capture import capture  # Lazy: only this event reads transcripts
+        before = _board(engine)
+        answer = capture(payload, engine)
+        if not answer:
+            _note_pending(engine, before)
+        return HookResult(answer)
+    if event == 'PostToolUse':
+        return HookResult(_post_agent(payload, engine))
     if event == 'SessionEnd':
         session_id = payload.get('session_id')
         if engine is None or not isinstance(session_id, str) or not session_id:
@@ -354,7 +365,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             reason = engine.hook_stop()
             if isinstance(reason, str) and reason:
                 return HookResult({'decision': 'block', 'reason': reason})
-            return HookResult(_stopped_note(engine) if armed_before and not _armed_now(engine) else {})
+            if armed_before:
+                return HookResult(_stopped_note(engine) if not _armed_now(engine) else {})
+            return HookResult(_board_stop(engine, payload))
         except (OSError, ValueError, KeyError, RuntimeError, AttributeError):
             return HookResult({})  # Corrupt/unarmed state never creates continuation.
     if event != 'PreToolUse':
@@ -441,6 +454,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     command = data.get('command', data.get('cmd'))
     if not isinstance(command, str):
         return _deny('Missing shell command', True)
+    if role == 'subagent' and str(payload.get('agent_type')).startswith('orchestra:') and 'orchestra.py' in command \
+            and _LEASE_FLAG.search(command):
+        return _deny(LEASE_COORDINATOR_ONLY)  # a worker role limit in every mode
     if role == 'subagent' and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES) and runs_test_suite(command):
         gates = _gate_ids(engine)
         if gates:  # a worker role limit: minimal keeps it like protect; normal warns (row 43)
@@ -467,7 +483,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if split is None:
             return _deny(decision.reason)
         remainder, pushed = split
-        refused = _soft_push_refusal(command, cwd, engine) if pushed or decision.category == 'release' else None
+        refused = _soft_push_refusal(_uncomment(command), cwd, engine) if pushed or decision.category == 'release' else None
         if refused:
             return _deny(refused)
         if decision.soften == 'warn':
@@ -670,24 +686,43 @@ def _soft_push_refusal(command, cwd, engine):
     return None
 
 
-def _soft_remainder(command):
-    """R4: (the command without its softened segments, True when one of them is a push), or None when the command
-    cannot be split safely: a substitution, a heredoc, a shell string, a softened segment inside a pipe or an
-    unreadable segment, a `$'...'` string or a `#` comment (the split reads neither, so either could hide a command)."""
-    if re.search(r'\$\(|`|<\(|>\(|<<|\$\'', command):
-        return None
-    quote, escaped = None, False
+def _uncomment(command):
+    """The command with each `#` comment cut at its line end, or None when a `#` is not clearly a comment. The split reads a quote inside a comment as a real quote
+    and would join the next lines into one segment, so every comment goes before it reads a word."""
+    out, quote, escaped, comment, literal = [], None, False, False, -1
     for i, char in enumerate(command):
-        if escaped:
-            escaped = False
+        if comment:
+            comment = char != '\n'  # a comment runs to the end of its line, as the classifier reads it
+            if comment:
+                continue
+        elif escaped:
+            escaped, literal = False, i
         elif char == '\\' and quote != "'":
             escaped = True
         elif quote:
             quote = None if char == quote else quote
         elif char in "\"'":
             quote = char
-        elif char == '#' and (not i or command[i - 1] in ' \t\n;&|()<>'):
-            return None
+        elif char == '#' and (not i or command[i - 1] in _WORD_START):
+            if i and (command[i - 1] == ')' or command[i - 2:i] == '\\\n'):
+                return None  # the classifier may read this `#` as part of a word: do not cut a command it could see
+            if literal != i - 1:  # bash reads `x\ #y` as one word: a `#` after an escaped blank starts no comment
+                comment = True
+                continue
+        out.append(char)
+    return ''.join(out)
+
+
+def _soft_remainder(command):
+    """R4: (the command without its softened segments, True when one of them is a push), or None when the command
+    cannot be split safely: a substitution, a heredoc, a shell string, a softened segment inside a pipe, an
+    unreadable segment or a `$'...'` string (the split reads none of them, so each could hide a command). A `#` comment
+    is cut at its line end first."""
+    if re.search(r'\$\(|`|<\(|>\(|<<|\$\'', command):
+        return None
+    command = _uncomment(command)
+    if command is None:
+        return None
     kept, pushed = [], False
     try:
         for pipeline in _pipelines(command):
@@ -1624,6 +1659,87 @@ def _armed_now(engine):
         return False
 
 
+def _board(engine):
+    """The lease-free board of the loaded engine, or None when it cannot be read (a mock adapter included)."""
+    try:
+        view = engine.view()
+    except Exception:
+        return None
+    return view if isinstance(view, dict) else None
+
+
+def _note_pending(engine, before):
+    """After a SubagentStop that moved a card, append the move to `<state>/pending-delta` for the coordinator's next
+    PostToolUse, prompt or Stop. Writes nothing when no card moved; any error is ignored."""
+    try:
+        moved = delta.delta(before, _board(engine))
+        if moved:
+            path = Path(engine.state_dir) / 'pending-delta'
+            old = path.read_text() if path.exists() else ''
+            from .paths import atomic
+            atomic(path, ((old + '\n' if old else '') + moved).encode())
+    except Exception:
+        pass
+
+
+def _post_agent(payload, engine):
+    """PostToolUse on Agent or Task, made by the coordinator: print the pending delta once as context and clear it.
+    Workflow agents never reach this hook; their moves reach the coordinator through the prompt and Stop hooks."""
+    try:
+        if engine is None or payload.get('tool_name') not in ('Agent', 'Task') or payload.get('agent_id') \
+                or _other_session(engine, payload.get('session_id')):
+            return {}
+        directory = Path(engine.state_dir)
+        path = directory / 'pending-delta'
+        if not path.is_file():
+            return {}
+        moved = ' | '.join(path.read_text().split('\n'))
+        path.unlink()
+        view = _board(engine)
+        command = delta.next_command(view)
+        if delta.live(view):
+            delta.store(directory, 'board-seen.json', view)
+        return {'hookSpecificOutput': {'hookEventName': 'PostToolUse',
+                                       'additionalContext': delta.PREFIX + moved + ('. Next: ' + command if command else '')}}
+    except Exception:
+        return {}
+
+
+def _board_stop(engine, payload):
+    """Outside autonomy: block a Stop once per board signature while a card is reported or startable, naming the next
+    command. Never while only workers run, with no cards, on a repeated Stop or for an engine that cannot show a board."""
+    try:
+        if payload.get('stop_hook_active') is True:
+            return {}
+        view = _board(engine)
+        if not delta.live(view) or not (delta.ids(view, 'reported') or view.get('startable_now')):
+            return {}
+        directory = Path(engine.state_dir)
+        if delta.read(directory, 'stop-seen').get('signature') == delta.signature(view):
+            return {}
+        delta.store(directory, 'stop-seen', view)
+        return {'decision': 'block', 'reason': delta.line(view, {})}
+    except Exception:
+        return {}
+
+
+def prompt_board(payload, engine):
+    """The UserPromptSubmit answer for the board: one `Orchestra board: ...` context line when the board signature
+    differs from `<state>/board-seen.json` (then stored); `{}` otherwise."""
+    try:
+        if engine is None or _other_session(engine, payload.get('session_id')):
+            return {}
+        view, directory = _board(engine), Path(engine.state_dir)
+        text = delta.line(view, delta.read(directory, 'board-seen.json'))
+        if text is None:
+            return {}
+        delta.store(directory, 'board-seen.json', view)
+        (directory / 'pending-delta').unlink(missing_ok=True)
+        return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': text}}
+    except Exception:
+        return {}
+
+
 def _stopped_note(engine):
     """GF12: the Stop that ended autonomy says why, so the coordinator does not learn it from its next deny."""
     try:
@@ -1812,6 +1928,10 @@ def _prompt_submit(payload):
             from .prompt_approval import handle_prompt
             repo, state_dir = _run_location(payload['cwd'])
             reply = handle_prompt(payload, state_dir, repo)
+            if not reply and (state_dir / 'state.json').is_file():
+                from .engine import Engine
+                from .paths import load_policy
+                reply = prompt_board(payload, Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT))
     except Exception:
         reply = {}
     print(json.dumps(reply))
@@ -1821,7 +1941,7 @@ def _prompt_submit(payload):
 def _main(argv=None):
     started = time.monotonic()
     parser = argparse.ArgumentParser()
-    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit'])
+    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit', 'PostToolUse'])
     parser.add_argument('--harness', choices=['claude'], default='claude')
     parser.add_argument('--from-mod', action='store_true')
     args = parser.parse_args(argv)
@@ -1852,7 +1972,7 @@ def _main(argv=None):
     busy = False
     missing_cwd = False
     build_error = None
-    if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
+    if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart', 'SubagentStop', 'PostToolUse'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
             from .paths import StateRootError, load_policy
