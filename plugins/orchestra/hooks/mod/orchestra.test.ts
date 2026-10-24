@@ -228,6 +228,33 @@ test('agent.spawn: no standing orders leaves the prompt alone and spawns are nev
   expect(b.spawned[0]!.prompt).toBe('p');
 });
 
+test('agent.spawn: an orchestra brief file with no Mode line is refused before the spawn', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  whereAnswer(r, false);
+  r.files['/s/briefs/B1.md'] = '# B1\n\nNo mode here.\n';
+  await $.session.start(start);
+  const res = await $.agent.spawn({ prompt: '  Read your brief at /s/briefs/B1.md and do it.', subagentType: 'orchestra:builder' } as never);
+  expect('deny' in res).toBe(true);
+  expect(String((res as { deny: string }).deny)).toContain('Mode:');
+  expect(b.spawned.length).toBe(0);
+});
+
+test('agent.spawn: a Mode line in the brief or the prompt, an unreadable brief or a non-orchestra agent is not refused', async ($, on) => {
+  const r = rig(on);
+  const b = bottom(on, r);
+  whereAnswer(r, false);
+  r.files['/s/briefs/B2.md'] = '# B2\n\nMode: implementation\n';
+  r.files['/s/briefs/B3.md'] = '# B3\n';
+  await $.session.start(start);
+  const a = await $.agent.spawn({ prompt: 'Read your brief at /s/briefs/B2.md.', subagentType: 'orchestra:builder' } as never);
+  const c = await $.agent.spawn({ prompt: 'Mode: final\nRead your brief at /s/briefs/B3.md.', subagentType: 'orchestra:code-reviewer' } as never);
+  const d = await $.agent.spawn({ prompt: 'Read your brief at /s/briefs/missing.md.', subagentType: 'orchestra:builder' } as never);
+  const e = await $.agent.spawn({ prompt: 'Read your brief at /s/briefs/B3.md.', subagentType: 'general-purpose' } as never);
+  for (const x of [a, c, d, e]) expect('deny' in x).toBe(false);
+  expect(b.spawned.length).toBe(4);
+});
+
 test('/orchestra-board is registered once and command.run opens the pane', async ($, on) => {
   const r = rig(on);
   const b = bottom(on, r);

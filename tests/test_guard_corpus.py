@@ -108,7 +108,7 @@ class GuardCorpusTest(unittest.TestCase):
                         'git branch -D x | cat'):
             with self.subTest(command=command):
                 decision = classify_command(command)
-                self.assertEqual((decision.action, decision.reason), ('deny', 'Execute branch deletions separately'))
+                self.assertEqual((decision.action, decision.reason), ('deny', 'Run each branch deletion as its own command, not chained or batched with other calls'))
         for command in ('git -C $(pwd) branch -D x', 'git -C /o branch -D x', 'git --git-dir=/o branch -D x',
                         'git --work-tree /o push origin --delete x', 'GIT_DIR=/o git branch -D x',
                         'GIT_WORK_TREE=/o git push origin -d x', 'sudo git branch -D x', 'env X=1 git branch -D x',

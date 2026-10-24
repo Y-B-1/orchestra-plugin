@@ -97,6 +97,24 @@ export function blocked(reason: string): { deny: string } {
 }
 
 /** SPEC 5.16 item 4: the reason names the one failure class. `detail` is the spawn code or the exit status. */
+const MODE_LINE = /^[ \t]*Mode:[ \t]+\S/m;
+const BRIEF_PATH = /brief at (\/[^\s`'"]+)/;
+
+/** F23: the brief path an Orchestra spawn names, when neither the prompt nor that readable file has a Mode line. */
+export async function briefWithoutMode($: { fs: { read(path: string): Promise<string> } }, prompt: string): Promise<string | null> {
+  if (MODE_LINE.test(prompt)) return null;
+  const m = BRIEF_PATH.exec(prompt);
+  if (m === null) return null;
+  const path = m[1]!.replace(/[.,;:)]+$/, '');
+  let text: string;
+  try {
+    text = await $.fs.read(path);
+  } catch {
+    return null;
+  }
+  return MODE_LINE.test(text) ? null : path;
+}
+
 export function failClosed(kind: 'spawn' | 'exit' | 'timeout' | 'bad output', detail: string): string {
   const named = kind === 'spawn' ? `spawn: ${detail}` : kind === 'exit' ? `exit ${detail}` : kind;
   return `Orchestra guard error (${named}); failing closed`;
@@ -688,6 +706,8 @@ export const register: Register = (on: On) => {
 
   on('agent.spawn', async ($, e, next) => {
     if (!e.subagentType.startsWith('orchestra:')) return next(e);
+    const modeLess = await briefWithoutMode($, e.prompt);
+    if (modeLess !== null) return { deny: `Orchestra brief ${modeLess} has no "Mode: <mode>" line; add it to the brief or the prompt before spawning` };
     let spawn = e;
     try {
       // O21: only a result with standing orders is cached; session.start clears it.
