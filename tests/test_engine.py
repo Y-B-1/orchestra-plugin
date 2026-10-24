@@ -2406,11 +2406,12 @@ class FindingsLedgerTests(EngineFixture):
         self.assertEqual([], self.engine.list_findings())
         self.engine.add_finding('main', self.lease, final['id'], 'out_of_scope', 0, 'card', 'later', card='X1')
 
-    def test_checkpoint_review_with_out_of_scope_is_refused(self):
+    def test_checkpoint_review_with_out_of_scope_folds_into_notes(self):
         self.reported()
-        with self.assertRaisesRegex(EngineError, 'raised only at the final review'):
-            self.record('r', ['a'], out_of_scope=['Dead code in util'])
-        self.assertEqual([], self.engine.status()['reviews'])
+        receipt = self.record('r', ['a'], out_of_scope=['Dead code in util'])
+        self.assertEqual([], receipt['out_of_scope'])
+        self.assertEqual(['out of scope: Dead code in util'], receipt['notes'])
+        self.assertEqual([], self.engine.list_findings())  # never enters the triage ledger
 
     def test_final_out_of_scope_does_not_block_verdict(self):
         receipt = self.final_with_items(['Dead code in util', 'Stale doc'])
@@ -2965,13 +2966,15 @@ class FinalReceiptTests(HoldFixture):
         self.assertEqual({}, found['cleared'])
 
     def test_final_receipt_with_falsy_cleared(self):
-        # Code decides: a final receipt's `cleared` must be an object, so a falsy non-object is refused;
-        # an empty object is the same as none. A non-final receipt treats any falsy value as empty.
+        # Code decides: a final receipt's `cleared` is an object, and `[]` means the same as `{}` (none); any other
+        # falsy non-object is refused. A held tip still has to be addressed. A non-final receipt treats any falsy value as empty.
         self.blocked_chain()
         self.engine.hold('main', self.lease, 'R1', 'g')
-        for name, falsy in (('list', []), ('none', None), ('empty-string', ''), ('zero', 0)):
+        for name, falsy in (('none', None), ('empty-string', ''), ('zero', 0)):
             with self.assertRaisesRegex(EngineError, 'Invalid cleared entries', msg=name):
                 self.reviewed('falsy-' + name, ['B1', 'R1'], final=True, mutate=lambda body, v=falsy: body.update(cleared=v))
+        with self.assertRaisesRegex(EngineError, 'Final receipt must address held tip R1'):
+            self.reviewed('empty-list', ['B1', 'R1'], final=True, mutate=lambda body: body.update(cleared=[]))
         with self.assertRaisesRegex(EngineError, 'Final receipt must address held tip R1'):
             self.reviewed('empty-object', ['B1', 'R1'], final=True, cleared={})
         receipt = self.reviewed('plain', ['B1', 'R1'], mutate=lambda body: body.update(cleared=[]))
