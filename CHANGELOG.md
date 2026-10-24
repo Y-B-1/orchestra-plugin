@@ -6,6 +6,8 @@ Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
 Built from the audit proposals and the friction log of the 2.13 run: fewer hand steps between a worker's report and an accepted card, and a board the coordinator sees without asking.
 
+- **Widest dispatch (owner request).** An investigator card may carry `prep_for: ID` and start at once while its target is blocked; its accepted report appears in the target's brief under `## Prep notes`. `waves` and `wave` print `idle_workers` and `prep` (blocked builder cards nobody prepares). The coordinator and planner texts say to start every disjoint unit at once and to run read-only prep and lookahead research immediately.
+
 Audit proposals:
 - **Worker reports are captured:** a `SubagentStop` hook saves each `orchestra:` agent's final message to `<state>/reports/<token>.md` and records it as the card's report (P1).
 - **`accept` compares the reported commit:** scoped evidence binds a card's files, index, status and policy, not HEAD, so a commit that leaves those files alone no longer stales it (P2, F3).

@@ -20,7 +20,11 @@ Route by readiness and consequence. A lane is a routing choice, never an approva
 | review | Existing artifact or PR candidate | Independent code-reviewer; critic for a named conformance axis |
 | full-test | Explicit owner request | Operator gate mode with the requested full commands |
 
-Pick each executor by its unit, then run `waves`: each wave starts whole with `wave`, one card inline and the rest to builders through Workflow, in the same turn. A wave of one small card runs inline. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets; the cleanup preset (builder-cleanup) runs once after the repairs.
+Pick each executor by its unit, then run `waves`: each wave starts whole with `wave`, one card inline and the rest to builders through Workflow, in the same turn. A wave of one small card runs inline.
+
+Widest dispatch: like an owner with a large team, start every disjoint unit at once; work that depends on another waits as a pending card. Read-only prep (code reading, research, an audit of what a later card builds) starts now, as an investigator card with `prep_for`; `waves` lists blocked cards without one under `prep`.
+
+Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets; the cleanup preset (builder-cleanup) runs once after the repairs.
 
 ## Two tracks
 

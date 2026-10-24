@@ -41,6 +41,7 @@ Plans decide what an implementer cannot decide alone. Give a test its name and a
 - Two tickets that edit one resource share an owner, or one depends on the other. Never rely on edits that happen to commute.
 - Model the dependency graph. Check for cycles and unknown dependencies. Explain why the order holds.
 - Test readiness: from the accepted prerequisites alone, does each queued ticket become ready? Independent tickets can start at once.
+- Plan the widest first wave. For each ticket that must wait, add a read-only investigator prep ticket with `prep_for` that gathers its groundwork now, and add lookahead research tickets for later phases. Prep tickets reserve no files.
 - Pre-flight: for each ticket that consumes what an earlier ticket produces, write one row with both tickets, what one produces against what the other consumes, and what you found. Rule each conflict against the spec. If tickets share nothing, write one line that says so.
 
 ## Group into PRs and worktrees
