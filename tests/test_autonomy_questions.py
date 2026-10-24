@@ -15,7 +15,7 @@ from orchestra_core.hooks import handle_event
 from test_live_fixes import LiveFixture
 
 CONTINUE = 'Continue one authorized bounded pass'
-PARK = "park the card with `orchestra.py park TASK --reason '<the question>'`"
+PARK = "park the card with `orchestra.py park TASK --reason 'needs-owner: <the question>'`"
 
 
 def question(text, labels, multi=False):

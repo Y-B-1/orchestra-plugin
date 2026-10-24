@@ -859,7 +859,7 @@ def _pull_request_push(command, cwd, engine, plain=False):
     return None
 
 
-_PARK_HINT = 'park this card with `orchestra.py park TASK --reason ...` and continue with other cards.'
+_PARK_HINT = "park this card with `orchestra.py park TASK --reason 'needs-owner: WHY'` and continue with other cards."
 
 
 def _hint(engine, state_dir):
@@ -1807,7 +1807,7 @@ def _deletes_only_ignored(command, cwd):
 DECIDE_OR_PARK = ('Autonomy is armed and the owner is away. Decide this yourself: take the option you would recommend, '
                   'record the decision in your next message, and continue. If only the owner can answer (a secret, a code, '
                   "an account action, or a matter of their taste), park the card with `orchestra.py park TASK --reason "
-                  "'<the question>'` and continue with other cards.")
+                  "'needs-owner: <the question>'` and continue with other cards.")
 
 
 def _answer_question(data, engine):

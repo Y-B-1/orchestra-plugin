@@ -2666,12 +2666,15 @@ class AutonomyHookTest(unittest.TestCase):
     def stopped(self, reason):
         return hooks_module.AUTONOMY_STOPPED % (reason, self.state / 'progress.md')
 
-    def test_stop_after_an_unchanged_continued_turn_with_nothing_running_stops_stalled(self):
+    def test_stop_after_unchanged_turns_nudges_twice_then_escalates_to_the_owner(self):
         self.arm()
         self.add_card('c1')
-        self.assertEqual(self.stop()['decision'], 'block')
-        self.assertEqual(self.stop(), {'systemMessage': self.stopped('stalled')})  # no repeat, and nothing would wake the session
-        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'stalled')
+        first, second, third = self.stop(), self.stop(), self.stop()  # continue, then two different nudges
+        self.assertEqual([o['decision'] for o in (first, second, third)], ['block'] * 3)
+        self.assertEqual(3, len({first['reason'], second['reason'], third['reason']}))  # each says something new
+        self.assertEqual(self.stop(), {'systemMessage': self.stopped('needs-owner:escalated')})
+        self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'needs-owner:escalated')
+        self.assertEqual('needs-owner:escalated', self.engine.status()['tasks']['c1']['parked_reason'])
 
     def test_stop_stops_at_the_deadline(self):
         self.arm()
@@ -2681,9 +2684,9 @@ class AutonomyHookTest(unittest.TestCase):
 
     def test_gf12_the_stop_that_ends_autonomy_names_its_reason(self):
         self.arm()
-        output = self.stop_main(self.repo)  # no ready card: the run stops
+        output = self.stop_until_stopped()  # no ready card: nudged until the run escalates to the owner
         self.assertNotIn('decision', output)
-        self.assertIn('no-ready-card', output['systemMessage'])
+        self.assertIn('needs-owner:escalated', output['systemMessage'])
         self.assertIn('Orchestra autonomy stopped', output['systemMessage'])
         self.assertFalse(self.engine.autonomy_active())
         self.assertEqual(self.stop_main(self.repo), {})  # already stopped: nothing to say again
@@ -2692,6 +2695,9 @@ class AutonomyHookTest(unittest.TestCase):
         self.engine.dispatch('main', self.lease, 'c1', 'w1')
         self.assertEqual(self.stop(), {})  # only a worker running: the run stays armed
         self.assertTrue(self.engine.autonomy_active())
+
+    def stop_until_stopped(self):
+        return stop_until_stopped(self)
 
     def session_start(self, source='compact'):
         payload = {'cwd': str(self.repo), 'session_id': 's-1', 'source': source}
@@ -2702,8 +2708,8 @@ class AutonomyHookTest(unittest.TestCase):
 
     def test_gf11_session_start_says_the_run_is_live_and_hides_a_stale_stop(self):
         self.arm()
-        self.stop_main(self.repo)  # stops as no-ready-card and writes a brief
-        self.assertIn('Run brief (no-ready-card)', self.session_start('startup'))
+        self.stop_until_stopped()  # escalates to the owner and writes a brief
+        self.assertIn('Run brief (needs-owner:escalated', self.session_start('startup'))
         self.add_card('c1')
         self.arm()
         deadline = self.engine.status()['autonomy']['deadline']
@@ -2714,7 +2720,7 @@ class AutonomyHookTest(unittest.TestCase):
                 self.assertIn('autonomy armed until ' + deadline, context)
                 self.assertIn('guard_mode minimal', context)
                 self.assertIn('orchestra.py status', context)
-                self.assertNotIn('no-ready-card', context)
+                self.assertNotIn('needs-owner:escalated', context)
                 self.assertNotIn('Run brief', context)
 
     def session_context_checked(self, source):
@@ -2847,13 +2853,13 @@ class RunBriefHookTest(unittest.TestCase):
 
     def test_session_start_falls_back_to_2_1_autonomy_report(self):
         self.arm()
-        self.stop_main(self.repo)
+        stop_until_stopped(self)
         data = json.loads((self.state / 'state.json').read_text())
         self.assertIn('report', data['autonomy'])
         del data['last_brief']
         (self.state / 'state.json').write_text(json.dumps(data))
         context = self.session_context()
-        self.assertIn('Autonomy report (no-ready-card): ## Run brief', context)  # the hook runs on the real clock
+        self.assertIn('Autonomy report (needs-owner:escalated): ## Run brief', context)  # the hook runs on the real clock
         self.assertNotIn('Run brief (', context)
 
     def test_pretooluse_missing_cwd_denies_delegated_class_with_reason(self):
@@ -3245,3 +3251,21 @@ class StateEditAndMarkerTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def stop_until_stopped(test):
+    """Goal-style autonomy nudges an unchanged board before it stops: call Stop until it stops (at most 5 times)."""
+    for _ in range(5):
+        output = test.stop_main(test.repo)
+        if 'systemMessage' in output:
+            return output
+    test.fail('the run never stopped')
+
+
+class OwnerParkTextTests(unittest.TestCase):
+    """Under goal-style autonomy a park without the `needs-owner:` prefix is undone, so every instruction to park for the
+    owner must give that prefix."""
+    def test_both_park_instructions_use_the_owner_prefix(self):
+        from orchestra_core import hooks as h
+        self.assertIn("--reason 'needs-owner: ", h.DECIDE_OR_PARK)
+        self.assertIn("--reason 'needs-owner: ", h._PARK_HINT)

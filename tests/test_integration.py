@@ -591,7 +591,7 @@ class AutonomyIntegration(unittest.TestCase):
         self.cli('autonomy','arm')
         first=self.hook('Stop')
         self.assertEqual(first['decision'],'block')
-        self.cli('--lease',self.lease,'park','c1','--reason','needs a push')
+        self.cli('--lease',self.lease,'park','c1','--reason','needs-owner: needs a push')
         self.assertIn('parked-only',self.hook('Stop')['systemMessage'])  # GF12: the stop names its reason
         self.assertEqual(self.cli('autonomy','status')['last_stop_reason'],'parked-only')
         context=self.hook('SessionStart',session_id='S3',source='startup')['hookSpecificOutput']['additionalContext']
