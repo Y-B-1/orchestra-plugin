@@ -92,8 +92,11 @@ def parser():
     report.add_argument('worker')
     report.add_argument('token')
     report.add_argument('report', help='Nonempty result file')
+    report.add_argument('--accept', action='store_true', help='Inline cards only: record the report and accept the card in one call; needs --lease')
+    report.add_argument('--lease', default=argparse.SUPPRESS, help='Coordinator lease, for --accept')
     accept = sub.add_parser('accept')
     accept.add_argument('task_id')
+    accept.add_argument('--ruling', metavar='TEXT', help='Accept a worker card whose only gap is an unmet criterion, with the coordinator reason')
     review = sub.add_parser('review')
     review.add_argument('report', help='Structured review JSON path')
     review.add_argument('--token', help='Assignment token of the final review card: report it, record the receipt and '
@@ -276,6 +279,10 @@ def execute(args):
         for card in cards:
             board.setdefault(card['role'],{}).setdefault(card['state'],[]).append(card['id'])
         return board,0
+    if args.command=='report' and args.accept:
+        if not args.lease:
+            raise EngineError('report --accept needs --lease from start')
+        return engine.report_accept(args.actor,args.lease,args.worker,args.token,Path(args.report).read_text()),0
     if args.command=='report':
         engine.report(args.worker,args.token,Path(args.report).read_text())
         return {'reported':args.token},0
@@ -299,7 +306,7 @@ def execute(args):
     if args.command=='wave':
         return engine.wave(args.actor,args.lease,args.task_ids,inline=args.inline,helper=args.helper,serial=args.serial),0
     if args.command=='accept':
-        engine.accept(args.actor,args.lease,args.task_id)
+        engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
         return {'accepted':args.task_id},0
     if args.command=='review':
         review = read_json(args.report)

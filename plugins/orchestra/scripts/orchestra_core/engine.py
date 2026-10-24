@@ -60,7 +60,7 @@ FINDING_ROUTES = '; add a repair card (`repair_of`) or record the finding with `
 # Keys the engine writes on a card; a task file never supplies them (repair_of only on a builder repair card).
 ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
                     'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
-                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha')
+                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha', 'ruling')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -1999,9 +1999,10 @@ class Engine:
                         and type(c.get('met')) is bool and isinstance(c.get('evidence'), str) for c in criteria))
 
     @classmethod
-    def _self_review_failure(cls, review):
+    def _self_review_failure(cls, review, ruled=False):
         """Why a self-review fails, in words, or None when it holds. Every check exits 0, except a red-first check
-        (`expect: fail`): that one exits non-zero and a later check of the same command, with no `expect`, exits 0."""
+        (`expect: fail`): that one exits non-zero and a later check of the same command, with no `expect`, exits 0.
+        `ruled` skips the unmet criteria only: a coordinator ruling never covers a check."""
         checks = review['checks']
         for i, check in enumerate(checks):
             command = check['command']
@@ -2013,8 +2014,14 @@ class Engine:
                     return 'check "%s" (expect: fail) has no later passing run' % command
             elif check['exit_code'] != 0:
                 return 'check "%s" exited %s' % (command, check['exit_code'])
-        unmet = next((c['criterion'] for c in review['criteria'] if not c['met']), None)
+        unmet = None if ruled else next((c['criterion'] for c in review['criteria'] if not c['met']), None)
         return None if unmet is None else 'criterion not met: ' + str(unmet)
+
+    @staticmethod
+    def _unanswered(task, review):
+        """The acceptance lines of a card that no SELF_REVIEW criterion repeats (whitespace collapsed and trimmed)."""
+        answered = {' '.join(c['criterion'].split()) for c in review['criteria']}
+        return [line for line in task['acceptance'] if ' '.join(line.split()) not in answered]
 
     @classmethod
     def _parse_self_review(cls, report):
@@ -2074,6 +2081,9 @@ class Engine:
         if task['role'] == 'builder' and not any(
                 line.startswith('ARTIFACT:') and line[len('ARTIFACT:'):].strip() for line in report.splitlines()):
             raise EngineError('Builder report needs a nonempty ARTIFACT line')
+        missing = self._unanswered(task, review) if review is not None else []
+        if missing:
+            raise EngineError('SELF_REVIEW does not answer these acceptance lines: ' + '; '.join(missing))
         task.update(state='reported', report=report,
                     report_artifact=self.artifact(self._scope_of(state, [task['id']])))
         task.pop('report_sha', None)
@@ -2525,7 +2535,7 @@ class Engine:
                    and tip['id'] in r['tasks'] and self._intact(r)
                    and self._same(r['artifact'], self._artifact_cached(cache, r.get('scope'))) for r in reviews)
 
-    def _accept_refusal(self, state, cache, task_id):
+    def _accept_refusal(self, state, cache, task_id, ruled=False):
         """Why `accept` would refuse this card now, or None when every accept check passes."""
         task = state['tasks'].get(task_id)
         if not task or task['state'] not in ('reported', 'held'):
@@ -2544,7 +2554,7 @@ class Engine:
             review = task.get('self_review')
             if review is None:
                 return SELF_REVIEW_ERROR
-            failed = self._self_review_failure(review)
+            failed = self._self_review_failure(review, ruled)
             if failed:
                 return 'Self-review has a failing check or unmet criterion: ' + failed
         elif task.get('review_required', False):
@@ -2580,13 +2590,44 @@ class Engine:
         except EngineError:
             return False
 
-    def accept(self, actor, lease, task_id):
+    def accept(self, actor, lease, task_id, ruling=None):
+        """Accept a reported card. `ruling` is the coordinator's reason for accepting a worker card whose only gap is a
+        criterion with met false; a failing check, a current finding or a card with no gap stays refused."""
         with self._state() as state:
             self._lease(state, actor, lease)
-            refusal = self._accept_refusal(state, {}, task_id)
+            task = state['tasks'].get(task_id)
+            if ruling is not None:
+                if not isinstance(ruling, str) or not ruling.strip():
+                    raise EngineError('A ruling needs a nonempty reason')
+                if task and task.get('inline'):
+                    raise EngineError('An inline card cannot take a ruling: the coordinator would rule on its own unmet criterion')
+                review = task.get('self_review') if task and task['role'] == 'builder' else None
+                if review is None or all(c['met'] for c in review['criteria']):
+                    raise EngineError('The card has no unmet criterion to rule on')
+            refusal = self._accept_refusal(state, {}, task_id, ruled=ruling is not None)
             if refusal:
                 raise EngineError(refusal)
-            state['tasks'][task_id]['state'] = 'accepted'
+            task = state['tasks'][task_id]
+            task['state'] = 'accepted'
+            if ruling is not None:
+                at = self._stamp()
+                task['ruling'] = dict(text=ruling.strip(), at=at)
+                _append_progress(self.state_dir, '- ruled %s: %s (at %s)' % (task_id, ruling.strip(), at))
+
+    def report_accept(self, actor, lease, worker, token, report):
+        """Report an inline card and accept it in one state write. When accept refuses, the report stays recorded."""
+        if not isinstance(report, str) or not report.strip():
+            raise EngineError('Empty worker report')
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
+            if task is not None and not task.get('inline'):
+                raise EngineError('report --accept is for inline cards; the coordinator accepts a worker card with accept')
+            self._report_in(state, worker, token, report)
+            refusal = self._accept_refusal(state, {}, task['id'])
+            if refusal is None:
+                task['state'] = 'accepted'
+            return dict(card=task['id'], accepted=refusal is None, refusal=refusal)
 
     def add_finding(self, actor, lease, review_id, kind, index, disposition, reason, card=None):
         """Record the coordinator's disposition of one receipt item (SPEC 5.12). A rejection accepts no card."""

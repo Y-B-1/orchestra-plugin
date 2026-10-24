@@ -20,7 +20,7 @@ SH=shutil.which('sh') or '/bin/sh'
 CATEGORIES=['requirements','correctness','security','tests','architecture','standards','cleanup']
 BASE=['requirements','correctness','tests','architecture']
 SELF_REVIEW='ARTIFACT: fixture\nSELF_REVIEW: '+json.dumps(dict(checks=[dict(command='fixture check',exit_code=0)],
-                                          criteria=[dict(criterion='fixture outcome',met=True,evidence='Inspected fixture.')]))
+                                          criteria=[dict(criterion=c,met=True,evidence='Inspected fixture.') for c in ('fixture check','a')]))
 
 
 class WorkflowIntegration(unittest.TestCase):
