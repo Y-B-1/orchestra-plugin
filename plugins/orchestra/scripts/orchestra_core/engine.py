@@ -2670,7 +2670,7 @@ class Engine:
         clean = now.get('status') == _hash(b'')
         if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'scope')) or not clean and reported != now:
             return self._stale_report(reported, now)
-        if reported.get('fingerprint') != now.get('fingerprint') and not self._reported_work_in_head(task, scope):
+        if reported.get('fingerprint') != now.get('fingerprint') and not self._reported_work_in_head(task, scope, state['tasks']):
             return self._stale_report(reported, now)
         return None
 
@@ -2681,9 +2681,12 @@ class Engine:
         return 'Reported artifact is stale: %s differ since the report; re-report or send a repair card' % ', '.join(
             sorted(keys, key=order.index))
 
-    def _reported_work_in_head(self, task, scope):
+    def _reported_work_in_head(self, task, scope, tasks=None):
         """Whether the commit the report names is in HEAD (an ancestor, or applied as patch-equivalent commits) and HEAD
-        holds exactly its content for the card's files: built in a linked worktree, then merged into this checkout."""
+        holds exactly its content for the card's files: built in a linked worktree, then merged into this checkout. A
+        repaired card is judged by its repair chain's tip commit, which holds the fixed content of its files (F47)."""
+        while tasks is not None and task.get('repaired_by') in tasks:
+            task = tasks[task['repaired_by']]
         sha = task.get('report_sha')
         if not sha or not self._landed(sha):
             return False
