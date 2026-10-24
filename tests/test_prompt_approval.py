@@ -354,7 +354,7 @@ class MergeGlueTest(tp.PlaneFixture):
         self.arm()
         self.engine.disarm_autonomy()
         self.engine.record_owner_approval([], [], tm.EVIDENCE)
-        self.assertEqual(tp.verdict(self.decide('gh pr merge 7', mode='protect', engine=self.engine)), 'ask')
+        self.assertEqual(tp.verdict(self.decide('gh pr merge 7', mode='protect', engine=self.engine)), 'deny')
 
     def test_release_multi_merge_command_reaches_the_guard(self):
         self.approved_pair()

@@ -1,5 +1,6 @@
 {
   "schema_version": 1,
+  "guard_mode": "minimal",
   "max_workers": 20,
   "max_worktrees": 3,
   "required_checks": [],

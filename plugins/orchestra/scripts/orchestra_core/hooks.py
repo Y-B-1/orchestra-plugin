@@ -196,12 +196,6 @@ UNATTENDED_LOCKED = ('The last autonomous run stopped and its work waits for the
                      '`orchestra.py autonomy disarm` in a terminal.')
 
 
-def _ask(reason):
-    return HookResult({'hookSpecificOutput': {'hookEventName': 'PreToolUse',
-                        'permissionDecision': 'ask',
-                        'permissionDecisionReason': reason}})
-
-
 def _patch_paths(command):
     if not isinstance(command, str) or not command.startswith('*** Begin Patch\n') or not command.rstrip().endswith('*** End Patch'):
         raise ValueError('Malformed patch payload')
@@ -215,34 +209,36 @@ def _patch_paths(command):
     return paths
 
 
-GUARD_MODES = ('normal', 'protect')
+GUARD_MODES = ('minimal', 'normal', 'protect')
 RELEASE_WORKFLOWS = ['release*', 'publish*', 'deploy*']  # the policy key `release_workflows` replaces these
 
 
 def _guard_mode(state_dir):
     """The mode `policy.json` selects, read on every call with or without `state.json`: no file or no state directory
-    is `normal`; `protect` and `normal` are themselves; a file that cannot be read or checked, or any other value, is
-    `protect` (fail closed)."""
+    is `minimal`; `minimal`, `normal` and `protect` are themselves; a file that cannot be read or checked, or any other
+    value, is `protect` (fail closed)."""
     if state_dir is None:
-        return 'normal'
+        return 'minimal'
     try:
         from .paths import load_policy
         policy = load_policy(state_dir)
     except Exception:
         return 'protect'
     if policy is None:
-        return 'normal'
-    mode = policy.get('guard_mode', 'normal')
+        return 'minimal'
+    mode = policy.get('guard_mode', 'minimal')
     return mode if isinstance(mode, str) and mode in GUARD_MODES else 'protect'
 
 
 def handle_event(event, payload, *, harness='claude', state_dir=None, engine=None, armed=False, autonomy=False,
                  busy=False, missing_cwd=False, started=None, mode='protect', unattended=False):
-    """`mode` is the guard mode (`normal` or `protect`; the default keeps every direct caller on the strict verdicts).
+    """`mode` is the guard mode (`minimal`, `normal` or `protect`; the default keeps every direct caller on the strict
+    verdicts). `minimal` leaves generic command classification to Claude Code's permission mode and keeps only the
+    Orchestra-specific denials; no mode ever asks.
     `unattended` marks a stopped run whose report is kept without an owner receipt: it locks like an active run.
     A warning collected while deciding rides on an otherwise empty answer as `additionalContext`."""
     notes = []
-    result = _decide(event, payload, notes, 'normal' if mode == 'normal' else 'protect', harness=harness, state_dir=state_dir,
+    result = _decide(event, payload, notes, mode if mode in ('minimal', 'normal') else 'protect', harness=harness, state_dir=state_dir,
                      engine=engine, armed=armed, autonomy=autonomy, busy=busy, missing_cwd=missing_cwd, started=started,
                      unattended=unattended is True)
     if notes and event == 'PreToolUse' and not result.output:
@@ -373,6 +369,10 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             notes.append(AGENT_GUARD)  # Row 33: normal warns
     if locked and name in _SCHEDULERS:
         return _deny(('Autonomy is active: ' if auto_on else UNATTENDED_LOCKED + ' ') + name + ' could schedule the run past its limits')
+    if mode == 'minimal' and name in _SHELL_TOOLS and role != 'subagent':
+        # Generic command classification is Claude Code's permission mode; the state, runtime and release locks of an
+        # autonomous or unattended run took the full path above (`locked`), and role limits cover only workers.
+        return HookResult({}) if isinstance(data.get('command', data.get('cmd')), str) else _deny('Missing shell command', True)
     if 'cwd' in payload:
         cwd = payload['cwd']
         if not isinstance(cwd, str):
@@ -409,6 +409,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     command = data.get('command', data.get('cmd'))
     if not isinstance(command, str):
         return _deny('Missing shell command', True)
+    if mode == 'minimal':
+        return HookResult({})  # a worker's shell call: the role limits above applied; the rest is Claude Code's call
     shaped = _cd_delete_shape(command, cwd)
     if shaped:
         found = classify_command(shaped[0])
@@ -496,8 +498,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd, engine):
             return _deny('Approval boundary under autonomy: no merge on the default branch. ' + hint)
     if klass in {'release', 'release-multi'} and (engine is not None or armed) and mode == 'protect':
-        # Normal never asks (rows 24, 27, 46, 50, 51). Protect: a current permit lets the release run; otherwise the
-        # user is present: ask, unless autonomy is active.
+        # Normal never releases without a question; protect: a current permit lets the release run, otherwise deny.
         problem = decision.reason
         if klass == 'release' and engine is not None and decision.remote and decision.target:
             try:
@@ -508,7 +509,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
                 problem = str(exc)
         if active:
             return _deny('Release denied: ' + problem)
-        return _ask('Orchestra run active: approve this release action? No current release permit covers it: ' + problem)
+        return _deny('Release needs a current permit (orchestra.py permit ...) or the owner\'s "approved"; Orchestra never asks. ' + problem)
     return HookResult({})  # allow, boundary (autonomy off) and unarmed release classes
 
 
@@ -1339,8 +1340,7 @@ def _run_location(cwd):
 
 
 def _release_call(payload):
-    """A shell call of class release or release-multi. A mod `tool.call` hook cannot ask the user, so it passes an
-    `ask` on and this native hook raises the prompt even while the mod is live."""
+    """A shell call of class release or release-multi: this native hook decides it even while the mod is live."""
     data = payload.get('tool_input')
     command = data.get('command', data.get('cmd')) if isinstance(data, dict) else None
     if not isinstance(payload.get('tool_name'), str) or payload['tool_name'] not in _SHELL_TOOLS or not isinstance(command, str):
