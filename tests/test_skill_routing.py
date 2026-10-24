@@ -37,5 +37,11 @@ class SkillRoutingTests(unittest.TestCase):
         self.assertNotIn('the rest to workers in one Workflow', text)
 
 
+    def test_a_review_grants_no_external_permission(self):
+        """A CLEAN review is evidence for acceptance only; it never stands in for a release permit or the owner."""
+        text = (SKILL_DIR / 'references' / 'final-review.md').read_text()
+        self.assertIn('A review grants no external permission', text)
+
+
 if __name__ == '__main__':
     unittest.main()
