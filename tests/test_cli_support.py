@@ -14,7 +14,7 @@ from orchestra_core import cli_support, delta  # noqa: E402
 
 SELF_REVIEW = 'ARTIFACT: fixture\nSELF_REVIEW: '+json.dumps(dict(
     checks=[dict(command='fixture check', exit_code=0)],
-    criteria=[dict(criterion='fixture outcome', met=True, evidence='Inspected fixture.')]))
+    criteria=[dict(criterion='fixture check', met=True, evidence='Inspected fixture.')]))
 
 
 def view(**states):

@@ -124,7 +124,8 @@ class SelfReviewRefusalTests(te.EngineFixture):
 
     def test_unmet_criterion_is_named_by_its_text(self):
         self.assertEqual('Self-review has a failing check or unmet criterion: criterion not met: renders the board',
-                         self.refusal(criteria=[{'criterion': 'renders the board', 'met': False, 'evidence': 'no'}]))
+                         self.refusal(criteria=[{'criterion': 'check behavior', 'met': True, 'evidence': 'ok'},
+                                               {'criterion': 'renders the board', 'met': False, 'evidence': 'no'}]))
 
 
 if __name__ == '__main__':
