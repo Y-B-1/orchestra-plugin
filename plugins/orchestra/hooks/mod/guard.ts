@@ -54,7 +54,7 @@ type Rules = {
     gh_api_autonomy_allow: string[][];
   };
   boundary: { delete_commands: string[]; find_delete_flag: string; gh: string[][] };
-  protected: { harness_dirs: string[]; files: string[]; agents_prefixes: string[]; component: string; state_root_exceptions: string[]; autonomy_files: string[] };
+  protected: { harness_dirs: string[]; files: string[]; agents_prefixes: string[]; component: string; state_root_exceptions: string[]; state_dir_exceptions: string[]; autonomy_files: string[] };
 };
 
 const MULTI = 'releasemulti';
@@ -142,6 +142,7 @@ export function loadRules(json: string): void {
   strings(prot.files, 'protected.files');
   strings(prot.agents_prefixes, 'protected.agents_prefixes');
   strings(prot.state_root_exceptions, 'protected.state_root_exceptions');
+  strings(prot.state_dir_exceptions, 'protected.state_dir_exceptions');
   const shellTools = strings(tools.shell, 'tools.shell');
   const editTools = strings(tools.edit, 'tools.edit');
   const execFlags = new Set(strings(runners.watch_exec_flags, 'runners.watch_exec_flags'));
@@ -2481,8 +2482,9 @@ export function editDenied(path: string | undefined, cwd: string, env: EditEnv):
   const resolved = resolveParts(cwd, path);
   const stateRoot = (root: string[]): boolean | null => {
     if (!startsWithParts(resolved, root)) return null;
-    // Coordinator-authored notes at the state root stay writable (A8).
-    return !(resolved.length === root.length + 1 && PROTECTED.state_root_exceptions.includes(resolved[resolved.length - 1]!));
+    // Coordinator-authored notes at the state root stay writable (A8), and so do files inside a state_dir_exceptions directory (GF8).
+    if (resolved.length === root.length + 1 && PROTECTED.state_root_exceptions.includes(resolved[resolved.length - 1]!)) return false;
+    return !(resolved.length > root.length + 1 && PROTECTED.state_dir_exceptions.includes(resolved[root.length]!));
   };
   if (env.stateDir) {
     const verdict = stateRoot(resolveParts('/', expandUser(env.stateDir, env.home)));

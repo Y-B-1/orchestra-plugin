@@ -798,6 +798,14 @@ These change rules above; docs/hooks.md and the cli reference carry the current 
 4. **5.14 item 2.** One leading `cd <literal path> &&` (same Git common directory; no `$`, `~`, backtick, glob or leading `-`) and one trailing pipe to `tail`, `head`, `grep` or `cat` without file operands do not count as extra segments. The proof of item 4 runs in the `cd` target.
 5. **5.14 item 4.5.** (d) For every path in `git diff-tree -r -z --no-renames --name-only $(git merge-base <default> <tip>) <tip>`, `git --literal-pathspecs diff-tree -r -z --no-renames <default> <tip> -- <paths>` prints nothing (an empty path list counts). No merge driver, diff driver or textconv runs; any git error or unparsable output is no proof.
 
+### 5.21 Amendments in 2.13.0
+
+These change rules above; docs/hooks.md and the cli reference carry the current wording.
+
+1. **Guard modes.** `guard_mode` gains `minimal`, the default. In `minimal`, outside autonomy and the unattended lock, the PreToolUse hook and the mod apply only Orchestra-specific denies (autonomy and unattended locks, engine state and runtime protection, worker role limits, approval forgery). No hook returns `ask` in any mode; protect mode's release ask becomes a deny. This supersedes the 2.11.0 rule that normal is the default.
+2. **Dispatch rule (section 5.1).** `dispatch` and `inline` refuse a single start while another disjoint card in `startable_now` could start beside it within `max_workers` and `max_worktrees`; `--serial REASON` overrides and is logged. `wave` starts a set of cards atomically. `waves` and `board --view` are lease-free reads. Policy key `parallel_waves` (bool, default true) is validated but not part of the default policy, so the policy hash of running runs is unchanged.
+3. **Board and native tasks.** The mod renders `board --view` as a live pane and mirrors cards to native tasks only when the run is bound to the session and the task tools are present with an `allow` verdict.
+
 ## 6. Engine and state changes
 
 State schema: `state.json` keeps `version: 1` with additive optional keys (OD-17 A). A missing key reads as its default.

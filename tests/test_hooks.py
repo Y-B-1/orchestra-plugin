@@ -518,24 +518,24 @@ class HooksTest(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(self.pre('Bash', {'command': command}).output, {})
 
-    def test_armed_release_without_a_permit_asks(self):
+    def test_armed_release_without_a_permit_denies(self):
         engine = mock.Mock()
         engine.check_release.side_effect = ValueError('No current explicit release permit')
         result = self.pre('Bash', {'command': 'git push origin feat/x'}, engine=engine)
-        self.assertEqual(decision_of(result), 'ask')
+        self.assertEqual(decision_of(result), 'deny')
         self.assertIn('No current explicit release permit', result.output['hookSpecificOutput']['permissionDecisionReason'])
 
-    def test_armed_release_multi_asks_even_with_a_permit(self):
+    def test_armed_release_multi_denies_even_with_a_permit(self):
         engine = mock.Mock()
         engine.check_release.return_value = {'id': 'permit'}
         for command in MULTI_RELEASES:
             with self.subTest(command=command):
-                self.assertEqual(decision_of(self.pre('Bash', {'command': command}, engine=engine)), 'ask')
+                self.assertEqual(decision_of(self.pre('Bash', {'command': command}, engine=engine)), 'deny')
         engine.check_release.assert_not_called()
 
-    def test_armed_without_loadable_engine_asks_for_release_not_ordinary_commands(self):
+    def test_armed_without_loadable_engine_denies_release_not_ordinary_commands(self):
         for command in ['git push origin feat/x', 'gh release create v1 --verify-tag']:
-            self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'ask')
+            self.assertEqual(decision_of(self.pre('Bash', {'command': command}, armed=True)), 'deny')
         self.assertEqual(self.pre('Bash', {'command': 'git status'}, armed=True).output, {})
 
     def test_git_config_touching_commands_are_free_without_autonomy(self):
@@ -706,7 +706,7 @@ class HooksTest(unittest.TestCase):
         engine.check_release.assert_called_once_with('origin', 'main', argv=['git', 'push', 'origin', 'HEAD:main'])
         engine.check_release.side_effect = ValueError('stale')
         self.assertIn('stale', self.pre('Bash', {'command': command}, engine=engine).output['hookSpecificOutput']['permissionDecisionReason'])
-        self.assertEqual(self.pre('Bash', {'command': 'git -C other push origin main'}, engine=engine).output['hookSpecificOutput']['permissionDecision'], 'ask')
+        self.assertEqual(self.pre('Bash', {'command': 'git -C other push origin main'}, engine=engine).output['hookSpecificOutput']['permissionDecision'], 'deny')
 
     def test_interrupt_and_bounded_adapter(self):
         engine = mock.Mock()
@@ -795,7 +795,9 @@ class HooksTest(unittest.TestCase):
         for command, decision in [('git reset --hard', 'deny'), ('git status', None)]:
             with self.subTest(command=command):
                 with tempfile.TemporaryDirectory() as cwd:
-                    code, output = run_main({'cwd': cwd, 'tool_name': 'PowerShell', 'tool_input': {'command': command}})
+                    (Path(cwd) / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
+                    code, output = run_main({'cwd': cwd, 'tool_name': 'PowerShell', 'tool_input': {'command': command}},
+                                            env={'ORCHESTRA_STATE_DIR': cwd})
                 self.assertEqual(output.get('hookSpecificOutput', {}).get('permissionDecision'), decision)
 
     def test_mod_tools_match_orchestra_ts_guarded(self):
@@ -836,15 +838,17 @@ class HookCrashTest(unittest.TestCase):
     @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: the fallback root is a private POSIX temp directory')
     def test_the_state_location_survives_a_missing_home_directory(self):
         from orchestra_core import paths
-        with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
-            location = paths.state_home()
-        self.assertTrue(location.is_absolute())
-        self.assertIn('orchestra-state', location.name)
-        self.assertEqual(location.stat().st_mode & 0o077, 0)  # private to the user
-        location.chmod(0o755)
-        with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
-            again = paths.state_home()
-        self.assertEqual(again.stat().st_mode & 0o077, 0)  # a loosened root is tightened again
+        # A temp folder of its own: check.sh runs two suites at once, and the shared root would race (2.13 gate).
+        with tempfile.TemporaryDirectory() as tmp, mock.patch('tempfile.gettempdir', return_value=tmp):
+            with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
+                location = paths.state_home()
+            self.assertTrue(location.is_absolute())
+            self.assertIn('orchestra-state', location.name)
+            self.assertEqual(location.stat().st_mode & 0o077, 0)  # private to the user
+            location.chmod(0o755)
+            with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
+                again = paths.state_home()
+            self.assertEqual(again.stat().st_mode & 0o077, 0)  # a loosened root is tightened again
 
     @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: the fallback root uses uids and symlinks')
     def test_an_unsafe_fallback_root_denies_instead_of_reading_as_no_run(self):
@@ -1395,9 +1399,12 @@ class MarkerHandshakeTest(unittest.TestCase):
         self.xdg = Path(self.temp.name) / 'xdg'
         self.cwd = Path(self.temp.name) / 'cwd'
         self.cwd.mkdir()
-        self.mods = self.xdg / 'orchestra' / 'mods'
+        self.state = Path(self.temp.name) / 'state'  # the marker handshake is about the full guard: pin protect
+        self.state.mkdir()
+        self.mods = self.state / 'mods'  # GF10: with ORCHESTRA_STATE_DIR set the markers live under it
         self.mods.mkdir(parents=True)
-        self.env = {'XDG_STATE_HOME': str(self.xdg)}
+        (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
+        self.env = {'XDG_STATE_HOME': str(self.xdg), 'ORCHESTRA_STATE_DIR': str(self.state)}
         self.sha = guard_digest()
 
     def marker(self, session='s1', *, age_ms=0, sha=None, inner=None, name=None):
@@ -1534,6 +1541,12 @@ class MarkerHandshakeTest(unittest.TestCase):
         with mock.patch('subprocess.check_output', side_effect=AssertionError('git ran')):
             self.assertEqual(self.call(), {})
 
+    def test_pr2_fresh_marker_does_not_skip_an_unreadable_run_state(self):
+        """A state the mod cannot vouch for may hold a lock: the native hook decides (fail closed)."""
+        self.marker()
+        (self.state / 'state.json').write_text('not json')
+        self.assertEqual(self.call().get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
+
 
 class RunStateResolutionTest(unittest.TestCase):
     """A1 states and A15: where the hook looks for the run."""
@@ -1559,7 +1572,7 @@ class RunStateResolutionTest(unittest.TestCase):
         git(self.repo, 'worktree', 'add', '-q', str(self.linked), '-b', 'side')
 
     def protect(self, repo):
-        """Normal mode (no policy file) never asks; these tests are about the protect-mode ask."""
+        """The default mode is minimal; these tests are about the protect-mode verdicts."""
         from orchestra_core.paths import state_location
         state = state_location(repo)
         state.mkdir(parents=True, exist_ok=True)
@@ -1581,41 +1594,42 @@ class RunStateResolutionTest(unittest.TestCase):
         return output.get('hookSpecificOutput', {}).get('permissionDecision')
 
     def test_unarmed_repository_allows_release_classes(self):
+        self.protect(self.repo)
         for command in UNARMED_RELEASES + MULTI_RELEASES:
             with self.subTest(command=command):
                 self.assertIsNone(self.bash(self.repo, command))
         self.assertEqual(self.bash(self.repo, 'git push --force origin x'), 'deny')
 
-    def test_armed_main_checkout_asks_for_release_without_a_permit(self):
+    def test_armed_main_checkout_denies_release_without_a_permit(self):
         self.start(self.repo)
-        self.assertEqual(self.bash(self.repo, 'git push origin side'), 'ask')
-        self.assertEqual(self.bash(self.repo, 'git push origin x && git status'), 'ask')
+        self.assertEqual(self.bash(self.repo, 'git push origin side'), 'deny')
+        self.assertEqual(self.bash(self.repo, 'git push origin x && git status'), 'deny')
         self.assertIsNone(self.bash(self.repo, 'git status'))
         self.assertIsNone(self.bash(self.repo, 'rm -rf build'))
 
     def test_interrupted_run_is_unarmed_again(self):
         lease = self.start(self.repo)
-        self.assertEqual(self.bash(self.repo, 'git push origin side'), 'ask')
+        self.assertEqual(self.bash(self.repo, 'git push origin side'), 'deny')
         self.interrupt(self.repo, lease)
         self.assertIsNone(self.bash(self.repo, 'git push origin side'))
 
-    def test_unloadable_state_file_asks_for_release(self):
+    def test_unloadable_state_file_denies_release(self):
         from orchestra_core.paths import state_location
         state = state_location(self.repo)
         self.protect(self.repo)
         for text in ['{not json', '{}', '[]', '{"version": 1, "session": {"active": "yes"}}']:
             (state / 'state.json').write_text(text)
             with self.subTest(text=text):
-                # Never silently allowed: an unparseable file may be armed autonomy (deny), else the user is asked.
-                self.assertIn(self.bash(self.repo, 'git push origin main'), ('ask', 'deny'))
-                self.assertIn(self.bash(self.repo, 'gh release create v1 --verify-tag'), ('ask', 'deny'))
+                # Never silently allowed: an unparseable file may be armed autonomy or a run without a permit; both deny.
+                self.assertEqual(self.bash(self.repo, 'git push origin main'), 'deny')
+                self.assertEqual(self.bash(self.repo, 'gh release create v1 --verify-tag'), 'deny')
                 self.assertIsNone(self.bash(self.repo, 'git status'))
 
-    def test_a15_linked_worktree_of_an_armed_repository_asks_for_release(self):
+    def test_a15_linked_worktree_of_an_armed_repository_denies_release(self):
         self.start(self.repo)
         for command in LINKED_WORKTREE_COMMANDS:
             with self.subTest(command=command):
-                self.assertEqual(self.bash(self.linked, command), 'ask')
+                self.assertEqual(self.bash(self.linked, command), 'deny')
         self.assertIsNone(self.bash(self.linked, 'git status'))
 
     def test_a15_linked_worktree_of_an_unarmed_repository_allows_release(self):
@@ -1629,7 +1643,7 @@ class RunStateResolutionTest(unittest.TestCase):
     def test_a15_state_of_the_linked_worktree_itself_wins(self):
         # Its own armed run is found first; the main worktree's inactive state is never consulted.
         self.start(self.linked)
-        self.assertEqual(self.bash(self.linked, 'git push origin side'), 'ask')
+        self.assertEqual(self.bash(self.linked, 'git push origin side'), 'deny')
         self.assertIsNone(self.bash(self.repo, 'git push origin side'))
 
     def test_a15_protected_state_follows_the_main_worktree(self):
@@ -2121,18 +2135,18 @@ class AutonomyHookTest(unittest.TestCase):
         return output.get('hookSpecificOutput', {}).get('permissionDecision')
 
     def protect(self):
-        """T2a1: normal mode never asks, so a test of the ask answer selects protect, as `policy.json` does."""
+        """The default mode is minimal, so a test of the protect verdicts selects protect, as `policy.json` does."""
         (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
 
-    def test_interactive_run_asks_for_release_actions(self):
+    def test_interactive_run_denies_release_actions(self):
         self.protect()
         for command in ['git push origin main', 'gh pr merge 3 --squash', 'npm publish', 'git push origin a && git push origin b',
                         'gh api graphql --input payload.json']:
             with self.subTest(command=command):
                 code, output = run_main({'cwd': str(self.repo), 'tool_name': 'Bash', 'tool_input': {'command': command}})
                 decision = output['hookSpecificOutput']
-                self.assertEqual(decision['permissionDecision'], 'ask')
-                self.assertIn('approve this release action', decision['permissionDecisionReason'])
+                self.assertEqual(decision['permissionDecision'], 'deny')
+                self.assertIn('Orchestra never asks', decision['permissionDecisionReason'])
 
     def origin(self, default='main'):
         """A real bare origin whose default branch is `default`, so arming can ask it (the hook trusts only that)."""
@@ -2508,7 +2522,7 @@ class AutonomyHookTest(unittest.TestCase):
         for cwd in (self.repo, self.linked):
             with self.subTest(cwd=cwd.name):
                 self.assertIsNone(self.hook(cwd, 'rm -rf build'))
-                self.assertEqual(self.hook(cwd, 'git push origin side'), 'ask')  # A1: armed, no permit
+                self.assertEqual(self.hook(cwd, 'git push origin side'), 'deny')  # A1: armed, no permit
                 self.assertEqual(self.stop_main(cwd), {})
         self.assertIsNone(self.hook(self.repo, 'git merge topic'))
         never_armed = json.loads((self.state / 'state.json').read_text())
@@ -2524,6 +2538,7 @@ class AutonomyHookTest(unittest.TestCase):
     def test_o35_ended_run_under_a_changed_policy_is_unarmed(self):
         self.engine.interrupt('main', self.lease)
         self.break_policy()
+        self.protect()
         for cwd in (self.repo, self.linked):
             with self.subTest(cwd=cwd.name):
                 self.assertIsNone(self.hook(cwd, 'git push origin main'))
@@ -2538,7 +2553,7 @@ class AutonomyHookTest(unittest.TestCase):
         self.set_raw_session_active(True)
         for cwd in (self.repo, self.linked):
             with self.subTest(cwd=cwd.name):
-                self.assertEqual(self.hook(cwd, 'git push origin main'), 'ask')
+                self.assertEqual(self.hook(cwd, 'git push origin main'), 'deny')
                 self.assertEqual(self.hook(cwd, 'git reset --hard'), 'deny')
 
     def test_o35_unparseable_state_stays_armed(self):
@@ -2645,21 +2660,75 @@ class AutonomyHookTest(unittest.TestCase):
         self.add_card('c2')
         self.assertEqual(self.stop()['decision'], 'block')  # the old cap of 1 no longer stops the loop
         self.now[0] += 7200
-        self.assertEqual(self.stop(), {})
+        self.assertEqual(self.stop(), {'systemMessage': self.stopped('deadline')})
         self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'deadline')
+
+    def stopped(self, reason):
+        return hooks_module.AUTONOMY_STOPPED % (reason, self.state / 'progress.md')
 
     def test_stop_after_an_unchanged_continued_turn_with_nothing_running_stops_stalled(self):
         self.arm()
         self.add_card('c1')
         self.assertEqual(self.stop()['decision'], 'block')
-        self.assertEqual(self.stop(), {})  # no repeat, and nothing would wake the session
+        self.assertEqual(self.stop(), {'systemMessage': self.stopped('stalled')})  # no repeat, and nothing would wake the session
         self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'stalled')
 
     def test_stop_stops_at_the_deadline(self):
         self.arm()
         self.now[0] += 7200
-        self.assertEqual(self.stop(), {})
+        self.assertEqual(self.stop(), {'systemMessage': self.stopped('deadline')})
         self.assertEqual(self.engine.status()['autonomy']['last_stop_reason'], 'deadline')
+
+    def test_gf12_the_stop_that_ends_autonomy_names_its_reason(self):
+        self.arm()
+        output = self.stop_main(self.repo)  # no ready card: the run stops
+        self.assertNotIn('decision', output)
+        self.assertIn('no-ready-card', output['systemMessage'])
+        self.assertIn('Orchestra autonomy stopped', output['systemMessage'])
+        self.assertFalse(self.engine.autonomy_active())
+        self.assertEqual(self.stop_main(self.repo), {})  # already stopped: nothing to say again
+        self.arm()
+        self.add_card('c1')
+        self.engine.dispatch('main', self.lease, 'c1', 'w1')
+        self.assertEqual(self.stop(), {})  # only a worker running: the run stays armed
+        self.assertTrue(self.engine.autonomy_active())
+
+    def session_start(self, source='compact'):
+        payload = {'cwd': str(self.repo), 'session_id': 's-1', 'source': source}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out:
+            main(['SessionStart', '--harness', 'claude'])
+        return json.loads(out.getvalue())['hookSpecificOutput']['additionalContext']
+
+    def test_gf11_session_start_says_the_run_is_live_and_hides_a_stale_stop(self):
+        self.arm()
+        self.stop_main(self.repo)  # stops as no-ready-card and writes a brief
+        self.assertIn('Run brief (no-ready-card)', self.session_start('startup'))
+        self.add_card('c1')
+        self.arm()
+        deadline = self.engine.status()['autonomy']['deadline']
+        for source in ('compact', 'resume', 'startup'):
+            with self.subTest(source=source):
+                context = self.session_context_checked(source)
+                self.assertIn('Run active (size ', context)
+                self.assertIn('autonomy armed until ' + deadline, context)
+                self.assertIn('guard_mode minimal', context)
+                self.assertIn('orchestra.py status', context)
+                self.assertNotIn('no-ready-card', context)
+                self.assertNotIn('Run brief', context)
+
+    def session_context_checked(self, source):
+        context = self.session_start(source)
+        self.assertLess(len(context), 1200)
+        return context
+
+    def test_gf11_session_start_names_a_live_run_without_autonomy(self):
+        context = self.session_context_checked('startup')
+        self.assertIn('Run active (size ', context)
+        self.assertIn('autonomy off', context)
+        self.assertIn('guard_mode minimal', context)
+        self.engine.interrupt('main', self.lease)
+        self.assertNotIn('Run active', self.session_start('startup'))  # an ended run is not live
 
     def test_stop_without_autonomy_is_empty(self):
         self.assertEqual(self.stop(), {})
@@ -2714,6 +2783,12 @@ class RunBriefHookTest(unittest.TestCase):
     hook = AutonomyHookTest.hook
     stop_main = AutonomyHookTest.stop_main
     protect = AutonomyHookTest.protect
+
+    def pin_state(self):
+        """A removed cwd resolves to no state directory: point the hook at this run's, whose policy the test set."""
+        patcher = mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': str(self.state)})
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def session_context(self):
         payload = {'cwd': str(self.repo), 'session_id': 's-9', 'source': 'startup'}
@@ -2783,6 +2858,8 @@ class RunBriefHookTest(unittest.TestCase):
 
     def test_pretooluse_missing_cwd_denies_delegated_class_with_reason(self):
         gone = self.root / 'gone'
+        self.protect()
+        self.pin_state()
         for command in ['git push origin side', 'rm -rf build']:
             with self.subTest(command=command):
                 code, output = run_main({'cwd': str(gone), 'tool_name': 'Bash', 'tool_input': {'command': command}})
@@ -2795,9 +2872,10 @@ class RunBriefHookTest(unittest.TestCase):
     def test_pretooluse_missing_cwd_allows_nothing_new(self):
         gone = self.root / 'gone'
         self.protect()
+        self.pin_state()
         self.assertEqual(self.hook(gone, 'git status'), None)  # an allowed class stays allowed
         self.assertEqual(self.hook(gone, 'git reset --hard'), 'deny')  # a plain deny stays denied
-        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'ask')  # existing cwd: armed run, no permit
+        self.assertEqual(self.hook(self.repo, 'git push origin side'), 'deny')  # existing cwd: armed run, no permit
 
     def test_hook_state_read_fails_closed_after_lock_wait(self):
         self.arm()
@@ -2818,6 +2896,7 @@ class RunBriefHookTest(unittest.TestCase):
     def test_ended_run_busy_lock_does_not_deny_non_delegated(self):
         from orchestra_core.engine import Engine, StateBusy
         self.engine.interrupt('main', self.lease)  # the run's session has ended
+        self.protect()
         # An ended session is unarmed from its status alone: no second read that a busy lock could fail.
         with mock.patch.object(Engine, 'autonomy_active', side_effect=StateBusy('Orchestra state is busy; retry')) as second:
             self.assertIsNone(self.hook(self.repo, 'git status'))
@@ -2871,6 +2950,8 @@ class RunBriefHookTest(unittest.TestCase):
 
     @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: Windows cannot remove a directory that is a process cwd')
     def test_pretooluse_deleted_process_cwd_denies_delegated(self):
+        self.protect()
+        self.pin_state()
         payloads = {'payload cwd removed': lambda gone, c: {'cwd': str(gone), 'tool_name': 'Bash', 'tool_input': {'command': c}},
                     'no payload cwd': lambda gone, c: {'tool_name': 'Bash', 'tool_input': {'command': c}}}
         for label, make in payloads.items():
@@ -2986,8 +3067,9 @@ class PlanV24GuardTest(unittest.TestCase):
                 with self.subTest(tool=tool, kind=kind):
                     result = self.agent(kind, tool, self.engine())
                     self.assertEqual(decision_of(result), 'deny')
-                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'],
-                                     'Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits)')
+                    self.assertEqual(result.output['hookSpecificOutput']['permissionDecisionReason'], hooks_module.AGENT_GUARD)
+                    self.assertTrue(hooks_module.AGENT_GUARD.startswith(
+                        'Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits)'))
 
     def test_orchestra_agent_allowed_during_run(self):
         self.assertEqual(self.agent('orchestra:builder', engine=self.engine()).output, {})
@@ -3083,6 +3165,82 @@ class PlanV24GuardTest(unittest.TestCase):
         engine = self.engine()
         engine.current_gate_ids = mock.Mock(side_effect=RuntimeError('x'))
         self.assertEqual(self.review_call('pytest', 'orchestra:critic', engine).output, {})
+
+
+class StateEditAndMarkerTest(unittest.TestCase):
+    """GF items 8 to 10: review packages, NotebookEdit and the marker directory under ORCHESTRA_STATE_DIR."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name).resolve()
+        self.state = self.root / 'state'
+        self.state.mkdir()
+        self.cwd = self.root / 'cwd'
+        self.cwd.mkdir()
+
+    def edit(self, tool, data, mode='minimal'):
+        payload = {'tool_name': tool, 'tool_input': data, 'cwd': str(self.cwd)}
+        return handle_event('PreToolUse', payload, mode=mode, state_dir=str(self.state))
+
+    def test_gf8_review_packages_are_writable_with_the_edit_tools(self):
+        package = self.state / 'review-packages' / 'B1'
+        for mode in ('minimal', 'normal', 'protect'):
+            for tool in ('Write', 'Edit', 'MultiEdit'):
+                for path in (package / 'diff.patch', package / 'nested' / 'report.md', self.state / 'review-packages' / 'index.md'):
+                    with self.subTest(mode=mode, tool=tool, path=str(path)):
+                        self.assertIsNone(decision_of(self.edit(tool, {'file_path': str(path)}, mode)))
+        (self.state / 'review-packages').mkdir(exist_ok=True)
+        (self.state / 'review-packages' / 'up').symlink_to(self.state)
+        for path in (self.state / 'review-packages' / '..' / 'state.json', self.state / 'review-packages',
+                     self.state / 'review-packages' / 'up' / 'state.json',
+                     self.state / 'review-packages-x' / 'a.md', self.state / 'history' / 'review-packages' / 'a.md',
+                     self.state / 'state.json', self.state / 'policy.json'):
+            with self.subTest(path=str(path)):
+                self.assertEqual(decision_of(self.edit('Write', {'file_path': str(path)})), 'deny')
+
+    def test_gf9_notebook_edit_is_guarded(self):
+        self.assertIn('NotebookEdit', hooks_module._MOD_TOOLS)
+        self.assertIn('NotebookEdit', RULES['tools']['edit'])
+        claude = json.loads((PLUGIN / 'hooks/claude.json').read_text())
+        self.assertRegex('NotebookEdit', '^(?:' + claude['hooks']['PreToolUse'][0]['matcher'] + ')$')
+        guarded = (PLUGIN / 'hooks/mod/orchestra.ts').read_text().split('const GUARDED = ', 1)[1].split(';', 1)[0]
+        self.assertIn("'NotebookEdit'", guarded)
+        for path in (self.state / 'n.ipynb', self.state / 'state.json'):
+            with self.subTest(path=path.name):
+                result = self.edit('NotebookEdit', {'notebook_path': str(path), 'new_source': 'x'})
+                self.assertEqual(decision_of(result), 'deny')
+        self.assertIsNone(decision_of(self.edit('NotebookEdit', {'notebook_path': str(self.cwd / 'n.ipynb'), 'new_source': 'x'})))
+        self.assertEqual(self.edit('NotebookEdit', {'new_source': 'x'}).exit_code, 2)
+
+    def test_gf9_the_native_hook_denies_a_notebook_edit_of_the_state(self):
+        env = {'XDG_STATE_HOME': str(self.root / 'xdg'), 'ORCHESTRA_STATE_DIR': str(self.state)}
+        payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': 'NotebookEdit',
+                   'tool_input': {'notebook_path': str(self.state / 'n.ipynb'), 'new_source': 'x'}}
+        self.assertEqual(run_main(payload, env=env)[1]['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_gf10_the_marker_directory_follows_orchestra_state_dir(self):
+        with mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': str(self.state), 'XDG_STATE_HOME': str(self.root / 'xdg')}):
+            self.assertEqual(hooks_module._marker_dir(), self.state / 'mods')
+        with mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': 'relative/state', 'XDG_STATE_HOME': str(self.root / 'xdg')}):
+            self.assertEqual(hooks_module._marker_dir(), self.root / 'xdg' / 'orchestra' / 'mods')
+        with mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.root / 'xdg')}):
+            os.environ.pop('ORCHESTRA_STATE_DIR', None)
+            self.assertEqual(hooks_module._marker_dir(), self.root / 'xdg' / 'orchestra' / 'mods')
+
+    def test_gf10_a_marker_under_the_state_dir_is_live_and_one_under_xdg_is_not(self):
+        env = {'XDG_STATE_HOME': str(self.root / 'xdg'), 'ORCHESTRA_STATE_DIR': str(self.state)}
+        data = json.dumps({'session_id': 's1', 'heartbeat_ms': int(time.time() * 1000), 'plugin_version': '2.0.0',
+                           'rules_sha256': guard_digest()})
+        (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
+        payload = {'cwd': str(self.cwd), 'session_id': 's1', 'tool_name': 'Bash', 'tool_input': {'command': 'git clean -fd'}}
+        xdg_mods = self.root / 'xdg' / 'orchestra' / 'mods'
+        xdg_mods.mkdir(parents=True)
+        (xdg_mods / 's1.json').write_text(data)
+        self.assertEqual(run_main(payload, env=env)[1]['hookSpecificOutput']['permissionDecision'], 'deny')
+        (self.state / 'mods').mkdir()
+        (self.state / 'mods' / 's1.json').write_text(data)
+        self.assertEqual(run_main(payload, env=env)[1], {})
 
 
 if __name__ == '__main__':

@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shlex
 import shutil
 import subprocess
@@ -113,7 +114,7 @@ class EngineTests(EngineFixture):
         self.task('inline')
         self.task('parallel')
         self.task('collision', files=['inline'])
-        token = self.engine.start_inline('main', self.lease, 'inline')
+        token = self.engine.start_inline('main', self.lease, 'inline', serial='fixture: one card at a time')
         self.engine.dispatch('main', self.lease, 'parallel', 'worker')
         with self.assertRaises(EngineError):
             self.engine.dispatch('main', self.lease, 'collision', 'other')
@@ -127,7 +128,7 @@ class EngineTests(EngineFixture):
         with self.assertRaises(EngineError):
             self.engine.start_inline('main', self.lease, 'review')
         self.task('inline')
-        token = self.engine.start_inline('main', self.lease, 'inline')
+        token = self.engine.start_inline('main', self.lease, 'inline', serial='fixture: one card at a time')
         self.engine.interrupt('main', self.lease)
         with self.assertRaises(EngineError):
             self.engine.report('main', token, done('Late inline result'))
@@ -214,7 +215,7 @@ class MoreEngineTests(EngineFixture):
         self.task()
         self.task('b')
         self.task('c', dependencies=['a'])
-        token = self.engine.dispatch('main', self.lease, 'a', 'builder-a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'builder-a', serial='fixture: one card at a time')
         self.assertEqual(['b'], self.engine.ready('main', self.lease))
         self.engine.report('builder-a', token, done('built a'))
         self.engine.accept('main', self.lease, 'a')
@@ -293,7 +294,7 @@ class IntegrationRepairTests(EngineFixture):
         self.task('C2', role='critic', mode='judge', files=[])
         with self.assertRaises(EngineError):
             self.engine.start_inline('main', self.lease, 'C2')
-        token = self.engine.dispatch('main', self.lease, 'B1', 'builder')
+        token = self.engine.dispatch('main', self.lease, 'B1', 'builder', serial='fixture: one card at a time')
         self.engine.report('builder', token, done('Built'))
         self.assertIn('C1', self.engine.ready('main', self.lease))
         modes = {'investigator': 'code', 'designer-planner': 'plan', 'operator': 'gate', 'builder': 'implementation'}
@@ -604,6 +605,23 @@ class FinalBlockerTests(EngineFixture):
                          argv=argv or ['git', 'push', 'authorized', 'HEAD:main'])))
         self.lease = self.engine.open_session('main')
         self.engine.run_gate('main', self.lease, 'unit', command)
+
+    def test_overlapping_queued_repairs_do_not_deadlock(self):
+        # F29: two repairs whose inherited reservations overlap; the lowest id starts, the other waits for it.
+        self.release_setup()
+        self.task('B1', files=['a', 'shared'])
+        self.task('B2', files=['b'])
+        for card in ('B1', 'B2'):
+            token = self.engine.dispatch('main', self.lease, card, 'builder-' + card, serial='test')
+            self.engine.report('builder-' + card, token, done('Result ' + card))
+        self.record('blocked', ['B1', 'B2'], findings=['Wrong output'])
+        self.task('RA', mode='repair', repair_of='B1', files=['a'])
+        self.task('RB', mode='repair', repair_of='B2', files=['b', 'shared'])
+        self.assertEqual(['RA'], self.engine.ready('main', self.lease))
+        token = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
+        self.assertEqual([], self.engine.ready('main', self.lease))  # RB still overlaps the running RA
+        self.engine.report('repair-a', token, done('Repaired A'))
+        self.assertEqual([], self.engine.ready('main', self.lease))  # a reported repair still holds its files
 
     def test_repair_transfers_reservations_and_retains_history(self):
         self.release_setup()
@@ -1368,11 +1386,11 @@ class AutonomyFixture(EngineFixture):
     def worker_running(self, name='busy'):
         """A dispatched card: while it runs, an unchanged turn ends quietly instead of stopping as stalled."""
         self.task(name, files=[name])
-        self.engine.dispatch('main', self.lease, name, 'w-' + name)
+        self.engine.dispatch('main', self.lease, name, 'w-' + name, serial='fixture: one card at a time')
 
     def accept_card(self, name):
         self.task(name, role='investigator', mode='code')
-        token = self.engine.dispatch('main', self.lease, name, 'w-' + name)
+        token = self.engine.dispatch('main', self.lease, name, 'w-' + name, serial='fixture: one card at a time')
         self.engine.report('w-' + name, token, 'Inspected ' + name + '.')
         self.engine.accept('main', self.lease, name)
 
@@ -1972,7 +1990,7 @@ class AutonomyReportTests(AutonomyFixture):
         self.assertNotIn('old-failure', progress)  # failures recorded before arm are not this run's
         stored = self.engine.autonomy_report()
         self.assertEqual(stored['reason'], 'deadline')
-        self.assertEqual(stored['text'], progress.strip())
+        self.assertEqual(stored['text'], progress[progress.index('## Run brief'):].strip())  # the fixture's serial start comes first
         self.assertEqual(stored['path'], str(self.engine.state_dir / 'progress.md'))
 
     def test_report_appends_and_keeps_earlier_progress_lines(self):
@@ -2120,9 +2138,9 @@ class MaterialityTests(EngineFixture):
     def test_review_of_2_2_card_without_issues_refused(self):
         self.reported('a')
         self.assertEqual('2.2', self.engine.status()['tasks']['a']['rev'])
-        with self.assertRaisesRegex(EngineError, 'Review of 2.2 cards needs issues with severity'):
+        with self.assertRaisesRegex(EngineError, 'Review needs `issues`'):
             self.record('r', ['a'], None)
-        with self.assertRaisesRegex(EngineError, 'Review of 2.2 cards needs issues with severity'):
+        with self.assertRaisesRegex(EngineError, 'Review needs `issues`'):
             self.record('r2', ['a'], None, findings=['bug'])
 
     def test_review_of_migrated_card_keeps_string_findings(self):
@@ -2173,7 +2191,7 @@ class MaterialityTests(EngineFixture):
         self.reported('B1')
         self.task('V1', role='critic', mode='spec', files=['a'], resources=list(resources1), review_of=['B1'])
         self.task('V2', role='critic', mode='spec', files=['a'], resources=list(resources2), review_of=['B1'])
-        self.engine.dispatch('main', self.lease, 'V1', 'review-1')
+        self.engine.dispatch('main', self.lease, 'V1', 'review-1', serial='fixture: one card at a time')
 
     def test_two_read_only_reviews_on_same_file_do_not_collide(self):
         self.two_reviews()
@@ -2645,7 +2663,7 @@ class FixReviewTests(EngineFixture):
             self.task(name, mode='repair', repair_of='B' + name[1], files=['B' + name[1]])
         for name in ('R1', 'R2'):
             (self.repo / ('B' + name[1])).write_text('repaired')
-            self.engine.report(name.lower(), self.engine.dispatch('main', self.lease, name, name.lower()), done('Repaired'))
+            self.engine.report(name.lower(), self.engine.dispatch('main', self.lease, name, name.lower(), serial='fixture: one card at a time'), done('Repaired'))
 
     def test_fix_re_review_blaming_one_chain_still_accepts_the_other(self):
         self.two_chains()
@@ -2865,7 +2883,7 @@ class FinalReceiptTests(HoldFixture):
         for repair, target in (('R1', 'B1'), ('R2', 'B2')):
             self.task(repair, mode='repair', repair_of=target, files=[target])
             rounds.append(self.engine.status()['tasks'][repair]['final_round'])
-        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), done('Repaired'))
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1', serial='fixture: one card at a time'), done('Repaired'))
         self.task('R3', mode='repair', repair_of='B3', files=['B3'])
         rounds.append(self.engine.status()['tasks']['R3']['final_round'])
         self.assertEqual([1, 1, 2], rounds)
@@ -2999,6 +3017,55 @@ class SelfReviewTests(EngineFixture):
         with self.assertRaisesRegex(EngineError, 'A review covers this report'):
             self.engine.report('w-a', token, done('Second.'))
         self.assertIn('First.', self.engine.status()['tasks']['a']['report'])
+
+    def test_covered_report_takes_a_corrected_self_review_line_only(self):
+        # F32: a red-first check whose command text carries a note never matches its green run. After a review covers
+        # the report, the coordinator may correct only the SELF_REVIEW line; any other change still needs a repair card.
+        token = self.running()
+        red = [{'command': 'python3 -m unittest t (at base)', 'exit_code': 1, 'expect': 'fail'},
+               {'command': 'python3 -m unittest t', 'exit_code': 0}]
+        self.engine.report('w-a', token, done('First.', checks=red))
+        path = self.root / 'final-a.json'
+        self.review(path, tasks=['a'], categories=ALL_CATEGORIES, final=True)
+        self.engine.record_review('main', self.lease, 'reviewer', path, ALL_CATEGORIES, ['a'], final=True)
+        with self.assertRaisesRegex(EngineError, 'failing check'):
+            self.engine.accept('main', self.lease, 'a')
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('Changed body.'))
+        fixed = [dict(red[0], command='python3 -m unittest t'), red[1]]
+        self.engine.report('w-a', token, done('First.', checks=fixed))
+        self.assertIn('First.', self.engine.status()['tasks']['a']['report'])
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
+    def covered_report(self, checks=None, criteria=None):
+        token = self.running()
+        self.engine.report('w-a', token, done('First.', checks=checks, criteria=criteria))
+        path = self.root / 'final-a.json'
+        self.review(path, tasks=['a'], categories=ALL_CATEGORIES, final=True)
+        self.engine.record_review('main', self.lease, 'reviewer', path, ALL_CATEGORIES, ['a'], final=True)
+        return token
+
+    def test_covered_report_cannot_refresh_a_stale_artifact(self):
+        # PR4: re-sending the identical report after a file edit must not rebind the report to the new files.
+        token = self.covered_report()
+        (self.repo / 'a').write_text('changed after the review')
+        with self.assertRaisesRegex(EngineError, 'Reported artifact is stale'):
+            self.engine.accept('main', self.lease, 'a')
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('First.'))
+        with self.assertRaisesRegex(EngineError, 'Reported artifact is stale'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_covered_report_correction_cannot_flip_results(self):
+        # PR4 note: after a review, only check command strings may change; exit codes and met flags stay as reviewed.
+        failing = [{'command': 'python3 -m unittest t', 'exit_code': 1}]
+        token = self.covered_report(checks=failing)
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('First.', checks=[dict(failing[0], exit_code=0)]))
+        unmet = [{'criterion': 'check behavior', 'met': False, 'evidence': 'not yet'}]
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('First.', checks=failing, criteria=unmet))
 
     def test_non_builder_report_needs_no_self_review(self):
         self.task('look', role='investigator', mode='code', files=[])
@@ -3174,11 +3241,11 @@ class RouteTests(EngineFixture):
         self.assertNotIn('route', engine.status()['session'])
         self.add(engine, lease, 'b')
         self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[])  # a plan card is allowed
-        token = engine.dispatch('main', lease, 'b', 'w')  # no --helper, no plan card
+        token = engine.dispatch('main', lease, 'b', 'w', serial='fixture: one card at a time')  # no --helper, no plan card
         engine.report('w', token, done('Built b.'))
         engine.accept('main', lease, 'b')
         self.add(engine, lease, 'c')
-        engine.start_inline('main', lease, 'c')
+        engine.start_inline('main', lease, 'c', serial='fixture: one card at a time')
 
 
 class SizeRouteTests(EngineFixture):
@@ -3397,7 +3464,7 @@ class SizeRouteTests(EngineFixture):
                 with self.assertRaisesRegex(EngineError, 'Inline route'):
                     engine.dispatch('main', lease, 'b', 'w')  # the 2.4 route check, not the card size, decides
             else:
-                engine.dispatch('main', lease, 'b', 'w')
+                engine.dispatch('main', lease, 'b', 'w', serial='fixture: one card at a time')
             if name == 'legacy':
                 engine.dispatch('main', lease, 'c', 'x')  # a tiny card on a 2.3 run needs no helper
 
@@ -3422,7 +3489,7 @@ class SizeRouteTests(EngineFixture):
         engine.set_route('main', lease, None, 'grilling passed the ceiling', size='large')
         self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[])
         self.add(engine, lease, 'b')  # a large run does not force a plan before builders
-        engine.dispatch('main', lease, 'b', 'w')
+        engine.dispatch('main', lease, 'b', 'w', serial='fixture: one card at a time')
 
     def test_plan_card_allowed_with_session_owner_request(self):
         engine, lease = self.run_with('large', owner_request=True)
@@ -4879,11 +4946,11 @@ class RunHygieneTests(EngineFixture):
             add(name)
         engine.add_task('main', lease, dict(id='inv', role='investigator', mode='code', inputs=['s'], acceptance=['x'],
                                             files=[], resources=[], dependencies=[]))
-        engine.dispatch('main', lease, 'b1', 'w1')
-        engine.dispatch('main', lease, 'b2', 'w2')
+        engine.dispatch('main', lease, 'b1', 'w1', serial='fixture: one card at a time')
+        engine.dispatch('main', lease, 'b2', 'w2', serial='fixture: one card at a time')
         with self.assertRaisesRegex(EngineError, 'Worktree cap: 2'):
             engine.dispatch('main', lease, 'b3', 'w3')
-        engine.dispatch('main', lease, 'inv', 'wi')  # read-only roles do not count
+        engine.dispatch('main', lease, 'inv', 'wi', serial='fixture: one card at a time')  # read-only roles do not count
         engine.start_inline('main', lease, 'b3')  # inline cards do not count
         self.assertEqual(engine.status()['tasks']['b3']['state'], 'running')
 
@@ -4891,7 +4958,7 @@ class RunHygieneTests(EngineFixture):
         for name in ('b1', 'b2', 'b3', 'b4'):
             self.task(name)
         for name in ('b1', 'b2', 'b3'):
-            self.engine.dispatch('main', self.lease, name, 'w' + name)
+            self.engine.dispatch('main', self.lease, name, 'w' + name, serial='fixture: one card at a time')
         with self.assertRaisesRegex(EngineError, 'Worktree cap: 3'):
             self.engine.dispatch('main', self.lease, 'b4', 'wb4')
         for value in (0, -1, True, 1.5, '3'):
@@ -5821,7 +5888,7 @@ class DispatchDefaultTests(EngineFixture):
     def test_default_worker_is_still_reserved_and_never_the_coordinator(self):
         self.task('x')
         self.task('y')
-        self.engine.dispatch('main', self.lease, 'x')
+        self.engine.dispatch('main', self.lease, 'x', serial='fixture: one card at a time')
         with self.assertRaisesRegex(EngineError, 'Worker is already reserved'):
             self.engine.dispatch('main', self.lease, 'y', 'orchestra-x')
         with self.assertRaisesRegex(EngineError, 'Worker must differ from coordinator'):
@@ -5988,3 +6055,155 @@ class ReviewRecordingTests(EngineFixture):
         self.assertEqual((0, ''), (code, err), out)
         self.assertTrue(json.loads(out)['accepted'])
         self.assertEqual('accepted', self.engine.status()['tasks']['V1']['state'])
+
+    def test_cli_review_token_prints_the_receipt_without_entries(self):
+        token = self.final_card()
+        code, out, err = run_cli(self, '--lease', self.lease, 'review', str(self.final_file()), '--token', token)
+        self.assertEqual((0, ''), (code, err), out)
+        self.assertNotIn('entries', json.loads(out)['receipt'])
+        self.assertIn('entries', self.engine.status()['reviews'][0])
+
+
+class LandedWorkTests(HoldFixture):
+    """`finish` refuses an accepted builder card whose reported commit never reached HEAD."""
+
+    def side_commit(self, branch, name):
+        self.git('switch', '-qc', branch)
+        (self.repo / name).write_text(name)
+        self.git('add', name)
+        self.git('commit', '-qm', name)
+        sha = self.git('rev-parse', 'HEAD')
+        self.git('switch', '-q', '-')
+        return sha
+
+    def accepted(self, name, artifact):
+        self.task(name)
+        token = self.engine.dispatch('main', self.lease, name, 'w-' + name)
+        self.engine.report('w-' + name, token, done('Built %s\nARTIFACT: %s' % (name, artifact)))
+        self.engine.accept('main', self.lease, name)
+
+    def landed(self):
+        return {c['id']: c['landed'] for c in self.engine.view()['cards']}
+
+    def test_finish_refuses_until_the_reported_commit_is_in_head(self):
+        sha = self.side_commit('side', 'B3')
+        self.accepted('B3', sha + ' clean')
+        self.assertEqual(sha, self.engine.status()['tasks']['B3']['report_sha'])
+        self.reviewed('final', ['B3'], final=True, categories=self.ALL)
+        self.assertEqual({'B3': False}, self.landed())
+        with self.assertRaisesRegex(EngineError, r'^Accepted work is not in HEAD: B3 \(%s\); merge it, or hold the card$' % sha[:8]):
+            self.engine.close_session('main', self.lease)
+        self.git('merge', '-q', 'side')
+        self.assertEqual({'B3': True}, self.landed())
+        self.reviewed('final-2', ['B3'], final=True, categories=self.ALL)
+        self.engine.close_session('main', self.lease)
+
+    def test_patch_equivalent_work_counts_as_landed(self):
+        sha = self.side_commit('side', 'B4')
+        self.git('cherry-pick', sha)
+        self.accepted('B4', sha[:7] + ' clean')
+        self.assertEqual({'B4': True}, self.landed())
+
+    def test_a_report_without_a_commit_sha_is_not_checked(self):
+        for name, artifact in (('B5', 'deadbeef nonsense'), ('B6', 'fixture'), ('B7', '')):
+            self.accepted(name, artifact or self.git('rev-parse', 'HEAD')[:6] + ' clean')
+        self.assertEqual({'B5': None, 'B6': None, 'B7': None}, self.landed())
+        self.reviewed('final', [], final=True, categories=self.ALL)
+        self.engine.close_session('main', self.lease)
+
+
+class CliOutputSizeTests(EngineFixture):
+    """`review` and `status` leave the per-file `entries` map out; `status --full` keeps it."""
+
+    def test_receipts_print_without_entries_for_a_large_repository(self):
+        for n in range(500):
+            (self.repo / ('f%03d.txt' % n)).write_text(str(n))
+        self.git('add', '.')
+        self.git('commit', '-qm', 'many files')
+        path = self.root / 'final.json'
+        self.review(path, categories=ALL_CATEGORIES, final=True)
+        code, out, err = run_cli(self, '--lease', self.lease, 'review', str(path))
+        self.assertEqual((0, ''), (code, err), out)
+        self.assertNotIn('entries', json.loads(out))
+        self.assertEqual(500 + 1, len(self.engine.status()['reviews'][0]['entries']))  # state.json keeps the map
+        short, full = run_cli(self, 'status')[1], run_cli(self, 'status', '--full')[1]
+        self.assertNotIn('"entries"', short)
+        self.assertIn('"entries"', full)
+        self.assertLess(len(short) * 3, len(full))
+
+
+class NextStepRefusalTests(HoldFixture):
+    """Refusals name what to do next."""
+
+    def test_review_without_issues_names_the_field_and_its_shape(self):
+        self.built('B1')
+        with self.assertRaisesRegex(EngineError, r'^Review needs `issues`: a list of \{text, severity, impact\}, or \[\] when clean$'):
+            self.reviewed('r', ['B1'], mutate=lambda body: body.pop('issues'))
+
+    def test_final_review_coverage_names_the_missing_cards(self):
+        self.built('B1')
+        self.built('B2')
+        with self.assertRaisesRegex(EngineError, 'Final review must explicitly cover every task; missing: B1, B2$'):
+            self.reviewed('partial', [], final=True, cover=False)
+
+    def test_finish_with_findings_names_the_repair_and_finding_routes(self):
+        self.built('B1')
+        self.engine.accept('main', self.lease, 'B1')
+        self.reviewed('final', ['B1'], findings=['f'], task_findings={'B1': ['f']}, final=True, categories=self.ALL)
+        with self.assertRaisesRegex(EngineError, r'^Current final review has findings; add a repair card \(`repair_of`\) '
+                                                 r'or record the finding with `finding add`$'):
+            self.engine.close_session('main', self.lease)
+
+    def test_finish_with_unaccepted_cards_names_them_and_their_states(self):
+        self.built('B1')
+        self.task('B2', files=['B2'])
+        self.engine.dispatch('main', self.lease, 'B2', 'w-B2')
+        with self.assertRaisesRegex(EngineError, r'^All tasks must be accepted: B1 \(reported\), B2 \(running\)$'):
+            self.engine.close_session('main', self.lease)
+
+    def test_finish_with_held_tips_names_the_cleared_route(self):
+        self.blocked_chain()
+        self.engine.hold('main', self.lease, 'R1', 'g')
+        with self.assertRaisesRegex(EngineError, r'B1 \(held\), R1 \(held\).*a CLEAN final review with `cleared` closes'):
+            self.engine.close_session('main', self.lease)
+
+    def test_a_start_refusal_says_why_the_card_is_not_ready(self):
+        self.task('a')
+        self.task('b', dependencies=['a'])
+        for task_id, why in (('nope', 'unknown task nope'), ('b', 'open dependencies: a')):
+            with self.subTest(task_id), self.assertRaisesRegex(EngineError, '^Task is not ready or capacity is exhausted: ' + why):
+                self.engine.dispatch('main', self.lease, task_id, 'w')
+        self.engine = Engine(self.root / 'capacity', self.repo, dict(schema_version=1, max_workers=1))
+        self.lease = self.engine.open_session('main')
+        self.task('a')
+        self.engine.dispatch('main', self.lease, 'a', 'w')
+        self.task('c', files=['c'])
+        with self.assertRaisesRegex(EngineError, '^Task is not ready or capacity is exhausted: 1 of 1 workers running$'):
+            self.engine.dispatch('main', self.lease, 'c', 'w2')
+
+    def test_task_lists_default_to_empty_and_missing_lists_say_missing(self):
+        self.engine.add_task('main', self.lease, dict(id='t', role='builder', mode='implementation', inputs=['s'], acceptance=['x']))
+        stored = self.engine.status()['tasks']['t']
+        self.assertEqual(([], [], []), (stored['files'], stored['resources'], stored['dependencies']))
+        for key in ('inputs', 'acceptance'):
+            task = dict(id='u', role='builder', mode='implementation', inputs=['s'], acceptance=['x'])
+            del task[key]
+            with self.subTest(key), self.assertRaisesRegex(EngineError, '^Missing task ' + key + '$'):
+                self.engine.add_task('main', self.lease, task)
+
+
+class RestartReceiptTests(EngineFixture):
+    def test_plain_start_lists_the_requeued_cards(self):
+        self.task('a')
+        self.engine.dispatch('main', self.lease, 'a', 'w')
+        self.engine.interrupt('main', self.lease)
+        code, out, err = run_cli(self, 'start')
+        self.assertEqual((0, ''), (code, err), out)
+        self.assertEqual(['a'], json.loads(out)['requeued'])
+
+    def test_recover_for_another_session_names_the_crash_route(self):
+        self.engine.interrupt('main', self.lease)
+        self.engine.open_session('main', harness_session='H1')
+        with self.assertRaisesRegex(EngineError, r'another session.*read session.lease from %s, then `interrupt --lease LEASE`'
+                                    % re.escape(str(self.engine.state_dir / 'state.json'))):
+            self.engine.recover_lease('main', 'H2')

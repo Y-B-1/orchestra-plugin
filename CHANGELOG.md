@@ -2,6 +2,25 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.13.0 — 2026-10-24
+
+Parallel waves, a live Kanban board with native task sync, and a guard that leaves permission decisions to Claude Code.
+
+- **Guard mode `minimal`, the new default:** Orchestra stops second-guessing Claude Code's permission mode. Generic command rules (destructive git, `rm`, force push, reset, branch-delete proofs, chained or malformed shell, PowerShell rules) no longer run outside autonomy. Orchestra keeps only what Claude Code cannot know: the autonomy and unattended locks, engine state and runtime protection, worker role limits and the approval-forgery check. `normal` and `protect` stay as opt-in modes.
+- **No hook ever asks:** no Orchestra hook returns an ask, so no "Allow once" prompt comes from Orchestra in any mode. Protect mode's release check now denies and names the permit or the owner's `approved`.
+- **Parallel waves checkpoint:** `orchestra.py waves` prints reservation overlaps, dependency chains, the waves and the cards startable now. `wave [--inline ID] ID ...` starts a whole wave in one step, all or nothing. `dispatch` and `inline` refuse a lone start while another disjoint card could start beside it; `--serial REASON` overrides and is logged. Policy `parallel_waves: false` turns the refusal off.
+- **Live Kanban board:** `/orchestra-board` is a live pane with the columns queued, running, reported, repairing, held, parked and accepted. It refreshes on engine commands and worker events, links each card to its agent and Workflow run, and stacks the columns on a phone. `board --view` gives the same data as JSON without a lease and without hashing files.
+- **Native task sync:** when the session exposes `TaskCreate`, `TaskUpdate` and `TaskList`, the board mirrors each card as a native task with status, owner and blocked-by, so the app's task list matches the coordinator's board.
+- **Accepted work must land:** `report` records the commit named on the `ARTIFACT:` line, and `finish` refuses while accepted work is neither in HEAD nor patch-equivalent. The board shows `landed` per card.
+- **Locks the audit found open, now closed:** while autonomy is active or the unattended lock holds, a shell write to Orchestra's state, a local move of the default branch (`git branch -f main`, `git update-ref`, switching to main and merging) and, when unattended, a tag delete are denied. A state file without a valid session no longer reads as no run.
+- **The merge guard runs in every mode:** after `approved`, the printed merges are checked for order, head and form in `minimal` too.
+- **Routine autonomous work:** `git commit ... && git push -u origin <feature>` is judged by its push, and deleting git-ignored files in the run repository is allowed.
+- **Clearer output and refusals:** `wave --inline X Y Z` works as printed and names its workers; `status` and `review` drop per-file digests (`status --full` keeps them); refusals name the blocking card and the next command; task lists default to `[]`; `start` lists requeued cards; a malformed policy names its file; SessionStart says a run is live, and the Stop hook says why autonomy stopped.
+- **Closed by the pre-PR review:** native task sync turns on only when `TaskCreate`, `TaskUpdate` and `TaskList` are all allowed without asking; under `minimal` the mod keeps reading autonomy status while autonomy is off, and the Python hook checks the lock state before it skips a mod-guarded call, so an arm from a terminal is enforced; a delete through an ignored symlink with a trailing slash (`rm -rf build/`) is checked at the folder the link points to.
+- **Engine fixes found by using 2.13 on itself:** overlapping queued repairs no longer block each other (the lowest id starts first); after a review covers a builder report, the coordinator may correct only the command text of its `SELF_REVIEW` checks, and only while the reviewed files are unchanged.
+- **Smaller fixes:** `NotebookEdit` is guarded; the mod marker follows `ORCHESTRA_STATE_DIR`; review packages under the state directory are writable; reviewer test-suite reruns stay a worker role limit in `minimal`, and heredoc text no longer counts as a suite run.
+- **Working rules from the skill sources:** a builder lists each test, CI, timeout, snapshot or skip change on its own line; the final reviewer gives each such change a disposition and checks sibling call sites for each confirmed finding; a flaky test gets no retry, timeout or skip until its cause is named.
+
 ## 2.12.0 — 2026-10-23
 
 Fixes for the friction met while using Orchestra to ship 2.11.0. None of them lets a card be accepted or a command run on less evidence than before.

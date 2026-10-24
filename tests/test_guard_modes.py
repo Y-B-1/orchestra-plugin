@@ -102,32 +102,32 @@ class GuardMatrixTest(RepoCase):
     def test_row_24_release_multi(self):
         command = 'git push origin x && gh pr create'
         self.rows(command, {'normal': 'allow', 'protect': 'allow'})  # no run
-        self.rows(command, {'normal': 'allow', 'protect': 'ask'}, armed=True)
+        self.rows(command, {'normal': 'allow', 'protect': 'deny'}, armed=True)
         self.rows(command, {'normal': 'deny', 'protect': 'deny'}, armed=True, autonomy=True)
 
     def test_rows_27_46_50_n1_release_class(self):
         for command in ('gh pr merge 3', 'git push origin main', 'gh release create v1', 'npm publish'):
             self.rows(command, {'normal': 'allow', 'protect': 'allow'})
-            self.rows(command, {'normal': 'allow', 'protect': 'ask'}, armed=True)
+            self.rows(command, {'normal': 'allow', 'protect': 'deny'}, armed=True)
             self.rows(command, {'normal': 'deny', 'protect': 'deny'}, armed=True, autonomy=True)
 
     def test_row_50_release_with_a_loaded_engine_and_no_permit(self):
-        self.rows('git push origin main', {'normal': 'allow', 'protect': 'ask'}, engine=FakeEngine())
+        self.rows('git push origin main', {'normal': 'allow', 'protect': 'deny'}, engine=FakeEngine())
         self.rows('git push origin main', {'normal': 'allow', 'protect': 'allow'}, engine=FakeEngine(permit=True))
 
-    def test_row_51_normal_never_asks(self):
+    def test_row_51_no_mode_asks(self):
         for command in ('git push origin main', 'gh pr merge 3', 'gh workflow run deploy.yml', 'gh pr edit 3 --base main',
                         'git push origin x && gh pr create', 'gh api -X DELETE repos/o/r', 'gh prm 12'):
             with self.subTest(command=command):
                 self.assertNotEqual(verdict(self.bash(command, 'normal', armed=True)), 'ask')
                 self.assertNotEqual(verdict(self.bash(command, 'normal', engine=FakeEngine())), 'ask')
-                self.assertEqual(verdict(self.bash(command, 'protect', armed=True)), 'ask')
+                self.assertEqual(verdict(self.bash(command, 'protect', armed=True)), 'deny')
 
     def test_n10_n11_n13_new_release_classes(self):
         for command in ('gh pr edit 3 --base main', 'gh prm 12', 'gh api -X DELETE repos/o/r',
                         'gh api -X PATCH repos/o/r -f default_branch=x'):
             self.rows(command, {'normal': 'allow', 'protect': 'allow'})
-            self.rows(command, {'normal': 'allow', 'protect': 'ask'}, armed=True)
+            self.rows(command, {'normal': 'allow', 'protect': 'deny'}, armed=True)
             self.rows(command, {'normal': 'deny', 'protect': 'deny'}, armed=True, autonomy=True)
         self.rows('gh alias set x y', {'normal': 'allow', 'protect': 'allow'}, armed=True)  # config boundary
         self.rows('gh alias set x y', {'normal': 'deny', 'protect': 'deny'}, armed=True, autonomy=True)
@@ -294,23 +294,23 @@ class WorkflowRunTest(RepoCase):
         return verdict(self.bash('gh workflow run ' + name, mode, state_dir=state_dir, **kw))
 
     def test_non_release_name_with_local_file_downgrades_to_allow(self):
-        self.assertEqual(self.workflow('ci.yml', armed=True), 'allow')  # protect would ask for a release
-        self.assertEqual(self.workflow('other', create=False, armed=True), 'ask')  # no such file
+        self.assertEqual(self.workflow('ci.yml', armed=True), 'allow')  # protect would deny a release
+        self.assertEqual(self.workflow('other', create=False, armed=True), 'deny')  # no such file
         self.assertEqual(self.workflow('ci', create=False, armed=True), 'allow')  # the name is a file stem
         self.assertEqual(self.workflow('ci.yml', mode='normal', armed=True), 'allow')
 
     def test_release_name_stays_release(self):
         for name in ('release.yml', 'publish-docs.yml', 'deploy.yaml', 'Release.yml'):
             with self.subTest(name=name):
-                self.assertEqual(self.workflow(name, armed=True), 'ask')
-                self.assertEqual(self.workflow(name, mode='normal', armed=True), 'allow')  # normal never asks
+                self.assertEqual(self.workflow(name, armed=True), 'deny')
+                self.assertEqual(self.workflow(name, mode='normal', armed=True), 'allow')  # normal allows a release
 
     def test_missing_workflow_file_stays_release(self):
-        self.assertEqual(self.workflow('nothing.yml', create=False, armed=True), 'ask')
+        self.assertEqual(self.workflow('nothing.yml', create=False, armed=True), 'deny')
         self.assertEqual(self.workflow('nothing.yml', create=False, armed=True, autonomy=True), 'deny')
 
     def test_a_command_with_no_name_stays_release(self):
-        self.assertEqual(verdict(self.bash('gh workflow run', 'protect', armed=True)), 'ask')
+        self.assertEqual(verdict(self.bash('gh workflow run', 'protect', armed=True)), 'deny')
 
     def test_autonomy_denies_every_name(self):
         for name in ('ci.yml', 'release.yml'):
@@ -323,18 +323,18 @@ class WorkflowRunTest(RepoCase):
         state = self.root / 'state'
         state.mkdir()
         (state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'release_workflows': ['nightly*']}))
-        self.assertEqual(self.workflow('nightly.yml', armed=True, state_dir=str(state)), 'ask')
+        self.assertEqual(self.workflow('nightly.yml', armed=True, state_dir=str(state)), 'deny')
         self.assertEqual(self.workflow('release.yml', armed=True, state_dir=str(state)), 'allow')
         engine = FakeEngine()
         engine.policy = {'release_workflows': ['ci*']}
-        self.assertEqual(self.workflow('ci.yml', engine=engine), 'ask')
+        self.assertEqual(self.workflow('ci.yml', engine=engine), 'deny')
         self.assertEqual(self.workflow('release.yml', engine=engine), 'allow')
 
     def test_a_malformed_release_workflows_value_keeps_the_default_globs(self):
         state = self.root / 'state'
         state.mkdir()
         (state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'release_workflows': 'ci*'}))
-        self.assertEqual(self.workflow('release.yml', armed=True, state_dir=str(state)), 'ask')
+        self.assertEqual(self.workflow('release.yml', armed=True, state_dir=str(state)), 'deny')
 
     def test_a_workflow_name_with_a_path_or_glob_is_never_downgraded(self):
         (self.repo / '.github' / 'workflows').mkdir(parents=True)
@@ -354,19 +354,23 @@ class ModeResolutionTest(unittest.TestCase):
     def policy(self, text):
         (self.dir / 'policy.json').write_text(text)
 
-    def test_no_policy_file_is_normal(self):
-        self.assertEqual(_guard_mode(self.dir), 'normal')
-        self.assertEqual(_guard_mode(str(self.dir / 'missing')), 'normal')
+    def test_no_policy_file_is_minimal(self):
+        self.assertEqual(_guard_mode(self.dir), 'minimal')
+        self.assertEqual(_guard_mode(str(self.dir / 'missing')), 'minimal')
+
+    def test_minimal(self):
+        self.policy(json.dumps({'schema_version': 1, 'guard_mode': 'minimal'}))
+        self.assertEqual(_guard_mode(self.dir), 'minimal')
 
     def test_protect(self):
         self.policy(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
         self.assertEqual(_guard_mode(self.dir), 'protect')
 
-    def test_normal_and_key_absent_are_normal(self):
+    def test_normal_is_normal_and_key_absent_is_minimal(self):
         self.policy(json.dumps({'schema_version': 1, 'guard_mode': 'normal'}))
         self.assertEqual(_guard_mode(self.dir), 'normal')
         self.policy(json.dumps({'schema_version': 1, 'worker_stale_seconds': 900}))
-        self.assertEqual(_guard_mode(self.dir), 'normal')
+        self.assertEqual(_guard_mode(self.dir), 'minimal')
 
     def test_corrupt_file_is_protect(self):
         for text in ('{not json', '', '[]', '"protect"', json.dumps({'guard_mode': 'normal'}),
@@ -390,8 +394,8 @@ class ModeResolutionTest(unittest.TestCase):
         self.assertFalse((self.dir / 'state.json').exists())
         self.assertEqual(_guard_mode(self.dir), 'protect')
 
-    def test_no_state_dir_is_normal(self):
-        self.assertEqual(_guard_mode(None), 'normal')
+    def test_no_state_dir_is_minimal(self):
+        self.assertEqual(_guard_mode(None), 'minimal')
 
 
 class MainPathDefaultsTest(RepoCase):
@@ -412,7 +416,13 @@ class MainPathDefaultsTest(RepoCase):
             code = main([event])
             return code, json.loads(output.getvalue())
 
-    def test_no_policy_file_main_path_is_normal(self):
+    def test_no_policy_file_main_path_is_minimal(self):
+        for command in ('git stash', 'git add -A', 'git reset --hard'):
+            with self.subTest(command=command):
+                self.assertEqual(self.call(command), (0, {}))
+
+    def test_normal_policy_main_path_warns(self):
+        (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'normal'}))
         code, output = self.call('git stash')
         self.assertEqual(code, 0)
         self.assertNotIn('permissionDecision', output.get('hookSpecificOutput', {}))
@@ -430,15 +440,17 @@ class MainPathDefaultsTest(RepoCase):
         self.assertEqual(self.call('git stash')[1]['hookSpecificOutput']['permissionDecision'], 'deny')
 
     def test_policy_is_read_live_on_each_call(self):
+        self.assertEqual(self.call('git stash')[1], {})
+        (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'normal'}))
         self.assertIn('additionalContext', self.call('git stash')[1]['hookSpecificOutput'])
         (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
         self.assertEqual(self.call('git stash')[1]['hookSpecificOutput']['permissionDecision'], 'deny')
 
-    def test_a_run_with_policy_guard_mode_protect_asks_for_a_release(self):
+    def test_a_run_with_policy_guard_mode_protect_denies_a_release(self):
         (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
         subprocess.run([sys.executable, str(Path(hooks_module.__file__).resolve().parents[1] / 'orchestra.py'), '--repo',
                         str(self.repo), 'start', '--size', 'medium'], env=os.environ, capture_output=True, text=True, check=True)
-        self.assertEqual(self.call('git push origin main')[1]['hookSpecificOutput']['permissionDecision'], 'ask')
+        self.assertEqual(self.call('git push origin main')[1]['hookSpecificOutput']['permissionDecision'], 'deny')
         (self.state / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'normal'}))
         self.assertEqual(self.call('git push origin main')[1], {})
 
@@ -457,11 +469,12 @@ class ModDelegationTest(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name).resolve()
         self.xdg, self.cwd = root / 'xdg', root / 'cwd'
-        (self.xdg / 'orchestra' / 'mods').mkdir(parents=True)
+        mods = root / 'state' / 'mods'  # GF10: with ORCHESTRA_STATE_DIR set the markers live under it
+        mods.mkdir(parents=True)
         self.cwd.mkdir()
         data = {'session_id': 's1', 'heartbeat_ms': int(time.time() * 1000), 'plugin_version': '2.0.0',
                 'rules_sha256': guard_digest()}
-        (self.xdg / 'orchestra' / 'mods' / 's1.json').write_text(json.dumps(data))
+        (mods / 's1.json').write_text(json.dumps(data))
         patcher = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(self.xdg), 'ORCHESTRA_STATE_DIR': str(root / 'state')})
         patcher.start()
         self.addCleanup(patcher.stop)
@@ -503,7 +516,7 @@ class ModDelegationTest(unittest.TestCase):
         code, output = self.call('git stash', '--from-mod')
         self.assertEqual(code, 0)
         self.assertNotIn('permissionDecision', output.get('hookSpecificOutput', {}))
-        (Path(os.environ['ORCHESTRA_STATE_DIR'])).mkdir()
+        (Path(os.environ['ORCHESTRA_STATE_DIR'])).mkdir(exist_ok=True)
         (Path(os.environ['ORCHESTRA_STATE_DIR']) / 'policy.json').write_text(json.dumps({'schema_version': 1, 'guard_mode': 'protect'}))
         code, output = self.call('git stash', '--from-mod')
         self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
@@ -586,6 +599,140 @@ class SoftenedCompoundTest(tm.MergeFixture):
                             ("echo $'\\''; git add -A; gh pr merge 7 --admin # '", state)):
             with self.subTest(command=command):
                 self.assertEqual(self.verdict(command, **kw), 'deny')
+
+
+class MinimalModeTest(RepoCase):
+    """`minimal` (the default) leaves generic command classification to Claude Code's permission mode and keeps only
+    the denials Claude Code cannot know: the autonomy and unattended locks, state and runtime protection, worker role
+    limits and the approval-forgery check."""
+
+    GENERIC = ('git reset --hard', 'git push --force origin x', 'git branch -D x', 'rm -rf build',
+               'cd x; git push origin --delete y | tail -1', 'git clean -fd', 'git checkout -- .', 'git stash',
+               'git push origin main', 'gh pr merge 3', 'gh release create v1', 'npm publish')
+
+    def test_generic_commands_are_allowed(self):
+        for command in self.GENERIC:
+            for kw in ({}, {'armed': True}, {'engine': FakeEngine()}):
+                with self.subTest(command=command, run=sorted(kw)):
+                    self.assertEqual(verdict(self.bash(command, 'minimal', **kw)), 'allow')
+
+    def test_the_same_commands_still_deny_in_protect(self):
+        for command in ('git reset --hard', 'git push --force origin x', 'cd x; git push origin --delete y | tail -1'):
+            with self.subTest(command=command):
+                self.assertEqual(verdict(self.bash(command, 'protect')), 'deny')
+
+    def test_powershell_is_allowed_too(self):
+        payload = {'tool_name': 'PowerShell', 'tool_input': {'command': 'git reset --hard'}, 'cwd': str(self.repo)}
+        self.assertEqual(handle_event('PreToolUse', payload, mode='minimal').output, {})
+
+    def test_a_shell_call_without_a_command_still_denies(self):
+        payload = {'tool_name': 'Bash', 'tool_input': {}, 'cwd': str(self.repo)}
+        self.assertEqual(handle_event('PreToolUse', payload, mode='minimal').exit_code, 2)
+
+    def edit(self, path, state, **kw):
+        payload = {'tool_name': 'Write', 'tool_input': {'file_path': str(path), 'content': 'x'}, 'cwd': str(self.repo)}
+        return verdict(handle_event('PreToolUse', payload, mode='minimal', state_dir=str(state), **kw))
+
+    def test_state_and_runtime_edits_are_denied(self):
+        state = self.root / 'state'
+        state.mkdir()
+        for path in (state / 'state.json', state / 'policy.json', self.repo / '.claude' / 'hooks.json'):
+            with self.subTest(path=path.name):
+                self.assertEqual(self.edit(path, state), 'deny')
+        self.assertEqual(self.edit(self.repo / 'notes.md', state), 'allow')
+
+    def test_the_autonomy_ledger_is_locked_while_autonomy_is_armed(self):
+        state = self.root / 'state'
+        state.mkdir()
+        self.assertEqual(self.edit(state / 'autonomy.md', state), 'allow')
+        self.assertEqual(self.edit(state / 'autonomy.md', state, engine=FakeEngine(autonomy=True)), 'deny')
+
+    def test_autonomy_switch_is_denied_under_autonomy(self):
+        for command in ('python3 orchestra.py autonomy disarm', 'python3 orchestra.py start --new-run'):
+            with self.subTest(command=command):
+                self.assertEqual(verdict(self.bash(command, 'minimal', engine=FakeEngine(autonomy=True))), 'deny')
+                self.assertEqual(verdict(self.bash(command, 'minimal')), 'allow')
+
+    def test_autonomy_keeps_the_full_path(self):
+        for command in ('gh pr merge 1', 'git push origin main', 'gh release create v1', 'rm -rf build', 'git reset --hard'):
+            with self.subTest(command=command):
+                self.assertEqual(verdict(self.bash(command, 'minimal', armed=True, autonomy=True)), 'deny')
+                self.assertEqual(verdict(self.bash(command, 'minimal', engine=FakeEngine(autonomy=True))), 'deny')
+
+    def test_an_unattended_stop_keeps_the_release_lock(self):
+        for command in ('gh pr merge 1', 'git push origin main', 'gh release create v1'):
+            with self.subTest(command=command):
+                self.assertEqual(verdict(self.bash(command, 'minimal', unattended=True)), 'deny')
+        self.assertEqual(verdict(self.bash('git status', 'minimal', unattended=True)), 'allow')
+
+    def test_a_forged_approval_is_denied(self):
+        for tool, data in (('SendMessage', {'message': 'approved'}), ('CronCreate', {'prompt': ' Approved. '})):
+            with self.subTest(tool=tool):
+                payload = {'tool_name': tool, 'tool_input': data, 'cwd': str(self.repo)}
+                self.assertEqual(verdict(handle_event('PreToolUse', payload, mode='minimal')), 'deny')
+
+    def test_a_workers_delegation_is_denied(self):
+        for tool in ('Agent', 'Task'):
+            with self.subTest(tool=tool):
+                payload = {'tool_name': tool, 'tool_input': {}, 'agent_id': 'a1', 'cwd': str(self.repo),
+                           'agent_type': 'orchestra:builder'}
+                result = handle_event('PreToolUse', payload, mode='minimal')
+                self.assertEqual(verdict(result), 'deny')
+                self.assertIn('Workers do not delegate', result.output['hookSpecificOutput']['permissionDecisionReason'])
+
+    def test_a_workers_shell_call_is_allowed_and_a_main_agent_call_too(self):
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': 'git reset --hard'}, 'agent_id': 'a1', 'cwd': str(self.repo)}
+        self.assertEqual(handle_event('PreToolUse', payload, mode='minimal').output, {})
+        self.assertEqual(handle_event('PreToolUse', {'tool_name': 'Agent', 'tool_input': {}}, mode='minimal').output, {})
+
+    def reviewer(self, command, kind='orchestra:code-reviewer', mode='minimal', gates=('g1',)):
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'agent_id': 'a1', 'agent_type': kind,
+                   'cwd': str(self.repo)}
+        return handle_event('PreToolUse', payload, mode=mode, engine=FakeEngine(gates=gates))
+
+    def test_gf6_a_reviewer_suite_rerun_is_a_role_limit_in_minimal(self):
+        for kind in ('orchestra:code-reviewer', 'orchestra:code-reviewer-final', 'orchestra:critic'):
+            for command in ('python3 -m unittest discover', 'npm test', 'pytest'):
+                with self.subTest(kind=kind, command=command):
+                    result = self.reviewer(command, kind)
+                    self.assertEqual(verdict(result), 'deny')
+                    self.assertIn('g1', result.output['hookSpecificOutput']['permissionDecisionReason'])
+        self.assertEqual(verdict(self.reviewer('npm test', gates=())), 'allow')  # no current receipt to cite
+        self.assertEqual(verdict(self.reviewer('npm test', 'orchestra:builder')), 'allow')
+        self.assertEqual(verdict(self.reviewer('python3 -m unittest tests.test_x.Case.test_y')), 'allow')  # a probe
+
+    def test_gf6_heredoc_text_is_not_a_suite_run(self):
+        from orchestra_core.guards import runs_test_suite
+        notes = "cat > notes.txt <<'EOF'\nnpm test\npytest\nEOF"
+        commit = "git commit -F - <<'EOF'\nFix the hook\n\nVerified with npm test and python3 -m unittest discover\nnpm test\nEOF"
+        for command in (notes, commit, 'cat <<EOF > routine.txt\nnpm test\nEOF', "tee a.txt <<-'X'\n\tgo test ./...\n\tX"):
+            with self.subTest(command=command):
+                self.assertFalse(runs_test_suite(command))
+                for mode in ('minimal', 'normal', 'protect'):
+                    self.assertEqual(verdict(self.reviewer(command, 'orchestra:critic', mode)), 'allow')
+        for command in ("bash <<'EOF'\nnpm test\nEOF", "npm test <<'EOF'\nx\nEOF", "cat > a <<'EOF'\nx\nEOF\nnpm test",
+                        "sh -s <<EOF\npytest\nEOF", "python3 - <<'EOF'\nimport os\nEOF\npytest"):
+            with self.subTest(command=command, suite=True):
+                self.assertTrue(runs_test_suite(command))
+
+    def test_gf7_a_foreign_agent_during_a_run_warns_with_the_reason(self):
+        payload = {'tool_name': 'Agent', 'tool_input': {'subagent_type': 'general-purpose'}, 'cwd': str(self.repo)}
+        result = handle_event('PreToolUse', payload, mode='minimal', engine=FakeEngine())
+        self.assertEqual(verdict(result), 'warn')
+        text = result.output['hookSpecificOutput']['additionalContext']
+        self.assertIn('orchestra:', text)
+        self.assertIn('because', text)
+        self.assertIn('standing orders', text)
+
+    def test_no_mode_ever_asks(self):
+        source = Path(hooks_module.__file__).read_text()
+        self.assertNotRegex(source, r"""['"]ask['"]""")
+        self.assertNotIn('def _ask', source)
+        for mode in ('minimal', 'normal', 'protect'):
+            for command in self.GENERIC + ('gh prm 12', 'gh workflow run deploy.yml', 'git push origin x && gh pr create'):
+                for kw in ({}, {'armed': True}, {'engine': FakeEngine()}, {'armed': True, 'autonomy': True}):
+                    with self.subTest(mode=mode, command=command, run=sorted(kw)):
+                        self.assertNotEqual(verdict(self.bash(command, mode, **kw)), 'ask')
 
 
 if __name__ == '__main__':

@@ -29,6 +29,8 @@ With a single lens, set `categories` in the verdict to the row for your lens and
 - Find contracts that two tickets each assume differently.
 - Find the same symbol or file changed by more than one ticket.
 - Confirm that every requirement in the approved ask is met by code in the diff.
+- Give each reported gate edit (test, CI step, timeout, snapshot, skip) a disposition: justified or a finding.
+- For each confirmed finding, grep its pattern at sibling call sites and rate on the worst.
 - Cite the operator's gate receipt in `gate_receipts`. Run no full suite; the guard denies suite commands while a current receipt exists. A cited failed receipt is a blocking finding for the correctness lens.
 
 ## Attribution

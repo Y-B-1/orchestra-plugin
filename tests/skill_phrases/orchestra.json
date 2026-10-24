@@ -59,8 +59,8 @@
     "references/wayfinder.md",
     "largest ask",
     "by file",
-    "build every unit inline in sequence",
+    "run `waves` and start each wave whole",
     "start your inline card in the same turn",
-    "only a large run sends 2+ independent units to builders"
+    "`--serial reason` overrides"
   ]
 }

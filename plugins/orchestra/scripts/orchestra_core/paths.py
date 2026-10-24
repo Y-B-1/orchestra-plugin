@@ -77,7 +77,10 @@ def load_policy(state_dir):
     path = Path(state_dir)/'policy.json'
     if not path.exists():
         return None
-    data = json.loads(path.read_text())
+    try:
+        data = json.loads(path.read_text())
+    except json.JSONDecodeError as exc:
+        raise ValueError('Invalid project policy %s: %s' % (path, exc)) from None
     if not isinstance(data,dict) or data.get('schema_version') != 1:
         raise ValueError('Invalid project policy')
     return data

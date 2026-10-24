@@ -374,7 +374,7 @@ Worker agent body (generated) contains two things only:
 
 The body has no "Read references/…" or "Read SKILL.md" lines and no inlined method or contract text.
 
-The orchestrator body inlines `orchestra/references/coordination.md` and `orchestra/references/briefs.md`, because they are the binding main-thread contract. `briefs.md` is the coordinator's guide to writing briefs (with Pocock writing-for-agents ideas) and no longer goes into worker bodies. Whether `skills:` preloads on a `settings.agent` main thread is UNVERIFIED; the SessionStart context also names the skill path, so the main thread has the core either way.
+The orchestrator body inlines `orchestra/references/coordination.md` and `orchestra/references/briefs.md`, because they are the binding main-thread contract. `briefs.md` is the coordinator's guide to writing briefs (with Pocock writing-for-agents ideas) and no longer goes into worker bodies. Whether `skills:` preloads on a `settings.agent` main thread: probed in the 2.13 audit, it did not (the coordinator reads SKILL.md itself); the SessionStart context also names the skill path, so the main thread has the core either way.
 
 Briefs carry a `Mode:` line. The engine checks it cheaply: when a card names a `brief` file (the existing optional field), `add_task` requires a line `Mode: <card mode>` in that file and rejects the card otherwise. Cards without a `brief` file are unchanged.
 

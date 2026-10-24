@@ -214,6 +214,12 @@ class SkillTreeTests(unittest.TestCase):
                 self.assertLessEqual(len(read(rel).encode()), 6144, rel)
         self.assertLessEqual(len(read('orchestra/references/briefs.md').encode()), 1800)
 
+    def test_no_positional_placeholder_in_shipped_text(self):
+        # Claude Code substitutes $0-$9 in skill and agent text, so a literal one silently changes meaning.
+        shipped = [SKILLS / rel for rel in files()] + sorted((PLUGIN / 'agents').glob('*.md'))
+        for path in shipped:
+            self.assertIsNone(re.search(r'\$[0-9]', path.read_text()), path)
+
     def test_generated_agent_budgets(self):
         agents = sorted((PLUGIN / 'agents').glob('*.md'))
         self.assertLessEqual((PLUGIN / 'agents/orchestrator.md').stat().st_size, 10500)

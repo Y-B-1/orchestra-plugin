@@ -61,7 +61,7 @@ class WorkflowIntegration(unittest.TestCase):
             cmd+=['--lease',self.lease]
         args=list(args)
         if args[:1]==['dispatch']:  # a helper is accepted and ignored on a medium card
-            args+=['--helper','fixture helper']
+            args+=['--helper','fixture helper','--serial','fixture: one card at a time']
         if args[:1]==['report']:
             path=Path(args[3])
             if 'SELF_REVIEW:' not in path.read_text():
@@ -388,8 +388,8 @@ class LinkedWorktreeHook(unittest.TestCase):
         self.assertIsNone(self.hook(self.linked,command))
         lease=json.loads(subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'start','--size','medium'],env=self.env,
                                         capture_output=True,text=True,check=True).stdout)['lease']
-        self.assertEqual(self.hook(self.linked,command),'ask')
-        self.assertEqual(self.hook(self.repo,command),'ask')
+        self.assertEqual(self.hook(self.linked,command),'deny')
+        self.assertEqual(self.hook(self.repo,command),'deny')
         self.assertIsNone(self.hook(self.linked,'git status'))
         subprocess.run([sys.executable,str(CLI),'--repo',str(self.repo),'--lease',lease,'interrupt'],env=self.env,
                        capture_output=True,text=True,check=True)
@@ -503,7 +503,7 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.assertFalse((self.state/'history').exists())
         (self.state/'policy.json').write_text(json.dumps({'schema_version':1,'guard_mode':'protect'}))  # T2a1: normal never asks
         push=self.hook('PreToolUse',tool_name='Bash',tool_input={'command':'git push origin main'})
-        self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'ask')  # the run stays armed; the user is asked
+        self.assertEqual(push['hookSpecificOutput']['permissionDecision'],'deny')  # the run stays armed; Orchestra never asks
 
     def test_new_run_refuses_an_active_run_under_the_current_policy(self):
         self.cli('start')
@@ -531,8 +531,9 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.hook('SessionEnd',session_id='S',reason='prompt_input_exit')
         self.assertTrue(self.session()['active'])
         where=self.cli('where')
-        self.assertEqual(set(where),{'repo','state','standing_orders'})
-        self.assertEqual((where['repo'],where['state'],where['standing_orders']),(str(self.repo),str(self.state),False))
+        self.assertEqual(set(where),{'repo','state','standing_orders','guard_mode'})
+        self.assertEqual((where['repo'],where['state'],where['standing_orders'],where['guard_mode']),
+                         (str(self.repo),str(self.state),False,'minimal'))
         (self.state/'standing-orders.md').write_text('rules\n')
         self.assertTrue(self.cli('where')['standing_orders'])
 
@@ -591,7 +592,7 @@ class AutonomyIntegration(unittest.TestCase):
         first=self.hook('Stop')
         self.assertEqual(first['decision'],'block')
         self.cli('--lease',self.lease,'park','c1','--reason','needs a push')
-        self.assertEqual(self.hook('Stop'),{})
+        self.assertIn('parked-only',self.hook('Stop')['systemMessage'])  # GF12: the stop names its reason
         self.assertEqual(self.cli('autonomy','status')['last_stop_reason'],'parked-only')
         context=self.hook('SessionStart',session_id='S3',source='startup')['hookSpecificOutput']['additionalContext']
         self.assertIn('parked-only',context)

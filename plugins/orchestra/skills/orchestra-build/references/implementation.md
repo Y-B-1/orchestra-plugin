@@ -39,6 +39,7 @@ The reproducing test fails at the starting commit, in its own assertion. An impo
 
 ## Checks
 
+Name each change to a test, CI step, timeout, snapshot or skip on its own report line, before any other result; never weaken a gate to pass it.
 A worktree that is not at the brief's starting commit is fast-forwarded to it (`git merge --ff-only <sha>`) before the first edit; never reset. Capture a check's exit code with `; echo EXIT=$?` on the check itself, never on a push or delete. While iterating, run the single test and the type or lint check for the code you touch. Run the owned and derived checks the brief lists before you report. Run the full suite only when the brief names it. A check that passes at once or fails oddly points first at the observation: the wrong target, a cached result or a stale build. Rerun it on the real artifact.
 
 ## Stuck

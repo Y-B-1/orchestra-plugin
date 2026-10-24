@@ -287,7 +287,7 @@ class UnattendedLockTest(PlaneFixture):
                     self.assertEqual(output.get('permissionDecision'), 'deny')
                     for word in WAY_OUT:
                         self.assertIn(word, output['permissionDecisionReason'])
-            for command in ('rm -rf build', 'git tag -d v1'):  # a local delete keeps its ordinary path
+            for command in ('rm -rf build',):  # a local file delete keeps its ordinary path; a tag delete does not (GF3)
                 with self.subTest(mode=mode, command=command):
                     self.assertEqual(self.decide(command, mode=mode, armed=True, unattended=True).output,
                                      self.decide(command, mode=mode, armed=True).output)
@@ -325,7 +325,7 @@ class UnattendedLockTest(PlaneFixture):
                     self.assertIn('Denied: ', output['permissionDecisionReason'])
                     for word in WAY_OUT:
                         self.assertIn(word, output['permissionDecisionReason'])
-            for command in ('rm -rf build', 'git tag -d v1', 'rm -rf build && gh release view v1'):
+            for command in ('rm -rf build', 'rm -rf build && gh release view v1'):  # GF3 denies a tag delete
                 with self.subTest(mode=mode, command=command):
                     self.assertEqual(self.decide(command, mode=mode, armed=True, unattended=True).output,
                                      self.decide(command, mode=mode, armed=True).output)
@@ -385,7 +385,7 @@ class UnattendedLockTest(PlaneFixture):
         """B1: normal relaxes `--all` and `--tags`, but the stopped run is never on the normal column."""
         self.stop()
         self.assertFalse((self.state / 'policy.json').exists())  # the main() path resolves the mode: normal
-        self.assertIsNone(self.hook('git branch -f main feat'))  # the classifier allows it; the push after it must fail
+        self.assertEqual(self.hook('git branch -f main feat'), 'deny')  # GF2: moving the default branch is a boundary merge
         for command in ('git push --all origin', 'git push --tags origin', 'git push origin :topic', 'git stash',
                         'git add -A', 'git commit --amend'):
             with self.subTest(command=command):
@@ -644,6 +644,180 @@ class PlaneTest(PlaneFixture):
                         'gh pr close 3', 'gh pr reopen 3', 'gh pr view 3', 'gh pr list', 'gh pr checks 3', 'gh pr diff 3',
                         'git merge topic', 'git tag v1'):
             with self.subTest(command=command):
+                self.assertIsNone(self.hook(command))
+
+
+class LockedShellTest(PlaneFixture):
+    """GF items 1 to 4: what the autonomy and unattended locks deny or allow in a shell call, in the default mode."""
+
+    def live_marker(self, session='s1'):
+        """A fresh mod marker: the native hook would skip a call the mod fully guards."""
+        mods = self.root / 'xdg' / 'orchestra' / 'mods'
+        mods.mkdir(parents=True, exist_ok=True)
+        (mods / (session + '.json')).write_text(json.dumps({'session_id': session, 'plugin_version': '2.0.0',
+                                                            'heartbeat_ms': int(time.time() * 1000), 'rules_sha256': guard_digest()}))
+
+    def state_writes(self):
+        state = str(self.state)
+        return ("echo '{}' > %s/state.json" % state, "sed -i.bak s/true/false/ %s/policy.json" % state,
+                'printf x >> %s/autonomy.md' % state, 'rm -rf %s' % state, 'cp /dev/null %s/state.json' % state,
+                'cd %s && echo x > state.json' % state, 'git status; tee %s/progress.md < /dev/null' % state)
+
+    def test_gf1_a_shell_write_to_the_state_directory_is_denied_while_locked(self):
+        self.arm()
+        for command in self.state_writes():
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command), 'deny')
+        self.live_marker()
+        self.assertEqual(self.hook(self.state_writes()[0], session='s1'), 'deny')  # a live mod never hides it
+        code, output = self.call('', tool='PowerShell', data={'command': "Set-Content -Path '%s/state.json' -Value '{}'" % self.state})
+        self.assertEqual(output['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.engine.disarm_autonomy()
+        self.assertEqual(self.hook(self.state_writes()[0]), 'deny')  # unattended: the report is kept
+
+    def test_pr2_a_live_mod_never_skips_the_hook_while_a_lock_holds(self):
+        """The mod does not see an arm written by the engine: while either lock holds, the native hook decides."""
+        self.live_marker()
+        with mock.patch.object(hooks_module, 'handle_event', side_effect=AssertionError('handler called')):
+            self.assertIsNone(self.hook('git status', session='s1'))  # no lock: the mod path skips the handler
+        self.git('tag', 'v1')
+        self.arm()
+        commands = ('rm -rf src', 'git reset --hard origin/%s' % self.default_branch, 'git tag -d v1')
+        for command in commands:
+            with self.subTest(command=command, lock='autonomy'):
+                self.assertEqual(self.hook(command, session='s1'), 'deny')
+        self.engine.disarm_autonomy()
+        for command in commands:  # unattended: the live-mod call gets the full handler's verdict
+            with self.subTest(command=command, lock='unattended'):
+                self.assertEqual(self.hook(command, session='s1'), self.hook(command))
+        for command in commands[1:]:
+            with self.subTest(command=command, lock='unattended'):
+                self.assertEqual(self.hook(command, session='s1'), 'deny')
+        self.engine.state_path.write_text('not json')
+        self.assertEqual(self.hook('git tag -d v1', session='s1'), 'deny')  # unreadable state: fail closed
+        self.engine.state_path.write_text(json.dumps({'session': None}))
+        (self.state / 'autonomy.md').unlink(missing_ok=True)
+        with mock.patch.object(hooks_module, 'handle_event', side_effect=AssertionError('handler called')):
+            self.assertIsNone(self.hook('git status', session='s1'))  # an ended run with no lock: skip again
+
+    def test_gf1_the_cli_may_name_the_state_directory_and_an_unlocked_run_may_write_it(self):
+        cli = 'python3 /opt/orchestra/scripts/orchestra.py --repo %s finding add --json %s/review-packages/B1/f.json'
+        self.arm()
+        self.assertIsNone(self.hook(cli % (self.repo, self.state)))
+        self.assertEqual(self.hook((cli % (self.repo, self.state)) + ' && echo x > %s/state.json' % self.state), 'deny')
+        self.engine.disarm_autonomy()
+        self.engine.record_owner_approval([], [], EVIDENCE)
+        self.assertIsNone(self.hook('echo x > %s/notes.txt' % self.state))  # no lock: Claude Code's permission mode decides
+
+    def test_gf1_a_state_without_a_valid_session_stays_locked_while_a_ledger_exists(self):
+        self.arm()
+        for text in ('{}', '{"session": 7}', '{"session": {"actor": "main"}}'):
+            with self.subTest(state=text):
+                self.engine.state_path.write_text(text)
+                for command in ('git push origin %s' % self.default_branch, 'gh pr merge 3 --admin', 'git tag -d v0.1'):
+                    self.assertEqual(self.hook(command), 'deny')
+                self.assertIsNone(self.hook('git status'))
+        (self.state / 'autonomy.md').unlink()
+        self.engine.state_path.write_text('{}')
+        self.assertIsNone(self.hook('git status'))
+
+    def default_moves(self):
+        main = self.default_branch
+        return ('git switch %s && git merge work' % main, 'git checkout %s; git merge work' % main,
+                'git switch %s && git reset work' % main, 'git checkout %s && git commit -m x' % main,
+                'git switch -q %s && git rebase work' % main, 'git branch -f %s work' % main,
+                'git branch --force %s work' % main, 'git branch -f release work', 'git branch -M work %s' % main,
+                'git update-ref refs/heads/%s work' % main, 'git update-ref refs/heads/production HEAD',
+                'git checkout -B %s work' % main, "bash -c 'git branch -f %s work'" % main, 'git fetch . work:%s' % main)
+
+    def test_gf2_moving_the_default_branch_locally_is_a_boundary_merge_while_locked(self):
+        self.arm()
+        for command in self.default_moves():
+            with self.subTest(command=command, lock='autonomy'):
+                self.assertEqual(self.hook(command), 'deny')
+                self.assertIn('park', self.hook_reason(command))
+        self.live_marker()
+        self.assertEqual(self.hook('git branch -f %s work' % self.default_branch, session='s1'), 'deny')
+        self.assertEqual(self.hook('git update-ref refs/heads/%s work' % self.default_branch, session='s1'), 'deny')
+        for command in ('git switch %s' % self.default_branch, 'git branch -f feat/x work', 'git update-ref refs/heads/feat/x HEAD',
+                        'git switch feat && git merge work', 'git checkout -b feat/y && git commit -m x'):
+            with self.subTest(command=command, allowed=True):
+                self.assertIsNone(self.hook(command))
+        self.engine.disarm_autonomy()
+        for command in self.default_moves():
+            with self.subTest(command=command, lock='unattended'):
+                self.assertEqual(self.hook(command), 'deny')
+                self.assertIn('approved', self.hook_reason(command))
+
+    def test_gf3_a_tag_delete_is_denied_while_unattended(self):
+        self.git('tag', 'v0.1')
+        self.stop()
+        for command in ('git tag -d v0.1', 'git tag --delete v0.1', 'git tag -l && git tag -d v0.1'):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command), 'deny')
+                self.assertIn('approved', self.hook_reason(command))
+        self.assertIsNone(self.hook('git tag v0.2'))
+        self.engine.record_owner_approval([], [], EVIDENCE)
+        self.assertIsNone(self.hook('git tag -d v0.1'))
+
+    def test_gf4_commit_and_push_a_feature_branch_is_judged_by_its_push(self):
+        self.arm()
+        for command in ('git commit -m "a" && git push -u origin work', 'git add f.txt && git commit -m "a; b" && git push origin work'):
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(command))
+        for command in ('git commit -m a && git push -u origin %s' % self.default_branch, 'cd .. && git push -u origin work',
+                        'git commit -m a && git push origin work && gh pr merge 3', 'git push -u origin work && git commit -m a',
+                        'git -C ../other commit -m a && git push -u origin work', 'echo $(git push origin x) && git push -u origin work',
+                        'git commit -m a && git push origin work && git push origin work', 'git push origin work && gh pr create'):
+            with self.subTest(command=command, allowed=False):
+                self.assertEqual(self.hook(command), 'deny')
+
+    def ignored_tree(self):
+        (self.repo / '.gitignore').write_text('build/\nnode_modules/\n.pytest_cache/\n*.pyc\n')
+        for path in ('build/out.o', 'node_modules/x/index.js', '.pytest_cache/v', 'pkg/a.pyc', 'pkg/sub/b.pyc', 'scratch/n.txt'):
+            (self.repo / path).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / path).write_text('x')
+
+    def test_gf4_deleting_git_ignored_paths_in_the_run_repository_is_allowed(self):
+        self.ignored_tree()
+        self.arm()
+        for command in ('rm -rf build node_modules .pytest_cache', 'rm -r build', "find . -name '*.pyc' -delete",
+                        'find pkg -name "*.pyc" -type f -delete', 'rm pkg/a.pyc', 'rm -rf ./build'):
+            with self.subTest(command=command):
+                self.assertIsNone(self.hook(command))
+        # A tracked, unknown or unreadable path keeps the deny.
+        (self.repo / 'pkg' / 'keep.pyc').write_text('x')
+        self.git('add', '-f', 'pkg/keep.pyc')
+        (self.repo / 'link').symlink_to('build')  # a tracked symlink to an ignored directory
+        self.git('add', 'link')
+        self.git('commit', '-qm', 'tracked pyc and link')
+        for command in ('rm -rf build f.txt', 'rm -rf scratch', 'rm -rf build/../f.txt', "find . -name '*.pyc' -delete",
+                        "find . -name '*.txt' -delete", 'rm -rf build && rm f.txt', 'rm -rf .git/info', 'rm -rf $HOME/build',
+                        "find . -name '*.pyc' -newer f.txt -delete", "find . -name '*.pyc' -exec rm {} ;", 'rm -rf pkg',
+                        'rm -rf ../outside/build', 'rm -rf /tmp/build', 'rm -rf build*', 'rm link', 'find / -name x -delete'):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command), 'deny')
+
+    def test_pr2_a_trailing_slash_on_an_ignored_symlink_deletes_its_target_and_is_denied(self):
+        """`rm -rf build/` follows the link `build` and empties what it points to: the exemption checks the target."""
+        (self.repo / '.gitignore').write_text('build\ndata\nout/\n')
+        (self.repo / 'src').mkdir()
+        (self.repo / 'src' / 'main.py').write_text('x')
+        self.git('add', '.gitignore', 'src/main.py')
+        self.git('commit', '-qm', 'tracked src')
+        outside = self.root / 'outside-data'
+        outside.mkdir()
+        (outside / 'keep.txt').write_text('x')
+        (self.repo / 'build').symlink_to('src')
+        (self.repo / 'data').symlink_to(outside)
+        (self.repo / 'out').mkdir()
+        (self.repo / 'out' / 'o.bin').write_text('x')
+        self.arm()
+        for command in ('rm -rf build/', 'rm -rf data/', 'rm -rf build/.', 'rm -rf build//', 'rm -r data/'):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command), 'deny')
+        for command in ('rm -rf build', 'rm data', 'rm -rf out/', 'rm -rf out'):  # the link itself, a plain ignored directory
+            with self.subTest(command=command, allowed=True):
                 self.assertIsNone(self.hook(command))
 
 

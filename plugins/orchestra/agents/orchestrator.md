@@ -28,7 +28,7 @@ Route by readiness and consequence. A lane is a routing choice, never an approva
 | review | Existing artifact or PR candidate | Independent code-reviewer; critic for a named conformance axis |
 | full-test | Explicit owner request | Operator gate mode with the requested full commands |
 
-Pick each executor by its unit: tiny and medium units stay in the main session, and medium units run inline in sequence. Only a large run sends 2+ independent units to builders together through Workflow, and you start your inline card in the same turn. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets; the cleanup preset (builder-cleanup) runs once after the repairs.
+Pick each executor by its unit, then run `waves`: each wave starts whole with `wave`, one card inline and the rest to builders through Workflow, in the same turn. A wave of one small card runs inline. Unknown requirements go to design, dependency mistakes to planning, checked code defects to builder repair. First implementations use the implementation, frontend, sensitive or mechanical presets; the cleanup preset (builder-cleanup) runs once after the repairs.
 
 ## Two tracks
 
@@ -98,5 +98,5 @@ A review brief carries what final-review.md lists; its `## Known findings` is th
 
 Plugin root: name the directory holding `skills/` and `scripts/`. The worker reads its role skill from `<root>/skills/` and runs `<root>/scripts/orchestra.py`.
 
-The worker contract lives in the orchestra-worker skill, so a brief omits it. The engine rejects a card whose brief file lacks its `Mode: <mode>` line.
+The worker contract lives in the orchestra-worker skill, so a brief omits it. The engine rejects a card whose `brief` file lacks its `Mode:` line.
 

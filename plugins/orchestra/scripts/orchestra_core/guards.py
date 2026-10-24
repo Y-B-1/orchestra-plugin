@@ -2231,8 +2231,21 @@ def runs_test_suite(command, _depth=0):
     if not isinstance(command, str) or not command.strip() or len(command) > 131072:
         return False
     try:
-        return any(_words_run_suite(_command_words(segment), _depth) for segment in _segments(command))
+        text, docs = _strip_heredocs(command)
     except ValueError:
+        text, docs = command, []  # An unreadable heredoc: every line is read as a command (fail closed)
+    try:
+        if any(_words_run_suite(_command_words(segment), _depth) for segment in _segments(text)):
+            return True
+        # A heredoc body is data (notes, a commit message) unless a shell in its pipeline reads it as a script.
+        for pipeline in _pipelines(text):
+            for i, segment in enumerate(pipeline):
+                for mark in _MARK_RE.finditer(segment):
+                    body = docs[int(mark.group()[len('<<' + _MARK):-len(_MARK)])][0]
+                    if _depth < 4 and any(_consumer_mode(s) for s in pipeline[i:]) and runs_test_suite(body, _depth + 1):
+                        return True
+        return False
+    except (ValueError, IndexError):
         return False
 
 
