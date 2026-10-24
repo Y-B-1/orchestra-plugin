@@ -1,6 +1,8 @@
 """The parallel-waves checkpoint: `waves`, `wave`, the lone-start refusal and the lease-free `board --view`."""
 import json
 import pathlib
+import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -288,6 +290,22 @@ class BoardViewTests(unittest.TestCase):
         ok = self.cli('dispatch', 'a', '--helper', 'x', '--serial', 'b waits on a', lease=True)
         self.assertEqual(ok['task'], 'a')
         self.assertIn('b waits on a', (self.state / 'progress.md').read_text())
+
+    def test_the_printed_wave_command_runs_as_printed(self):
+        """The lone-start refusal prints a `wave` command; running exactly that command starts the whole wave."""
+        for start in ('dispatch', 'inline'):
+            with self.subTest(start):
+                if start == 'inline':
+                    self.cli('interrupt', lease=True)
+                    self.lease = self.cli('start', '--new-run', '--size', 'medium')['lease']
+                for name in 'abc':
+                    self.add(name)
+                err = self.cli(start, 'a', lease=True, expected=2)['error']
+                printed = re.search(r'Start the whole wave: (wave .*?) \(or pass', err).group(1)
+                out = self.cli(*shlex.split(printed), lease=True)
+                self.assertEqual(set(out['assignments']), {'a', 'b', 'c'})
+                self.assertEqual(out['inline'], 'a' if start == 'inline' else None)
+                self.assertEqual(out['workers'], {i: 'main' if i == out['inline'] else 'orchestra-' + i for i in 'abc'})
 
     def test_where_reports_the_guard_mode(self):
         self.assertEqual(self.cli('where')['guard_mode'], 'minimal')

@@ -1745,23 +1745,23 @@ class Engine:
         serial = self._check_serial(serial)
         if not isinstance(task_ids, list) or not task_ids or any(not isinstance(i, str) for i in task_ids):
             raise EngineError('A wave needs one or more task ids')
+        if inline is not None and inline not in task_ids:
+            task_ids = [inline, *task_ids]  # `wave --inline A B C`: argparse gives A to --inline
         if len(set(task_ids)) != len(task_ids):
             raise EngineError('Duplicate task in wave')
-        if inline is not None and inline not in task_ids:
-            raise EngineError('--inline must name a card in the wave')
         with self._state() as state:
             self._lease(state, actor, lease)
-            tokens = {}
+            tokens, workers = {}, {}
             for task_id in task_ids:
                 is_inline = task_id == inline
-                worker = actor if is_inline else 'orchestra-' + task_id
+                worker = workers[task_id] = actor if is_inline else 'orchestra-' + task_id
                 self._start_checks(state, actor, task_id, worker, is_inline, helper)
                 if len(task_ids) == 1 and not serial:
                     self._checkpoint(state, actor, task_id, is_inline)
                 tokens[task_id] = self._mark_running(state, task_id, worker, is_inline, helper, lease)
         if serial:
             self._log_serial(task_ids, serial)
-        return dict(assignments=tokens, inline=inline)
+        return dict(assignments=tokens, workers=workers, inline=inline)
 
     def _slot_free(self, state, actor):
         return not any(t.get('worker') == actor and t['state'] in ('running', 'reported') for t in state['tasks'].values())
