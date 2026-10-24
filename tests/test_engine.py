@@ -3017,7 +3017,7 @@ class SelfReviewTests(EngineFixture):
     def test_builder_report_needs_exactly_one_self_review_line(self):
         token = self.running()
         good = {'checks': [{'command': 'pytest', 'exit_code': 0}],
-                'criteria': [{'criterion': 'c', 'met': True, 'evidence': 'e'}]}
+                'criteria': [{'criterion': 'check behavior', 'met': True, 'evidence': 'e'}]}
         line = 'SELF_REVIEW: ' + json.dumps(good)
         bad = {'no line': 'Built a.',
                'two lines': 'Built a.\n' + line + '\n' + line,
@@ -3040,7 +3040,7 @@ class SelfReviewTests(EngineFixture):
     def test_builder_report_needs_a_nonempty_artifact_line(self):
         token = self.running()
         line = 'SELF_REVIEW: ' + json.dumps({'checks': [{'command': 'pytest', 'exit_code': 0}],
-                                             'criteria': [{'criterion': 'c', 'met': True, 'evidence': 'e'}]})
+                                             'criteria': [{'criterion': 'check behavior', 'met': True, 'evidence': 'e'}]})
         for label, head in {'no line': 'Built a.', 'empty': 'ARTIFACT:\nBuilt a.', 'blank': 'ARTIFACT:   \nBuilt a.'}.items():
             with self.subTest(label), self.assertRaisesRegex(EngineError, 'Builder report needs a nonempty ARTIFACT line'):
                 self.engine.report('w-a', token, head + '\n' + line)
@@ -3130,7 +3130,7 @@ class SelfReviewTests(EngineFixture):
     def test_failing_check_or_unmet_criterion_refuses_accept(self):
         cases = {'failing check': dict(checks=[{'command': 'pytest', 'exit_code': 1}]),
                  'one of two checks failing': dict(checks=[{'command': 'a', 'exit_code': 0}, {'command': 'b', 'exit_code': 2}]),
-                 'unmet criterion': dict(criteria=[{'criterion': 'c', 'met': False, 'evidence': 'not done'}])}
+                 'unmet criterion': dict(criteria=[{'criterion': 'check behavior', 'met': False, 'evidence': 'not done'}])}
         for label, kw in cases.items():
             name = label.replace(' ', '-')
             token = self.running(name)
@@ -5036,7 +5036,7 @@ class RunHygieneTests(EngineFixture):
 
     def test_a_lost_lease_is_taken_back_by_the_owning_session_only(self):
         engine, lease = self.fresh(harness_session='H1')
-        engine.add_task('main', lease, dict(id='a', role='builder', mode='implementation', inputs=['s'], acceptance=['x'],
+        engine.add_task('main', lease, dict(id='a', role='builder', mode='implementation', inputs=['s'], acceptance=['check behavior'],
                                             files=['a'], resources=[], dependencies=[]))
         token = engine.dispatch('main', lease, 'a', 'wa')
         for who, session in (('main', 'H2'), ('other', 'H1'), ('main', None)):
