@@ -29,6 +29,7 @@ python3 scripts/live-matrix.py --list
 - `--plugin-dir DIR`: load this plugin directory into every session in place of the installed copy, for example `plugins/orchestra` of a release candidate. Claude Code then loads only that copy (one SessionStart answer), so a candidate is tested live before it ships.
 - `--model ID`: model for every session. Default `claude-sonnet-5-5`.
 - `--parallel N`: scenarios at once. Default 4.
+- `--repeat N`: runs of each scenario. Default 1, which keeps `OUT_DIR/<id>/`. With N above 1 each run gets its own `OUT_DIR/<id>.rK/`, a scenario passes only when every run passes, and the summary names each scenario whose runs disagreed as a `FLIP` with the failing checks. One run hides flaky behavior: Anthropic's article on folding subagents says to run each task more than once, because a break showed in only one run out of two.
 - `--source DIR`: marketplace source for `i1`. Default: this repository's root.
 - `OUT_DIR`: output root. Each scenario writes `OUT_DIR/<id>/` with `repo/`, `origin.git/`, one `run<N>.jsonl` and `run<N>.err` per session, and `result.json`.
 
