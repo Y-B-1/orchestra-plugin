@@ -51,6 +51,8 @@ run mod-fixtures "$py311" plugins/orchestra/hooks/mod/fixtures/sync.py --check
 # The mod type stubs and tsconfig.json are written by Claude Code when it loads the plugin; they are not tracked.
 if [ -f plugins/orchestra/tsconfig.json ] && [ -d plugins/orchestra/.claude-plugin/types ] && command -v npx >/dev/null 2>&1; then
   run mod-typecheck npx -y -p typescript@5 tsc -p plugins/orchestra/tsconfig.json --noEmit
+elif [ "$(git rev-parse --git-dir 2>/dev/null)" != "$(git rev-parse --git-common-dir 2>/dev/null)" ]; then
+  summary+=("SKIPPED  mod-typecheck GAP (git-ignored stubs: run from the main checkout)")
 else
   summary+=("SKIPPED  mod-typecheck (needs npx and the type stubs: load the plugin in Claude Code once)")
 fi
