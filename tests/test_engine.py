@@ -1693,11 +1693,13 @@ class AutonomyLoopTests(AutonomyFixture):
         self.arm()
         self.task('x')
         self.assertIsInstance(self.engine.hook_stop(), str)
+        self.assertIn('x queued', self.engine.hook_stop())  # the nudge carries the board
+        self.assertIn('x queued', self.engine.hook_stop())
         self.assertIsNone(self.engine.hook_stop())
-        self.assertEqual(self.auto()['last_stop_reason'], 'stalled')
+        self.assertEqual(self.auto()['last_stop_reason'], 'needs-owner:escalated')
         brief = self.engine.status()['last_brief']['text']
-        self.assertIn('- stop reason: stalled', brief)
-        self.assertIn('x (builder/implementation): queued, not finished', brief)
+        self.assertIn('- stop reason: needs-owner:escalated', brief)
+        self.assertIn('x: needs-owner:escalated', brief)
 
     def test_stop_continues_inside_the_bounds_and_counts_passes(self):
         self.arm(passes='3')
@@ -1773,7 +1775,7 @@ class AutonomyLoopTests(AutonomyFixture):
         self.arm(passes='9')
         self.accept_card('done')
         self.task('p')
-        self.engine.park('main', self.lease, 'p', 'needs a push')
+        self.engine.park('main', self.lease, 'p', 'needs-owner: a push')
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.auto()['last_stop_reason'], 'parked-only')
 
@@ -1781,24 +1783,29 @@ class AutonomyLoopTests(AutonomyFixture):
         self.arm(passes='9')
         self.task('p')
         self.task('dep', dependencies=['p'])
-        self.engine.park('main', self.lease, 'p', 'boundary')
+        self.engine.park('main', self.lease, 'p', 'needs-owner: boundary')
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.auto()['last_stop_reason'], 'parked-only')
 
-    def test_no_ready_card_stops(self):
+    def test_no_ready_card_replans_and_only_then_hands_the_run_to_the_owner(self):
         self.arm(passes='9')  # an empty board and no change since the base: nothing to do
+        self.assertIn('Re-plan', self.engine.hook_stop())
+        self.assertIsNone(self.auto().get('last_stop_reason'))
+        self.assertIn('still nothing to do', self.engine.hook_stop())
         self.assertIsNone(self.engine.hook_stop())
-        self.assertEqual(self.auto()['last_stop_reason'], 'no-ready-card')
+        self.assertEqual(self.auto()['last_stop_reason'], 'needs-owner:escalated')
 
-    def test_every_card_accepted_continues_into_the_final_phase_then_stalls(self):
+    def test_every_card_accepted_continues_into_the_final_phase_then_escalates(self):
         self.arm(passes='9')
         self.accept_card('done')
         reason = self.engine.hook_stop()
         self.assertIn('Autonomy pass 1: every card is accepted; commit the work, run the final review', reason)
         self.assertIn('open the pull request', reason)
-        self.assertIsNone(self.engine.hook_stop())  # nothing changed and no worker runs: stop with a brief
-        self.assertEqual((self.auto()['active'], self.auto()['last_stop_reason']), (False, 'stalled'))
-        self.assertIn('- stop reason: stalled', self.engine.brief())
+        self.assertIn('changed nothing', self.engine.hook_stop())  # nothing changed and no worker runs: a different nudge
+        self.assertIn('still nothing changed', self.engine.hook_stop())
+        self.assertIsNone(self.engine.hook_stop())  # still unchanged: the owner takes over, with a brief
+        self.assertEqual((self.auto()['active'], self.auto()['last_stop_reason']), (False, 'needs-owner:escalated'))
+        self.assertIn('- stop reason: needs-owner:escalated', self.engine.brief())
 
     def test_empty_board_with_changed_files_owes_the_final_phase(self):
         self.arm(passes='9')
@@ -1949,7 +1956,7 @@ class AutonomyParkTests(AutonomyFixture):
     def test_o30_a_card_whose_open_repair_is_parked_stops_parked_only(self):
         self.arm(passes='9')
         self.repaired()
-        self.engine.park('main', self.lease, 'repair-of-a', 'needs a push')
+        self.engine.park('main', self.lease, 'repair-of-a', 'needs-owner: a push')
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.auto()['last_stop_reason'], 'parked-only')
 
@@ -4306,7 +4313,7 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.assertIsNone(self.last_stop())
         self.assertTrue(self.engine.autonomy_active())
 
-    def test_a_silent_worker_is_surfaced_and_a_repeat_stops_the_run(self):
+    def test_a_silent_worker_is_surfaced_and_a_repeat_parks_it_as_lost(self):
         self.arm(deadline=iso(T0 + 20000))
         self.worker_running('busy')
         self.assertIsNone(self.engine.hook_stop())  # a worker that just started: wait for the harness to wake us
@@ -4314,8 +4321,9 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         message = self.engine.hook_stop()
         self.assertIn('busy', message)
         self.assertIn('silent for over 60 minutes', message)
-        self.assertIsNone(self.engine.hook_stop())  # nothing changed since the nudge: stop and brief
-        self.assertEqual(self.last_stop(), 'stalled')
+        self.assertIn('parked as lost-worker', self.engine.hook_stop())  # nothing changed since the nudge: park it and re-plan
+        self.assertEqual(self.engine.status()['tasks']['busy']['parked_reason'], 'lost-worker')
+        self.assertIsNone(self.last_stop())
 
     def test_a_sub_minute_stale_limit_is_worded_in_seconds(self):
         self.fresh({'worker_stale_seconds': 30})
@@ -4349,17 +4357,20 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.lease = self.engine.open_session('main')
         self.assertNotIn('started_at', self.engine.status()['tasks']['busy'])
 
-    def test_a_required_gate_that_fails_three_times_in_a_row_stops_the_run(self):
+    def test_a_required_gate_that_fails_three_times_in_a_row_asks_for_a_repair_card_then_escalates(self):
         failing = [sys.executable, '-c', 'raise SystemExit(3)']
         self.arm(checks=['fixture: ' + shlex.join(failing)], deadline=iso(T0 + 20000))
         self.built('B1')
+        self.reviewed('clean', ['B1'])
+        self.engine.accept('main', self.lease, 'B1')
         for _ in range(2):
             self.engine.run_gate('main', self.lease, 'fixture', failing, again=True)
-        self.engine.hook_stop()
-        self.assertNotEqual(self.last_stop(), 'gate-failing')  # two failures are not yet a pattern
+        self.assertNotIn('repair card', self.engine.hook_stop())  # two failures are not yet a pattern
         self.engine.run_gate('main', self.lease, 'fixture', failing, again=True)
+        self.assertIn('repair card', self.engine.hook_stop())
+        self.assertIn('repair card', self.engine.hook_stop())
         self.assertIsNone(self.engine.hook_stop())
-        self.assertEqual(self.last_stop(), 'gate-failing')
+        self.assertEqual(self.last_stop(), 'needs-owner:escalated')
         self.assertIn('required gate fixture failed 3 times in a row', self.engine.brief())
         log = self.engine.status()['gates'][-1]['path']
         self.assertIn('read its log %s' % log, self.engine.brief())  # the owner gets the path, not a search
@@ -4395,11 +4406,11 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.blocked_chain()
         self.engine.hold('main', self.lease, 'R1', 'g')
         self.task('P')
-        self.engine.park('main', self.lease, 'P', 'needs a push')
+        self.engine.park('main', self.lease, 'P', 'needs-owner: a push')
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'parked-only'))
         needs = self.section(self.engine.status()['last_brief']['text'], 'Needs you')
-        self.assertIn('P: needs a push', needs)
+        self.assertIn('P: needs-owner: a push', needs)
         self.assertIn('R1 (chain R1, B1)', needs)
 
     def test_complete_skips_ledger_checks_until_all_accepted(self):
@@ -4428,8 +4439,10 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
         self.engine.hold('main', self.lease, 'R1', 'g')
         self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL, cleared={'R1': 'no defect'})
         self.passing_gate()
-        self.assertIsNone(self.engine.hook_stop())  # a current final receipt covers the held chain: the owner decides
-        self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'no-ready-card'))
+        self.assertIn('Re-plan', self.engine.hook_stop())  # a current final receipt covers the held chain: re-plan, then the owner decides
+        self.assertIn('still nothing to do', self.engine.hook_stop())
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'needs-owner:escalated'))
 
     def test_hook_stop_not_complete_while_final_finding_open(self):
         self.arm()
@@ -4535,7 +4548,9 @@ class AutonomyNoCapTests(AutonomyFixture, HoldFixture):
 
     def test_2_1_parked_card_keeps_park_semantics(self):
         lease = self.state_2_1(queued=False)
-        self.assertIsNone(self.engine.hook_stop())  # a parked card and nothing else live: the 2.1 stop
+        self.engine.unpark('main', lease, 'p')
+        self.engine.park('main', lease, 'p', 'needs-owner: a push')
+        self.assertIsNone(self.engine.hook_stop())  # a card parked for the owner and nothing else live: the 2.1 stop
         self.assertEqual(self.last_stop(), 'parked-only')
         self.engine.unpark('main', lease, 'p')
         self.assertEqual(self.states('p'), ['queued'])
@@ -4800,8 +4815,10 @@ class AutonomyHarnessTests(AutonomyFixture, HoldFixture):
         self.engine.hold('main', self.lease, 'R1', 'g')
         self.assertIn('held work is still owed a final review', self.engine.hook_stop())
         self.reviewed('final', ['B1', 'R1'], final=True, categories=self.ALL, findings=['g'], task_findings={'R1': ['g'], 'B1': []})
+        self.assertIn('Re-plan', self.engine.hook_stop())
+        self.assertIn('still nothing to do', self.engine.hook_stop())
         self.assertIsNone(self.engine.hook_stop())
-        self.assertEqual((self.auto()['active'], self.auto().get('last_stop_reason')), (False, 'no-ready-card'))
+        self.assertEqual((self.auto()['active'], self.auto().get('last_stop_reason')), (False, 'needs-owner:escalated'))
 
 
 class RunHygieneTests(EngineFixture):
@@ -5684,13 +5701,15 @@ class CompleteStopTests(PullRequestFixture):
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.last_stop(), 'complete')
 
-    def test_push_and_pr_continuation_stalls_after_two_passes(self):
+    def test_push_and_pr_continuation_keeps_going_then_escalates(self):
         self.arm()
         self.finish_line()
         self.assertIn('Autonomy pass 1:', self.engine.hook_stop())
         self.assertIn('Autonomy pass 2:', self.engine.hook_stop())  # nothing changed, yet the continuation repeats once
+        self.assertIn('read the exact git or gh error', self.engine.hook_stop())  # then a different one, with the failure to read
+        self.assertIn('still not done', self.engine.hook_stop())
         self.assertIsNone(self.engine.hook_stop())
-        self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'stalled'))
+        self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'needs-owner:escalated'))
         self.assertIn('no verified pull request', self.engine.brief())
 
     def test_recording_the_pr_after_one_continuation_completes(self):

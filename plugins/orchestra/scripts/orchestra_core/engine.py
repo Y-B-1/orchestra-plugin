@@ -54,7 +54,9 @@ EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 MODEL_FAMILIES = ('opus', 'sonnet', 'haiku', 'fable')
 PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop loop gives up as `stalled`
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
-GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which an unattended run stops
+GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which the Stop hook asks for a repair card
+ESCALATION_LIMIT = 3  # Unchanged nudges for one reason after which every unfinished card is parked for the owner
+OWNER_PARK = 'needs-owner:'  # A parked reason prefix: only the owner can unblock the card (a secret, a code, an account action)
 LARGE_FILE_BYTES = 64 * 1024 * 1024  # Files over this are bound by size, mtime and sampled content, not read whole
 SAMPLE_BYTES = 1024 * 1024
 STALE_REVIEW = 'Review with findings is stale; re-review'
@@ -3424,9 +3426,9 @@ class Engine:
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
         needs += ['review and merge pull request ' + entry['url'] for entry in self._pull_requests(state)]
-        if reason == 'stalled' and (auto or {}).get('pr_gap'):
+        if reason in ('stalled', 'needs-owner:escalated') and (auto or {}).get('pr_gap'):
             needs.append('publish the work: ' + auto['pr_gap'])
-        gate = self._failing_gate(state) if reason == 'gate-failing' else None
+        gate = self._failing_gate(state) if reason in ('gate-failing', 'needs-owner:escalated') else None
         if gate:
             log = [g['path'] for g in state['gates'] if g['name'] == gate][-1]
             needs.append('required gate %s failed %d times in a row -- read its log %s, fix the cause, then arm again'
@@ -3558,9 +3560,13 @@ class Engine:
                 return 'complete', None
             passes = auto.get('pr_passes', 0)
             if passes >= PR_CONTINUATIONS:
-                auto['stalls'] += 1
                 auto['pr_gap'] = gap
-                return 'stalled', None
+                return self._nudge(state, 'stalled', gap,
+                                   'still unpublished: %s. Run the push and `gh pr create` yourself, read the exact git or gh '
+                                   'error and fix it; park the card `needs-owner:` only when the push needs a credential or an '
+                                   'account action.' % gap,
+                                   'the push is still not done: %s. Read the last git or gh error again and fix its cause; '
+                                   'another unchanged pass hands the run to the owner.' % gap)
             auto.update(pr_passes=passes + 1, accepted=self._accepted(state))
             auto['passes'] += 1
             return None, 'Autonomy pass %d: %s; push the branch, open the pull request, then record it with `pr URL`.' % (
@@ -3572,8 +3578,6 @@ class Engine:
                 and any(t['state'] == 'held' and not t.get('repaired_by') and not self._final_receipts(state, t['id'])
                         for t in tasks))
         failing = self._failing_gate(state)
-        if failing:
-            return 'gate-failing', None
         stale_after = self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS)
         silent = self._silent_workers(state)
         running = any(t['state'] == 'running' and not t.get('inline') and t not in silent for t in tasks)
@@ -3587,6 +3591,13 @@ class Engine:
         final_owed = (not (running or actionable or held or final_open or parked)
                       and all(t['state'] == 'accepted' for t in tasks)
                       and bool(tasks or (base is not None and self._run_changed(state)[0])))
+        if failing and not (running or actionable):
+            log = [g['path'] for g in state['gates'] if g['name'] == failing][-1]
+            return self._nudge(state, 'gate-failing', failing,
+                               'required gate %s failed %d times in a row. Read its log %s and add a repair card for the cause; '
+                               'run the gate again once the card is accepted.' % (failing, GATE_FAILURE_LIMIT, log),
+                               'required gate %s still fails (log %s). Add or dispatch the repair card now; another unchanged '
+                               'pass hands the run to the owner.' % (failing, log))
         if silent and not (running or actionable or held or final_open or final_owed):
             auto['accepted'] = self._accepted(state)
             names = ', '.join(t['id'] for t in silent)
@@ -3597,13 +3608,34 @@ class Engine:
             signature = self._signature(state)
             if signature == auto.get('signature'):
                 auto['stalls'] += 1
-                return 'stalled', None
+                for task in silent:
+                    self._set_aside(state, task, 'lost-worker')
+                auto['signature'] = self._signature(state)
+                auto['passes'] += 1
+                return None, ('Autonomy pass %d: %s parked as lost-worker. Re-plan: `unpark` and dispatch each again, or add a '
+                              'card that does the work another way.' % (auto['passes'], names))
             auto['signature'] = signature
             auto['stalls'] = 0
             auto['passes'] += 1
             return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
         if not (running or actionable or held or final_open or final_owed):
-            return ('parked-only' if parked else 'no-ready-card'), None
+            if not parked:
+                return self._nudge(state, 'no-ready-card', '',
+                                   'no card is ready, running or owed a review and the ledger is not met. Re-plan: compare the '
+                                   'ledger goal and checks with the cards, then add each missing card or park it with a reason '
+                                   '(`needs-owner:` when only the owner can unblock it).',
+                                   'still nothing to do after the re-plan%s. Add a card for each unmet ledger goal or check, or '
+                                   'park the blocked ones; another unchanged pass hands the run to the owner.'
+                                   % self._board_diff(state))
+            waiting = ['%s (%s)' % (t['id'], t.get('parked_reason', '')) for t in tasks
+                       if t['state'] == 'parked' and not t.get('parked_reason', '').startswith(OWNER_PARK)]
+            if not waiting:
+                return 'parked-only', None  # every parked card needs an owner input
+            return self._nudge(state, 'parked-only', ', '.join(waiting),
+                               'parked cards need no owner input: %s. `unpark` them and continue; keep `needs-owner:` parks '
+                               'for a secret, a code or an account action.' % ', '.join(waiting),
+                               'those cards are still parked: %s. `unpark` them now or re-park with a `needs-owner:` reason; '
+                               'another unchanged pass hands the run to the owner.' % ', '.join(waiting))
         auto['accepted'] = self._accepted(state)
         if actionable:
             message = 'continue with the next ready or reported card; park any card that reaches an approval boundary.'
@@ -3618,12 +3650,47 @@ class Engine:
                        'then push the branch and open the pull request.')
         signature = self._signature(state)
         if signature == auto.get('signature'):
-            auto['stalls'] += 1  # The last continuation changed nothing: end the turn instead of repeating it
-            return (None if running else 'stalled'), None  # with no worker to wake the session, stop and brief
+            auto['stalls'] += 1  # The last continuation changed nothing: never repeat it
+            if running or any(t['state'] == 'running' for t in tasks):
+                return None, None  # a worker or the inline card's background shell will wake the session
+            return self._nudge(state, 'stalled', '',
+                               'the last pass changed nothing%s. Name what is missing and do it: run the next gate, record the '
+                               'review, or add the card the ledger still needs.' % self._board_diff(state),
+                               'still nothing changed%s. Park what only the owner can unblock with a `needs-owner:` reason; '
+                               'another unchanged pass hands the run to the owner.' % self._board_diff(state))
         auto['signature'] = signature
         auto['stalls'] = 0
+        auto.pop('escalations', None)
         auto['passes'] += 1
         return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
+
+    @staticmethod
+    def _board_diff(state):
+        """The unfinished cards and their states, for a nudge that must differ from the one before it."""
+        cards = ', '.join('%s %s' % (t['id'], t['state']) for t in state['tasks'].values() if t['state'] != 'accepted')
+        return ' (unfinished: %s)' % cards if cards else ''
+
+    def _nudge(self, state, reason, key, first, again):
+        """Keep an armed run going: the first nudge for an unchanged board, a different one on the next, and after
+        ESCALATION_LIMIT with the board still unchanged every unfinished card is parked for the owner and the run stops
+        `needs-owner:escalated`. Returns the `_stop_check` pair."""
+        auto = state['autonomy']
+        signature = _digest([self._signature(state), reason, key])
+        seen = (auto.get('escalations') or {}).get(reason) or {}
+        count = seen.get('count', 0) + 1 if seen.get('signature') == signature else 1
+        auto['escalations'] = {reason: dict(signature=signature, count=count)}
+        if count >= ESCALATION_LIMIT:
+            for task in state['tasks'].values():
+                if task['state'] in PARKABLE:
+                    self._set_aside(state, task, OWNER_PARK + 'escalated')
+                elif task['state'] == 'parked' and not task.get('parked_reason', '').startswith(OWNER_PARK):
+                    task['parked_reason'] = OWNER_PARK + 'escalated'
+            return 'needs-owner:escalated', None
+        auto['stalls'] = 0 if count == 1 else auto['stalls'] + 1
+        auto['signature'] = self._signature(state)
+        auto['accepted'] = self._accepted(state)
+        auto['passes'] += 1
+        return None, 'Autonomy pass %d: %s' % (auto['passes'], first if count == 1 else again)
 
     def _publication_gap(self, state):
         """Why finished work is not yet published, or None: the branch holds commits beyond the session base and no
@@ -3653,12 +3720,12 @@ class Engine:
         return None
 
     def hook_stop(self):
-        """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm, an
-        idle run, a required gate that failed three times in a row (`gate-failing`) and a stall with no worker running
-        (`stalled`). When every worker is silent past `worker_stale_seconds` the turn continues once with a message to
-        park or re-dispatch the lost card, then stops as `stalled`. Finished work counts as `complete` only once a
-        verified pull request has the current head or nothing lies beyond the base; two nudges to push and open it
-        come first. Caller identifiers do not authenticate."""
+        """The Stop continuation of SPEC 5.8: a fixed goal. Only the deadline, completion, tamper, disarm, a stale
+        loop, parked cards that all need the owner (`parked-only`) and `needs-owner:escalated` stop it. An idle board,
+        a failing gate, a stall, a silent worker and an unpublished branch each get a nudge that differs from the
+        last; the same unchanged board three times parks the unfinished cards for the owner. Finished work counts as
+        `complete` only once a verified pull request has the current head or nothing lies beyond the base. Caller
+        identifiers do not authenticate."""
         with self._state(False) as state:
             if not self._autonomy_on(state):
                 return None  # Read-only unless autonomy is active in a session
