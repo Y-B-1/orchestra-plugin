@@ -18,7 +18,7 @@ import time
 
 from . import portable
 from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
-from .guards import (RULES, Decision, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
+from .guards import (RULES, Decision, _WORD_START, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
                      guard_digest, runs_test_suite)
 
 _PROTECTED = RULES['protected']
@@ -313,6 +313,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if _run_active(engine):  # SubagentStart cannot block; the PreToolUse deny below enforces
             return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': SUBAGENT_GUARD}})
         return HookResult({})
+    if event == 'SubagentStop':
+        from .capture import capture  # Lazy: only this event reads transcripts
+        return HookResult(capture(payload, engine))
     if event == 'SessionEnd':
         session_id = payload.get('session_id')
         if engine is None or not isinstance(session_id, str) or not session_id:
@@ -467,7 +470,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if split is None:
             return _deny(decision.reason)
         remainder, pushed = split
-        refused = _soft_push_refusal(command, cwd, engine) if pushed or decision.category == 'release' else None
+        refused = _soft_push_refusal(_uncomment(command), cwd, engine) if pushed or decision.category == 'release' else None
         if refused:
             return _deny(refused)
         if decision.soften == 'warn':
@@ -670,15 +673,16 @@ def _soft_push_refusal(command, cwd, engine):
     return None
 
 
-def _soft_remainder(command):
-    """R4: (the command without its softened segments, True when one of them is a push), or None when the command
-    cannot be split safely: a substitution, a heredoc, a shell string, a softened segment inside a pipe or an
-    unreadable segment, a `$'...'` string or a `#` comment (the split reads neither, so either could hide a command)."""
-    if re.search(r'\$\(|`|<\(|>\(|<<|\$\'', command):
-        return None
-    quote, escaped = None, False
+def _uncomment(command):
+    """The command with each `#` comment cut at its line end, or None when a `#` is not clearly a comment. The split reads a quote inside a comment as a real quote
+    and would join the next lines into one segment, so every comment goes before it reads a word."""
+    out, quote, escaped, comment = [], None, False, False
     for i, char in enumerate(command):
-        if escaped:
+        if comment:
+            comment = char != '\n'  # a comment runs to the end of its line, as the classifier reads it
+            if comment:
+                continue
+        elif escaped:
             escaped = False
         elif char == '\\' and quote != "'":
             escaped = True
@@ -686,8 +690,25 @@ def _soft_remainder(command):
             quote = None if char == quote else quote
         elif char in "\"'":
             quote = char
-        elif char == '#' and (not i or command[i - 1] in ' \t\n;&|()<>'):
-            return None
+        elif char == '#' and (not i or command[i - 1] in _WORD_START):
+            if i and (command[i - 1] == ')' or command[i - 2:i] == '\\\n'):
+                return None  # the classifier may read this `#` as part of a word: do not cut a command it could see
+            comment = True
+            continue
+        out.append(char)
+    return ''.join(out)
+
+
+def _soft_remainder(command):
+    """R4: (the command without its softened segments, True when one of them is a push), or None when the command
+    cannot be split safely: a substitution, a heredoc, a shell string, a softened segment inside a pipe, an
+    unreadable segment or a `$'...'` string (the split reads none of them, so each could hide a command). A `#` comment
+    is cut at its line end first."""
+    if re.search(r'\$\(|`|<\(|>\(|<<|\$\'', command):
+        return None
+    command = _uncomment(command)
+    if command is None:
+        return None
     kept, pushed = [], False
     try:
         for pipeline in _pipelines(command):
@@ -1821,7 +1842,7 @@ def _prompt_submit(payload):
 def _main(argv=None):
     started = time.monotonic()
     parser = argparse.ArgumentParser()
-    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit'])
+    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit'])
     parser.add_argument('--harness', choices=['claude'], default='claude')
     parser.add_argument('--from-mod', action='store_true')
     args = parser.parse_args(argv)
@@ -1852,7 +1873,7 @@ def _main(argv=None):
     busy = False
     missing_cwd = False
     build_error = None
-    if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
+    if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart', 'SubagentStop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
             from .paths import StateRootError, load_policy
