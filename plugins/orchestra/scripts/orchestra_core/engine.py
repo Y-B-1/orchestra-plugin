@@ -1655,6 +1655,9 @@ class Engine:
                                      and not set(t['resources']) & set(other['resources']))
                             and not (self._read_review(t) and self._read_review(other)
                                      and not set(t['resources']) & set(other['resources']))
+                            # Overlapping queued repairs: the lowest id starts first instead of each blocking the other.
+                            and not (t.get('repair_of') and other['state'] == 'queued' and other.get('repair_of')
+                                     and t['id'] < other['id'])
                             for other in occupied)]
 
     def _not_ready_reason(self, state, task_id):

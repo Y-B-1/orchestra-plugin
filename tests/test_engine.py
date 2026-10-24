@@ -606,6 +606,23 @@ class FinalBlockerTests(EngineFixture):
         self.lease = self.engine.open_session('main')
         self.engine.run_gate('main', self.lease, 'unit', command)
 
+    def test_overlapping_queued_repairs_do_not_deadlock(self):
+        # F29: two repairs whose inherited reservations overlap; the lowest id starts, the other waits for it.
+        self.release_setup()
+        self.task('B1', files=['a', 'shared'])
+        self.task('B2', files=['b'])
+        for card in ('B1', 'B2'):
+            token = self.engine.dispatch('main', self.lease, card, 'builder-' + card, serial='test')
+            self.engine.report('builder-' + card, token, done('Result ' + card))
+        self.record('blocked', ['B1', 'B2'], findings=['Wrong output'])
+        self.task('RA', mode='repair', repair_of='B1', files=['a'])
+        self.task('RB', mode='repair', repair_of='B2', files=['b', 'shared'])
+        self.assertEqual(['RA'], self.engine.ready('main', self.lease))
+        token = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
+        self.assertEqual([], self.engine.ready('main', self.lease))  # RB still overlaps the running RA
+        self.engine.report('repair-a', token, done('Repaired A'))
+        self.assertEqual([], self.engine.ready('main', self.lease))  # a reported repair still holds its files
+
     def test_repair_transfers_reservations_and_retains_history(self):
         self.release_setup()
         self.task('B1', files=['a'])
