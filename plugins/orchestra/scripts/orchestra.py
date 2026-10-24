@@ -17,12 +17,14 @@ import subprocess
 import sys
 import uuid
 
-from orchestra_core import portable
+from orchestra_core import cli_support, delta, portable
 from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, repository, state_location
 
 ROOT = Path(__file__).resolve().parents[1]
+# Commands that add one `board` line to their JSON when a card changed state.
+BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','review','park','cancel','unpark','hold'}
 
 
 def read_json(path):
@@ -57,6 +59,8 @@ def parser():
     board.add_argument('--session', help='With --view: the harness session id; `bound` says whether it owns the run (the id is never printed)')
     sub.add_parser('waves', help='Print overlaps, unmet prerequisites, ordered waves and the cards that can start now; no lease, read-only')
     sub.add_parser('brief', help='Print the newest run brief; no lease, read-only')
+    refusals = sub.add_parser('refusals', help='Print the newest refused commands (exit 2) from the refusal log; no lease, read-only')
+    refusals.add_argument('--last', type=int, default=10, help='How many entries (default 10)')
     art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
     art.add_argument('--tasks', help='Comma-separated task IDs')
     sub.add_parser('prepr', help='Print the pre-PR size check and reviewer choice; no lease, read-only')
@@ -193,6 +197,8 @@ def execute(args):
         except ValueError:
             mode = 'minimal'
         return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file(),'guard_mode':mode},0
+    if args.command=='refusals':  # lease-free and read-only; reads the log and nothing else
+        return {'refusals':cli_support.read_refusals(state,args.last)},0
     if args.command=='start' and args.policy:
         policy = read_json(args.policy)
         if not isinstance(policy,dict) or policy.get('schema_version') != 1:  # the rule load_policy applies later
@@ -200,6 +206,13 @@ def execute(args):
     else:
         policy = load_policy(state)
     engine = Engine(state,repo,policy)
+    args.state_dir, args.board_before = state, None
+    if args.command in BOARD_COMMANDS:
+        try:
+            args.board_before = engine.view(args.actor)
+        except Exception:  # no readable board: the command reports its own error
+            pass
+    args.engine = engine
     if args.command=='start':
         if args.items is not None:
             raise EngineError('--items is the 2.4 flag; start with --size')
@@ -381,15 +394,46 @@ def execute(args):
     raise EngineError('Unsupported command')
 
 
+def add_board_line(args,result):
+    """Add the one-line `board` delta to a result when a card moved; return the signature to store, or None."""
+    if args.command not in BOARD_COMMANDS or not isinstance(result,dict) or args.board_before is None:
+        return None
+    try:
+        after = args.engine.view(args.actor)
+    except Exception:
+        return None
+    line = delta.delta(args.board_before,after)
+    if line is None:
+        return None
+    result['board'] = line
+    return delta.signature(after)
+
+
+def refused_state(args):
+    """The state directory of a refused command, or None when it cannot be told."""
+    try:
+        return Path(args.state).expanduser().resolve() if args.state else state_location(repository(args.repo))
+    except Exception:
+        return None
+
+
 def main(argv=None):
-    args=parser().parse_args(argv)
+    raw = list(sys.argv[1:] if argv is None else argv)
+    args=parser().parse_args(raw)
+    state=refused_state(args)
+    known=state is not None and state.is_dir()  # a command run before any state exists logs nothing and creates nothing
     try:
         result,code=execute(args)
+        seen=add_board_line(args,result)
     except (EngineError,ValueError,OSError,KeyError,TypeError,AttributeError,subprocess.SubprocessError) as exc:
         print(json.dumps({'error':str(exc)}),file=sys.stderr)
+        if known:
+            cli_support.log_refusal(state,raw,exc)
         return 2
     if result is not None:
         print(json.dumps(result,indent=2))
+    if seen is not None:
+        cli_support.store_seen(args.state_dir,seen)
     return code
 
 
