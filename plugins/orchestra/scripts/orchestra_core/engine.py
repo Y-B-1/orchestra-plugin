@@ -1292,6 +1292,8 @@ class Engine:
                     raise EngineError('Only an investigator card can use prep_for')
                 if task['prep_for'] == task['id'] or task['prep_for'] not in state['tasks']:
                     raise EngineError('prep_for must name another existing card')
+            if 'owner_approval' in task and (task['role'], task['mode']) != ('builder', 'repair'):
+                raise EngineError('owner_approval is only for a repair of a held chain')
             if task['role'] == 'builder' and task['mode'] == 'repair':
                 repair_of = task.get('repair_of')
                 if repair_of not in state['tasks'] or state['tasks'][repair_of]['role'] != 'builder':
@@ -1304,6 +1306,7 @@ class Engine:
                 newest = self._newest_receipts(state, repair_of)  # stale findings still start a repair
                 if not any(self._task_findings(r, repair_of) for r in newest.values()):
                     raise EngineError('Repair needs earlier checked coding findings')
+                self._check_owner_approval(state, task, original)
                 self._check_repair_ladder(state, original)
                 final_findings = self._final_findings(state, repair_of, stale=True)
                 if final_findings:
@@ -1320,6 +1323,24 @@ class Engine:
             task['rev'] = '2.2'
             task['seq'] = len(state['tasks'])  # state.json is saved with sorted keys, so add order is stored
             state['tasks'][task['id']] = task
+            if 'owner_approval' in task:
+                _append_progress(self.state_dir, '- owner approved repair %s of %s: %s'
+                                 % (task['id'], task['repair_of'], task['owner_approval']))
+
+    def _check_owner_approval(self, state, task, original):
+        """A repair of a held chain carries the owner's words; never while autonomy is armed (the owner is away). A held
+        chain that a current final receipt blames stays on the final-round path and needs none."""
+        held = original['state'] == 'held'
+        if 'owner_approval' in task:
+            words = task['owner_approval']
+            if not held:
+                raise EngineError('owner_approval is only for a repair of a held chain')
+            if not isinstance(words, str) or not words.strip() or len(words) > 1000:
+                raise EngineError('owner_approval must be a nonempty string of at most 1000 characters')
+            if self._autonomy_on(state):
+                raise EngineError('A held chain waits for the owner while autonomy is armed')
+        elif held and not self._final_blocks(state, original['id'], stale=True):
+            raise EngineError("A held chain needs the owner's approval: add owner_approval with the owner's words")
 
     def _check_repair_ladder(self, state, original):
         """The ladder ends in hold (SPEC 5.2 item 4): a repair of a repair, or of a card the repair-diff check
@@ -2609,7 +2630,11 @@ class Engine:
             return None
         if any(review['artifact'][k] != self._artifact_cached(cache, None)[k] for k in ('repo', 'identity', 'policy')):
             return None
-        return {i for r in later for i in r['tasks']}
+        chain = {i for r in later for i in r['tasks']}
+        # An accepted fix re-review card of that chain is covered whatever its verdict: a BLOCKED one led to the repair
+        # the CLEAN one closed.
+        return chain | {t['id'] for t in state['tasks'].values() if t['role'] == 'code-reviewer'
+                        and t['state'] == 'accepted' and chain & set(t.get('review_of', []))}
 
     def _review_verdicts(self, state, cache, task_id=None, final=False, keep=False, strict=False):
         """Newest relevant verdict wins; altered evidence cannot restore an older verdict. With `keep`, a stale final
