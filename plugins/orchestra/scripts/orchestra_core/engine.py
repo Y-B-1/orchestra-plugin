@@ -56,10 +56,11 @@ GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which 
 LARGE_FILE_BYTES = 64 * 1024 * 1024  # Files over this are bound by size, mtime and sampled content, not read whole
 SAMPLE_BYTES = 1024 * 1024
 STALE_REVIEW = 'Review with findings is stale; re-review'
+FINDING_ROUTES = '; add a repair card (`repair_of`) or record the finding with `finding add`'
 # Keys the engine writes on a card; a task file never supplies them (repair_of only on a builder repair card).
 ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
                     'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
-                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy')
+                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -701,6 +702,8 @@ class Engine:
                 raise EngineError('Invalid task helper_reason')
             if 'dispatch_policy' in task and not isinstance(task['dispatch_policy'], str):
                 raise EngineError('Invalid task dispatch_policy')
+            if 'report_sha' in task and not isinstance(task['report_sha'], str):
+                raise EngineError('Invalid task report_sha')
             if 'size' in task and task['size'] not in CARD_SIZES:
                 raise EngineError('Invalid task size')
             if 'self_review' in task and not cls._self_review_ok(task['self_review']):
@@ -1074,12 +1077,14 @@ class Engine:
             if harness_session is not None:
                 state['session']['harness_session'] = harness_session
             state['autonomy'] = self._kept_autonomy(state)
+            self.requeued = []  # the restart receipt: cards a resumed run put back in the queue
             for task in state['tasks'].values():
                 if task['state'] == 'running':
                     task['state'] = 'queued'
                     task.pop('assignment', None)
                     task.pop('started_at', None)
                     task.pop('report', None)
+                    self.requeued.append(task['id'])
             state['permits'] = []
             return lease
 
@@ -1233,7 +1238,11 @@ class Engine:
             if self._is_release(task) and any(self._is_release(t) for t in state['tasks'].values()):
                 raise EngineError('A run supports one terminal release task')
             for key in ('inputs', 'acceptance', 'files', 'resources', 'dependencies'):
-                values = task.get(key)
+                if key not in task:
+                    if key in ('inputs', 'acceptance'):
+                        raise EngineError('Missing task ' + key)
+                    task[key] = []
+                values = task[key]
                 if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
                     raise EngineError('Invalid task ' + key)
                 if key in ('inputs', 'acceptance') and not values:
@@ -1545,7 +1554,7 @@ class Engine:
     def _set_aside(self, state, task, reason):
         """Park a card: drop its assignment, reservation and report, and put its repair chain under repair again."""
         task.update(state='parked', parked_reason=reason)
-        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'started_at'):
+        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'report_sha', 'started_at'):
             task.pop(key, None)
         for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair's report is dropped: its chain is under repair again
             ancestor['state'] = 'repairing'
@@ -1587,7 +1596,8 @@ class Engine:
             if not session or not session['active']:
                 raise EngineError('No active run to recover; use start')
             if session['actor'] != actor or session.get('harness_session') != harness_session:
-                raise EngineError('This run belongs to another session; the owner ends it with interrupt or starts over')
+                raise EngineError('This run belongs to another session; the owner ends it with interrupt or starts over. After a '
+                                  'crash, read session.lease from %s, then `interrupt --lease LEASE`' % self.state_path)
             lease = uuid.uuid4().hex
             session['lease'] = lease
             for task in state['tasks'].values():
@@ -1646,6 +1656,25 @@ class Engine:
                             and not (self._read_review(t) and self._read_review(other)
                                      and not set(t['resources']) & set(other['resources']))
                             for other in occupied)]
+
+    def _not_ready_reason(self, state, task_id):
+        """Why `_ready` leaves this card out, in the order it checks."""
+        tasks = state['tasks']
+        task = tasks.get(task_id)
+        if task is None:
+            return 'unknown task %s' % task_id
+        if task['state'] != 'queued':
+            return '%s is %s' % (task_id, task['state'])
+        running = sum(t['state'] == 'running' for t in tasks.values())
+        if running >= self.policy['max_workers']:
+            return '%d of %d workers running' % (running, self.policy['max_workers'])
+        deps = [d for d in task['dependencies'] if tasks[d]['state'] not in ('accepted', 'held')]
+        if deps:
+            return 'open dependencies: ' + ', '.join(deps)
+        targets = [d for d in task.get('review_of', []) if tasks[d]['state'] not in ('reported', 'accepted', 'held')]
+        if targets:
+            return 'review targets not reported: ' + ', '.join(targets)
+        return 'its files or resources overlap a running, reported or repair card'
 
     def ready(self, actor, lease):
         with self._state(False) as state:
@@ -1707,7 +1736,7 @@ class Engine:
             raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report'
                               % self.policy.get('max_worktrees', MAX_WORKTREES))
         if task_id not in (self._ready(state) if ready is None else ready):
-            raise EngineError('Task is not ready or capacity is exhausted')
+            raise EngineError('Task is not ready or capacity is exhausted: ' + self._not_ready_reason(state, task_id))
         if contract:
             self._check_contract(state['tasks'][task_id])
 
@@ -1903,7 +1932,8 @@ class Engine:
                             inline=bool(t.get('inline')), dependencies=list(t['dependencies']),
                             deps_open=[d for d in t['dependencies'] if tasks[d]['state'] not in ('accepted', 'held')],
                             review_of=list(t.get('review_of', [])), files=list(t['files']),
-                            started_at=t.get('started_at'), seq=t.get('seq'))
+                            started_at=t.get('started_at'), seq=t.get('seq'),
+                            landed=self._landed(t['report_sha']) if t.get('report_sha') else None)
                 if 'outcome' in t:
                     card['outcome'] = t['outcome']
                 cards.append(card)
@@ -2015,11 +2045,36 @@ class Engine:
             raise EngineError('Builder report needs a nonempty ARTIFACT line')
         task.update(state='reported', report=report,
                     report_artifact=self.artifact(self._scope_of(state, [task['id']])))
+        task.pop('report_sha', None)
+        sha = self._reported_commit(report) if task['role'] == 'builder' else None
+        if sha:
+            task['report_sha'] = sha
         if review is not None:
             task['self_review'] = review
         for ancestor in self._walk(state['tasks'], task, 'repair_of'):
             ancestor['state'] = 'reported'
             ancestor['report_artifact'] = self.artifact(self._scope_of(state, [ancestor['id']]))  # the repair changed its files
+
+    def _reported_commit(self, report):
+        """The commit named by the first 7 to 40 hex characters of the report's first ARTIFACT line, or None."""
+        line = next((line for line in report.splitlines() if line.startswith('ARTIFACT:')), '')
+        found = re.match(r'\s*([0-9a-fA-F]{7,40})\b', line[len('ARTIFACT:'):])
+        if not found:
+            return None
+        try:
+            return self._git('rev-parse', '--verify', '--quiet', found.group(1) + '^{commit}').decode().strip()
+        except EngineError:
+            return None
+
+    def _landed(self, sha):
+        """Whether HEAD holds a reported commit: it is an ancestor, or `git cherry` finds each of its commits applied."""
+        if subprocess.run(['git', '-C', str(self.repo), 'merge-base', '--is-ancestor', sha, 'HEAD'],
+                          capture_output=True).returncode == 0:
+            return True
+        try:
+            return not any(line.startswith('+') for line in self._git('cherry', 'HEAD', sha).decode().splitlines())
+        except EngineError:
+            return False
 
     def _snapshot(self, path, kind, normalized=None):
         """Copy the file under the state directory. With `normalized` bytes the copy holds those instead, and the receipt
@@ -2068,7 +2123,8 @@ class Engine:
         if any(i not in state['tasks'] for i in ids):
             raise EngineError('Unknown reviewed task')
         if final and (len(ids) != len(set(ids)) or set(ids) not in (set(state['tasks']), self._pre_release_ids(state))):
-            raise EngineError('Final review must explicitly cover every task')
+            missing = sorted(self._pre_release_ids(state) - set(ids))
+            raise EngineError('Final review must explicitly cover every task' + ('; missing: ' + ', '.join(missing) if missing else ''))
         covered = [state['tasks'][i] for i in ids]
         if any(t.get('worker') == reviewer and not self._read_review(t) for t in covered):
             raise EngineError('Worker cannot review own artifact')
@@ -2258,7 +2314,7 @@ class Engine:
         """Materiality (SPEC 5.6): blocking issues are the findings; note texts are returned."""
         if 'issues' not in body:
             if any('rev' in t for t in covered):
-                raise EngineError('Review of 2.2 cards needs issues with severity')
+                raise EngineError('Review needs `issues`: a list of {text, severity, impact}, or [] when clean')
             return []
         issues = body['issues']
         if not isinstance(issues, list) or any(
@@ -2544,8 +2600,12 @@ class Engine:
             if releases and (len(releases) != 1 or releases[0]['state'] != 'running'):
                 raise EngineError('The terminal release task must be running')
         required_ids = self._pre_release_ids(state) if for_release else set(state['tasks'])
-        if any(state['tasks'][i]['state'] != 'accepted' for i in required_ids):
-            raise EngineError('All tasks must be accepted')
+        open_cards = [t for t in self._by_seq(state['tasks'].values()) if t['id'] in required_ids and t['state'] != 'accepted']
+        if open_cards:
+            held = ('; a CLEAN final review with `cleared` closes held tips'
+                    if any(t['state'] == 'held' for t in open_cards) else '')
+            raise EngineError('All tasks must be accepted: %s%s'
+                              % (', '.join('%s (%s)' % (t['id'], t['state']) for t in open_cards), held))
         artifact = self.artifact()
         cache = {None: artifact}
         verdicts = self._review_verdicts(state, cache, final=True, keep=True)
@@ -2558,13 +2618,13 @@ class Engine:
 
         categories = {category for category, review in verdicts.items() if not open_findings(review)}
         if any(open_findings(review) for review in verdicts.values()):
-            raise EngineError('Current final review has findings')
+            raise EngineError('Current final review has findings' + FINDING_ROUTES)
         for task_id in state['tasks']:
             task_verdicts = self._review_verdicts(state, cache, task_id=task_id, strict=True)
             if task_verdicts is None:
                 raise EngineError(STALE_REVIEW + ': ' + task_id)
             if any(self._task_findings(r, task_id) for r in task_verdicts.values()):
-                raise EngineError('Current task review has findings: ' + task_id)
+                raise EngineError('Current task review has findings: ' + task_id + FINDING_ROUTES)
         required_categories = set(self._required_lenses(state))
         changed = self._run_changed(state)
         owed = require_review or bool(state['tasks']) or bool(changed and changed[0])  # unreviewed changes need a review
@@ -2604,6 +2664,11 @@ class Engine:
         with self._state() as state:
             self._lease(state, actor, lease)
             artifact = self._completion_evidence(state)
+            missing = ['%s (%s)' % (t['id'], t['report_sha'][:8]) for t in self._by_seq(state['tasks'].values())
+                       if t['role'] == 'builder' and t['state'] == 'accepted' and t.get('report_sha')
+                       and not self._landed(t['report_sha'])]
+            if missing:
+                raise EngineError('Accepted work is not in HEAD: %s; merge it, or hold the card' % ', '.join(missing))
             self._end_run(state, 'finished' if self._autonomy_on(state) else 'closed')
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []

@@ -48,8 +48,10 @@ def parser():
                        '(needs --harness-session); running cards keep their assignments')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
-    for name in ['status','ready','interrupt','finish','scan']:
+    for name in ['ready','interrupt','finish','scan']:
         sub.add_parser(name)
+    status = sub.add_parser('status', help='Print the run state; review receipts leave out their per-file entries')
+    status.add_argument('--full', action='store_true', help='Keep the per-file entries of review receipts')
     board = sub.add_parser('board', help='Print card ids by role and state; --view prints the cheap lease-free board the Kanban mod reads')
     board.add_argument('--view', action='store_true')
     board.add_argument('--session', help='With --view: the harness session id; `bound` says whether it owns the run (the id is never printed)')
@@ -135,6 +137,12 @@ def parser():
     return p
 
 
+def without_entries(receipt):
+    """A review receipt as printed: its per-file `entries` digests stay in state.json only."""
+    receipt.pop('entries',None)
+    return receipt
+
+
 def parse_asks(text):
     if text is None:
         return None
@@ -213,9 +221,13 @@ def execute(args):
             raise
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
-        return {'lease':lease,'state':str(state),'repo':str(repo)},0
+        return {'lease':lease,'state':str(state),'repo':str(repo),'requeued':engine.requeued},0
     if args.command=='status':
-        return engine.status(lenses=True),0
+        result = engine.status(lenses=True)
+        if not args.full:
+            for receipt in result['reviews']:
+                without_entries(receipt)
+        return result,0
     if args.command=='prepr':  # lease-free and read-only, like status
         result=engine.prepr()
         if result['warning']:
@@ -284,10 +296,12 @@ def execute(args):
         if missing:
             raise EngineError('Review report is missing: '+', '.join(missing))
         if args.token:
-            return engine.review_with_token(args.actor,args.lease,args.token,args.report),0
+            result = engine.review_with_token(args.actor,args.lease,args.token,args.report)
+            without_entries(result['receipt'])
+            return result,0
         result = engine.record_review(args.actor,args.lease,review['reviewer'],args.report,
                                      review['categories'],review['tasks'],review['final'],review['findings'])
-        return result,0
+        return without_entries(result),0
     if args.command=='gate':
         argv, again, timeout = args.argv, args.again, args.timeout
         while argv[:1] in (['--again'], ['--timeout']):  # REMAINDER swallows flags written after NAME
