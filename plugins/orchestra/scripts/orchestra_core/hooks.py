@@ -1592,7 +1592,8 @@ def _deletes_only_ignored(command, cwd):
         if '..' in PurePosixPath(target).parts:
             return False
         joined = Path(os.path.normpath(Path(cwd) / target))
-        path = joined.parent.resolve() / joined.name  # rm removes a symlink itself, never what it points to
+        # rm removes a symlink itself, never what it points to; with a trailing `/` or `/.` it follows the link (PR2)
+        path = joined.resolve() if target.endswith(('/', '/.')) else joined.parent.resolve() / joined.name
         if path == top or top not in path.parents:
             return False
         rel = path.relative_to(top)
@@ -1741,6 +1742,28 @@ def _ledger_without_session(state_dir):
     return not valid and (Path(state_dir) / 'autonomy.md').is_file()
 
 
+def _lock_held(payload):
+    """PR2: the mod does not see an arm the engine wrote, so a live mod skips this hook only when the raw state of the
+    run governing this cwd holds neither lock. Active autonomy, a kept report without a receipt, a ledger without a
+    valid session, or a state that cannot be read or located: True. No run, or no repository: False."""
+    cwd = payload.get('cwd')
+    if not isinstance(cwd, str) or not cwd:
+        return False
+    try:
+        from .paths import StateRootError
+        override = os.environ.get('ORCHESTRA_STATE_DIR')  # state_location's override needs no git
+        try:
+            state_dir = Path(override).expanduser().resolve() if override else _run_location(cwd)[1]
+        except StateRootError:
+            return True
+        state_file = state_dir / 'state.json'
+        if not state_file.is_file():
+            return False
+    except (ImportError, OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        return False  # the full handler finds no run here either
+    return _raw_autonomy_active(state_file) or _raw_unattended(state_file) or _ledger_without_session(state_dir)
+
+
 def _mod_is_live(payload):
     """A12: a fresh marker carrying this copy's rules hash means the mod already guarded."""
     session = payload.get('session_id')
@@ -1818,7 +1841,8 @@ def _main(argv=None):
             and not _soften_call(payload)
             and not _ledger_call(payload)
             and not _lock_text_call(payload)
-            and _mod_is_live(payload)):
+            and _mod_is_live(payload)
+            and not _lock_held(payload)):
         print('{}')
         return 0
     state_dir = os.environ.get('ORCHESTRA_STATE_DIR')

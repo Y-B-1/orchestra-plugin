@@ -1541,6 +1541,12 @@ class MarkerHandshakeTest(unittest.TestCase):
         with mock.patch('subprocess.check_output', side_effect=AssertionError('git ran')):
             self.assertEqual(self.call(), {})
 
+    def test_pr2_fresh_marker_does_not_skip_an_unreadable_run_state(self):
+        """A state the mod cannot vouch for may hold a lock: the native hook decides (fail closed)."""
+        self.marker()
+        (self.state / 'state.json').write_text('not json')
+        self.assertEqual(self.call().get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
+
 
 class RunStateResolutionTest(unittest.TestCase):
     """A1 states and A15: where the hook looks for the run."""
