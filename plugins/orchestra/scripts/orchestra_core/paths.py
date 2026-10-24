@@ -13,6 +13,17 @@ def repository(cwd):
     return Path(subprocess.check_output(['git','-C',str(cwd),'rev-parse','--show-toplevel'],stderr=subprocess.PIPE).decode().strip()).resolve()
 
 
+def main_checkout(repo):
+    """The main worktree a linked worktree belongs to, or None for the main worktree itself (and for the checkout of a
+    bare repository, which has no main worktree)."""
+    def git(*args):
+        return (Path(repo) / subprocess.check_output(['git', '-C', str(repo), *args], stderr=subprocess.PIPE).decode().strip()).resolve()
+    common = git('rev-parse', '--git-common-dir')
+    if git('rev-parse', '--git-dir') == common or common.name != '.git':
+        return None
+    return common.parent
+
+
 class StateRootError(Exception):
     """The fallback state root is unusable. Not an OSError, so run discovery cannot mistake it for 'no run'."""
 
