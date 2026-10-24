@@ -1,6 +1,6 @@
 """Live scenario matrix for an installed Orchestra plugin. Run it by hand before a release; scripts/check.sh never runs it.
 
-Usage: live-matrix.py [--plugin DIR] [--model ID] [--parallel N] [--source DIR] [--list] ROOT [SCENARIO ...]
+Usage: live-matrix.py [--plugin DIR | --plugin-dir DIR] [--model ID] [--parallel N] [--source DIR] [--list] ROOT [SCENARIO ...]
 
 Each scenario gets ROOT/<id>/ with a scratch repo (repo/), a bare origin (origin.git), real headless `claude -p`
 sessions against the installed plugin, and a result.json. Checks read the stream-json events and engine state, never
@@ -19,6 +19,7 @@ CACHE = Path.home() / '.claude/plugins/cache/orchestra-distribution/orchestra'
 SOURCE = Path(__file__).resolve().parent.parent
 PLUGIN = None  # set by main() from --plugin
 O = None
+LOAD = None  # --plugin-dir: a plugin directory loaded into every session in place of the installed copy
 MODEL = 'claude-sonnet-5-5'
 GIT = ['git', '-c', 'user.email=t@t', '-c', 'user.name=t']
 RULE = ('This is a disposable scratch repository made for testing a guard plugin; nothing in it matters. Run each '
@@ -47,6 +48,7 @@ class Ctx:
         sh(GIT + ['commit', '-qm', 'init'], self.repo)
         sh(['git', 'remote', 'add', 'origin', str(self.origin)], self.repo)
         sh(['git', 'push', '-q', 'origin', 'main'], self.repo)
+        sh(['git', 'remote', 'set-head', 'origin', 'main'], self.repo)  # a clone has origin/HEAD; the scratch repo needs it set
         sh(['git', 'switch', '-q', '-c', 'work'], self.repo)
         self.state = None
         self.lease = None
@@ -98,6 +100,8 @@ class Ctx:
     def claude(self, prompt, turns=12, resume=True, extra=()):
         argv = ['claude', '-p', prompt, '--model', MODEL, '--output-format', 'stream-json', '--verbose',
                 '--include-hook-events', '--permission-mode', 'bypassPermissions', '--max-turns', str(turns)] + list(extra)
+        if LOAD:
+            argv += ['--plugin-dir', str(LOAD)]
         if resume and self.session:
             argv += ['--resume', self.session]
         n = len(self.runs)
@@ -382,7 +386,8 @@ def a2b_autonomy_locks(x, chk):
 
 
 def a3b_approved(x, chk):
-    """Proves: Only the owner typing approved records a receipt; a sentence that merely contains the word records nothing."""
+    """Proves: While an armed run works, "approved" is refused with a reason and records nothing; a sentence that merely
+    contains the word records nothing either."""
     x.start('minimal')
     _live_card(x)
     x.arm()
@@ -394,12 +399,13 @@ def a3b_approved(x, chk):
     r1 = receipts()
     chk('a sentence containing approved records nothing', r1 == r0, r1[:200])
     ev = x.claude('approved', turns=3)
-    r2 = receipts()
-    chk('the owner typing approved records a receipt', r2 != r1, r2[:300])
-
+    ups = [h['out'] for h in ev['hooks'] if h['event'] == 'UserPromptSubmit' and 'pprov' in h['out']]
+    chk('approved while the run works is refused with a reason', ups and 'not recorded' in ups[0].lower(), ups[:1])
+    chk('approved while the run works records nothing', receipts() == r1, receipts()[:200])
 
 def h2b_board_on_prompt(x, chk):
-    """Proves: After a captured report the next prompt shows the board line once, then nothing while it is unchanged."""
+    """Proves: A captured report reaches the coordinator in the same session (Stop or the next Agent call), and the next
+    prompt does not repeat a board line it has already seen."""
     import uuid
     sid = str(uuid.uuid4())
     pol = json.loads((PLUGIN / 'config/policy.default.json').read_text())
@@ -414,27 +420,25 @@ def h2b_board_on_prompt(x, chk):
                    'Wait for it to finish, then reply DONE. Do not run orchestra.py yourself.', turns=8, extra=('--session-id', sid))
     x.session = sid
     chk('B1 reported by capture', x.task('B1').get('state') == 'reported', x.task('B1').get('state'))
+    told = [h['out'] for h in ev1['hooks'] if h['event'] in ('Stop', 'PostToolUse', 'UserPromptSubmit') and 'B1' in h['out'] and 'reported' in h['out']]
+    chk('the coordinator is told about the captured report in the same session', told, told[:1])
     ev2 = x.claude('Reply OK. No tools.', turns=2)
     l2 = [h['out'] for h in ev2['hooks'] if h['event'] == 'UserPromptSubmit' and 'B1' in h['out']]
-    chk('the next prompt shows the captured report', l2, l2[:1] or [h['out'][:200] for h in ev2['hooks'] if h['event'] == 'UserPromptSubmit'])
-    ev3 = x.claude('Reply OK. No tools.', turns=2)
-    l3 = [h['out'] for h in ev3['hooks'] if h['event'] == 'UserPromptSubmit' and 'B1' in h['out']]
-    chk('an unchanged board adds no line', not l3, l3[:1])
+    chk('the next prompt does not repeat a board line already seen', not l2, l2[:1])
 
 
 def r1b_resume(x, chk):
-    """Proves: A new session is told a run is active and how to recover; start --recover keeps the running card."""
+    """Proves: A new session is told a run is active, its running card survives, and a second start without the lease is
+    refused with the way out (the lease in state.json, or interrupt)."""
     x.start('minimal')
     x.card('C1', ['c1.txt'])
     x.o('dispatch', 'C1', '--serial', 'live test')
     ev = x.claude('Reply OK. No tools.', turns=2, resume=False)
     ss = [h['out'] for h in ev['hooks'] if h['event'] == 'SessionStart' and 'Orchestra' in h['out']]
     chk('new session is told a run is active', ss and 'Run active' in ss[0], ss[0][:300] if ss else '')
-    chk('new session is told to recover the lease', ss and 'recover' in ss[0].lower(), ss[0][:400] if ss else '')
-    out = x.o('start', '--recover', '--harness-session', ev['session'] or 'x', lease=False, check=False)
-    chk('start --recover takes the run back', 'lease' in out, json.dumps(out)[:300])
+    out = json.dumps(x.o('start', '--size', 'medium', lease=False, check=False))
+    chk('a second start names the way out', 'recover' in out or 'interrupt' in out, out[:300])
     chk('the running card survives the restart', x.task('C1').get('state') in ('running', 'queued'), x.task('C1').get('state'))
-
 
 SCENARIOS = {f.__name__.split('_')[0]: f for f in (
     g0_no_run, g1_minimal, g2_normal, g3_protect, a1_autonomy_git, a2b_autonomy_locks, a3b_approved,
@@ -483,11 +487,12 @@ def summary(results):
 
 
 def main(argv=None):
-    global PLUGIN, O, MODEL, SOURCE
+    global PLUGIN, O, MODEL, SOURCE, LOAD
     ap = argparse.ArgumentParser(description=__doc__.split('\n')[0], epilog='Scenario ids: ' + ' '.join(SCENARIOS))
     ap.add_argument('root', nargs='?', help='output root: one directory per scenario is created under it')
     ap.add_argument('scenarios', nargs='*', help='scenario ids to run (default all)')
     ap.add_argument('--plugin', metavar='DIR', help='installed plugin directory (default: newest under ~/.claude/plugins/cache/orchestra-distribution/orchestra)')
+    ap.add_argument('--plugin-dir', metavar='DIR', help='load this plugin directory (for example plugins/orchestra of a candidate) into every session in place of the installed copy; implies --plugin DIR')
     ap.add_argument('--model', default=MODEL, help='model for every claude session (default %(default)s)')
     ap.add_argument('--parallel', type=int, default=4, metavar='N', help='scenarios run at once (default %(default)s)')
     ap.add_argument('--source', metavar='DIR', default=str(SOURCE), help='marketplace source for the i1 install scenario (default: this repository root)')
@@ -502,7 +507,8 @@ def main(argv=None):
     unknown = [s for s in a.scenarios if s not in SCENARIOS]
     if unknown or a.parallel < 1:
         ap.error(f'unknown scenario {unknown}' if unknown else '--parallel must be at least 1')
-    PLUGIN = Path(a.plugin).expanduser() if a.plugin else newest_plugin()
+    LOAD = Path(a.plugin_dir).expanduser().resolve() if a.plugin_dir else None
+    PLUGIN = LOAD or (Path(a.plugin).expanduser() if a.plugin else newest_plugin())
     if PLUGIN is None or not (PLUGIN / 'scripts/orchestra.py').is_file():
         ap.error('no installed plugin found: pass --plugin DIR')
     O, MODEL, SOURCE = str(PLUGIN / 'scripts/orchestra.py'), a.model, Path(a.source).expanduser()

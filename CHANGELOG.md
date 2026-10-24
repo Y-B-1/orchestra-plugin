@@ -2,6 +2,15 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.14.1 — 2026-10-24
+
+Fixes from the first live test of the installed plugin in real headless Claude Code sessions (`scripts/live-matrix.py`).
+
+- **Worker lease deny under the mod:** with the TypeScript mod running, the Python hook skipped an `orchestra:` worker's `orchestra.py --lease` command, so the 2.14.0 deny never fired live. The mod shortcut now sends that call to Python.
+- **Engine state is protected from shell writes in every mode:** a shell redirect, `tee`, `rm`, `mv`, `cp`, `ln`, `truncate`, `dd`, `chmod` or `sed -i` into the run's state directory is denied in `minimal`, `normal` and `protect`, as the Write tool already was. One `echo >> state.json` used to corrupt the run and then lock the session as if autonomy were active. Reads and `orchestra.py` commands stay allowed.
+- **`protect` allows the pull-request push:** `git push [-u] REMOTE BRANCH` of a feature branch no longer needs a release permit outside a lock, as under autonomy. The default branch, `main`, `master`, protected branches, the release target, force pushes and URL remotes stay denied; an unresolvable default denies.
+- **Live test matrix:** `scripts/live-matrix.py` runs 16 scenarios in real `claude -p` sessions against the installed plugin or, with `--plugin-dir`, a candidate. See docs/live-matrix.md. `scripts/check.sh` never runs it.
+
 ## 2.14.0 — 2026-10-24
 
 Built from the audit proposals and the friction log of the 2.13 run: fewer hand steps between a worker's report and an accepted card, and a board the coordinator sees without asking.

@@ -24,6 +24,7 @@ python3 scripts/live-matrix.py --list
 ```
 
 - `--plugin DIR`: the installed plugin to test. Default: the newest version under `~/.claude/plugins/cache/orchestra-distribution/orchestra`.
+- `--plugin-dir DIR`: load this plugin directory into every session in place of the installed copy, for example `plugins/orchestra` of a release candidate. Claude Code then loads only that copy (one SessionStart answer), so a candidate is tested live before it ships.
 - `--model ID`: model for every session. Default `claude-sonnet-5-5`.
 - `--parallel N`: scenarios at once. Default 4.
 - `--source DIR`: marketplace source for `i1`. Default: this repository's root.

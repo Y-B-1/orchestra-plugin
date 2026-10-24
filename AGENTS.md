@@ -10,7 +10,7 @@ Commit each working iteration with explicit paths. Never stage wholesale, stash,
 
 Guard modes: `minimal` (the default policy `guard_mode`) leaves every ask-or-allow decision to Claude Code's permission mode and keeps only Orchestra's own denies: the autonomy and unattended locks, engine state and runtime protection, worker role limits and the approval-forgery check. `normal` and `protect` are opt-in and stricter. No Orchestra hook ever asks. An autonomous run pushes its own branches and opens, reviews and approves PRs. It never merges to the default branch, deletes tags or releases until the owner types `approved` in the session, which records the receipt that lets the printed merges run. Details: `docs/hooks.md`.
 
-Checks run locally with `scripts/check.sh` (`--quick` for the per-edit set). `.github/workflows/ci.yml` runs only when started by hand (`workflow_dispatch`).
+Checks run locally with `scripts/check.sh` (`--quick` for the per-edit set). Before a release, run `scripts/live-matrix.py --plugin-dir plugins/orchestra ROOT` to test hooks in real headless sessions (docs/live-matrix.md); it costs tokens, so check.sh never runs it. `.github/workflows/ci.yml` runs only when started by hand (`workflow_dispatch`).
 
 ## Agentic E2E (tester-army `e2e`)
 
