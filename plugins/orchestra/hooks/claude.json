@@ -47,6 +47,18 @@
         "matcher": "orchestra:.*"
       }
     ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.sh\" PostToolUse --harness claude",
+            "timeout": 10
+          }
+        ],
+        "matcher": "Agent|Task"
+      }
+    ],
     "Stop": [
       {
         "hooks": [
