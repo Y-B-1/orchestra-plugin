@@ -129,6 +129,52 @@ function cardLine(card: Card, nowMs: number, link: Link | undefined, agents: Rea
   return parts.join(' ');
 }
 
+/** The run's autonomy status as the pane shows it: `autonomy status`, parsed. */
+export type Autonomy = { passes: number; maxPasses: number | null; stalls: number | null; maxStalls: number | null; deadline: string; running: number; silent: string[]; parked: { id: string; reason: string }[] };
+
+const count = (v: unknown): number | null => (typeof v === 'number' ? v : null);
+const shown = (n: number | null): string => (n === null ? '?' : String(n));
+
+/** An `autonomy status` body, or null when it is not one (no pass count). */
+export function parseAutonomy(body: unknown): Autonomy | null {
+  const b = obj(body);
+  if (b === null || typeof b['passes'] !== 'number') return null;
+  const when = typeof b['deadline'] === 'string' ? b['deadline'] : '';
+  const hhmm = /T(\d{2}:\d{2})/.exec(when);
+  const rows = (v: unknown): Json[] => (Array.isArray(v) ? v.map(obj).filter((r): r is Json => r !== null && typeof r['id'] === 'string') : []);
+  return {
+    passes: b['passes'],
+    maxPasses: count(b['max_passes']),
+    stalls: count(b['stalls']),
+    maxStalls: count(b['max_stalls']),
+    deadline: hhmm !== null ? hhmm[1]! : when !== '' ? when : '?',
+    running: typeof b['running'] === 'number' ? b['running'] : 0,
+    silent: rows(b['silent']).map((r) => r['id'] as string),
+    parked: rows(b['parked']).map((r) => ({ id: r['id'] as string, reason: typeof r['reason'] === 'string' ? r['reason'] : '' })),
+  };
+}
+
+const DECIDED = /^- decided for the owner: (.+) -> (.+) \(at (.+)\)$/;
+
+/** The last `n` decisions taken for the owner in progress.md, as `Q -> A (at T)`. */
+export function parseDecisions(text: string, n = 5): string[] {
+  const out: string[] = [];
+  for (const line of text.split('\n')) {
+    const m = DECIDED.exec(line.trimEnd());
+    if (m !== null) out.push(`${m[1]!} -> ${m[2]!} (at ${m[3]!})`);
+  }
+  return out.slice(-n);
+}
+
+const MOVES = ['parked', 'reported', 'accepted'];
+
+/** One line per card that newly entered parked, reported or accepted; nothing on the first load. */
+export function diffMoves(prev: View | null, next: View): string[] {
+  if (prev === null) return [];
+  const before = new Map(prev.cards.map((c) => [c.id, c.state]));
+  return next.cards.filter((c) => MOVES.includes(c.state) && before.get(c.id) !== c.state).map((c) => `Orchestra: card ${c.id} ${c.state}`);
+}
+
 export type PaneInput = {
   view: View | null;
   nowMs: number;
@@ -139,7 +185,16 @@ export type PaneInput = {
   syncLine: string;
   bodyColumns: number;
   surface: string;
+  autonomy?: Autonomy | null;
+  decisions?: readonly string[];
 };
+
+function autonomyLine(a: Autonomy): string {
+  const parts = [`pass ${a.passes}/${shown(a.maxPasses)}`, `stalls ${shown(a.stalls)}/${shown(a.maxStalls)}`, `deadline ${a.deadline}`];
+  if (a.running > 0) parts.push(`${a.running} running`);
+  if (a.silent.length > 0) parts.push(`silent: ${a.silent.join(', ')}`);
+  return `Autonomy: ${parts.join(', ')}`;
+}
 
 export type PaneModel = { layout: 'columns' | 'stacked'; header: string[]; sections: { title: string; lines: string[] }[] };
 
@@ -155,12 +210,18 @@ export function paneModel(input: PaneInput): PaneModel {
   if (view === null) return { layout, header: ['Orchestra: no board yet', ...freshness, input.syncLine], sections: [] };
   const header = [
     `Session: ${view.sessionActive ? 'active' : 'inactive'}${view.sessionSize !== null ? ` (${view.sessionSize})` : ''}; autonomy: ${view.autonomyActive ? 'on' : 'off'}; run ${view.runId.slice(0, 6) || '-'}`,
+    ...(input.autonomy ? [autonomyLine(input.autonomy)] : []),
     `Counts: ${COLUMNS.map((s) => `${s} ${view.counts[s] ?? 0}`).join(', ')}`,
     `Startable now: ${view.startableNow.join(', ') || '-'}; next wave: ${view.nextWave.join(', ') || '-'}`,
     `${view.latestReview ?? 'Review: -'}; ${view.latestGate ?? 'gate: -'}`,
     ...freshness,
     input.syncLine,
   ];
+  const own: { title: string; lines: string[] }[] = [];
+  const parked = input.autonomy?.parked ?? [];
+  if (parked.length > 0) own.push({ title: `Needs you (${parked.length})`, lines: parked.map((p) => `${p.id}: ${p.reason || '-'}`) });
+  const decided = input.decisions ?? [];
+  if (decided.length > 0) own.push({ title: `Decided for you (${decided.length})`, lines: [...decided] });
   const sections = COLUMNS.map((s) => ({
     title: `${s[0]!.toUpperCase()}${s.slice(1)} (${view.counts[s] ?? 0})`,
     lines: view.cards
@@ -168,7 +229,7 @@ export function paneModel(input: PaneInput): PaneModel {
       .sort((a, b) => a.seq - b.seq)
       .map((c) => cardLine(c, input.nowMs, input.links.get(c.id), input.agents)),
   }));
-  return { layout, header, sections };
+  return { layout, header, sections: [...own, ...sections] };
 }
 
 /** The card a spawned worker serves: `Worker orchestra-<ID>` anywhere, else a first line `# <ID>:`. */

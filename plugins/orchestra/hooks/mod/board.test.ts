@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing';
 
-import { cardIdOf, clockText, layoutOf, matchTasks, paneModel, parseView, planCreates, planUpdates, subjectOf } from './board.js';
+import { cardIdOf, clockText, diffMoves, layoutOf, matchTasks, paneModel, parseAutonomy, parseDecisions, parseView, planCreates, planUpdates, subjectOf } from './board.js';
 import type { NativeTask, View } from './board.js';
 
 const RUN = '0123456789abcdef';
@@ -123,4 +123,46 @@ test('sync plan: status, owner and blockedBy updates are sent only when they dif
   ]);
   expect(planUpdates(v, done, new Set())).toEqual([]);
   expect(planUpdates(v, matched, new Set(['B']))).toEqual([]);
+});
+
+const STATUS = { active: true, passes: 2, max_passes: 8, stalls: 0, max_stalls: 3, deadline: '2026-10-05T06:00:00+00:00', running: 2, silent: [{ id: 'C3', minutes: 62 }], parked: [{ id: 'C4', reason: 'needs a decision' }, { id: 'C5' }] };
+
+test('parseAutonomy: reads a full status body; anything else is null', () => {
+  expect(parseAutonomy(STATUS)).toEqual({ passes: 2, maxPasses: 8, stalls: 0, maxStalls: 3, deadline: '06:00', running: 2, silent: ['C3'], parked: [{ id: 'C4', reason: 'needs a decision' }, { id: 'C5', reason: '' }] });
+  expect(parseAutonomy(null)).toBe(null);
+  expect(parseAutonomy([])).toBe(null);
+  expect(parseAutonomy({ active: true })).toBe(null);
+});
+
+test('parseDecisions: keeps only decision lines, the last five, and nothing for empty text', () => {
+  const lines = Array.from({ length: 7 }, (_, i) => `- decided for the owner: Q${i} -> A${i} (at 0${i}:00)`);
+  const text = ['# progress', 'note', ...lines.slice(0, 3), '- decided for the owner: broken line', ...lines.slice(3)].join('\n');
+  expect(parseDecisions(text)).toEqual(['Q2 -> A2 (at 02:00)', 'Q3 -> A3 (at 03:00)', 'Q4 -> A4 (at 04:00)', 'Q5 -> A5 (at 05:00)', 'Q6 -> A6 (at 06:00)']);
+  expect(parseDecisions(text, 2)).toEqual(['Q5 -> A5 (at 05:00)', 'Q6 -> A6 (at 06:00)']);
+  expect(parseDecisions('')).toEqual([]);
+});
+
+test('diffMoves: quiet on the first load and when nothing changed; names a card that newly enters parked, reported or accepted', () => {
+  const a = view([card('A', 1, 'running'), card('B', 2, 'queued')]);
+  expect(diffMoves(null, a)).toEqual([]);
+  expect(diffMoves(a, a)).toEqual([]);
+  const b = view([card('A', 1, 'parked'), card('B', 2, 'running')]);
+  expect(diffMoves(a, b)).toEqual(['Orchestra: card A parked']);
+  const c = view([card('A', 1, 'accepted'), card('B', 2, 'reported')]);
+  expect(diffMoves(b, c)).toEqual(['Orchestra: card A accepted', 'Orchestra: card B reported']);
+  expect(diffMoves(c, c)).toEqual([]);
+});
+
+test('pane: the autonomy line, Needs you and Decided for you show when given and are omitted when empty', () => {
+  const v = view([card('A', 1, 'running')]);
+  const auto = parseAutonomy(STATUS)!;
+  const m = paneModel({ ...base, view: v, nowMs: 100_000, autonomy: auto, decisions: ['Q -> A (at 01:00)'] });
+  expect(m.header).toContain('Autonomy: pass 2/8, stalls 0/3, deadline 06:00, 2 running, silent: C3');
+  expect(m.sections.map((s) => s.title).slice(0, 2)).toEqual(['Needs you (2)', 'Decided for you (1)']);
+  expect(m.sections[0]!.lines).toEqual(['C4: needs a decision', 'C5: -']);
+  expect(m.sections[1]!.lines).toEqual(['Q -> A (at 01:00)']);
+  const quiet = paneModel({ ...base, view: v, nowMs: 100_000, autonomy: { ...auto, running: 0, silent: [], parked: [] }, decisions: [] });
+  expect(quiet.header).toContain('Autonomy: pass 2/8, stalls 0/3, deadline 06:00');
+  expect(quiet.sections.map((s) => s.title)).toEqual(['Queued (1)', 'Running (2)', 'Reported (0)', 'Repairing (0)', 'Held (0)', 'Parked (0)', 'Accepted (1)']);
+  expect(paneModel({ ...base, view: v, nowMs: 100_000 }).header.some((h) => h.startsWith('Autonomy:'))).toBe(false);
 });

@@ -829,15 +829,23 @@ function stage(on: On, r: Rig, opts: { tools?: string[]; decision?: string; deci
   });
   on('turn.complete', async () => ({ text: '' }) as never);
   const registered: string[] = [];
+  const registers: Record<string, unknown>[] = [];
   on('command.register', async (_$, e) => {
     registered.push((e as { name: string }).name);
+    registers.push(e as never);
     return { value: undefined } as never;
   });
-  on('ui.open', async () => ({ value: { isPlaced: true } }) as never);
+  const opens: Record<string, unknown>[] = [];
+  const open = { placed: true, reject: false };
+  on('ui.open', async (_$, e) => {
+    opens.push(e as never);
+    if (open.reject) throw new Error('no pane');
+    return { value: { isPlaced: open.placed } } as never;
+  });
   on('ui.close', async () => ({ value: undefined }) as never);
   on('ui.invalidate', async () => ({ value: undefined }) as never);
   return {
-    tasks, taskCalls, calls, failUpdates, agents, checks, spawned, registered,
+    tasks, taskCalls, calls, failUpdates, agents, checks, spawned, registered, registers, opens, open,
     setAgentId: (id: string) => {
       agentId = id;
     },
@@ -1168,4 +1176,159 @@ test('guard minimal: with autonomy active, after a stopped run, or before the fi
   const unknown = await $.tool.call({ tool: 'Bash', tool_use_id: 't4', command: 'git reset --hard' });
   expect('deny' in unknown).toBe(true);
   expect(s.calls.length).toBe(1);
+});
+
+// MODUI: the app shows the run. The board pane opens when autonomy arms; toasts name card moves.
+const HINT = 'Orchestra board ready: type /orchestra-board';
+const ACTIVE_STATUS = { active: true, last_stop_reason: null, passes: 2, max_passes: 8, stalls: 0, max_stalls: 3, deadline: '2026-10-05T06:00:00+00:00', running: 1, silent: [], parked: [{ id: 'A', reason: 'needs the owner' }] };
+const TICK = 5000;
+const WATCH = { repo: '/work/proj', state: '/s/state', standing_orders: false, guard_mode: 'minimal' };
+
+test('modui: /orchestra-board is registered with immediate: true', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  engine(r);
+  await $.session.start(start);
+  expect(s.registers.find((x) => x['name'] === 'orchestra-board')?.['immediate']).toBe(true);
+});
+
+test('modui: autonomy going active opens the pane once, unfocused; the command still focuses', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const e = engine(r, { where: WATCH });
+  await $.session.start(start);
+  await r.clock.advance(TICK);
+  expect(s.opens).toEqual([]);
+  e.status = ACTIVE_STATUS;
+  await r.clock.advance(TICK);
+  await flush();
+  expect(s.opens.length).toBe(1);
+  expect(s.opens[0]).toMatchObject({ id: 'orchestra-board', title: 'Orchestra board' });
+  expect('focus' in s.opens[0]!).toBe(false);
+  await r.clock.advance(60000);
+  await flush();
+  expect(s.opens.length).toBe(1);
+  await openBoard($);
+  expect(s.opens[1]).toMatchObject({ id: 'orchestra-board', focus: true });
+  expect(r.toasts).not.toContain(HINT);
+});
+
+test('modui: a pane that is not placed yields one hint toast per run; an open that rejects does not throw', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const e = engine(r, { where: WATCH });
+  s.open.placed = false;
+  await $.session.start(start);
+  e.status = ACTIVE_STATUS;
+  await r.clock.advance(TICK);
+  await flush();
+  expect(r.toasts.filter((t) => t === HINT)).toEqual([HINT]);
+  e.status = { ...ACTIVE_STATUS, active: false, last_stop_reason: 'deadline' };
+  await r.clock.advance(30000);
+  e.status = ACTIVE_STATUS;
+  await r.clock.advance(TICK);
+  await flush();
+  expect(s.opens.length).toBe(2);
+  expect(r.toasts.filter((t) => t === HINT).length).toBe(1);
+  s.open.reject = true;
+  e.status = { ...ACTIVE_STATUS, active: false, last_stop_reason: 'deadline' };
+  await r.clock.advance(30000);
+  e.status = ACTIVE_STATUS;
+  await r.clock.advance(TICK);
+  await flush();
+  expect(s.opens.length).toBe(3);
+});
+
+test('modui: arming through /orchestra-autonomy opens the pane; disarm and session.end cancel the timer', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const e = engine(r, { status: { ...ACTIVE_STATUS, ledger: '/s/autonomy.md' } });
+  await $.session.start(start);
+  await $.command.run({ command: 'orchestra-autonomy', args: 'on' } as never);
+  await flush();
+  expect(s.opens.length).toBe(1);
+  expect('focus' in s.opens[0]!).toBe(false);
+  const before = boardRuns(r).length;
+  await r.clock.advance(30000);
+  await flush();
+  expect(boardRuns(r).length).toBeGreaterThan(before);
+  e.status = { ...ACTIVE_STATUS, active: false, was_active: true, last_stop_reason: 'disarmed' };
+  await $.command.run({ command: 'orchestra-autonomy', args: 'off' } as never);
+  await flush();
+  const after = boardRuns(r).length;
+  await r.clock.advance(60000);
+  await flush();
+  expect(boardRuns(r).length).toBe(after);
+});
+
+test('modui: session.end cancels the timer the auto-open started', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const e = engine(r, { where: WATCH });
+  await $.session.start(start);
+  e.status = ACTIVE_STATUS;
+  await r.clock.advance(TICK);
+  await flush();
+  expect(s.opens.length).toBe(1);
+  await $.session.end({ reason: 'other', sessionId: 'sid-1' } as never);
+  const after = boardRuns(r).length;
+  await r.clock.advance(60000);
+  await flush();
+  expect(boardRuns(r).length).toBe(after);
+});
+
+test('modui: a card turning parked toasts its id; the first refresh toasts nothing', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  const e = engine(r, { view: boardView([{ id: 'A', state: 'running', seq: 1 }]) });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  expect(r.toasts).toEqual([]);
+  e.view = boardView([{ id: 'A', state: 'parked', seq: 1 }]);
+  await r.clock.advance(30000);
+  await flush();
+  expect(r.toasts).toEqual(['Orchestra: card A parked']);
+});
+
+test('modui: at most three move toasts per refresh, then a count of the rest', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  const ids = ['A', 'B', 'C', 'D', 'E'];
+  const e = engine(r, { view: boardView(ids.map((id, i) => ({ id, state: 'running', seq: i + 1 }))) });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  e.view = boardView(ids.map((id, i) => ({ id, state: 'accepted', seq: i + 1 })));
+  await r.clock.advance(30000);
+  await flush();
+  expect(r.toasts).toEqual(['Orchestra: card A accepted', 'Orchestra: card B accepted', 'Orchestra: card C accepted', 'Orchestra: +2 more']);
+});
+
+async function shown($: Parameters<TestBody>[0]): Promise<string[]> {
+  const ui = await drawBoard($, 'terminal', 80);
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  return drawn;
+}
+
+test('modui: while autonomy is active the pane shows its status, parked cards and decisions; a failing progress.md read still renders', async ($, on) => {
+  const r = rig(on, { files: { 's/state/progress.md': '- decided for the owner: Which db? -> sqlite (at 01:02)\n' } });
+  stage(on, r);
+  const e = engine(r, { view: boardView([{ id: 'A', state: 'parked', seq: 1 }], { autonomy: { active: true } }), status: ACTIVE_STATUS });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  const text = (await shown($)).join('\n');
+  expect(text).toContain('Autonomy: pass 2/8, stalls 0/3, deadline 06:00, 1 running');
+  expect(text).toContain('Needs you (1)');
+  expect(text).toContain('A: needs the owner');
+  expect(text).toContain('Which db? -> sqlite (at 01:02)');
+  r.files['s/state/progress.md'] = null;
+  e.status = { ...ACTIVE_STATUS, passes: 3 };
+  await r.clock.advance(30000);
+  await flush();
+  const again = (await shown($)).join('\n');
+  expect(again).toContain('pass 3/8');
+  expect(again).toContain('Which db? -> sqlite (at 01:02)');
 });

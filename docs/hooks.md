@@ -140,6 +140,8 @@ When active, the module classifies Bash, Edit, Write and MultiEdit calls in proc
 
 `/orchestra-board` opens a live pane beside the chat. It reads `orchestra.py board --view` (no lease, no file hashing) and shows the columns queued, running, reported, repairing, held, parked and accepted, with each card's role, worker, age, open dependencies and agent status, plus startable cards, the next wave and the latest review and gate. It refreshes after an `orchestra.py` command, a worker spawn or a worker turn, and every 30 s while open; a failed refresh keeps the last data and marks it stale. Wide surfaces show columns side by side; a phone shows stacked sections.
 
+When autonomy arms, the mod opens the pane by itself (unfocused; a terminal too narrow to place it gets one toast naming `/orchestra-board`), the header gains the pass, stall, deadline and worker line, "Needs you" lists parked cards with their reasons, "Decided for you" shows the last five decisions from `progress.md`, and a toast names each card that newly parks, reports or is accepted. The status line under the prompt stays as the fallback.
+
 The mod links each card to its worker: `agent.spawn` records the agent id and Workflow run id. When the session is the run's own and Claude Code exposes `TaskCreate`, `TaskUpdate` and `TaskList` with an `allow` verdict, the mod mirrors each card as a native task (subject `[run] ID role/mode: outcome`, status, owner, blocked-by) and reconciles by subject, so the app's task list matches the coordinator's board. Without the tools, or with any other verdict, sync stays off and the pane says why; it never raises a permission dialog.
 
 ## Board hooks and worker reports
