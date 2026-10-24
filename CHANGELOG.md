@@ -2,7 +2,7 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
-## 2.14.0 - 2026-10-24
+## 2.14.0 — 2026-10-24
 
 Built from the audit proposals and the friction log of the 2.13 run: fewer hand steps between a worker's report and an accepted card, and a board the coordinator sees without asking.
 

@@ -10,7 +10,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `where` | Print the repository, the state directory and whether `standing-orders.md` exists. | no |
 | `status` | Print cards, session state (`size`, `asks`, `owner_request`, or the 2.4 route) and `required_lenses`. Never prints a lease. | no |
 | `prepr` | Print the size check and the pre-PR reviewer: `base`, `changed_lines`, `size`, `asks`, `budget`, `over_budget`, `reviewer`, `agent`, `lenses`, `warning`. Read-only; the warning never blocks. | no |
-| `board` | Group card ids by role and state; `leftover_worktrees` lists landed worktrees still on disk. | no |
+| `board` | Group card ids by role and state; `leftover_worktrees` counts every entry under `.claude/worktrees/`, landed or not. | no |
 | `waves` | Print overlaps, unmet prerequisites, ordered waves and the cards startable now. Read-only. | no |
 | `worktrees` | List the entries under `.claude/worktrees/` with branch, card, `landed` and `clean`, and print `git worktree remove <path>` for each landed clean one. Read-only; the engine never creates or removes a worktree. | no |
 | `refusals [--last N]` | Print the newest refused commands (exit 2) from the refusal log, default 10. Read-only. | no |
