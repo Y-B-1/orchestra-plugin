@@ -38,6 +38,15 @@ class SiblingLensTests(TokenFixture):
         self.assertEqual(['B1', 'l1', 'l2'], sorted(result['receipt']['tasks']))
         self.assertEqual(1, len(self.engine.status()['reviews']))
 
+    def test_a_later_lens_records_after_the_first_lens_card_was_accepted(self):
+        t1, t2 = self.lens('l1'), self.lens('l2')
+        self.engine.report('orchestra-l2', t2, 'Lens two.')
+        first = self.engine.review_with_token('main', self.lease, t1, self.file('f1.json', 'orchestra-l1', ['B1', 'l1']))
+        self.assertTrue(first['accepted'], first['refusal'])
+        second = self.engine.review_with_token('main', self.lease, t2, self.file('f2.json', 'orchestra-l2', ['B1', 'l2']))
+        self.assertEqual(['B1', 'l1', 'l2'], sorted(second['receipt']['tasks']))
+        self.assertEqual(2, len(self.engine.status()['reviews']))
+
     def test_a_lens_card_that_reviews_other_cards_is_not_added(self):
         self.task('B2')
         t2 = self.engine.dispatch('main', self.lease, 'B2', 'w-B2')
