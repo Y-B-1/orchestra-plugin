@@ -5,6 +5,8 @@
 goal: <one line goal>
 deadline: <ISO 8601 time with a UTC offset, in the future>
 
+- Repairs: up to 1 per chain
+
 ## Completion checks
 
 > One check per line as `NAME: argv...`. Run each with `orchestra.py gate NAME -- argv...`. The run is complete when every check has a passed gate receipt on the current artifact.

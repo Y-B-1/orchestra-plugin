@@ -232,6 +232,11 @@ def parse_ledger(text, now):
                 raise refill
             raise EngineError('Approval boundaries must keep the fixed line: ' + line)
     caps = {k: fields[k] for k in ('max_passes', 'max_stalls') if k in fields}
+    repairs = [line.strip() for line in text.splitlines() if re.match(r'[ \t]*- Repairs:', line)]
+    if len(repairs) > 1 or (repairs and not re.fullmatch(r'- Repairs: up to [1-3] per chain', repairs[0])):
+        raise EngineError('Ledger line Repairs must be exactly "- Repairs: up to N per chain" (N from 1 to 3), once')
+    if repairs:
+        caps['repairs'] = int(repairs[0].split()[4])
     release = dict(release=dict(remote=pair.group(1), target=pair.group(2))) if pair else {}
     return dict(goal=fields['goal'], deadline=fields['deadline'], checks=checks, pull_requests=True,
                 **caps, **release)
@@ -639,7 +644,7 @@ class Engine:
             ints = ('passes', 'stalls', 'armed_gates', 'armed_reviews')
             if (not isinstance(auto.get('active'), bool)
                     or any(k in auto and (isinstance(auto[k], bool) or not isinstance(auto[k], int))
-                           for k in ('max_passes', 'max_stalls')) or ('report' in auto and not isinstance(auto['report'], dict))
+                           for k in ('max_passes', 'max_stalls', 'repairs')) or ('report' in auto and not isinstance(auto['report'], dict))
                     or ('pull_requests' in auto and not isinstance(auto['pull_requests'], bool))
                     or any(name in auto and (not isinstance(auto[name], dict) or any(
                         not isinstance(k, str) or not isinstance(v, str) or not k or not v
@@ -1316,9 +1321,11 @@ class Engine:
         blocked, needs the chain held or a current final receipt that blames it. 2.1 chains stay valid history."""
         if original['state'] == 'held' or self._final_blocks(state, original['id'], stale=True):
             return
-        if original['mode'] == 'repair':
-            raise EngineError('Escalation ends at one repair; hold the chain')
-        if self._blocked_by_repair_check(state, original['id']):
+        allowed = (state.get('autonomy') or {}).get('repairs', 1) if self._autonomy_on(state) else 1
+        rungs = sum(t['mode'] == 'repair' for t in [original, *self._walk(state['tasks'], original, 'repair_of')])
+        if rungs >= allowed:
+            raise EngineError('Escalation ends at %s; hold the chain' % ('one repair' if allowed == 1 else '%d repairs' % allowed))
+        if original['mode'] != 'repair' and self._blocked_by_repair_check(state, original['id']):
             raise EngineError('Repair-diff check blocked %s; hold the chain' % original['id'])
 
     def _newest_receipts(self, state, task_id):
@@ -1651,6 +1658,18 @@ class Engine:
             resources.update(task['resources'])
         return dict(files=list(files), resources=list(resources))
 
+    @staticmethod
+    def _held(task, other, state):
+        """What `other` holds against `task`. A reported repair holds its parents' files only against a non-repair card:
+        a repair card meets just the files and resources the reported repair's own card lists, and the reported
+        ancestors under that repair hold nothing against it."""
+        if task.get('repair_of') and other['state'] == 'reported' and other['role'] == 'builder':
+            if other.get('repaired_by'):
+                return dict(files=[], resources=[])
+            if other['mode'] == 'repair':
+                return dict(files=list(other['files']), resources=list(other['resources']))
+        return Engine._reservation(other, state)
+
     def _ready(self, state):
         occupied = [t for t in state['tasks'].values() if t['state'] == 'running'
                     or (t['state'] == 'reported' and not self._read_review(t))
@@ -1661,7 +1680,7 @@ class Engine:
                 and all(state['tasks'][d]['state'] in ('accepted', 'held') for d in t['dependencies'])
                 and all(state['tasks'][d]['state'] in ('reported', 'accepted', 'held') for d in t.get('review_of', []))
                 and not any(other['id'] != t['id']
-                            and self._collides(self._reservation(t, state), self._reservation(other, state))
+                            and self._collides(self._reservation(t, state), self._held(t, other, state))
                             and not (other['id'] in t.get('review_of', []) and other['state'] == 'reported'
                                      and not set(t['resources']) & set(other['resources']))
                             and not (self._read_review(t) and self._read_review(other)

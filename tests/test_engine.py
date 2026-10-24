@@ -621,7 +621,7 @@ class FinalBlockerTests(EngineFixture):
         token = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
         self.assertEqual([], self.engine.ready('main', self.lease))  # RB still overlaps the running RA
         self.engine.report('repair-a', token, done('Repaired A'))
-        self.assertEqual([], self.engine.ready('main', self.lease))  # a reported repair still holds its files
+        self.assertEqual(['RB'], self.engine.ready('main', self.lease))  # F30: RA's own files are disjoint from RB's
 
     def test_repair_transfers_reservations_and_retains_history(self):
         self.release_setup()
