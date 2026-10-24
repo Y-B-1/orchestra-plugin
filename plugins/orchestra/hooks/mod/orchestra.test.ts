@@ -1061,6 +1061,18 @@ test('guard minimal: an engine state write by shell is decided by Python; a stat
   expect(s.calls.length).toBe(1);
 });
 
+test('guard minimal: after a stopped run the mod never denies on its own; Python decides with the lock state', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const e = await minimalSession($, r, false);
+  e.fromMod = '{}';
+  e.status = { active: false, last_stop_reason: 'deadline', parked: [] };
+  await $.command.run({ command: 'orchestra-autonomy', args: 'status' } as never);
+  const reset = await $.tool.call({ tool: 'Bash', tool_use_id: 'm1', command: 'git reset --hard' });
+  expect('deny' in reset).toBe(false);
+  expect(s.calls.length).toBe(1);
+});
+
 test('guard minimal: with autonomy active, after a stopped run, or before the first status read, commands are classified as before', async ($, on) => {
   const r = rig(on);
   const s = stage(on, r);

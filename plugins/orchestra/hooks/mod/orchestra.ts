@@ -622,7 +622,8 @@ export const register: Register = (on: On) => {
         const d = classifyCommand(command);
         const klass = klassOf(d);
         // A softened deny is mode-dependent (normal relaxes it) and the mod reads no policy: Python decides, like a release.
-        if (klass === 'deny' && !d.soften) return blocked(d.reason !== '' ? d.reason : FAIL_CLOSED);
+        // Under `minimal` the mod cannot see the unattended lock, so every deny goes to Python, which knows it.
+        if (klass === 'deny' && !d.soften && guardMode !== 'minimal') return blocked(d.reason !== '' ? d.reason : FAIL_CLOSED);
         if (klass === 'deny' || DELEGATED.includes(klass)) {
           const sid = lastSeen ?? '';
           const reason = await delegate($, tool, { command }, sid);
