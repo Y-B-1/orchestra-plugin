@@ -2031,7 +2031,11 @@ class Engine:
         if not task or task['worker'] != worker or not (task['state'] == 'running' or replacing):
             raise EngineError('Invalid assignment')
         if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
-            raise EngineError('A review covers this report; route a change through a repair card')
+            # The review bound the reported work; only the builder's SELF_REVIEW line may be corrected (F32).
+            def body(text):
+                return [line for line in text.splitlines() if not line.startswith('SELF_REVIEW: ')]
+            if body(report) != body(task.get('report', '')):
+                raise EngineError('A review covers this report; route a change through a repair card')
         self._lease(state, state['session']['actor'], task['lease'])
         lines = report.splitlines()
         blocked = next((line[len('BLOCKED:'):].strip() for line in lines if line.startswith('BLOCKED:')), '')

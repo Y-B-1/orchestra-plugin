@@ -3018,6 +3018,26 @@ class SelfReviewTests(EngineFixture):
             self.engine.report('w-a', token, done('Second.'))
         self.assertIn('First.', self.engine.status()['tasks']['a']['report'])
 
+    def test_covered_report_takes_a_corrected_self_review_line_only(self):
+        # F32: a red-first check whose command text carries a note never matches its green run. After a review covers
+        # the report, the coordinator may correct only the SELF_REVIEW line; any other change still needs a repair card.
+        token = self.running()
+        red = [{'command': 'python3 -m unittest t (at base)', 'exit_code': 1, 'expect': 'fail'},
+               {'command': 'python3 -m unittest t', 'exit_code': 0}]
+        self.engine.report('w-a', token, done('First.', checks=red))
+        path = self.root / 'final-a.json'
+        self.review(path, tasks=['a'], categories=ALL_CATEGORIES, final=True)
+        self.engine.record_review('main', self.lease, 'reviewer', path, ALL_CATEGORIES, ['a'], final=True)
+        with self.assertRaisesRegex(EngineError, 'failing check'):
+            self.engine.accept('main', self.lease, 'a')
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('Changed body.'))
+        fixed = [dict(red[0], command='python3 -m unittest t'), red[1]]
+        self.engine.report('w-a', token, done('First.', checks=fixed))
+        self.assertIn('First.', self.engine.status()['tasks']['a']['report'])
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
     def test_non_builder_report_needs_no_self_review(self):
         self.task('look', role='investigator', mode='code', files=[])
         token = self.engine.dispatch('main', self.lease, 'look', 'w-look')
