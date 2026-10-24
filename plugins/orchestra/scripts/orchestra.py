@@ -18,7 +18,7 @@ import subprocess
 import sys
 import uuid
 
-from orchestra_core import briefs, cli_support, delta, ledger, portable
+from orchestra_core import briefs, cli_support, delta, ledger, now, portable
 from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, main_checkout, repository, state_location
@@ -53,8 +53,15 @@ def parser():
                        '(needs --harness-session); running cards keep their assignments')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
-    for name in ['ready','interrupt','finish','scan']:
+    for name in ['ready','interrupt','scan']:
         sub.add_parser(name)
+    finish = sub.add_parser('finish', help='Check and close the run')
+    finish.add_argument('--accept-reported', action='store_true',
+                        help='First accept every reported card whose accept passes; the rest stay reported')
+    do = sub.add_parser('do', help='Run several coordinator commands in one call, in order, with this call\'s --lease; '
+                        'stops at the first refusal and keeps the earlier steps. Each step is one quoted command, e.g. '
+                        'do "accept B1" "wave --inline B3 B4"')
+    do.add_argument('steps', nargs='+')
     status = sub.add_parser('status', help='Print the run state; review receipts leave out their per-file entries')
     status.add_argument('--full', action='store_true', help='Keep the per-file entries of review receipts')
     board = sub.add_parser('board', help='Print card ids by role and state; --view prints the cheap lease-free board the Kanban mod reads')
@@ -326,7 +333,7 @@ def execute(args):
         return {'ready':engine.ready(args.actor,args.lease)},0
     if args.command in ['interrupt','finish']:
         if args.command=='finish':
-            engine.close_session(args.actor,args.lease)
+            engine.close_session(args.actor,args.lease,accept_reported=args.accept_reported)
         else:
             engine.interrupt(args.actor,args.lease)
         return {'session':args.command,'state':str(state)},0
@@ -465,9 +472,58 @@ def refused_state(args):
         return None
 
 
+GLOBAL_OPTIONS = ('--repo','--state','--actor','--lease')
+
+
+class StepRefused(Exception):
+    pass
+
+
+def run_steps(args):
+    """`do`: each step is parsed as its own command with this call's global options; the first refusal stops the rest."""
+    base = []
+    for name in GLOBAL_OPTIONS:
+        value = getattr(args,name[2:])
+        if value is not None:
+            base += [name,value]
+    done, refused, engine = [], None, None
+    for step in args.steps:
+        try:
+            tokens = shlex.split(step)
+            if not tokens or tokens[0] in ('do','start'):
+                raise StepRefused('A step cannot be `do` or `start`')
+            if any(tok.split('=')[0] in GLOBAL_OPTIONS for tok in tokens):
+                raise StepRefused('A step takes no global option; `do` passes its own')
+            try:
+                sub = parser().parse_args(base+tokens)
+            except SystemExit:
+                raise StepRefused('Unparsable step') from None
+            result,code = execute(sub)
+            engine = getattr(sub,'engine',engine)
+            seen = add_board_line(sub,result)
+            if seen is not None:
+                cli_support.store_seen(sub.state_dir,seen)
+            done.append({'step':step,'result':result,'code':code})
+        except (StepRefused,EngineError,ValueError,OSError,KeyError,TypeError,AttributeError,subprocess.SubprocessError) as exc:
+            refused = {'step':step,'error':str(exc)}
+            break
+    if engine is not None:
+        now.refresh(engine)
+    body = {'steps':done}
+    if refused:
+        body['refused'] = refused
+    print(json.dumps(body,indent=2))
+    return 2 if refused else 0
+
+
 def main(argv=None):
     raw = list(sys.argv[1:] if argv is None else argv)
     args=parser().parse_args(raw)
+    if args.command=='do':
+        if not args.lease:
+            print(json.dumps({'steps':[],'refused':{'step':'','error':'Supply --lease from start for coordinator actions'}}))
+            return 2
+        return run_steps(args)
     state=refused_state(args)
     known=state is not None and state.is_dir()  # a command run before any state exists logs nothing and creates nothing
     try:
@@ -482,6 +538,8 @@ def main(argv=None):
         print(json.dumps(result,indent=2))
     if seen is not None:
         cli_support.store_seen(args.state_dir,seen)
+    if getattr(args,'lease',None) and getattr(args,'engine',None) is not None:
+        now.refresh(args.engine)  # never raises
     return code
 
 

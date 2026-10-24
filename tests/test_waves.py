@@ -257,7 +257,7 @@ class BoardViewTests(unittest.TestCase):
         self.assertNotIn('"assignment"', text)
         self.assertNotIn('"lease"', text)
         self.assertNotIn('harness_session', text)
-        self.assertEqual(view['session'], {'active': True, 'size': 'medium'})
+        self.assertEqual(view['session'], {'active': True, 'size': 'medium', 'model': None, 'effort': None})
         self.assertIs(view['bound'], True)
         self.assertIs(self.cli('board', '--view', '--session', 'other')['bound'], False)
         self.assertIs(self.cli('board', '--view')['bound'], False)
