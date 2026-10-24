@@ -1732,7 +1732,8 @@ class Engine:
             return 'open dependencies: ' + ', '.join(deps)
         targets = [d for d in task.get('review_of', []) if tasks[d]['state'] not in ('reported', 'accepted', 'held')]
         if targets:
-            return 'review targets not reported: ' + ', '.join(targets)
+            names = ', '.join(targets)
+            return "review targets not reported: %s; if %s's worker finished, record its report with `report WORKER TOKEN FILE`" % (names, names)
         return 'its files or resources overlap a running, reported or repair card'
 
     def ready(self, actor, lease):
@@ -2048,6 +2049,9 @@ class Engine:
             prs = [{k: e.get(k) for k in ('url', 'number', 'base_ref', 'head_ref', 'autonomous', 'tasks', 'reviewed', 'verified_at')}
                    for e in self._pull_requests(state)]
             startable = plan['startable_now']
+            pending = {d for t in ordered if t['state'] in ('queued', 'running') for d in t.get('review_of', [])}
+            acceptable = [t['id'] for t in ordered if t['state'] == 'reported' and not t.get('repaired_by')
+                          and t['id'] not in pending and not self._self_review_blocks(t)]
             return dict(
                 run_id=state.get('run_id'), session=dict(active=bool(run.get('active')), size=run.get('size')),
                 bound=session is not None and run.get('harness_session') == session,
@@ -2055,7 +2059,7 @@ class Engine:
                 counts={s: sum(t['state'] == s for t in ordered) for s in states},
                 counts_note='running includes inline cards',
                 columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
-                cards=cards, startable_now=startable,
+                cards=cards, startable_now=startable, acceptable_now=acceptable,
                 next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],
                 latest_review=None if review is None else dict(
                     id=review['id'], verdict='BLOCKED' if review['findings'] else 'CLEAN',
@@ -2080,6 +2084,12 @@ class Engine:
             if not reserved or any(scope is None or self._paths_overlap(scope, reserved)
                                    for scope in self._evidence_scopes(state, other['id'])):
                 raise EngineError('Accept %s first; a repair would make its evidence stale' % other['id'])
+
+    @classmethod
+    def _self_review_blocks(cls, task):
+        """Whether a reported builder card's stored self-review fails, so `accept` refuses it until a ruling or a re-report."""
+        review = task.get('self_review')
+        return task['role'] == 'builder' and cls._self_review_ok(review) and bool(cls._self_review_failure(review))
 
     @staticmethod
     def _self_review_ok(review):
@@ -2356,8 +2366,9 @@ class Engine:
         covered = [state['tasks'][i] for i in ids]
         if any(t.get('worker') == reviewer and not self._read_review(t) for t in covered):
             raise EngineError('Worker cannot review own artifact')
-        if any(t['state'] not in ('reported', 'accepted', 'held') for t in covered):
-            raise EngineError('Review covers incomplete work')
+        unfinished = ['%s (%s)' % (t['id'], t['state']) for t in covered if t['state'] not in ('reported', 'accepted', 'held')]
+        if unfinished:
+            raise EngineError('Review covers incomplete work: ' + ', '.join(unfinished))
         scope = None if final else self._scope_of(state, ids)
         artifact = self.artifact(scope)
         try:
@@ -2437,7 +2448,7 @@ class Engine:
     def _saw_clean_head(self, state, text, reviewer, artifact):
         """Whether a reviewer's artifact string `<sha> clean` holds: the sha is a prefix of HEAD, nothing in the receipt's
         scope is modified, and the policy is unchanged since the reviewer's newest card was dispatched."""
-        found = re.fullmatch(r'([0-9a-f]{7,40}) clean', text)
+        found = re.match(r'([0-9a-f]{7,40}) clean(?:\s*\(.*)?\Z', text, re.DOTALL)
         if not found or not artifact['head'].startswith(found.group(1)) or artifact['status'] != _hash(b''):
             return False
         cards = [t for t in state['tasks'].values()
@@ -2574,6 +2585,10 @@ class Engine:
         cited = body.get('gate_receipts', [])
         if not isinstance(cited, list) or any(not isinstance(c, str) or not c for c in cited):
             raise EngineError('Invalid gate receipts')
+        tokens = [re.search(r'(?<![0-9a-f])[0-9a-f]{32}(?![0-9a-f])', c) for c in cited]  # prose around the id is ignored
+        if not all(tokens):
+            raise EngineError('Invalid gate receipts: each entry needs a 32-hex receipt id')
+        cited = [t.group(0) for t in tokens]
         current = self.artifact() if cited else None
         failed = False
         for ident in cited:

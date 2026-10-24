@@ -1854,7 +1854,7 @@ def _board_stop(engine, payload):
         if payload.get('stop_hook_active') is True:
             return {}
         view = _board(engine)
-        if not delta.live(view) or not (delta.ids(view, 'reported') or view.get('startable_now')):
+        if not delta.live(view) or not delta.next_command(view):
             return {}
         directory = Path(engine.state_dir)
         if delta.read(directory, 'stop-seen').get('signature') == delta.signature(view):
