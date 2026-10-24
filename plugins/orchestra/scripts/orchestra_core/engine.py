@@ -499,8 +499,14 @@ class Engine:
     @staticmethod
     def _same(recorded, current):
         """Whether evidence recorded against `recorded` still holds for `current`: the artifacts are identical, HEAD, index
-        and status included, so staging or committing after a review makes it stale and the review is recorded again."""
-        return isinstance(recorded, dict) and isinstance(current, dict) and recorded == current
+        and status included, so staging or committing after a review makes it stale and the review is recorded again. A
+        scoped artifact binds its files, index, status and policy, not HEAD and tree: a commit that leaves those alone
+        does not stale it (Q7)."""
+        if not isinstance(recorded, dict) or not isinstance(current, dict):
+            return False
+        if 'scope' in recorded and 'scope' in current:
+            recorded, current = ({k: v for k, v in a.items() if k not in ('head', 'tree')} for a in (recorded, current))
+        return recorded == current
 
     def scope_for(self, task_ids):
         """Union of the tasks' reservation files, or None (whole repo) when any task reserves no files."""
@@ -1992,19 +1998,23 @@ class Engine:
                 and all(isinstance(c, dict) and isinstance(c.get('criterion'), str) and c['criterion'].strip()
                         and type(c.get('met')) is bool and isinstance(c.get('evidence'), str) for c in criteria))
 
-    @staticmethod
-    def _checks_pass(checks):
-        """Every check exits 0, except a red-first check (`expect: fail`): that one exits non-zero and a later check of the
-        same command, with no `expect`, exits 0 (the failing run, then the passing one)."""
+    @classmethod
+    def _self_review_failure(cls, review):
+        """Why a self-review fails, in words, or None when it holds. Every check exits 0, except a red-first check
+        (`expect: fail`): that one exits non-zero and a later check of the same command, with no `expect`, exits 0."""
+        checks = review['checks']
         for i, check in enumerate(checks):
+            command = check['command']
             if check.get('expect') == 'fail':
-                if check['exit_code'] == 0 or not any(
-                        later['command'] == check['command'] and later.get('expect', 'pass') == 'pass' and later['exit_code'] == 0
-                        for later in checks[i + 1:]):
-                    return False
+                if check['exit_code'] == 0:
+                    return 'check "%s" (expect: fail) exited 0' % command
+                if not any(later['command'] == command and later.get('expect', 'pass') == 'pass' and later['exit_code'] == 0
+                           for later in checks[i + 1:]):
+                    return 'check "%s" (expect: fail) has no later passing run' % command
             elif check['exit_code'] != 0:
-                return False
-        return True
+                return 'check "%s" exited %s' % (command, check['exit_code'])
+        unmet = next((c['criterion'] for c in review['criteria'] if not c['met']), None)
+        return None if unmet is None else 'criterion not met: ' + str(unmet)
 
     @classmethod
     def _parse_self_review(cls, report):
@@ -2048,7 +2058,7 @@ class Engine:
                 corrected = None
             if (body(report) != body(task.get('report', ''))
                     or results(corrected) != results(task.get('self_review'))
-                    or self.artifact(self._scope_of(state, [task['id']])) != task.get('report_artifact')):
+                    or not self._same(task.get('report_artifact'), self.artifact(self._scope_of(state, [task['id']])))):
                 raise EngineError('A review covers this report; route a change through a repair card')
         self._lease(state, state['session']['actor'], task['lease'])
         lines = report.splitlines()
@@ -2534,19 +2544,41 @@ class Engine:
             review = task.get('self_review')
             if review is None:
                 return SELF_REVIEW_ERROR
-            if not self._checks_pass(review['checks']) or not all(c['met'] for c in review['criteria']):
-                return 'Self-review has a failing check or unmet criterion'
+            failed = self._self_review_failure(review)
+            if failed:
+                return 'Self-review has a failing check or unmet criterion: ' + failed
         elif task.get('review_required', False):
             return None if verdicts else 'Task needs current independent review'
-        reported, now = task['report_artifact'], self._artifact_cached(cache, self._scope_of(state, [task_id]))
+        scope = self._scope_of(state, [task_id])
+        reported, now = task['report_artifact'], self._artifact_cached(cache, scope)
         # A commit after the report moves HEAD but not the reported content, and the independent review above is current
         # on the committed tree. The report stays good only when it is unchanged outright, or when nothing is staged,
         # modified or untracked any more (within its scope): then HEAD holds exactly the reported files.
         clean = now.get('status') == _hash(b'')
-        if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'fingerprint', 'scope')) or (
-                reported != now and not clean):
-            return 'Reported artifact is stale: the files in its scope changed after the report; re-report or send a repair card'
+        if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'scope')) or not clean and reported != now:
+            return self._stale_report(reported, now)
+        if reported.get('fingerprint') != now.get('fingerprint') and not self._reported_work_in_head(task, scope):
+            return self._stale_report(reported, now)
         return None
+
+    @staticmethod
+    def _stale_report(reported, now):
+        keys = [k for k in reported.keys() | now.keys() if reported.get(k) != now.get(k)]
+        order = list(now) + [k for k in reported if k not in now]
+        return 'Reported artifact is stale: %s differ since the report; re-report or send a repair card' % ', '.join(
+            sorted(keys, key=order.index))
+
+    def _reported_work_in_head(self, task, scope):
+        """Whether the commit the report names is in HEAD (an ancestor, or applied as patch-equivalent commits) and HEAD
+        holds exactly its content for the card's files: built in a linked worktree, then merged into this checkout."""
+        sha = task.get('report_sha')
+        if not sha or not self._landed(sha):
+            return False
+        spec = ['--', *scope] if scope else []
+        try:
+            return self._git('ls-tree', '-r', '-z', sha, *spec) == self._git('ls-tree', '-r', '-z', 'HEAD', *spec)
+        except EngineError:
+            return False
 
     def accept(self, actor, lease, task_id):
         with self._state() as state:

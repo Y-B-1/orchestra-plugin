@@ -1180,13 +1180,67 @@ class ScopedEvidenceTests(EngineFixture):
         with self.assertRaisesRegex(EngineError, 'independent review'):
             self.engine.accept('main', self.lease, 'a')
 
-    def test_new_commit_stales_scoped_verdict(self):
+    def test_new_commit_outside_the_scope_keeps_scoped_verdict_current(self):
+        # Q7: a scoped receipt binds its files, index, status and policy, not HEAD and tree.
         self.reported('a')
         self.checkpoint('a')
         (self.repo / 'b').write_text('committed elsewhere')
         self.git('commit', '-qam', 'elsewhere')
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
+
+    def test_new_commit_outside_the_scope_keeps_scoped_report_current(self):
+        self.reported('r', role='investigator', mode='code', files=['b'])
+        (self.repo / 'a').write_text('committed elsewhere')
+        self.git('commit', '-qam', 'elsewhere')
+        self.engine.accept('main', self.lease, 'r')
+        self.assertEqual('accepted', self.engine.status()['tasks']['r']['state'])
+
+    def test_commit_of_a_scoped_file_stales_scoped_verdict(self):
+        self.reported('a')
+        self.checkpoint('a')
+        (self.repo / 'a').write_text('committed inside the scope')
+        self.git('commit', '-qam', 'inside')
         with self.assertRaisesRegex(EngineError, 'independent review'):
             self.engine.accept('main', self.lease, 'a')
+
+    def test_staged_scoped_file_stales_scoped_verdict(self):
+        self.reported('a')
+        self.checkpoint('a')
+        (self.repo / 'a').write_text('staged inside the scope')
+        self.git('add', 'a')
+        with self.assertRaisesRegex(EngineError, 'independent review'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_untracked_scoped_file_stales_scoped_status(self):
+        (self.repo / 'd').mkdir()
+        (self.repo / 'd' / 'f').write_text('1')
+        self.git('add', 'd')
+        self.git('commit', '-qm', 'd')
+        base = self.engine.artifact(['d'])
+        (self.repo / 'd' / 'g').write_text('untracked inside the scope')
+        self.assertFalse(self.engine._same(base, self.engine.artifact(['d'])))
+
+    def test_changed_policy_stales_scoped_artifact(self):
+        base = self.engine.artifact(['a'])
+        self.assertTrue(self.engine._same(base, dict(base, head='moved', tree='moved')))
+        self.assertFalse(self.engine._same(base, dict(base, policy='another policy')))
+
+    def test_whole_repository_receipts_go_stale_on_any_new_commit(self):
+        gate = self.engine.run_gate('main', self.lease, 'check', [sys.executable, '-c', 'print("ok")'])
+        self.reported('a')
+        final = self.root / 'final.json'
+        ids = sorted(self.engine.status()['tasks'])
+        self.review(final, reviewer='final-reviewer', tasks=ids, final=True, task_findings={})
+        self.engine.record_review('main', self.lease, 'final-reviewer', final, ['correctness'], ids, final=True)
+        whole = self.engine.artifact()
+        self.assertTrue(self.engine._same(gate['artifact'], whole))
+        (self.repo / 'b').write_text('committed elsewhere')
+        self.git('commit', '-qam', 'elsewhere')
+        self.assertFalse(self.engine._same(gate['artifact'], self.engine.artifact()))
+        self.assertFalse(self.engine._same(whole, self.engine.artifact()))
+        with self.engine._state(False) as state:
+            self.assertEqual({}, self.engine._review_verdicts(state, {}, final=True))
 
     def test_scoped_report_artifact_survives_outside_edit_and_stales_inside(self):
         self.reported('r', role='investigator', mode='code', files=['b'])
