@@ -6104,6 +6104,46 @@ class LandedWorkTests(HoldFixture):
         self.accepted('B4', sha[:7] + ' clean')
         self.assertEqual({'B4': True}, self.landed())
 
+    def squash_setup(self, move_main=False):
+        # F37: two builder commits on a PR branch, the second rewriting the first's line, so `git cherry` cannot match
+        # either one; the engine reviewed the branch tip, which was then squash-merged into main.
+        first = self.side_commit('pr', 'B8')
+        self.git('switch', '-q', 'pr')
+        (self.repo / 'B8').write_text('B8 again')
+        self.git('commit', '-qam', 'B9')
+        second = self.git('rev-parse', 'HEAD')
+        self.git('switch', '-q', '-')
+        self.accepted('B8', first + ' clean')
+        self.accepted('B9', second + ' clean')
+        self.git('switch', '-q', 'pr')
+        self.reviewed('final-pr', ['B8', 'B9'], final=True, categories=self.ALL)
+        self.git('switch', '-q', '-')
+        if move_main:
+            (self.repo / 'other').write_text('landed on main meanwhile')
+            self.git('add', 'other')
+            self.git('commit', '-qm', 'other')
+        self.git('merge', '-q', '--squash', 'pr')
+        self.git('commit', '-qm', 'squash of pr')
+        self.git('branch', '-q', '-D', 'pr')
+
+    def test_squash_merged_work_counts_as_landed(self):
+        self.squash_setup()
+        self.assertEqual({'B8': True, 'B9': True}, self.landed())
+        self.reviewed('final-main', ['B8', 'B9'], final=True, categories=self.ALL)
+        self.engine.close_session('main', self.lease)
+
+    def test_squash_after_main_moved_counts_as_landed(self):
+        self.squash_setup(move_main=True)
+        self.assertEqual({'B8': True, 'B9': True}, self.landed())
+
+    def test_reviewed_branch_that_never_merged_is_not_landed(self):
+        first = self.side_commit('pr', 'B8')
+        self.accepted('B8', first + ' clean')
+        self.git('switch', '-q', 'pr')
+        self.reviewed('final-pr', ['B8'], final=True, categories=self.ALL)
+        self.git('switch', '-q', '-')
+        self.assertEqual({'B8': False}, self.landed())
+
     def test_a_report_without_a_commit_sha_is_not_checked(self):
         for name, artifact in (('B5', 'deadbeef nonsense'), ('B6', 'fixture'), ('B7', '')):
             self.accepted(name, artifact or self.git('rev-parse', 'HEAD')[:6] + ' clean')

@@ -1936,7 +1936,7 @@ class Engine:
                             deps_open=[d for d in t['dependencies'] if tasks[d]['state'] not in ('accepted', 'held')],
                             review_of=list(t.get('review_of', [])), files=list(t['files']),
                             started_at=t.get('started_at'), seq=t.get('seq'),
-                            landed=self._landed(t['report_sha']) if t.get('report_sha') else None)
+                            landed=self._landed(t['report_sha'], state) if t.get('report_sha') else None)
                 if 'outcome' in t:
                     card['outcome'] = t['outcome']
                 cards.append(card)
@@ -2087,15 +2087,103 @@ class Engine:
         except EngineError:
             return None
 
-    def _landed(self, sha):
-        """Whether HEAD holds a reported commit: it is an ancestor, or `git cherry` finds each of its commits applied."""
-        if subprocess.run(['git', '-C', str(self.repo), 'merge-base', '--is-ancestor', sha, 'HEAD'],
-                          capture_output=True).returncode == 0:
+    def _is_ancestor(self, sha, of):
+        return subprocess.run(['git', '-C', str(self.repo), 'merge-base', '--is-ancestor', sha, of],
+                              capture_output=True).returncode == 0
+
+    def _landed(self, sha, state=None):
+        """Whether HEAD holds a reported commit: it is an ancestor, `git cherry` finds each of its commits applied, or
+        a commit the engine gated or reviewed contains it and was squash-merged into HEAD (F37)."""
+        if self._is_ancestor(sha, 'HEAD'):
             return True
         try:
-            return not any(line.startswith('+') for line in self._git('cherry', 'HEAD', sha).decode().splitlines())
+            if not any(line.startswith('+') for line in self._git('cherry', 'HEAD', sha).decode().splitlines()):
+                return True
         except EngineError:
             return False
+        if state is None:
+            return False
+        try:
+            memo = self._squash_memo(self._git('rev-parse', 'HEAD').decode().strip())
+        except EngineError:
+            return False
+        return any(sha in self._unmerged(memo, head) and self._squashed(memo, head) for head in self._recorded_heads(state))
+
+    SQUASH_DEPTH = 50
+
+    @staticmethod
+    def _recorded_heads(state):
+        """Heads the engine gated or reviewed, newest first, each once."""
+        heads = []
+        for record in reversed(list(state.get('gates', [])) + list(state.get('reviews', []))):
+            artifact = record.get('artifact')
+            head = artifact.get('head') if isinstance(artifact, dict) else None
+            if isinstance(head, str) and head not in heads:
+                heads.append(head)
+        return heads
+
+    def _squash_memo(self, head):
+        """Per-HEAD memo for the squash check: HEAD's first-parent history, patch ids and verdicts."""
+        memo = getattr(self, '_squash', None)
+        if memo is None or memo['head'] != head:
+            history = []
+            if head:
+                try:
+                    history = [line.split() for line in self._git(
+                        'log', '--first-parent', '-%d' % self.SQUASH_DEPTH, '--format=%H %T %P', head).decode().splitlines()]
+                except EngineError:
+                    history = []
+            memo = self._squash = dict(head=head, history=history, trees={e[1] for e in history if len(e) >= 2},
+                                       patches={}, verdicts={}, reach={})
+        return memo
+
+    def _unmerged(self, memo, head):
+        """Commits a recorded head holds that HEAD does not, one `git rev-list` per head (bounded)."""
+        if head not in memo['reach']:
+            try:
+                out = self._git('rev-list', '--max-count=5000', head, '^HEAD').decode().split()
+            except EngineError:
+                out = []
+            memo['reach'][head] = set(out)
+        return memo['reach'][head]
+
+    def _patch_id(self, memo, old, new):
+        key = (old, new)
+        if key not in memo['patches']:
+            pid = None
+            try:
+                diff = self._git('diff', '--binary', old, new)
+            except EngineError:
+                diff = b''
+            if diff.strip():
+                out = subprocess.run(['git', '-C', str(self.repo), 'patch-id', '--stable'], input=diff, capture_output=True)
+                words = out.stdout.split()
+                pid = words[0] if out.returncode == 0 and words else None
+            memo['patches'][key] = pid
+        return memo['patches'][key]
+
+    def _squashed(self, memo, candidate):
+        """Whether HEAD holds a recorded head's work as a squash commit: a commit in HEAD's last SQUASH_DEPTH first-parent
+        commits has the head's tree, or, after their merge base, carries the head's whole patch from that base."""
+        if candidate in memo['verdicts']:
+            return memo['verdicts'][candidate]
+        verdict = False
+        try:
+            tree = self._git('rev-parse', candidate + '^{tree}').decode().strip()
+            base = self._git('merge-base', candidate, 'HEAD').decode().strip()
+        except EngineError:
+            tree = base = None
+        if tree is not None:
+            verdict = tree in memo['trees']
+            theirs = None if verdict else self._patch_id(memo, base, candidate)
+            for entry in ([] if verdict or theirs is None else memo['history']):
+                if entry[0] == base:
+                    break
+                if len(entry) == 3 and self._patch_id(memo, entry[2], entry[0]) == theirs:
+                    verdict = True
+                    break
+        memo['verdicts'][candidate] = verdict
+        return verdict
 
     def _snapshot(self, path, kind, normalized=None):
         """Copy the file under the state directory. With `normalized` bytes the copy holds those instead, and the receipt
@@ -2687,7 +2775,7 @@ class Engine:
             artifact = self._completion_evidence(state)
             missing = ['%s (%s)' % (t['id'], t['report_sha'][:8]) for t in self._by_seq(state['tasks'].values())
                        if t['role'] == 'builder' and t['state'] == 'accepted' and t.get('report_sha')
-                       and not self._landed(t['report_sha'])]
+                       and not self._landed(t['report_sha'], state)]
             if missing:
                 raise EngineError('Accepted work is not in HEAD: %s; merge it, or hold the card' % ', '.join(missing))
             self._end_run(state, 'finished' if self._autonomy_on(state) else 'closed')

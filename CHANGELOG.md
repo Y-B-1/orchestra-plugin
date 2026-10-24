@@ -2,6 +2,10 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.13.1 — 2026-10-24
+
+- **`finish` works after a squash merge:** a reported commit also counts as landed when a commit the engine gated or reviewed contains it and `HEAD`'s last 50 first-parent commits hold that commit's tree, or its whole patch from their merge base. 2.13.0 refused every run whose work was squash-merged. Work that never merged is still refused.
+
 ## 2.13.0 — 2026-10-24
 
 Parallel waves, a live Kanban board with native task sync, and a guard that leaves permission decisions to Claude Code.
