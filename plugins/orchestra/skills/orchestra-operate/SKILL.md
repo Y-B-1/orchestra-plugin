@@ -1,6 +1,6 @@
 ---
 name: orchestra-operate
-description: Core rules for the operator role, preloaded by the orchestra:operator agent. Worker agents only; not for the main session.
+description: Core rules for the operator role, preloaded by the orchestra:operator agent. The main session loads it before doing an operator card inline.
 ---
 Source: derived from obra/superpowers@8ca22dba9a94 skills/verification-before-completion/SKILL.md (MIT); garrytan/gstack@4015c2870b06 health/SKILL.md (MIT); see THIRD-PARTY-NOTICES.
 Sentinel: orchestra-operate/SKILL.md
