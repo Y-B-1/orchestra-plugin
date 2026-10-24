@@ -4,7 +4,7 @@
 
 ## What it tests
 
-Sixteen scenarios, each in its own scratch repository with a bare origin, so nothing touches a real project. `--list` prints each id with one line on what it proves.
+Sixteen scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
 
 - Guard modes: `g0` (no run), `g1` minimal, `g2` normal, `g3` protect.
 - Autonomy: `a1` git limits while armed, `a2b` ledger, settings and cron locks, `a3b` the owner-only `approved` receipt.
@@ -31,6 +31,17 @@ python3 scripts/live-matrix.py --list
 - `OUT_DIR`: output root. Each scenario writes `OUT_DIR/<id>/` with `repo/`, `origin.git/`, one `run<N>.jsonl` and `run<N>.err` per session, and `result.json`.
 
 Python 3.11 or newer and Git are needed, and nothing else.
+
+## Run state
+
+Each scenario that starts a run leaves its run state under `~/.local/state/orchestra/<identity>` (`$XDG_STATE_HOME/orchestra/<identity>` when `XDG_STATE_HOME` is an absolute path), not under `OUT_DIR`. The harness never removes it. `<identity>` is the first 24 hex digits of the SHA-256 of the scenario's repository path, `OUT_DIR/<id>/repo`, so a scenario's directory is found from that path. To remove one scenario's run state:
+
+```
+ID=$(python3 -c 'import hashlib, os, sys; print(hashlib.sha256(os.path.realpath(sys.argv[1]).encode()).hexdigest()[:24])' OUT_DIR/g1/repo)
+rm -rf ~/.local/state/orchestra/"$ID"
+```
+
+Remove it before a rerun of the same scenario: `OUT_DIR/<id>/` is recreated at the same path, so the same identity comes back and the rerun can find the old run.
 
 ## Cost and time
 

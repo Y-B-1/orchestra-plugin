@@ -1433,22 +1433,66 @@ def _touches_state(command, state_dir, cwd):
 _WRITE_VERBS = {'tee', 'rm', 'rmdir', 'unlink', 'shred', 'mv', 'cp', 'install', 'ln', 'truncate', 'dd', 'chmod', 'chown',
                 'set-content', 'add-content', 'out-file', 'remove-item', 'copy-item', 'move-item', 'new-item', 'clear-content'}
 _DEST_VERBS = {'cp', 'install', 'ln', 'copy-item', 'move-item'}  # the last word is the destination: a read copy is fine
+_COPY_VERBS = {'cp', 'install'}  # these write their destination's content, so a coordinator note may be one
+_NOTES = tuple(name for name in _PROTECTED['state_root_exceptions'] if name != 'autonomy.md')  # the ledger stays denied
 _WRAPPERS = {'sudo', 'command', 'exec', 'nohup', 'env', 'time', 'nice'}
 
 
+def _target_dir(args):
+    """The directory named by `-t DIR`, `-vt DIR`, `-tDIR` or `--target-directory[=]DIR` (cp, install), or None."""
+    for i, word in enumerate(args):
+        if word.startswith('--target-directory='):
+            return word.split('=', 1)[1]
+        if word == '--target-directory' or re.fullmatch(r'-[A-Za-z]*t', word):
+            return args[i + 1] if i + 1 < len(args) else ''
+        if re.fullmatch(r'-t.+', word):
+            return word[2:]
+    return None
+
+
+def _is_state_note(target, state_dir, base):
+    """True when `target`, relative to `base` (None: only an absolute or home path can be resolved), is a coordinator
+    note at the root of the state directory."""
+    if target.startswith('$'):
+        return False
+    try:
+        path = Path(target).expanduser()
+        if not path.is_absolute():
+            if base is None:
+                return False
+            path = Path(base).expanduser() / path
+        resolved = path.resolve()
+        state = Path(state_dir).expanduser().resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
+    return resolved.parent == state and resolved.name in _NOTES
+
+
+def _lands_in_state(target, state_dir, cwd, inside, notes_ok=False):
+    """True when a write to `target` lands in the state directory. `inside` is an earlier `cd` into it, so a relative
+    target names a file there. With `notes_ok`, a coordinator note at the state root does not count (the Write rule's list)."""
+    relative = not target.startswith(('/', '~', '$'))
+    if not (_touches_state(target, state_dir, cwd if relative else None) or (relative and inside)):
+        return False
+    if not notes_ok:
+        return True
+    base = state_dir if relative and inside else (cwd if relative else None)
+    return not _is_state_note(target, state_dir, base)
+
+
 def _writes_state(command, state_dir, cwd):
-    """A shell command that writes into the state directory: an output redirect or tee, rm, mv, cp, install, ln, truncate,
-    dd, chmod or `sed -i` aimed at it. Reads and orchestra.py commands are not writes. Text only: best effort."""
+    """A shell command that writes into the state directory: an output redirect, tee, cp or install aimed at it, or rm, mv,
+    ln, truncate, dd, chmod or `sed -i` there. Outside a lock the coordinator's notes at the state root are not state
+    (redirects, tee, cp and install may write them). Reads and orchestra.py commands are not writes. Text only: best effort."""
     if _cli_only(command) or not _touches_state(command, state_dir, cwd):
         return False
     text = re.sub(r'\d*>&\s*(?:\d+|-)', ' ', command)  # a descriptor copy writes no file
     text = text.replace('&>', '>')
-    inside = False  # an earlier `cd` into the state directory
-    for piece in re.split(r'[;&|\n]+', text):
+    inside = False  # the last `cd` went into the state directory
+    for piece in re.split(r'[;&\n]+|(?<!>)\|+', text):  # `>|` is a clobbering redirect, not a pipe
         for target in re.findall(r'>>?\|?\s*((?:\'[^\']*\'|"[^"]*"|[^\s<>\'"])+)', piece):
             target = target.replace("'", '').replace('"', '')
-            relative = not target.startswith(('/', '~', '$'))
-            if _touches_state(target, state_dir, cwd if relative else None) or (relative and inside):
+            if _lands_in_state(target, state_dir, cwd, inside, notes_ok=True):
                 return True
         try:
             words = shlex.split(piece.replace('>', ' '))
@@ -1461,16 +1505,23 @@ def _writes_state(command, state_dir, cwd):
         verb = PurePosixPath(words[0]).name.lower()
         args = words[1:]
         if verb == 'cd':
-            inside = inside or _touches_state(piece, state_dir, None)
+            if _touches_state(piece, state_dir, None):
+                inside = True
+            elif not args or args[0].startswith(('/', '~', '$')):
+                inside = False  # a cd to an absolute or home path leaves the state directory; a relative cd keeps the flag
             continue
         flagged = verb == 'sed' and any(re.match(r'-[A-Za-z]*i|--in-place', w) for w in args if w.startswith('-'))
         if verb not in _WRITE_VERBS and not flagged:
             continue
         operands = [w for w in args if not w.startswith('-')] or args
         if verb in _DEST_VERBS:
-            last = operands[-1] if operands else ''
-            relative = not last.startswith(('/', '~', '$'))
-            if _touches_state(last, state_dir, cwd if relative else None) or (relative and inside):
+            dest = _target_dir(args)
+            if dest is None:
+                dest = operands[-1] if operands else ''
+            if _lands_in_state(dest, state_dir, cwd, inside, notes_ok=verb in _COPY_VERBS):
+                return True
+        elif verb == 'tee':
+            if any(_lands_in_state(word, state_dir, cwd, inside, notes_ok=True) for word in operands):
                 return True
         elif inside or _touches_state(piece, state_dir, cwd):
             return True

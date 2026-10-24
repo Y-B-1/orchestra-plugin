@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 CACHE = Path.home() / '.claude/plugins/cache/orchestra-distribution/orchestra'
@@ -159,7 +160,7 @@ def by_cmd(ev, needle):
 
 
 def orch_denied(c):
-    return bool(c and c['error'] and 'orchestra' in c['text'].lower())
+    return bool(c and c['error'] and 'orchestra guard' in c['text'].lower())
 
 
 class Check:
@@ -185,6 +186,7 @@ def cmd_prompt(cmds, tail='Then reply DONE.'):
 
 
 # ---------------------------------------------------------------- scenarios
+
 
 def g0_no_run(x, chk):
     """Proves: With no run started, the guard denies nothing and SessionStart still adds Orchestra context."""
@@ -243,8 +245,6 @@ def a1_autonomy_git(x, chk):
     expect_cmds(ev, chk, [('push origin work', False), ('push origin main', True), ('push origin v9', True),
                           ('git merge work', True)])
     chk('origin main unchanged', sh(['git', 'rev-parse', 'main'], x.origin).strip() == sh(['git', 'rev-parse', 'main'], x.repo).strip())
-
-
 
 
 def d1_agent_capture(x, chk, workflow=False, worktree=False):
@@ -337,8 +337,6 @@ def h1_stop_block(x, chk):
     chk('no second block on an unchanged board after a new prompt', not b2, [h['out'][:200] for h in b2])
 
 
-
-
 def i1_install(x, chk):
     """Proves: The plugin installs from a clean profile via the marketplace source and uninstalls again."""
     cfg = x.dir / 'cfg'
@@ -406,10 +404,10 @@ def a3b_approved(x, chk):
     chk('approved while the run works is refused with a reason', ups and 'not recorded' in ups[0].lower(), ups[:1])
     chk('approved while the run works records nothing', receipts() == r1, receipts()[:200])
 
+
 def h2b_board_on_prompt(x, chk):
     """Proves: A captured report reaches the coordinator in the same session (Stop or the next Agent call), and the next
     prompt does not repeat a board line it has already seen."""
-    import uuid
     sid = str(uuid.uuid4())
     pol = json.loads((PLUGIN / 'config/policy.default.json').read_text())
     (x.dir / 'policy.json').write_text(json.dumps(pol))
@@ -442,6 +440,7 @@ def r1b_resume(x, chk):
     out = json.dumps(x.o('start', '--size', 'medium', lease=False, check=False))
     chk('a second start names the way out', 'recover' in out or 'interrupt' in out, out[:300])
     chk('the running card survives the restart', x.task('C1').get('state') in ('running', 'queued'), x.task('C1').get('state'))
+
 
 SCENARIOS = {f.__name__.split('_')[0]: f for f in (
     g0_no_run, g1_minimal, g2_normal, g3_protect, a1_autonomy_git, a2b_autonomy_locks, a3b_approved,

@@ -105,6 +105,40 @@ class StateShellWriteTest(LiveFixture):
             with self.subTest(mode=mode):
                 self.assertEqual(self.verdict('echo x >> /tmp/notes.txt && rm /tmp/old'), 'allow')
 
+    def test_a_shell_append_to_a_coordinator_note_is_allowed(self):
+        s = shlex.quote(str(self.state))
+        notes = ('echo x >> %s/progress.md' % s, 'echo x >> %s/standing-orders.md' % s, 'echo x >| %s/progress.md' % s,
+                 'echo x | tee -a %s/progress.md' % s, 'cp f %s/standing-orders.md' % s)
+        for mode in MODES:
+            self.set_mode(mode)
+            for command in notes:
+                with self.subTest(mode=mode, command=command):
+                    self.assertEqual(self.verdict(command, session_id='s1'), 'allow')
+
+    def test_a_shell_write_to_any_other_state_file_stays_denied(self):
+        s = shlex.quote(str(self.state))
+        others = ('echo x >> %s/state.json' % s, 'echo x >> %s/policy.json' % s, 'echo x >> %s/autonomy.md' % s,
+                  'echo x >> %s/cards.json' % s, 'echo x | tee -a %s/autonomy.md' % s)
+        for mode in MODES:
+            self.set_mode(mode)
+            for command in others:
+                with self.subTest(mode=mode, command=command):
+                    out = self.raw_call(command, session_id='s1')
+                    self.assertEqual(out.get('permissionDecision'), 'deny')
+                    self.assertIn(STATE_SHELL, out['permissionDecisionReason'])
+
+    def test_the_clobber_and_target_directory_spellings_are_denied(self):
+        s = shlex.quote(str(self.state))
+        for command in ('echo x >| %s/state.json' % s, 'cp -t %s f' % s, 'install -t %s f' % s, 'mv -t %s f' % s,
+                        'cp --target-directory=%s f' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+
+    def test_a_cd_out_of_the_state_directory_ends_the_inside_rule(self):
+        s = shlex.quote(str(self.state))
+        self.assertEqual(self.verdict('cd %s && ls; cd /tmp && echo x > out.txt' % s, session_id='s1'), 'allow')
+        self.assertEqual(self.verdict('cd %s && echo x > state.json' % s, session_id='s1'), 'deny')
+
 
 class ProtectBranchPushTest(LiveFixture):
     def setUp(self):
@@ -116,6 +150,11 @@ class ProtectBranchPushTest(LiveFixture):
         for command in ('git push -u origin feature', 'git push origin feature', 'git push --set-upstream origin feature'):
             with self.subTest(command=command):
                 self.assertEqual(self.verdict(command), 'allow')
+
+    def test_a_builder_worker_pushes_a_feature_branch_outside_a_lock(self):
+        worker = {'session_id': 's1', 'agent_id': 'a1', 'agent_type': 'orchestra:builder'}
+        self.assertEqual(self.verdict('git push -u origin feature', **worker), 'allow')
+        self.assertEqual(self.verdict('git push origin ' + self.default_branch, **worker), 'deny')
 
     def test_every_other_push_stays_denied(self):
         self.git('remote', 'add', 'other', str(self.root / 'origin.git'))
