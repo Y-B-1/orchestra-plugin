@@ -24,7 +24,7 @@
   "tools": {
     "shell": ["Bash", "PowerShell", "exec_command", "shell", "shell_command"],
     "edit": ["apply_patch", "Edit", "Write", "MultiEdit", "NotebookEdit"],
-    "claude_matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Agent|Task|CronCreate|ScheduleWakeup|RemoteTrigger|SendMessage",
+    "claude_matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Agent|Task|CronCreate|ScheduleWakeup|RemoteTrigger|SendMessage|AskUserQuestion",
     "scheduler": ["CronCreate", "ScheduleWakeup", "RemoteTrigger"]
   },
   "shells": ["sh", "bash", "zsh", "dash", "ksh"],

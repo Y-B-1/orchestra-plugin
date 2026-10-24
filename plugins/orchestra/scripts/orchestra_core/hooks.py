@@ -364,6 +364,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             armed_before = _armed_now(engine)
             reason = engine.hook_stop()
             if isinstance(reason, str) and reason:
+                if armed_before and _ends_with_question(payload):
+                    reason += ' ' + DECIDE_OR_PARK
                 return HookResult({'decision': 'block', 'reason': reason})
             if armed_before:
                 return HookResult(_stopped_note(engine) if not _armed_now(engine) else {})
@@ -375,6 +377,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     name, data = payload.get('tool_name'), payload.get('tool_input')
     if not isinstance(name, str) or not name or not isinstance(data, dict):
         return _deny('Malformed tool payload', True)
+    if name == 'AskUserQuestion':
+        return _answer_question(data, engine)
     if name in _APPROVAL_TEXT_TOOLS and _carries_approval_text(data):
         return _deny('A message or scheduled prompt that is only the approval word could record the owner\'s approval; '
                      'the owner types it in their own session')
@@ -1501,7 +1505,7 @@ def _writes_state(command, state_dir, cwd):
     (redirects, tee, cp and install may write them). Reads and orchestra.py commands are not writes. Text only: best effort."""
     if _cli_only(command) or not _touches_state(command, state_dir, cwd):
         return False
-    text = re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()])', ' ', command)  # a descriptor copy writes no file; `>&1new` is a file
+    text = re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()])|\d*>&\s*\d+(?=[\'"](?:[\s;&|<>()\'"]|$))', ' ', command)  # a descriptor copy writes no file; `>&1new` is a file
     text = text.replace('&>', '>')
     text = re.sub(r'>&(?=\s*[^\s&>])', '>', text)  # `>&FILE` sends stdout and stderr to a file
     inside = False  # an earlier `cd` into the state directory
@@ -1791,6 +1795,77 @@ def _deletes_only_ignored(command, cwd):
         if code != 0 or tracked:
             return False
     return True
+
+
+DECIDE_OR_PARK = ('Autonomy is armed and the owner is away. Decide this yourself: take the option you would recommend, '
+                  'record the decision in your next message, and continue. If only the owner can answer (a secret, a code, '
+                  "an account action, or a matter of their taste), park the card with `orchestra.py park TASK --reason "
+                  "'<the question>'` and continue with other cards.")
+
+
+def _answer_question(data, engine):
+    """AskUserQuestion while autonomy is armed: answer each question with its "(Recommended)" option, log the decisions to
+    progress.md, and deny a question with no such option. Unarmed or without an engine: no decision."""
+    if engine is None or not _armed_now(engine):
+        return HookResult({})
+    questions = data.get('questions')
+    answers = {}
+    if isinstance(questions, list) and questions:
+        for item in questions:
+            options = item.get('options') if isinstance(item, dict) else None
+            text = item.get('question') if isinstance(item, dict) else None
+            if not isinstance(text, str) or not isinstance(options, list):
+                answers = None
+                break
+            labels = [o['label'] for o in options if isinstance(o, dict) and isinstance(o.get('label'), str)
+                      and o['label'].rstrip().lower().endswith('(recommended)')]
+            if not labels:
+                answers = None
+                break
+            answers[text] = ', '.join(labels) if item.get('multiSelect') is True else labels[0]
+    else:
+        answers = None
+    if not answers:
+        return _deny(DECIDE_OR_PARK)
+    try:
+        from .engine import _append_progress  # Lazy, like the other engine imports
+        at = datetime.now(timezone.utc).isoformat(timespec='seconds')
+        _append_progress(engine.state_dir, '\n'.join('- decided for the owner: %s -> %s (at %s)' % (q, a, at)
+                                                    for q, a in answers.items()))
+    except Exception:
+        pass  # The log is a courtesy; the answer still stands
+    return HookResult({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
+                                              'updatedInput': {**data, 'answers': answers}}})
+
+
+def _ends_with_question(payload):
+    """True when the last assistant message ends with a question (a `?` in its last 600 characters): the message from the
+    Stop payload, else the last assistant text of the transcript (its last 256 KB). Any error means no question."""
+    try:
+        text = payload.get('last_assistant_message')
+        if not isinstance(text, str):
+            text = ''
+            with open(payload['transcript_path'], 'rb') as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - 256 * 1024))
+                lines = handle.read().decode('utf-8', 'replace').splitlines()
+            for line in reversed(lines):
+                try:
+                    row = json.loads(line)
+                    message = row['message']
+                    if row.get('type') != 'assistant' or not isinstance(message.get('content'), list):
+                        continue
+                    parts = [c['text'] for c in message['content'] if isinstance(c, dict) and c.get('type') == 'text'
+                             and isinstance(c.get('text'), str)]
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    continue
+                if parts:
+                    text = '\n'.join(parts)
+                    break
+        return '?' in text[-600:]
+    except Exception:
+        return False
 
 
 def _armed_now(engine):

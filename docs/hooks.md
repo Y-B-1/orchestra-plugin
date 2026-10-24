@@ -106,6 +106,14 @@ Where autonomy is active or the unattended lock holds, the effective mode is `pr
 
 In a compound command, `normal` relaxes only the softened items: the rest of the command is classified on its own and keeps its verdict (`hooks.py` `_soft_remainder`). A command the split cannot read safely (a substitution, heredoc, shell string, `#` comment or `$'...'` string) gets the strict verdict.
 
+## Questions while armed
+
+While autonomy is armed the owner is away, so a question must not wait for a click. Unarmed, `AskUserQuestion` is left alone. Armed:
+
+1. `AskUserQuestion` is answered by the hook when every question has a "(Recommended)" option: the hook returns `allow` with the original questions and an `answers` map (a multi-select joins its labels with ", ") and appends one `decided for the owner` line per question to `progress.md`.
+2. A question with no recommended option, or a malformed one, is denied with the reason "decide it yourself, record the decision, or park the card". An answer is never approval text.
+3. A Stop whose last assistant message ends with a question (a `?` in its last 600 characters) gets the same decide-or-park text added to the continuation reason.
+
 ## The unattended lock
 
 A run that stopped and kept its report, with no owner receipt for its `run_id`, is unattended (`approval.py` `raw_unattended`; the hook reads `state.json` directly, and a file it cannot read counts as unattended, `_raw_unattended`). The effective mode is `protect`, release-class commands, a local merge on the default branch, `autonomy disarm` and `start --new-run` from a tool call, scheduler tools and settings edits are denied, and the deny reason names the way out: type `approved` in the owner's session, or run `orchestra.py autonomy disarm` in a terminal. `orchestra.py start --new-run` itself refuses while the kept report has no receipt (`orchestra.py` `archive_inactive`: "New run refused"), so a run cannot clear its own lock with `interrupt` then `start --new-run`. The lock clears when the receipt for the run is recorded or `autonomy disarm` removes the kept report. `autonomy arm` moves an existing receipt to `approval_history`, so a receipt never survives a re-arm (`Engine.arm_autonomy`).
