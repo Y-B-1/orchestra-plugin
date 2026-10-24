@@ -35,6 +35,18 @@
         "matcher": ".*"
       }
     ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.sh\" SubagentStop --harness claude",
+            "timeout": 30
+          }
+        ],
+        "matcher": "orchestra:.*"
+      }
+    ],
     "Stop": [
       {
         "hooks": [
