@@ -84,9 +84,9 @@ Sentinel: orchestra/references/briefs.md
 
 # Brief writing
 
-One brief per worker, one responsibility per brief. Write it for a reader with empty context, durable and behavioral: name interfaces and outcomes, and point to files by path instead of copying them.
+One brief per worker, one responsibility per brief. Write for a reader with empty context: name interfaces and outcomes, and point to files by path, never copy them.
 
-1. Objective: a summary, the current against the desired behavior, and what is out of scope.
+1. Objective: a summary, current against desired behavior, and what is out of scope. `card ID` prints a skeleton.
 2. `Mode:` line (a review brief adds `Lens:`, a lens name or `specialist:<name>`), the immutable starting artifact and the output path (writers only).
 3. Ownership: files and resources, sibling ownership, worktree, prerequisites.
 4. Acceptance: exhaustive criteria a command can check, each ending in a done condition.

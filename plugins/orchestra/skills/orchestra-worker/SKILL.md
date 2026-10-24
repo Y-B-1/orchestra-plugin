@@ -18,8 +18,8 @@ Start the final message with:
 `STATUS: PASS|ISSUES|BLOCKED`
 `ARTIFACT: <full commit sha> <clean, or dirty-tree fingerprint>`
 
-PASS is done, ISSUES is done with concerns, BLOCKED is blocked or needs-context. Then list changed paths or symbols inspected, each command with exit and log path, findings, uncertainties and routing. Separate reasoning from proof. Name each check you could not run; a missing check is never a pass. Never claim reviewer acceptance, another artifact's gate, release authority or coordinator state.
+PASS is done, ISSUES is done with concerns, BLOCKED is blocked or needs-context. Then list paths or symbols inspected, each command with exit and log path, findings, uncertainties and routing. Separate reasoning from proof. Name each check you could not run; a missing check is never a pass. Never claim reviewer acceptance, another gate, release authority or coordinator state.
 
-Run, read output and exit, then claim. Evidence binds repository, full commit, dirty-tree fingerprint, policy revision and action; a later edit voids it.
+Run, read output and exit, then claim. Task evidence binds the card's files, index, status and policy, not HEAD; review evidence binds the full commit. A later edit voids it.
 
 Hedge rule. Builders: "should", "probably", "seems" or "likely" in a completion claim means missing evidence; run the check. Critic and code-reviewer: file a hedged claim lacking a command, exit code or log as an unverified `tests` or `requirements` finding.

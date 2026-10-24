@@ -54,7 +54,7 @@ From your first message to a finished branch:
    | Size | Diff | Route |
    | --- | --- | --- |
    | tiny | up to 50 changed lines | Inline edit in the main session, no alignment. A tiny builder card needs `dispatch --helper REASON`. |
-   | medium | up to 400 | Grill inline, then run `waves` and start each wave whole with `wave`. |
+   | medium | up to 400 | Grill inline, then run `waves` and start each wave whole with `wave` (`--emit` prints each worker call). |
    | large | above 400, or more than one session can align | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it, then a plan card; 2+ units go to builders through Workflow. |
 
    Tiny escalates to medium when an edit needs a decision or the diff passes the guide. Medium escalates to large when grilling outgrows one context or answers open questions faster than they close.

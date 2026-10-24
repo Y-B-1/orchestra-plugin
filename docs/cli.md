@@ -2,7 +2,7 @@
 
 The maintained command guide and the task/review schemas live in the package [CLI reference](../plugins/orchestra/skills/orchestra/references/cli.md). The package carries that guide after installation. This page lists every command.
 
-Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE] [--actor ACTOR] [--lease LEASE] COMMAND`. Each command prints a JSON receipt. `--actor` and `--lease` are consistency checks, not authentication. The Lease column says whether the command needs `--lease` from `start`.
+Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE] [--actor ACTOR] [--lease LEASE] COMMAND`. Each command prints a JSON receipt. A card-moving command adds a `board` key, one line saying what moved and what waits. Run from a linked worktree, any command except `where` is refused when the main checkout holds the run state. `--actor` and `--lease` are consistency checks, not authentication. The Lease column says whether the command needs `--lease` from `start`.
 
 | Command | Purpose | Lease |
 | --- | --- | --- |
@@ -10,9 +10,16 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `where` | Print the repository, the state directory and whether `standing-orders.md` exists. | no |
 | `status` | Print cards, session state (`size`, `asks`, `owner_request`, or the 2.4 route) and `required_lenses`. Never prints a lease. | no |
 | `prepr` | Print the size check and the pre-PR reviewer: `base`, `changed_lines`, `size`, `asks`, `budget`, `over_budget`, `reviewer`, `agent`, `lenses`, `warning`. Read-only; the warning never blocks. | no |
-| `board` | Group card ids by role and state. | no |
+| `board` | Group card ids by role and state; `leftover_worktrees` lists landed worktrees still on disk. | no |
+| `waves` | Print overlaps, unmet prerequisites, ordered waves and the cards startable now. Read-only. | no |
+| `worktrees` | List the entries under `.claude/worktrees/` with branch, card, `landed` and `clean`, and print `git worktree remove <path>` for each landed clean one. Read-only; the engine never creates or removes a worktree. | no |
+| `refusals [--last N]` | Print the newest refused commands (exit 2) from the refusal log, default 10. Read-only. | no |
+| `card TASK [--out FILE]` | Print the brief skeleton rendered for a card, or write it to FILE. Read-only. | no |
+| `ledger [--cards ID[,ID]]` | Print BUILD-LEDGER rows (card, role, commit, evidence, status) for accepted cards from engine facts. Read-only. | no |
+| `package TASK` | Write a reviewer package (brief, report, self-review, diff stat) under `<state>/packages` and print its path. | no |
+| `wave [--inline ID] [--helper REASON] [--serial REASON] [--emit] ID ...` | Start every named card in one step, all or none. `--emit` also prints per card `agent_type`, `model_override`, `isolation`, `fast_forward`, `prompt` (with an `Assignment: WORKER TOKEN` line) and `agent_call`; a card may carry `variant` (`standards` or `medium`). `wave --emit` records each card's base for the `report` base check. | yes |
 | `artifact [--tasks ID[,ID]]` | Print the whole-repo artifact, or with `--tasks` the artifact scoped to those cards' reserved files plus HEAD. | no |
-| `report WORKER TOKEN FILE` | Record a worker's result file against its assignment token. The same worker may replace the report until the card is accepted or a review covers it. | no |
+| `report [--accept --lease LEASE] WORKER TOKEN FILE` | Record a worker's result file against its assignment token. The same worker may replace the report until the card is accepted or a review covers it. A builder report must answer every acceptance line verbatim. It is refused when its commit is not built on the card's recorded base (recorded by `wave --emit`; `dispatch` and `inline` record none). `--accept` (inline cards only) records the report and accepts the card in one call. | no (`--accept`: yes) |
 | `autonomy arm\|disarm\|status` | Arm, disarm or inspect the autonomous loop. | no |
 | `brief` | Print the newest run brief. Read-only. | no |
 | `finding list [--for-brief]` | List the findings ledger, or render a "Known findings" block for reviewer briefs. | no |
@@ -22,8 +29,8 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `add TASK.json` | Add a card. A builder card may carry `size` (`tiny` or `medium`). On a size run a designer-planner plan card needs a large run or an owner request. On a 2.4 workflow route, the plan card must be accepted first. | yes |
 | `dispatch TASK WORKER [--helper REASON]` | Reserve a card for a worker. A tiny builder card (and any builder card on a 2.4 inline route) needs `--helper REASON`. | yes |
 | `inline TASK` | Reserve a card for the main coordinator. | yes |
-| `review REVIEW.json` | Record the independent pre-PR review (`final: true`) or the fix re-review (`repair_check: true`). | yes |
-| `accept TASK` | Accept a card whose current evidence allows it. | yes |
+| `review REVIEW.json [--token TOKEN] [--defer-out-of-scope REASON]` | Record the independent pre-PR review (`final: true`) or the fix re-review (`repair_check: true`). `--token` reports the review card, records the receipt and accepts the card in one step; it covers sibling final lens cards that review the same cards, and takes critic and repair_check receipts. `--defer-out-of-scope REASON` (with `--token`) records each out-of-scope item as deferred to a brief. An empty `cleared` means none; a mismatch refusal names each key with both values; a one-task receipt gets `task_findings` filled; out-of-scope items on a non-final receipt are kept as notes. | yes |
+| `accept TASK [--ruling TEXT]` | Accept a card whose current evidence allows it. The refusal names the failing check. `--ruling TEXT` accepts a worker card whose only gap is an unmet criterion, with the coordinator's reason; it is never allowed for an inline card or a failing check. | yes |
 | `gate [--again] [--timeout SECONDS] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. `--timeout` overrides `gate_timeout_seconds` for this run. Processes the check leaves running in its own process group are stopped when it exits; one that starts a new session or group is not tracked. | yes |
 | `scan` | Run the configured secret scan; an unavailable optional scanner is reported, not passed. | yes |
 | `permit REMOTE TARGET` | Create a release permit for an exact remote and target. It stays valid until the artifact changes or the session ends, and is not used up by a release. Refused while autonomy is active. | yes |
@@ -36,7 +43,15 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `unpark TASK` | Return a parked card to the queue. | yes |
 | `cancel TASK --reason TEXT` | Drop a queued or parked card that should never run. Refused while another card depends on it, a review covers it or it is in a repair chain; the drop is kept in the state's `cancelled` list. | yes |
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |
-| `finish` | Close the run after completion checks. A parked card blocks it. A run that changed files needs a current final review even with no cards. | yes |
+| `finish` | Close the run after completion checks. A parked card blocks it. A refusal for leftover worktrees points to `worktrees`. A run that changed files needs a current final review even with no cards. | yes |
+
+## Changes in 2.14.0
+
+- New commands: `card`, `ledger`, `package`, `refusals [--last N]` and `worktrees`; new flags `wave --emit`, `report --accept`, `accept --ruling TEXT` and `review --defer-out-of-scope REASON`. The `board` key rides on card-moving command output. There is no `--lease @session` and no engine-owned worktree or `engine_worktrees` policy key: the engine only reads and reports worktrees.
+- `start` returns `resume` per requeued card: the old worker and the saved report path.
+- The autonomy ledger may carry `- Repairs: up to N per chain` (N from 1 to 3; absent means 1). A sibling repair with disjoint files no longer waits on a parent reservation.
+- A worker's shell command carrying `orchestra.py ... --lease` is denied in every guard mode ([hooks](hooks.md#worker-limits-added-in-214)).
+- Loosened: out-of-scope items on a non-final review receipt are kept as notes instead of refused.
 
 ## Changes in 2.11.0
 
@@ -93,7 +108,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 
 ## Scoped evidence
 
-A task report binds to the covered cards' reserved files plus HEAD. An uncommitted edit outside those files does not stale the evidence; an edit inside them, or any new commit, does. A card with no reserved files gets the whole-repo artifact. Reviews, gates, release permits, release receipts and completion evidence always bind to the whole repository. The newest receipt per category that covers a card decides that category. If it is stale there is no current verdict; the engine never falls back to an older receipt.
+A task report binds to the covered cards' reserved files, the index, the status and the policy, not to HEAD. An uncommitted edit outside those files does not stale the evidence, and a commit that leaves those files alone does not either; an edit inside them does. `accept` compares the reported commit. A card with no reserved files gets the whole-repo artifact. Reviews, gates, release permits, release receipts and completion evidence always bind to the whole repository. The newest receipt per category that covers a card decides that category. If it is stale there is no current verdict; the engine never falls back to an older receipt.
 
 ## Repair and hold
 

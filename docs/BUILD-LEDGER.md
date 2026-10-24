@@ -441,3 +441,26 @@ The real hook entry point (`run-hook.sh <Event> --harness claude`, hook JSON on 
 | N10 | The unattended lock matches provider deletes by text, so a command that also holds a real `rm` and quotes `gh release delete` is denied (fails closed). |
 | E1 | Fixed in 2.12.0. Engine: adding a repair card ignores findings in a final receipt made stale by a sibling chain's repair, so the second chain needs a new review. Let `add` accept those findings, or refuse the first repair until every blamed chain has its card. |
 | E2 | Engine: `report` and `accept` run from a linked worktree resolve another state directory ("Invalid assignment") and leave an empty one. Run engine commands from the main checkout. |
+
+## 2.14.0 (2026-10-24)
+
+Source: the audit proposals and the friction log of the 2.13 run, planned by a designer-planner and challenged by a critic before any builder started. Rows come from the `ledger` command.
+
+| Card | Role | Commit | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| P1 | designer-planner plan | - | 2.14 plan; report only; no review | accepted |
+| C1 | critic feasibility | - | plan challenge; report only; no review | accepted |
+| ACC | builder implementation | d4e567e | accept compares the reported commit, scoped evidence ignores unrelated commits, accept refusals name the failed check; 6 checks, 1 red first; no review | accepted |
+| CLI | builder implementation | 13ced07 | a refusal log with a read command, and a one-line board delta on engine command output; 6 checks, 1 red first; no review | accepted |
+| CAP | builder implementation | 1febef3 | SubagentStop hook saves each Orchestra worker final message to disk and records it as the report; normal-mode softening reads past a trailing comment; 11 checks, 1 red first; no review | accepted |
+| MODG | builder implementation | c4c662c | the mod refuses an Orchestra spawn without a Mode line; the branch-delete refusal says to run it in its own tool call; 7 checks, 2 red first; no review | accepted |
+| GATE | builder implementation | 3df570d | a builder report must answer every acceptance line, accept --ruling records the coordinator ruling on unmet criteria, report --accept closes a card in one call; 8 checks, 1 red first; no review | accepted |
+| RCPT | builder implementation | 7264e21 | review receipts need less hand normalization and every receipt refusal names the key and both values; 5 checks, 1 red first; no review | accepted |
+| EMIT | builder implementation | 75c4448 | wave --emit and a brief renderer, ledger rows and a package command written from engine facts, a clear refusal from a linked worktree; 8 checks, 1 red first; no review | accepted |
+| SKIL | builder implementation | 62a2880 | skill and check.sh text for the open friction that needs words, not code; 4 checks, 1 red first; no review | accepted |
+| TREE2 | builder implementation | ebbf747 | report refuses a commit built on the wrong base; the engine lists leftover Orchestra worktrees with their landed and clean state and prints the removal commands; start after an ended run names each requeued card and its saved report; 8 checks, 1 red first; no review | accepted |
+| TOKN2 | builder implementation | 54ceecf | review --token covers sibling lens cards, takes non-final receipts and can defer out-of-scope items; 4 checks, 1 red first; no review | accepted |
+| WDENY2 | builder implementation | b080968 | a worker shell command that carries --lease is denied in every guard mode; 7 checks, 1 red first; no review | accepted |
+| LADR2 | builder implementation | f2d55e9 | the owner sets repairs per chain in the autonomy ledger, a sibling repair no longer waits on a parent reservation it does not own; 6 checks, 1 red first; no review | accepted |
+| FIXT | builder mechanical | 5fde75b | sibling fixtures follow the acceptance-match rule; 4 checks, 2 red first; no review | accepted |
+| HOOK2 | builder implementation | 401f0b8 | the board as a stone on the path: the prompt hook, a post-agent hook and the Stop hook say what moved and what waits; 6 checks, 1 red first; no review | accepted (ruled) |
