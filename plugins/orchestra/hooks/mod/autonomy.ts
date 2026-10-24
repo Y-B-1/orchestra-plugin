@@ -157,10 +157,13 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
   return { text: `Orchestra autonomy: inactive${last !== undefined && last !== null ? ` (last stop: ${String(last)})` : ''}`, band };
 }
 
-/** Whether the tick may read status at `now`; takes the slot when it may. */
-export function pollDue(auto: AutonomyState, now: number): boolean {
-  if (!auto.active && !auto.unknown) return false;
-  if (auto.lastRead !== null && now - auto.lastRead < POLL_MS) return false;
+/**
+ * Whether the tick may read status at `now`; takes the slot when it may. `watch` (guard `minimal`) reads at every
+ * tick while not active, so an arm from another session or a terminal ends the mod's fast path.
+ */
+export function pollDue(auto: AutonomyState, now: number, watch = false): boolean {
+  if (!auto.active && !auto.unknown && !watch) return false;
+  if (!(watch && !auto.active) && auto.lastRead !== null && now - auto.lastRead < POLL_MS) return false;
   auto.lastRead = now;
   return true;
 }

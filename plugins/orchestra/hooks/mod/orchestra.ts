@@ -143,7 +143,7 @@ async function delegate($: Dollar, tool: string, toolInput: Json, sessionId: str
   const spec = asJson(JSON.stringify(hso));
   if (spec === null) return failClosed('bad output', '');
   if (spec['permissionDecision'] === 'deny') return String(spec['permissionDecisionReason'] ?? failClosed('bad output', ''));
-  // `ask` passes on: a tool.call hook cannot prompt, so the native PreToolUse hook, which never skips a release, asks.
+  // `ask` passes on: a tool.call hook cannot prompt, so the native PreToolUse hook, which never skips a release, decides.
   return run.exitCode === 0 ? null : failClosed('exit', String(run.exitCode));
 }
 
@@ -224,15 +224,15 @@ async function autonomyCommand($: Dollar, auto: AutonomyState, args: string, see
   }
 }
 
-/** One step of the existing tick: reads status at most every 30 s while active; never throws. */
-async function autonomyPoll($: Dollar, auto: AutonomyState, seen: Seen): Promise<void> {
-  if ((!auto.active && !auto.unknown) || auto.busy) return;
+/** One step of the existing tick: reads status at most every 30 s while active, every tick while `watch`; never throws. */
+async function autonomyPoll($: Dollar, auto: AutonomyState, seen: Seen, watch: boolean): Promise<void> {
+  if ((!auto.active && !auto.unknown && !watch) || auto.busy) return;
   const epoch = auto.epoch;
   const changes = auto.changes;
   auto.busy = true;
   try {
     const now = await $.clock.now();
-    if (epoch !== auto.epoch || !pollDue(auto, now)) return;
+    if (epoch !== auto.epoch || !pollDue(auto, now, watch)) return;
     const res = await autonomyCli($, 'status');
     if (epoch !== auto.epoch || changes !== auto.changes) return;
     seen('status', res);
@@ -530,7 +530,8 @@ export const register: Register = (on: On) => {
             }
             enqueue(fresh(current));
             // SPEC 12.7: the autonomy read rides this tick (no second timer) and never blocks the marker.
-            void autonomyPoll($, auto, seen);
+            // Under guard `minimal` the fast path rests on this read, so it runs at every tick while not active.
+            void autonomyPoll($, auto, seen, guardMode === 'minimal');
           });
         }
         return true;

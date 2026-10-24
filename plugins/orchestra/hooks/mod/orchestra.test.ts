@@ -690,7 +690,7 @@ test('delegate surfaces the reason of an exit-2 deny', async ($, on) => {
   expect(b.calls.length).toBe(0);
 });
 
-test('delegate passes an ask on to the native hook instead of deciding it', async ($, on) => {
+test('delegate passes an ask on to the native hook, which decides',async ($, on) => {
   const r = rig(on);
   const b = bottom(on, r);
   await $.session.start(start);
@@ -1107,6 +1107,18 @@ test('guard minimal: after a stopped run the mod never denies on its own; Python
   const reset = await $.tool.call({ tool: 'Bash', tool_use_id: 'm1', command: 'git reset --hard' });
   expect('deny' in reset).toBe(false);
   expect(s.calls.length).toBe(1);
+});
+
+test('guard minimal: an arm from outside this session is seen at the next heartbeat and the fast path stops', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const e = await minimalSession($, r, false);
+  e.status = { active: true, last_stop_reason: null, parked: [] };
+  await r.clock.advance(5000);
+  const reset = await $.tool.call({ tool: 'Bash', tool_use_id: 'x1', command: 'git reset --hard origin/main' });
+  expect(reset).toEqual({ deny: 'Orchestra guard: ' + PY_DENY } as never);
+  expect(fromModRuns(r).length).toBe(1);
+  expect(s.calls.length).toBe(0);
 });
 
 test('guard minimal: with autonomy active, after a stopped run, or before the first status read, commands are classified as before', async ($, on) => {
