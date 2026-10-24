@@ -2030,11 +2030,25 @@ class Engine:
         replacing = bool(task) and task['state'] == 'reported'  # a repair needs a covering review, refused below
         if not task or task['worker'] != worker or not (task['state'] == 'running' or replacing):
             raise EngineError('Invalid assignment')
-        if replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews']):
-            # The review bound the reported work; only the builder's SELF_REVIEW line may be corrected (F32).
+        covered = replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews'])
+        if covered:
+            # The review bound the reported work and files. Only the command text of the builder's checks may be
+            # corrected (F32); exit codes, criteria and the reported artifact stay as reviewed (PR4).
             def body(text):
                 return [line for line in text.splitlines() if not line.startswith('SELF_REVIEW: ')]
-            if body(report) != body(task.get('report', '')):
+
+            def results(review):
+                if not isinstance(review, dict):
+                    return None
+                return ([(c.get('exit_code'), c.get('expect', 'pass')) for c in review.get('checks', [])],
+                        review.get('criteria'))
+            try:
+                corrected = self._parse_self_review(report) if task['role'] == 'builder' else None
+            except EngineError:
+                corrected = None
+            if (body(report) != body(task.get('report', ''))
+                    or results(corrected) != results(task.get('self_review'))
+                    or self.artifact(self._scope_of(state, [task['id']])) != task.get('report_artifact')):
                 raise EngineError('A review covers this report; route a change through a repair card')
         self._lease(state, state['session']['actor'], task['lease'])
         lines = report.splitlines()

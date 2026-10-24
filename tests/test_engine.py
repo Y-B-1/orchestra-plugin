@@ -3038,6 +3038,35 @@ class SelfReviewTests(EngineFixture):
         self.engine.accept('main', self.lease, 'a')
         self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
 
+    def covered_report(self, checks=None, criteria=None):
+        token = self.running()
+        self.engine.report('w-a', token, done('First.', checks=checks, criteria=criteria))
+        path = self.root / 'final-a.json'
+        self.review(path, tasks=['a'], categories=ALL_CATEGORIES, final=True)
+        self.engine.record_review('main', self.lease, 'reviewer', path, ALL_CATEGORIES, ['a'], final=True)
+        return token
+
+    def test_covered_report_cannot_refresh_a_stale_artifact(self):
+        # PR4: re-sending the identical report after a file edit must not rebind the report to the new files.
+        token = self.covered_report()
+        (self.repo / 'a').write_text('changed after the review')
+        with self.assertRaisesRegex(EngineError, 'Reported artifact is stale'):
+            self.engine.accept('main', self.lease, 'a')
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('First.'))
+        with self.assertRaisesRegex(EngineError, 'Reported artifact is stale'):
+            self.engine.accept('main', self.lease, 'a')
+
+    def test_covered_report_correction_cannot_flip_results(self):
+        # PR4 note: after a review, only check command strings may change; exit codes and met flags stay as reviewed.
+        failing = [{'command': 'python3 -m unittest t', 'exit_code': 1}]
+        token = self.covered_report(checks=failing)
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('First.', checks=[dict(failing[0], exit_code=0)]))
+        unmet = [{'criterion': 'check behavior', 'met': False, 'evidence': 'not yet'}]
+        with self.assertRaisesRegex(EngineError, 'A review covers this report'):
+            self.engine.report('w-a', token, done('First.', checks=failing, criteria=unmet))
+
     def test_non_builder_report_needs_no_self_review(self):
         self.task('look', role='investigator', mode='code', files=[])
         token = self.engine.dispatch('main', self.lease, 'look', 'w-look')
