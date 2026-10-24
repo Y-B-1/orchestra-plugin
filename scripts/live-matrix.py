@@ -195,12 +195,13 @@ def g0_no_run(x, chk):
 
 
 def g1_minimal(x, chk):
-    """Proves: In minimal mode only Orchestra's own denies fire: engine state and policy writes are blocked, git is left alone."""
+    """Proves: In minimal mode only Orchestra's own denies fire: shell writes into engine state and policy are blocked, reads and git are left alone."""
     x.start('minimal')
     st = x.state / 'state.json'
     ev = x.claude(cmd_prompt(['git reset --hard HEAD', 'git push --force origin work', f'echo x >> {st}',
-                              f'python3 -c "open(\'{x.state}/policy.json\',\'a\').write(\' \')"']))
-    expect_cmds(ev, chk, [('reset --hard', False), ('push --force', False), (f'>> {st}', True), ("policy.json", True)])
+                              f'echo x | tee -a {x.state}/policy.json', f'cat {st}']))
+    expect_cmds(ev, chk, [('reset --hard', False), ('push --force', False), (f'>> {st}', True), ('tee -a', True),
+                          (f'cat {st}', False)])
     chk('state.json still valid JSON', json.loads(st.read_text()) is not None)
 
 
@@ -317,7 +318,9 @@ def d4_worker_limits(x, chk):
     plain = [c for c in sub if c['cmd'] and '--lease' not in (c['cmd'] or '') and 'status' in (c['cmd'] or '')]
     chk('worker lease-free status allowed', plain and not plain[0]['error'], plain[0]['text'][:150] if plain else 'not run')
     nested = [c for c in sub if c['tool'] in ('Agent', 'Task')]
-    chk('worker delegation denied', nested and orch_denied(nested[0]), nested[0]['text'][:200] if nested else 'not attempted (tool not offered)')
+    # A worker's tools: allowlist leaves out Agent, so Claude Code itself refuses the call; either refusal enforces it.
+    chk('worker delegation refused', nested and nested[0]['error'] and (orch_denied(nested[0]) or 'no such tool' in nested[0]['text'].lower()),
+        nested[0]['text'][:200] if nested else 'not attempted')
 
 
 def h1_stop_block(x, chk):
