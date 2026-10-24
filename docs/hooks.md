@@ -153,6 +153,10 @@ The board is the one view of what moved and what waits. Four hooks carry it to t
 - A worker (an `orchestra:` agent) whose shell command carries `orchestra.py ... --lease` is denied in every guard mode: "The coordinator lease is coordinator-only". `--force-with-lease` is not matched.
 - The Kanban module refuses an `Agent` or `Task` spawn of an `orchestra:` agent whose brief has no `Mode:` line. This deny lives in the TypeScript module only; the Python hooks have no equal, so without mods the engine's own `Mode:` check at `add` is the guard.
 
+## Model fit
+
+The main session's model is recorded at three hook points, never for a worker or subagent: SessionStart (the payload `model`, else the last assistant entry of the transcript), PostModelSwitch (`to_model`; it prints `{}` and never blocks) and UserPromptSubmit (the transcript tail, and `CLAUDE_EFFORT` for the effort). The prompt then adds one `Session model:` line naming queued cards that must go to a worker: another model family, or a higher effort on the same model, starts only on a worker. An unknown model refuses nothing; the line says so only while a builder card is queued.
+
 ## Release hooks
 
 Release hooks check existing permits; a tool request cannot create one. Structured release execution independently checks configured authority, exact command, current final reviews and required gates. Known Git pushes need exactly four argv elements: the engine's resolved Git executable, push, the configured remote and one refspec. The source must resolve to the reviewed full HEAD. Wrappers and global/push options are rejected because they can change repository or destination context. Default policy names no remote, deployment, database operation or release command. Required missing scanners block; optional missing scanners report unavailable.

@@ -294,6 +294,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
                 engine.apply_harness_rebind(session_id)  # B-F5: the one SessionStart write
             except Exception:
                 pass  # An unloadable state or changed contract never blocks the context
+        if not worker:
+            _record_model(engine, payload)  # Bookkeeping, not progress; any error is swallowed
         if not worker and engine is not None:
             line, armed = _run_line(engine)
             context += line
@@ -1940,19 +1942,97 @@ def _board_stop(engine, payload):
         return {}
 
 
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')  # As engine.EFFORTS; hooks import the engine lazily
+
+
+def _transcript_model(path):
+    """The model of the last assistant entry in the last 256 KB of a transcript, or None for any error."""
+    try:
+        with open(path, 'rb') as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 262144))
+            lines = handle.read().decode('utf-8', 'replace').splitlines()
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            message = entry.get('message') if isinstance(entry, dict) and entry.get('type') == 'assistant' else None
+            model = message.get('model') if isinstance(message, dict) else None
+            if isinstance(model, str) and model.strip() and not model.startswith('<'):
+                return model
+    except Exception:
+        pass
+    return None
+
+
+def _record_model(engine, payload, effort=None):
+    """Record the main session's model (payload, else the transcript) and effort. Bookkeeping: every error is swallowed."""
+    try:
+        if engine is None or payload.get('agent_id'):
+            return
+        model = payload.get('model')
+        if not (isinstance(model, str) and model.strip()):
+            path = payload.get('transcript_path')
+            model = _transcript_model(path) if isinstance(path, str) and path else None
+        if model is not None or effort is not None:
+            engine.record_model(model, effort)
+    except Exception:
+        pass
+
+
+def _model_line(engine, view):
+    """The Model fit line for a prompt, or None: the cards of the board that run on another model than the session's."""
+    session = view.get('session') or {}
+    if not session.get('active'):
+        return None
+    queued = [c for c in view.get('cards') or [] if c.get('state') == 'queued']
+    model, effort = engine.session_model({'session': session})
+    if not model:
+        if any(c['role'] == 'builder' for c in queued):
+            return 'Session model: unknown; the engine refuses no inline card on model grounds.'
+        return None
+    away = []
+    for card in queued:
+        need_model, need_effort = engine.card_model(card)
+        want, have = engine._family(need_model), engine._family(model)
+        higher = (want == have and need_effort in EFFORTS and effort in EFFORTS
+                  and EFFORTS.index(effort) < EFFORTS.index(need_effort))
+        if want and have and (want != have or higher):
+            away.append('%s (%s %s)' % (card['id'], need_model, need_effort))
+    if not away:
+        return None
+    extra = ' +%d' % (len(away) - 8) if len(away) > 8 else ''
+    return 'Session model: %s%s. Cards that must go to a worker (another model): %s%s.' % (
+        model, ' ' + effort if effort else '', ', '.join(away[:8]), extra)
+
+
 def prompt_board(payload, engine):
     """The UserPromptSubmit answer for the board: one `Orchestra board: ...` context line when the board signature
-    differs from `<state>/board-seen.json` (then stored); `{}` otherwise."""
+    differs from `<state>/board-seen.json` (then stored), plus the Model fit line when it changed; `{}` otherwise."""
     try:
         if engine is None or _other_session(engine, payload.get('session_id')):
             return {}
+        effort = os.environ.get('CLAUDE_EFFORT')
+        _record_model(engine, payload, effort if effort in EFFORTS else None)
         view, directory = _board(engine), Path(engine.state_dir)
+        parts = []
         text = delta.line(view, delta.read(directory, 'board-seen.json'))
-        if text is None:
+        if text is not None:
+            delta.store(directory, 'board-seen.json', view)
+            (directory / 'pending-delta').unlink(missing_ok=True)
+            parts.append(text)
+        fit = _model_line(engine, view) if view else None
+        seen = directory / 'model-seen'
+        if fit is not None and (not seen.is_file() or seen.read_text() != fit):
+            seen.write_text(fit)
+            parts.append(fit)
+        elif fit is None and seen.is_file():
+            seen.unlink()
+        if not parts:
             return {}
-        delta.store(directory, 'board-seen.json', view)
-        (directory / 'pending-delta').unlink(missing_ok=True)
-        return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': text}}
+        return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': ' '.join(parts)}}
     except Exception:
         return {}
 
@@ -2155,10 +2235,27 @@ def _prompt_submit(payload):
     return 0
 
 
+def _model_switch(payload):
+    """PostModelSwitch records the main session's new model. It never blocks and never adds context."""
+    try:
+        if isinstance(payload, dict) and isinstance(payload.get('cwd'), str) and payload['cwd'] \
+                and not payload.get('agent_id') and isinstance(payload.get('to_model'), str):
+            repo, state_dir = _run_location(payload['cwd'])
+            if (state_dir / 'state.json').is_file():
+                from .engine import Engine
+                from .paths import load_policy
+                _record_model(Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT),
+                              {'model': payload['to_model']})
+    except Exception:
+        pass
+    print('{}')
+    return 0
+
+
 def _main(argv=None):
     started = time.monotonic()
     parser = argparse.ArgumentParser()
-    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit', 'PostToolUse'])
+    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit', 'PostToolUse', 'PostModelSwitch'])
     parser.add_argument('--harness', choices=['claude'], default='claude')
     parser.add_argument('--from-mod', action='store_true')
     args = parser.parse_args(argv)
@@ -2170,6 +2267,8 @@ def _main(argv=None):
         _CRASH_TOOL['name'] = payload['tool_name']
     if args.event == 'UserPromptSubmit':
         return _prompt_submit(payload)
+    if args.event == 'PostModelSwitch':
+        return _model_switch(payload)
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
             and isinstance(payload, dict) and isinstance(payload.get('tool_name'), str)
             and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)
