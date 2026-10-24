@@ -675,6 +675,31 @@ class LockedShellTest(PlaneFixture):
         self.engine.disarm_autonomy()
         self.assertEqual(self.hook(self.state_writes()[0]), 'deny')  # unattended: the report is kept
 
+    def test_pr2_a_live_mod_never_skips_the_hook_while_a_lock_holds(self):
+        """The mod does not see an arm written by the engine: while either lock holds, the native hook decides."""
+        self.live_marker()
+        with mock.patch.object(hooks_module, 'handle_event', side_effect=AssertionError('handler called')):
+            self.assertIsNone(self.hook('git status', session='s1'))  # no lock: the mod path skips the handler
+        self.git('tag', 'v1')
+        self.arm()
+        commands = ('rm -rf src', 'git reset --hard origin/%s' % self.default_branch, 'git tag -d v1')
+        for command in commands:
+            with self.subTest(command=command, lock='autonomy'):
+                self.assertEqual(self.hook(command, session='s1'), 'deny')
+        self.engine.disarm_autonomy()
+        for command in commands:  # unattended: the live-mod call gets the full handler's verdict
+            with self.subTest(command=command, lock='unattended'):
+                self.assertEqual(self.hook(command, session='s1'), self.hook(command))
+        for command in commands[1:]:
+            with self.subTest(command=command, lock='unattended'):
+                self.assertEqual(self.hook(command, session='s1'), 'deny')
+        self.engine.state_path.write_text('not json')
+        self.assertEqual(self.hook('git tag -d v1', session='s1'), 'deny')  # unreadable state: fail closed
+        self.engine.state_path.write_text(json.dumps({'session': None}))
+        (self.state / 'autonomy.md').unlink(missing_ok=True)
+        with mock.patch.object(hooks_module, 'handle_event', side_effect=AssertionError('handler called')):
+            self.assertIsNone(self.hook('git status', session='s1'))  # an ended run with no lock: skip again
+
     def test_gf1_the_cli_may_name_the_state_directory_and_an_unlocked_run_may_write_it(self):
         cli = 'python3 /opt/orchestra/scripts/orchestra.py --repo %s finding add --json %s/review-packages/B1/f.json'
         self.arm()
@@ -772,6 +797,28 @@ class LockedShellTest(PlaneFixture):
                         'rm -rf ../outside/build', 'rm -rf /tmp/build', 'rm -rf build*', 'rm link', 'find / -name x -delete'):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(command), 'deny')
+
+    def test_pr2_a_trailing_slash_on_an_ignored_symlink_deletes_its_target_and_is_denied(self):
+        """`rm -rf build/` follows the link `build` and empties what it points to: the exemption checks the target."""
+        (self.repo / '.gitignore').write_text('build\ndata\nout/\n')
+        (self.repo / 'src').mkdir()
+        (self.repo / 'src' / 'main.py').write_text('x')
+        self.git('add', '.gitignore', 'src/main.py')
+        self.git('commit', '-qm', 'tracked src')
+        outside = self.root / 'outside-data'
+        outside.mkdir()
+        (outside / 'keep.txt').write_text('x')
+        (self.repo / 'build').symlink_to('src')
+        (self.repo / 'data').symlink_to(outside)
+        (self.repo / 'out').mkdir()
+        (self.repo / 'out' / 'o.bin').write_text('x')
+        self.arm()
+        for command in ('rm -rf build/', 'rm -rf data/', 'rm -rf build/.', 'rm -rf build//', 'rm -r data/'):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command), 'deny')
+        for command in ('rm -rf build', 'rm data', 'rm -rf out/', 'rm -rf out'):  # the link itself, a plain ignored directory
+            with self.subTest(command=command, allowed=True):
+                self.assertIsNone(self.hook(command))
 
 
 if __name__ == '__main__':
