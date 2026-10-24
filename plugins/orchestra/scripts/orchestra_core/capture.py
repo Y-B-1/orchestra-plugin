@@ -15,7 +15,10 @@ _SAFE = re.compile(r'[A-Za-z0-9_-]+')
 _LINES = 64
 
 
-def _first_user_text(path):
+def _user_texts(path):
+    """The text of each user message in the first lines. A Workflow agent's first user message is the harness's relayed
+    request; the computed task, with the Assignment line, follows it (F62)."""
+    texts = []
     with open(path, encoding='utf-8', errors='replace') as stream:
         for _, line in zip(range(_LINES), stream):
             try:
@@ -27,10 +30,10 @@ def _first_user_text(path):
                 continue
             content = message.get('content')
             if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                return '\n'.join(b['text'] for b in content if isinstance(b, dict) and isinstance(b.get('text'), str))
-    return ''
+                texts.append(content)
+            elif isinstance(content, list):
+                texts.append('\n'.join(b['text'] for b in content if isinstance(b, dict) and isinstance(b.get('text'), str)))
+    return texts
 
 
 def _transcript(payload):
@@ -43,9 +46,13 @@ def _transcript(payload):
     return None
 
 
-def _assignment(text):
-    found = _ASSIGNMENT.search(text) or _PROSE.search(text)
-    return (found.group(1), found.group(2).rstrip('.')) if found else (None, None)
+def _assignments(texts):
+    """Every (worker, token) an Assignment line or the prose form names, in message order."""
+    found = []
+    for text in texts:
+        for pattern in (_ASSIGNMENT, _PROSE):
+            found += [(m.group(1), m.group(2).rstrip('.')) for m in pattern.finditer(text)]
+    return found
 
 
 def _save(directory, name, message):
@@ -85,17 +92,19 @@ def _capture(payload, engine):
     path = _transcript(payload)
     if path is None:
         return {}
-    text = _first_user_text(path)  # An unreadable transcript raises: nothing is written
+    texts = _user_texts(path)  # An unreadable transcript raises: nothing is written
     reports = Path(engine.state_dir) / 'reports'
     agent_id = payload.get('agent_id')
     unmatched = 'unmatched-' + agent_id if isinstance(agent_id, str) and _SAFE.fullmatch(agent_id) else None
-    worker, token = _assignment(text)
-    if worker is None or not _SAFE.fullmatch(token):
+    candidates = [(w, k) for w, k in _assignments(texts) if _SAFE.fullmatch(k)]
+    if not candidates:
         if unmatched:
             _save(reports, unmatched, message)
         return {}
-    if not _running(engine, worker, token):
+    running = [(w, k) for w, k in candidates if _running(engine, w, k)]
+    if not running:
         return {}
+    worker, token = running[0]
     if not _has_report_lines(message):
         if unmatched:
             _save(reports, unmatched, message)
