@@ -16,7 +16,7 @@ import sys
 import subprocess
 import time
 
-from . import portable
+from . import delta, portable
 from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
 from .guards import (RULES, Decision, _WORD_START, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
                      guard_digest, runs_test_suite)
@@ -315,7 +315,13 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         return HookResult({})
     if event == 'SubagentStop':
         from .capture import capture  # Lazy: only this event reads transcripts
-        return HookResult(capture(payload, engine))
+        before = _board(engine)
+        answer = capture(payload, engine)
+        if not answer:
+            _note_pending(engine, before)
+        return HookResult(answer)
+    if event == 'PostToolUse':
+        return HookResult(_post_agent(payload, engine))
     if event == 'SessionEnd':
         session_id = payload.get('session_id')
         if engine is None or not isinstance(session_id, str) or not session_id:
@@ -357,7 +363,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             reason = engine.hook_stop()
             if isinstance(reason, str) and reason:
                 return HookResult({'decision': 'block', 'reason': reason})
-            return HookResult(_stopped_note(engine) if armed_before and not _armed_now(engine) else {})
+            if armed_before:
+                return HookResult(_stopped_note(engine) if not _armed_now(engine) else {})
+            return HookResult(_board_stop(engine, payload))
         except (OSError, ValueError, KeyError, RuntimeError, AttributeError):
             return HookResult({})  # Corrupt/unarmed state never creates continuation.
     if event != 'PreToolUse':
@@ -1645,6 +1653,87 @@ def _armed_now(engine):
         return False
 
 
+def _board(engine):
+    """The lease-free board of the loaded engine, or None when it cannot be read (a mock adapter included)."""
+    try:
+        view = engine.view()
+    except Exception:
+        return None
+    return view if isinstance(view, dict) else None
+
+
+def _note_pending(engine, before):
+    """After a SubagentStop that moved a card, append the move to `<state>/pending-delta` for the coordinator's next
+    PostToolUse, prompt or Stop. Writes nothing when no card moved; any error is ignored."""
+    try:
+        moved = delta.delta(before, _board(engine))
+        if moved:
+            path = Path(engine.state_dir) / 'pending-delta'
+            old = path.read_text() if path.exists() else ''
+            from .paths import atomic
+            atomic(path, ((old + '\n' if old else '') + moved).encode())
+    except Exception:
+        pass
+
+
+def _post_agent(payload, engine):
+    """PostToolUse on Agent or Task, made by the coordinator: print the pending delta once as context and clear it.
+    Workflow agents never reach this hook; their moves reach the coordinator through the prompt and Stop hooks."""
+    try:
+        if engine is None or payload.get('tool_name') not in ('Agent', 'Task') or payload.get('agent_id') \
+                or _other_session(engine, payload.get('session_id')):
+            return {}
+        directory = Path(engine.state_dir)
+        path = directory / 'pending-delta'
+        if not path.is_file():
+            return {}
+        moved = ' | '.join(path.read_text().split('\n'))
+        path.unlink()
+        view = _board(engine)
+        command = delta.next_command(view)
+        if delta.live(view):
+            delta.store(directory, 'board-seen.json', view)
+        return {'hookSpecificOutput': {'hookEventName': 'PostToolUse',
+                                       'additionalContext': delta.PREFIX + moved + ('. Next: ' + command if command else '')}}
+    except Exception:
+        return {}
+
+
+def _board_stop(engine, payload):
+    """Outside autonomy: block a Stop once per board signature while a card is reported or startable, naming the next
+    command. Never while only workers run, with no cards, on a repeated Stop or for an engine that cannot show a board."""
+    try:
+        if payload.get('stop_hook_active') is True:
+            return {}
+        view = _board(engine)
+        if not delta.live(view) or not (delta.ids(view, 'reported') or view.get('startable_now')):
+            return {}
+        directory = Path(engine.state_dir)
+        if delta.read(directory, 'stop-seen').get('signature') == delta.signature(view):
+            return {}
+        delta.store(directory, 'stop-seen', view)
+        return {'decision': 'block', 'reason': delta.line(view, {})}
+    except Exception:
+        return {}
+
+
+def prompt_board(payload, engine):
+    """The UserPromptSubmit answer for the board: one `Orchestra board: ...` context line when the board signature
+    differs from `<state>/board-seen.json` (then stored); `{}` otherwise."""
+    try:
+        if engine is None or _other_session(engine, payload.get('session_id')):
+            return {}
+        view, directory = _board(engine), Path(engine.state_dir)
+        text = delta.line(view, delta.read(directory, 'board-seen.json'))
+        if text is None:
+            return {}
+        delta.store(directory, 'board-seen.json', view)
+        (directory / 'pending-delta').unlink(missing_ok=True)
+        return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': text}}
+    except Exception:
+        return {}
+
+
 def _stopped_note(engine):
     """GF12: the Stop that ended autonomy says why, so the coordinator does not learn it from its next deny."""
     try:
@@ -1833,6 +1922,10 @@ def _prompt_submit(payload):
             from .prompt_approval import handle_prompt
             repo, state_dir = _run_location(payload['cwd'])
             reply = handle_prompt(payload, state_dir, repo)
+            if not reply and (state_dir / 'state.json').is_file():
+                from .engine import Engine
+                from .paths import load_policy
+                reply = prompt_board(payload, Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT))
     except Exception:
         reply = {}
     print(json.dumps(reply))
@@ -1842,7 +1935,7 @@ def _prompt_submit(payload):
 def _main(argv=None):
     started = time.monotonic()
     parser = argparse.ArgumentParser()
-    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit'])
+    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit', 'PostToolUse'])
     parser.add_argument('--harness', choices=['claude'], default='claude')
     parser.add_argument('--from-mod', action='store_true')
     args = parser.parse_args(argv)
@@ -1873,7 +1966,7 @@ def _main(argv=None):
     busy = False
     missing_cwd = False
     build_error = None
-    if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart', 'SubagentStop'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
+    if args.event in {'PreToolUse', 'Interrupt', 'Stop', 'SubagentStart', 'SubagentStop', 'PostToolUse'} and isinstance(payload, dict) and isinstance(payload.get('cwd'), str):
         missing_cwd = args.event == 'PreToolUse' and not os.path.isdir(payload['cwd'])
         try:
             from .paths import StateRootError, load_policy
