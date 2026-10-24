@@ -256,6 +256,11 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     `unattended` marks a stopped run whose report is kept without an owner receipt: it locks like an active run.
     A warning collected while deciding rides on an otherwise empty answer as `additionalContext`."""
     notes = []
+    if engine is not None and not busy and isinstance(payload, dict) and not payload.get('agent_id') and (
+            event == 'Stop' or (event == 'PreToolUse' and payload.get('tool_name') in _SHELL_TOOLS
+                                and 'orchestra.py' in str((payload.get('tool_input') or {}).get('command') or ''))):
+        level = (payload.get('effort') or {}).get('level') if isinstance(payload.get('effort'), dict) else None
+        _record_model(engine, payload, level if level in EFFORTS else None)  # live m1: the first turn has no earlier record
     result = _decide(event, payload, notes, mode if mode in ('minimal', 'normal') else 'protect', harness=harness, state_dir=state_dir,
                      engine=engine, armed=armed, autonomy=autonomy, busy=busy, missing_cwd=missing_cwd, started=started,
                      unattended=unattended is True)
@@ -1976,8 +1981,12 @@ def _record_model(engine, payload, effort=None):
         if not (isinstance(model, str) and model.strip()):
             path = payload.get('transcript_path')
             model = _transcript_model(path) if isinstance(path, str) and path else None
-        if model is not None or effort is not None:
-            engine.record_model(model, effort)
+        if model is None and effort is None:
+            return
+        session = engine.view().get('session') or {}  # a read: an unchanged record writes nothing
+        if (model is None or session.get('model') == model) and (effort is None or session.get('effort') == effort):
+            return
+        engine.record_model(model, effort)
     except Exception:
         pass
 

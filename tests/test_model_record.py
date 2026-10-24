@@ -149,3 +149,39 @@ class PromptTests(ModelCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class FirstTurnRecordTests(ModelCase):
+    """Live m1: a new session has no assistant line at SessionStart or at its first prompt, and a headless SessionStart
+    carries no model; the model is recorded at the first orchestra.py Bash call and at Stop, from the transcript."""
+
+    def bash(self, command, **extra):
+        payload = dict({'session_id': 's1', 'tool_name': 'Bash', 'tool_input': {'command': command}}, **extra)
+        return handle_event('PreToolUse', payload, engine=self.engine, state_dir=str(self.engine.state_dir), mode='minimal')
+
+    def test_an_orchestra_bash_call_records_the_model_from_the_transcript(self):
+        path = self.transcript([self.assistant(SONNET)])
+        self.bash('python3 /x/scripts/orchestra.py --lease L inline M1', transcript_path=path)
+        self.assertEqual(SONNET, self.recorded())
+
+    def test_another_bash_call_records_nothing(self):
+        path = self.transcript([self.assistant(SONNET)])
+        self.bash('git status', transcript_path=path)
+        self.assertIsNone(self.recorded())
+
+    def test_a_worker_call_records_nothing(self):
+        path = self.transcript([self.assistant(HAIKU)])
+        self.bash('python3 /x/scripts/orchestra.py status', transcript_path=path, agent_id='a1')
+        self.assertIsNone(self.recorded())
+
+    def test_stop_records_the_model(self):
+        path = self.transcript([self.assistant(SONNET)])
+        handle_event('Stop', {'session_id': 's1', 'transcript_path': path}, engine=self.engine, state_dir=str(self.engine.state_dir))
+        self.assertEqual(SONNET, self.recorded())
+
+    def test_an_unchanged_model_does_not_rewrite_the_state(self):
+        path = self.transcript([self.assistant(SONNET)])
+        self.bash('python3 /x/scripts/orchestra.py status', transcript_path=path)
+        before = self.engine.state_path.stat().st_mtime_ns
+        self.bash('python3 /x/scripts/orchestra.py status', transcript_path=path)
+        self.assertEqual(before, self.engine.state_path.stat().st_mtime_ns)
