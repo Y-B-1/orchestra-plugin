@@ -12,7 +12,7 @@ The ladder has one repair, one fix re-review, then a hold. It runs after the pre
 | 3 | One fix re-review of the fix diff only, with `repair_check: true`, by the agent `prepr` named for the pre-PR review, with no `Required categories:` line. CLEAN accepts the chain. |
 | Hold | `orchestra.py hold TASK --finding TEXT` when the fix re-review is BLOCKED. It moves the whole chain to `held`. |
 
-Each repair brief carries the exact artifact, the failing scenario and the scope of the defect. A second repair on a chain is refused until the owner takes it. Notes never reach the ladder.
+Each repair brief carries the exact artifact, the failing scenario and the scope of the defect. A repair of a held chain is refused unless its card carries `owner_approval`, the owner's words (at most 1000 characters); it is refused while autonomy is armed. Notes never reach the ladder.
 
 ## Held work
 
