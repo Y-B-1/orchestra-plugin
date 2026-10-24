@@ -58,6 +58,7 @@ def parser():
     board.add_argument('--view', action='store_true')
     board.add_argument('--session', help='With --view: the harness session id; `bound` says whether it owns the run (the id is never printed)')
     sub.add_parser('waves', help='Print overlaps, unmet prerequisites, ordered waves and the cards that can start now; no lease, read-only')
+    sub.add_parser('worktrees', help='Print leftover worktrees under .claude/worktrees (branch, card, landed, clean) and the removal commands for landed clean ones; no lease, read-only')
     sub.add_parser('brief', help='Print the newest run brief; no lease, read-only')
     refusals = sub.add_parser('refusals', help='Print the newest refused commands (exit 2) from the refusal log; no lease, read-only')
     refusals.add_argument('--last', type=int, default=10, help='How many entries (default 10)')
@@ -250,7 +251,7 @@ def execute(args):
             raise
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
-        return {'lease':lease,'state':str(state),'repo':str(repo),'requeued':engine.requeued},0
+        return {'lease':lease,'state':str(state),'repo':str(repo),'requeued':engine.requeued,'resume':engine.resume},0
     if args.command=='status':
         result = engine.status(lenses=True)
         if not args.full:
@@ -292,6 +293,8 @@ def execute(args):
         return {'ledger':ledger.rows(engine,[i for i in (args.cards or '').split(',') if i] or None)},0
     if args.command=='package':  # lease-free; writes only under <state>/packages
         return {'package':str(ledger.package(engine,args.task_id))},0
+    if args.command=='worktrees':  # lease-free and read-only; prints the removal commands, never runs them
+        return engine.worktrees(),0
     if args.command=='waves':  # lease-free and read-only, like status
         return engine.waves(args.actor),0
     if args.command=='board' and args.view:  # lease-free; from an allowlist, no lenses or hashing
@@ -301,6 +304,9 @@ def execute(args):
         board = {}
         for card in cards:
             board.setdefault(card['role'],{}).setdefault(card['state'],[]).append(card['id'])
+        leftover = engine.worktrees()['leftover']
+        if leftover:
+            board['leftover_worktrees'] = leftover
         return board,0
     if args.command=='report' and args.accept:
         if not args.lease:
@@ -330,6 +336,7 @@ def execute(args):
         prepared = briefs.prepare(engine,args.task_ids,args.inline) if args.emit else None  # refuses before any card starts
         result = engine.wave(args.actor,args.lease,args.task_ids,inline=args.inline,helper=args.helper,serial=args.serial)
         if prepared is not None:
+            engine.record_bases(args.actor,args.lease,args.task_ids if args.inline is None or args.inline in args.task_ids else [args.inline,*args.task_ids],prepared['base'])
             result['emit'] = briefs.emit(engine,prepared,result)
         return result,0
     if args.command=='accept':

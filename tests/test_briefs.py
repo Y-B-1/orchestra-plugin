@@ -170,6 +170,20 @@ class WaveEmitTests(CliFixture):
         self.assertTrue(pathlib.Path(emitted['a']['brief']).is_file())
         self.assertIn('agent_call', emitted['b'])
 
+    def test_emit_records_the_run_tip_as_the_base_of_each_builder_card_only(self):
+        self.task('a')
+        self.task('c', role='critic', mode='judge', files=[])
+        base = self.head()
+        self.cli('wave', 'a', 'c', '--emit')
+        tasks = self.engine.status()['tasks']
+        self.assertEqual(base, tasks['a']['base'])
+        self.assertNotIn('base', tasks['c'])
+
+    def test_a_wave_without_emit_records_no_base(self):
+        self.task('a')
+        self.cli('wave', 'a')
+        self.assertNotIn('base', self.engine.status()['tasks']['a'])
+
     def test_a_card_whose_brief_lost_its_mode_line_cannot_be_emitted_and_nothing_starts(self):
         brief = self.root / 'b.md'
         brief.write_text('Mode: implementation\n\n## Keep\nx\n\n## Remove\nnone\n')

@@ -60,7 +60,7 @@ FINDING_ROUTES = '; add a repair card (`repair_of`) or record the finding with `
 # Keys the engine writes on a card; a task file never supplies them (repair_of only on a builder repair card).
 ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
                     'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
-                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha', 'ruling')
+                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha', 'ruling', 'base')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -710,6 +710,8 @@ class Engine:
                 raise EngineError('Invalid task dispatch_policy')
             if 'report_sha' in task and not isinstance(task['report_sha'], str):
                 raise EngineError('Invalid task report_sha')
+            if 'base' in task and (not isinstance(task['base'], str) or not task['base']):
+                raise EngineError('Invalid task base')
             if 'size' in task and task['size'] not in CARD_SIZES:
                 raise EngineError('Invalid task size')
             if 'self_review' in task and not cls._self_review_ok(task['self_review']):
@@ -1084,8 +1086,11 @@ class Engine:
                 state['session']['harness_session'] = harness_session
             state['autonomy'] = self._kept_autonomy(state)
             self.requeued = []  # the restart receipt: cards a resumed run put back in the queue
+            self.resume = []  # per requeued card: the old worker and the saved report (<state>/reports/<token>.md) when present
             for task in state['tasks'].values():
                 if task['state'] == 'running':
+                    saved = self.state_dir / 'reports' / (str(task.get('assignment')) + '.md')
+                    self.resume.append(dict(task=task['id'], worker=task.get('worker'), report=str(saved) if saved.is_file() else None))
                     task['state'] = 'queued'
                     task.pop('assignment', None)
                     task.pop('started_at', None)
@@ -1801,6 +1806,29 @@ class Engine:
             self._log_serial(task_ids, serial)
         return dict(assignments=tokens, workers=workers, inline=inline)
 
+    def record_bases(self, actor, lease, task_ids, base):
+        """Record the run tip a started builder card was cut from; `report` then refuses a commit that does not descend from it."""
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            for task_id in task_ids:
+                task = state['tasks'].get(task_id)
+                if task is None:
+                    raise EngineError('Unknown task: ' + str(task_id))
+                if task['role'] == 'builder':
+                    task['base'] = self._git('rev-parse', '--verify', base + '^{commit}').decode().strip()
+
+    def worktrees(self):
+        """Leftover worktrees under .claude/worktrees with the removal commands. Lease-free and read-only."""
+        from . import worktrees
+        with self._state(False) as state:
+            return worktrees.listing(self, state)
+
+    def _leftover_note(self, state):
+        """' (N leftover worktrees under .claude/worktrees; run `worktrees`)' or ''."""
+        from . import worktrees
+        count = worktrees.listing(self, state)['leftover']
+        return '; %d leftover worktree%s under .claude/worktrees; run `worktrees`' % (count, '' if count == 1 else 's') if count else ''
+
     def _slot_free(self, state, actor):
         return not any(t.get('worker') == actor and t['state'] in ('running', 'reported') for t in state['tasks'].values())
 
@@ -2084,10 +2112,13 @@ class Engine:
         missing = self._unanswered(task, review) if review is not None else []
         if missing:
             raise EngineError('SELF_REVIEW does not answer these acceptance lines: ' + '; '.join(missing))
+        sha = self._reported_commit(report) if task['role'] == 'builder' else None
+        if sha and task.get('base') and not self._is_ancestor(task['base'], sha):
+            raise EngineError('Reported commit %s was built on the wrong base: the card base is %s and the commit does not '
+                              'descend from it; rebuild on the base (`git merge --ff-only %s` first)' % (sha, task['base'], task['base']))
         task.update(state='reported', report=report,
                     report_artifact=self.artifact(self._scope_of(state, [task['id']])))
         task.pop('report_sha', None)
-        sha = self._reported_commit(report) if task['role'] == 'builder' else None
         if sha:
             task['report_sha'] = sha
         if review is not None:
@@ -2875,12 +2906,18 @@ class Engine:
         """Check and close under one lock, keeping completion distinct from interruption."""
         with self._state() as state:
             self._lease(state, actor, lease)
-            artifact = self._completion_evidence(state)
-            missing = ['%s (%s)' % (t['id'], t['report_sha'][:8]) for t in self._by_seq(state['tasks'].values())
-                       if t['role'] == 'builder' and t['state'] == 'accepted' and t.get('report_sha')
-                       and not self._landed(t['report_sha'], state)]
-            if missing:
-                raise EngineError('Accepted work is not in HEAD: %s; merge it, or hold the card' % ', '.join(missing))
+            try:
+                artifact = self._completion_evidence(state)
+                missing = ['%s (%s)' % (t['id'], t['report_sha'][:8]) for t in self._by_seq(state['tasks'].values())
+                           if t['role'] == 'builder' and t['state'] == 'accepted' and t.get('report_sha')
+                           and not self._landed(t['report_sha'], state)]
+                if missing:
+                    raise EngineError('Accepted work is not in HEAD: %s; merge it, or hold the card' % ', '.join(missing))
+            except EngineError as exc:
+                note = self._leftover_note(state)
+                if note:
+                    raise EngineError(str(exc) + note) from exc
+                raise
             self._end_run(state, 'finished' if self._autonomy_on(state) else 'closed')
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []
