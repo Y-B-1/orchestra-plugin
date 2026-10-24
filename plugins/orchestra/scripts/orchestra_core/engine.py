@@ -75,8 +75,8 @@ MAX_WORKTREES = 3  # Running builder cards that are not inline; policy.max_workt
 # setting off in silence.
 POLICY_KEYS = frozenset(DEFAULT) | frozenset(DEFAULT_2_3) | {
     'schema_version', 'max_worktrees', 'reserved_ports', 'denied_tools', 'worker_stale_seconds', 'file_budget_bytes', 'file_budget_waivers', 'check_commands',
-    'release_timeout_seconds', 'guard_mode', 'release_workflows'}
-GUARD_MODES = ('normal', 'protect')  # `guard_mode` is read live by the hook, so it is left out of the policy hash
+    'release_timeout_seconds', 'guard_mode', 'release_workflows', 'parallel_waves'}
+GUARD_MODES = ('minimal', 'normal', 'protect')  # `guard_mode` is read live by the hook, so it is left out of the policy hash
 RUN_ID = re.compile(r'[0-9a-f]{16}')
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
 CONTRACT_HASH_2_3 = '7e12cdf268d85df0aac178c92f1577a3ce2ffbf686fbc536204b4677dfe3a942'
@@ -382,10 +382,12 @@ class Engine:
             raise EngineError('file_budget_waivers must map globs to reasons')
         if 'guard_mode' in self.policy and (not isinstance(self.policy['guard_mode'], str)
                                             or self.policy['guard_mode'] not in GUARD_MODES):
-            raise EngineError('Invalid guard mode: use normal or protect')
+            raise EngineError('Invalid guard mode: use minimal, normal or protect')
         workflows = self.policy.get('release_workflows', [])
         if not isinstance(workflows, list) or any(not isinstance(g, str) or not g for g in workflows):
             raise EngineError('release_workflows must be a list of globs')
+        if not isinstance(self.policy.get('parallel_waves', True), bool):
+            raise EngineError('parallel_waves must be true or false')
         legacy.pop('guard_mode', None)
         self.modes, self.contract_hash = _contracts()
         hashed = {k: v for k, v in self.policy.items() if k != 'guard_mode'}
@@ -1650,13 +1652,13 @@ class Engine:
             self._lease(state, actor, lease)
             return self._ready(state)
 
-    def dispatch(self, actor, lease, task_id, worker=None, helper=None):
+    def dispatch(self, actor, lease, task_id, worker=None, helper=None, serial=None):
         if worker is None:
             worker = 'orchestra-' + str(task_id)
-        return self._start_assignment(actor, lease, task_id, worker, inline=False, helper=helper)
+        return self._start_assignment(actor, lease, task_id, worker, inline=False, helper=helper, serial=serial)
 
-    def start_inline(self, actor, lease, task_id):
-        return self._start_assignment(actor, lease, task_id, actor, inline=True)
+    def start_inline(self, actor, lease, task_id, serial=None):
+        return self._start_assignment(actor, lease, task_id, actor, inline=True, serial=serial)
 
     @staticmethod
     def _check_route(state, task, inline, helper):
@@ -1677,34 +1679,255 @@ class Engine:
         elif not inline and not (isinstance(helper, str) and helper.strip()):
             raise EngineError('Inline route: the main session does this work; pass --helper REASON to dispatch a helper')
 
-    def _start_assignment(self, actor, lease, task_id, worker, inline, helper=None):
+    def _start_checks(self, state, actor, task_id, worker, inline, helper=None, ready=None, cheap=False, contract=True):
+        """Every refusal a start can make, with no change to the state. `ready` is a precomputed `_ready` list. `cheap`
+        swaps the repair check, which hashes files, for a plain overlap test that can only refuse more."""
+        if not isinstance(worker, str) or not worker.strip() or (worker == actor and not inline):
+            raise EngineError('Worker must differ from coordinator')
+        task = state['tasks'].get(task_id)
+        if inline and task and task['role'] in REVIEW_ROLES:
+            raise EngineError('Independent review roles need a separate worker')
+        if any(t.get('worker') == worker and t['state'] in ('running', 'reported') for t in state['tasks'].values()):
+            raise EngineError('Worker is already reserved')
+        if task:
+            self._check_route(state, task, inline, helper)
+        if task and task['role'] == 'builder' and task['mode'] == 'repair':
+            if cheap:
+                reserved = self._reservation(task, state)['files']
+                if any(t['state'] == 'reported' and t['id'] != task_id and (
+                        not reserved or not self._reservation(t, state)['files']
+                        or self._paths_overlap(self._reservation(t, state)['files'], reserved))
+                       for t in state['tasks'].values()):
+                    raise EngineError('Accept the reported cards first; a repair would make their evidence stale')
+            else:
+                self._check_accept_before_repair(state, task)
+        if (task and task['role'] == 'builder' and not inline and sum(
+                t['role'] == 'builder' and t['state'] == 'running' and not t.get('inline')
+                for t in state['tasks'].values()) >= self.policy.get('max_worktrees', MAX_WORKTREES)):
+            raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report'
+                              % self.policy.get('max_worktrees', MAX_WORKTREES))
+        if task_id not in (self._ready(state) if ready is None else ready):
+            raise EngineError('Task is not ready or capacity is exhausted')
+        if contract:
+            self._check_contract(state['tasks'][task_id])
+
+    def _mark_running(self, state, task_id, worker, inline, helper, lease):
+        token = uuid.uuid4().hex
+        state['tasks'][task_id].update(state='running', worker=worker, assignment=token, lease=lease, inline=inline,
+                                       started_at=self._clock(), dispatch_policy=self.policy_hash)
+        if isinstance(helper, str) and helper.strip():
+            state['tasks'][task_id]['helper_reason'] = helper.strip()
+        return token
+
+    @staticmethod
+    def _check_serial(serial):
+        if serial is not None and (not isinstance(serial, str) or not serial.strip()):
+            raise EngineError('--serial needs a reason')
+        return serial.strip() if serial else None
+
+    def _log_serial(self, task_ids, reason):
+        _append_progress(self.state_dir, '- serial start %s: %s (at %s)' % (', '.join(task_ids), reason, self._stamp()))
+
+    def _start_assignment(self, actor, lease, task_id, worker, inline, helper=None, serial=None):
+        serial = self._check_serial(serial)
         with self._state() as state:
             self._lease(state, actor, lease)
-            if not isinstance(worker, str) or not worker.strip() or (worker == actor and not inline):
-                raise EngineError('Worker must differ from coordinator')
-            task = state['tasks'].get(task_id)
-            if inline and task and task['role'] in REVIEW_ROLES:
-                raise EngineError('Independent review roles need a separate worker')
-            if any(t.get('worker') == worker and t['state'] in ('running', 'reported') for t in state['tasks'].values()):
-                raise EngineError('Worker is already reserved')
-            if task:
-                self._check_route(state, task, inline, helper)
-            if task and task['role'] == 'builder' and task['mode'] == 'repair':
-                self._check_accept_before_repair(state, task)
-            if (task and task['role'] == 'builder' and not inline and sum(
-                    t['role'] == 'builder' and t['state'] == 'running' and not t.get('inline')
-                    for t in state['tasks'].values()) >= self.policy.get('max_worktrees', MAX_WORKTREES)):
-                raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report'
-                                  % self.policy.get('max_worktrees', MAX_WORKTREES))
-            if task_id not in self._ready(state):
-                raise EngineError('Task is not ready or capacity is exhausted')
+            self._start_checks(state, actor, task_id, worker, inline, helper)
+            if not serial:
+                self._checkpoint(state, actor, task_id, inline)
+            token = self._mark_running(state, task_id, worker, inline, helper, lease)
+        if serial:
+            self._log_serial([task_id], serial)  # after the state write succeeded
+        return token
+
+    def wave(self, actor, lease, task_ids, inline=None, helper=None, serial=None):
+        """Start every named card in one state write; any refusal leaves the state unsaved."""
+        serial = self._check_serial(serial)
+        if not isinstance(task_ids, list) or not task_ids or any(not isinstance(i, str) for i in task_ids):
+            raise EngineError('A wave needs one or more task ids')
+        if len(set(task_ids)) != len(task_ids):
+            raise EngineError('Duplicate task in wave')
+        if inline is not None and inline not in task_ids:
+            raise EngineError('--inline must name a card in the wave')
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            tokens = {}
+            for task_id in task_ids:
+                is_inline = task_id == inline
+                worker = actor if is_inline else 'orchestra-' + task_id
+                self._start_checks(state, actor, task_id, worker, is_inline, helper)
+                if len(task_ids) == 1 and not serial:
+                    self._checkpoint(state, actor, task_id, is_inline)
+                tokens[task_id] = self._mark_running(state, task_id, worker, is_inline, helper, lease)
+        if serial:
+            self._log_serial(task_ids, serial)
+        return dict(assignments=tokens, inline=inline)
+
+    def _slot_free(self, state, actor):
+        return not any(t.get('worker') == actor and t['state'] in ('running', 'reported') for t in state['tasks'].values())
+
+    def _modes(self, state, actor, task_id, ready, cheap):
+        """How a card could start now: 'worker', 'inline', both or neither (a dry run of the real checks)."""
+        try:
             self._check_contract(state['tasks'][task_id])
-            token = uuid.uuid4().hex
-            state['tasks'][task_id].update(state='running', worker=worker, assignment=token, lease=lease, inline=inline,
-                                           started_at=self._clock(), dispatch_policy=self.policy_hash)
-            if isinstance(helper, str) and helper.strip():
-                state['tasks'][task_id]['helper_reason'] = helper.strip()
-            return token
+        except EngineError:
+            return set()
+        modes = set()
+        for inline in (False, True):
+            try:
+                self._start_checks(state, actor, task_id, actor if inline else 'orchestra-' + task_id, inline,
+                                   ready=ready, cheap=cheap, contract=False)
+            except EngineError:
+                continue
+            modes.add('inline' if inline else 'worker')
+        return modes
+
+    @staticmethod
+    def _by_seq(tasks):
+        return sorted(tasks, key=lambda t: t.get('seq', 0))
+
+    def _startable(self, state, actor, cheap=False):
+        """Queued card id to the modes it could start in now, in seq order."""
+        ready = self._ready(state)
+        found = {}
+        for task in self._by_seq(t for t in state['tasks'].values() if t['state'] == 'queued' and t['id'] in ready):
+            modes = self._modes(state, actor, task['id'], ready, cheap)
+            if modes:
+                found[task['id']] = modes
+        return found
+
+    def _overlap(self, state, a, b):
+        """The waves view of a clash: `_collides` over reservations (repair chains included) with `_ready`'s review
+        exemptions, and a builder that reserves no files counting against every other builder."""
+        if not set(a['resources']) & set(b['resources']) and (
+                b['id'] in a.get('review_of', []) or a['id'] in b.get('review_of', [])
+                or (self._read_review(a) and self._read_review(b))):
+            return False
+        ra, rb = self._reservation(a, state), self._reservation(b, state)
+        return self._collides(ra, rb) or (a['role'] == b['role'] == 'builder' and not (ra['files'] and rb['files']))
+
+    def _caps(self, state, free):
+        """(workers, worktrees) a wave may use: what is free now, or the full policy caps."""
+        full = (self.policy['max_workers'], self.policy.get('max_worktrees', MAX_WORKTREES))
+        if not free:
+            return full
+        running = [t for t in state['tasks'].values() if t['state'] == 'running']
+        return (full[0] - len(running),
+                full[1] - sum(t['role'] == 'builder' and not t.get('inline') for t in running))
+
+    def _fit(self, state, actor, chosen):
+        """The card of `chosen` ((id, modes) pairs) to run inline, '' for none, or None when they cannot all start
+        together: one inline slot, review roles never inline, the worker cap and the worktree cap."""
+        tasks = state['tasks']
+        inline_only = [i for i, m in chosen if m == {'inline'}]
+        slot = self._slot_free(state, actor)
+        if len(inline_only) > 1 or (inline_only and not slot):
+            return None
+        inline_id = inline_only[0] if inline_only else ''
+        workers, worktrees = self._caps(state, True)
+        if len(chosen) > workers:
+            return None
+        if sum(tasks[i]['role'] == 'builder' and i != inline_id for i, _ in chosen) > worktrees and not inline_id and slot:
+            inline_id = next((i for i, m in chosen if 'inline' in m and tasks[i]['role'] == 'builder'), '')  # saves a worktree
+        if sum(tasks[i]['role'] == 'builder' and i != inline_id for i, _ in chosen) > worktrees:
+            return None
+        return inline_id
+
+    def _checkpoint(self, state, actor, task_id, inline):
+        """Refuse a lone start while a disjoint card could start beside it. `parallel_waves: false` turns it off."""
+        if not self.policy.get('parallel_waves', True):
+            return
+        chosen = [(task_id, {'inline' if inline else 'worker'})]
+        for other_id, modes in self._startable(state, actor).items():
+            if other_id != task_id and not any(self._overlap(state, state['tasks'][other_id], state['tasks'][i])
+                                               for i, _ in chosen) and self._fit(state, actor, chosen + [(other_id, modes)]) is not None:
+                chosen.append((other_id, modes))
+        if len(chosen) > 1:
+            inline_id = self._fit(state, actor, chosen)
+            flag = '--inline %s ' % inline_id if inline_id else ''
+            raise EngineError('Start the whole wave: wave %s%s (or pass --serial REASON to start %s alone)'
+                              % (flag, ' '.join(i for i, _ in chosen if i != inline_id), task_id))
+
+    def waves(self, actor='main'):
+        with self._state(False) as state:
+            return self._waves(state, actor)
+
+    def _waves(self, state, actor, cheap=False):
+        """The checkpoint view: overlaps, unmet prerequisites, ordered waves and the cards a start would accept now."""
+        tasks = state['tasks']
+        open_cards = self._by_seq(t for t in tasks.values() if t['state'] not in ('accepted', 'held', 'parked'))
+        overlaps = [[a['id'], b['id']] for n, a in enumerate(open_cards) for b in open_cards[n + 1:]
+                    if self._overlap(state, a, b)]
+        chains, blocked, layer = {}, [], {}
+        for task in open_cards:
+            deps = [d for d in task['dependencies'] if tasks[d]['state'] not in ('accepted', 'held')]
+            reviews = [d for d in task.get('review_of', []) if tasks[d]['state'] not in ('reported', 'accepted', 'held')]
+            if deps or reviews:
+                chains[task['id']] = dict(dependencies=deps, review_of=reviews)
+            if task['state'] != 'queued':
+                continue
+            if any(tasks[d]['state'] == 'parked' or d in blocked for d in deps + reviews):
+                blocked.append(task['id'])
+                continue
+            layer[task['id']] = max([layer[d] + 1 if d in layer else 1 for d in deps + reviews], default=0)
+        waves, free = [], True
+        for depth in sorted(set(layer.values())):
+            pending = [t['id'] for t in open_cards if layer.get(t['id']) == depth]
+            while pending:
+                workers, worktrees = self._caps(state, free)
+                free = False  # only the first wave is cut to what is free now
+                wave, rest = [], []
+                for task_id in pending:
+                    if (len(wave) < workers and (tasks[task_id]['role'] != 'builder' or sum(
+                            tasks[i]['role'] == 'builder' for i in wave) < worktrees)
+                            and not any(self._overlap(state, tasks[task_id], tasks[i]) for i in wave)):
+                        wave.append(task_id)
+                    else:
+                        rest.append(task_id)
+                if wave:
+                    waves.append(wave)
+                pending = rest
+        return dict(overlaps=overlaps, chains=chains, blocked=blocked, waves=waves,
+                    startable_now=list(self._startable(state, actor, cheap)))
+
+    def view(self, actor='main', session=None):
+        """The lease-free board the Kanban mod reads. Built field by field from an allowlist, never from `status()`: no
+        lens, file hash or diff, and no lease, assignment token or harness session id."""
+        with self._state(False) as state:
+            tasks, run = state['tasks'], state['session'] or {}
+            plan = self._waves(state, actor, cheap=True)
+            ordered = self._by_seq(tasks.values())
+            cards = []
+            for t in ordered:
+                card = dict(id=t['id'], role=t['role'], mode=t['mode'], state=t['state'], worker=t.get('worker'),
+                            inline=bool(t.get('inline')), dependencies=list(t['dependencies']),
+                            deps_open=[d for d in t['dependencies'] if tasks[d]['state'] not in ('accepted', 'held')],
+                            review_of=list(t.get('review_of', [])), files=list(t['files']),
+                            started_at=t.get('started_at'), seq=t.get('seq'))
+                if 'outcome' in t:
+                    card['outcome'] = t['outcome']
+                cards.append(card)
+            states = ('queued', 'running', 'reported', 'repairing', 'held', 'parked', 'accepted')
+            review = state['reviews'][-1] if state['reviews'] else None
+            gate = state['gates'][-1] if state['gates'] else None
+            head = lambda receipt: str((receipt.get('artifact') or {}).get('head', ''))[:7]
+            prs = [{k: e.get(k) for k in ('url', 'number', 'base_ref', 'head_ref', 'autonomous', 'tasks', 'reviewed', 'verified_at')}
+                   for e in self._pull_requests(state)]
+            startable = plan['startable_now']
+            return dict(
+                run_id=state.get('run_id'), session=dict(active=bool(run.get('active')), size=run.get('size')),
+                bound=session is not None and run.get('harness_session') == session,
+                autonomy=dict(active=self._autonomy_on(state)),
+                counts={s: sum(t['state'] == s for t in ordered) for s in states},
+                counts_note='running includes inline cards',
+                columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
+                cards=cards, startable_now=startable,
+                next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],
+                latest_review=None if review is None else dict(
+                    id=review['id'], verdict='BLOCKED' if review['findings'] else 'CLEAN',
+                    categories=list(review['categories']), head=head(review)),
+                latest_gate=None if gate is None else dict(name=gate['name'], passed=gate['passed'], head=head(gate)),
+                pull_requests=prs, guard_mode=self.policy.get('guard_mode', 'minimal'))
 
     def _evidence_scopes(self, state, task_id):
         """The scopes a card's acceptance depends on; None means the whole repository (SPEC 5.1 item 10)."""
