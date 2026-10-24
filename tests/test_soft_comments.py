@@ -47,6 +47,14 @@ class SoftCommentTest(RepoCase):
     def test_an_escaped_hash_is_not_a_comment(self):
         self.assertEqual(self.normal('git add -A \\# x; git push --force origin main'), 'deny')
 
+    def test_a_hash_after_an_escaped_blank_is_not_a_comment(self):
+        for command in ('git add -A x\\ #y; git push origin --delete main',
+                        'git add -A x\\ #y; git push origin :main',
+                        'git stash x\\ #y; git branch -D feat',
+                        'git add -A x\\ #y; git tag -d v1; git push origin :refs/tags/v1'):
+            with self.subTest(command=command):
+                self.assertEqual(self.normal(command), 'deny')
+
     def test_a_quote_inside_a_comment_does_not_join_the_next_lines(self):
         self.assertEqual(self.normal("git add -A # it's\ngit push origin --delete main # it's"), 'deny')
         self.assertEqual(self.normal("git add -A # it's\ngit push --force origin main"), 'deny')

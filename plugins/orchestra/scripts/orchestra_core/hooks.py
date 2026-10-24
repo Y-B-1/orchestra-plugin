@@ -689,14 +689,14 @@ def _soft_push_refusal(command, cwd, engine):
 def _uncomment(command):
     """The command with each `#` comment cut at its line end, or None when a `#` is not clearly a comment. The split reads a quote inside a comment as a real quote
     and would join the next lines into one segment, so every comment goes before it reads a word."""
-    out, quote, escaped, comment = [], None, False, False
+    out, quote, escaped, comment, literal = [], None, False, False, -1
     for i, char in enumerate(command):
         if comment:
             comment = char != '\n'  # a comment runs to the end of its line, as the classifier reads it
             if comment:
                 continue
         elif escaped:
-            escaped = False
+            escaped, literal = False, i
         elif char == '\\' and quote != "'":
             escaped = True
         elif quote:
@@ -706,8 +706,9 @@ def _uncomment(command):
         elif char == '#' and (not i or command[i - 1] in _WORD_START):
             if i and (command[i - 1] == ')' or command[i - 2:i] == '\\\n'):
                 return None  # the classifier may read this `#` as part of a word: do not cut a command it could see
-            comment = True
-            continue
+            if literal != i - 1:  # bash reads `x\ #y` as one word: a `#` after an escaped blank starts no comment
+                comment = True
+                continue
         out.append(char)
     return ''.join(out)
 
