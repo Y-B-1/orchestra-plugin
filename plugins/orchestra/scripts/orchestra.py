@@ -48,8 +48,12 @@ def parser():
                        '(needs --harness-session); running cards keep their assignments')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
-    for name in ['status','ready','board','interrupt','finish','scan']:
+    for name in ['status','ready','interrupt','finish','scan']:
         sub.add_parser(name)
+    board = sub.add_parser('board', help='Print card ids by role and state; --view prints the cheap lease-free board the Kanban mod reads')
+    board.add_argument('--view', action='store_true')
+    board.add_argument('--session', help='With --view: the harness session id; `bound` says whether it owns the run (the id is never printed)')
+    sub.add_parser('waves', help='Print overlaps, unmet prerequisites, ordered waves and the cards that can start now; no lease, read-only')
     sub.add_parser('brief', help='Print the newest run brief; no lease, read-only')
     art = sub.add_parser('artifact', help='Print the whole-repo artifact, or with --tasks the artifact scoped to those cards\' reserved files')
     art.add_argument('--tasks', help='Comma-separated task IDs')
@@ -66,11 +70,18 @@ def parser():
     dispatch = sub.add_parser('dispatch')
     dispatch.add_argument('task_id')
     dispatch.add_argument('worker', nargs='?', help='Worker name; default orchestra-TASK_ID')
+    dispatch.add_argument('--serial', metavar='REASON', help='Start this card alone although others could start beside it; the reason is logged')
     dispatch.add_argument('--helper', metavar='REASON', help='Why a helper does this builder card instead of the main session: '
                           'required for a tiny unit on a size run, and for a 2.4 inline route. 2.4 workflow route: a builder '
                           'card needs an accepted designer-planner plan card first')
     inline = sub.add_parser('inline', help='Reserve a card for execution by the main coordinator')
     inline.add_argument('task_id')
+    inline.add_argument('--serial', metavar='REASON', help='Start this card alone although others could start beside it; the reason is logged')
+    wave = sub.add_parser('wave', help='Start every named card in one step, all or none; at most one is --inline')
+    wave.add_argument('task_ids', nargs='+', metavar='ID')
+    wave.add_argument('--inline', metavar='ID', help='The card the main session runs')
+    wave.add_argument('--helper', metavar='REASON', help='Why helpers do builder cards on a size run or inline route')
+    wave.add_argument('--serial', metavar='REASON', help='Start a single card alone although others could start beside it; the reason is logged')
     report = sub.add_parser('report')
     report.add_argument('worker')
     report.add_argument('token')
@@ -169,7 +180,11 @@ def execute(args):
     repo = repository(args.repo)
     state = Path(args.state).expanduser().resolve() if args.state else state_location(repo)
     if args.command=='where':
-        return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file()},0
+        try:
+            mode = (load_policy(state) or {}).get('guard_mode','minimal')
+        except ValueError:
+            mode = 'minimal'
+        return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file(),'guard_mode':mode},0
     if args.command=='start' and args.policy:
         policy = read_json(args.policy)
         if not isinstance(policy,dict) or policy.get('schema_version') != 1:  # the rule load_policy applies later
@@ -222,10 +237,14 @@ def execute(args):
             raise EngineError('--tasks needs at least one task id')
         return engine.artifact(engine.scope_for(ids) if ids else None),0
     if args.command=='inline':
-        return {'token':engine.start_inline(args.actor,args.lease,args.task_id), 'executor':args.actor, 'inline':True},0
+        return {'token':engine.start_inline(args.actor,args.lease,args.task_id,serial=args.serial), 'executor':args.actor, 'inline':True},0
     if args.command=='finding' and args.finding_command=='list':  # lease-free, like status
         result = engine.list_findings(args.for_brief)
         return ({'findings':result} if isinstance(result,str) else result),0
+    if args.command=='waves':  # lease-free and read-only, like status
+        return engine.waves(args.actor),0
+    if args.command=='board' and args.view:  # lease-free; from an allowlist, no lenses or hashing
+        return engine.view(args.actor,args.session),0
     if args.command=='board':
         cards = engine.status()['tasks'].values()
         board = {}
@@ -250,8 +269,10 @@ def execute(args):
         return {'added':read_json(args.task)['id']},0
     if args.command=='dispatch':
         worker = args.worker if args.worker is not None else 'orchestra-'+args.task_id
-        token = engine.dispatch(args.actor,args.lease,args.task_id,worker,helper=args.helper)
+        token = engine.dispatch(args.actor,args.lease,args.task_id,worker,helper=args.helper,serial=args.serial)
         return {'assignment':token,'task':args.task_id,'worker':worker},0
+    if args.command=='wave':
+        return engine.wave(args.actor,args.lease,args.task_ids,inline=args.inline,helper=args.helper,serial=args.serial),0
     if args.command=='accept':
         engine.accept(args.actor,args.lease,args.task_id)
         return {'accepted':args.task_id},0

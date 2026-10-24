@@ -113,7 +113,7 @@ class EngineTests(EngineFixture):
         self.task('inline')
         self.task('parallel')
         self.task('collision', files=['inline'])
-        token = self.engine.start_inline('main', self.lease, 'inline')
+        token = self.engine.start_inline('main', self.lease, 'inline', serial='fixture: one card at a time')
         self.engine.dispatch('main', self.lease, 'parallel', 'worker')
         with self.assertRaises(EngineError):
             self.engine.dispatch('main', self.lease, 'collision', 'other')
@@ -127,7 +127,7 @@ class EngineTests(EngineFixture):
         with self.assertRaises(EngineError):
             self.engine.start_inline('main', self.lease, 'review')
         self.task('inline')
-        token = self.engine.start_inline('main', self.lease, 'inline')
+        token = self.engine.start_inline('main', self.lease, 'inline', serial='fixture: one card at a time')
         self.engine.interrupt('main', self.lease)
         with self.assertRaises(EngineError):
             self.engine.report('main', token, done('Late inline result'))
@@ -214,7 +214,7 @@ class MoreEngineTests(EngineFixture):
         self.task()
         self.task('b')
         self.task('c', dependencies=['a'])
-        token = self.engine.dispatch('main', self.lease, 'a', 'builder-a')
+        token = self.engine.dispatch('main', self.lease, 'a', 'builder-a', serial='fixture: one card at a time')
         self.assertEqual(['b'], self.engine.ready('main', self.lease))
         self.engine.report('builder-a', token, done('built a'))
         self.engine.accept('main', self.lease, 'a')
@@ -293,7 +293,7 @@ class IntegrationRepairTests(EngineFixture):
         self.task('C2', role='critic', mode='judge', files=[])
         with self.assertRaises(EngineError):
             self.engine.start_inline('main', self.lease, 'C2')
-        token = self.engine.dispatch('main', self.lease, 'B1', 'builder')
+        token = self.engine.dispatch('main', self.lease, 'B1', 'builder', serial='fixture: one card at a time')
         self.engine.report('builder', token, done('Built'))
         self.assertIn('C1', self.engine.ready('main', self.lease))
         modes = {'investigator': 'code', 'designer-planner': 'plan', 'operator': 'gate', 'builder': 'implementation'}
@@ -1368,11 +1368,11 @@ class AutonomyFixture(EngineFixture):
     def worker_running(self, name='busy'):
         """A dispatched card: while it runs, an unchanged turn ends quietly instead of stopping as stalled."""
         self.task(name, files=[name])
-        self.engine.dispatch('main', self.lease, name, 'w-' + name)
+        self.engine.dispatch('main', self.lease, name, 'w-' + name, serial='fixture: one card at a time')
 
     def accept_card(self, name):
         self.task(name, role='investigator', mode='code')
-        token = self.engine.dispatch('main', self.lease, name, 'w-' + name)
+        token = self.engine.dispatch('main', self.lease, name, 'w-' + name, serial='fixture: one card at a time')
         self.engine.report('w-' + name, token, 'Inspected ' + name + '.')
         self.engine.accept('main', self.lease, name)
 
@@ -1972,7 +1972,7 @@ class AutonomyReportTests(AutonomyFixture):
         self.assertNotIn('old-failure', progress)  # failures recorded before arm are not this run's
         stored = self.engine.autonomy_report()
         self.assertEqual(stored['reason'], 'deadline')
-        self.assertEqual(stored['text'], progress.strip())
+        self.assertEqual(stored['text'], progress[progress.index('## Run brief'):].strip())  # the fixture's serial start comes first
         self.assertEqual(stored['path'], str(self.engine.state_dir / 'progress.md'))
 
     def test_report_appends_and_keeps_earlier_progress_lines(self):
@@ -2173,7 +2173,7 @@ class MaterialityTests(EngineFixture):
         self.reported('B1')
         self.task('V1', role='critic', mode='spec', files=['a'], resources=list(resources1), review_of=['B1'])
         self.task('V2', role='critic', mode='spec', files=['a'], resources=list(resources2), review_of=['B1'])
-        self.engine.dispatch('main', self.lease, 'V1', 'review-1')
+        self.engine.dispatch('main', self.lease, 'V1', 'review-1', serial='fixture: one card at a time')
 
     def test_two_read_only_reviews_on_same_file_do_not_collide(self):
         self.two_reviews()
@@ -2645,7 +2645,7 @@ class FixReviewTests(EngineFixture):
             self.task(name, mode='repair', repair_of='B' + name[1], files=['B' + name[1]])
         for name in ('R1', 'R2'):
             (self.repo / ('B' + name[1])).write_text('repaired')
-            self.engine.report(name.lower(), self.engine.dispatch('main', self.lease, name, name.lower()), done('Repaired'))
+            self.engine.report(name.lower(), self.engine.dispatch('main', self.lease, name, name.lower(), serial='fixture: one card at a time'), done('Repaired'))
 
     def test_fix_re_review_blaming_one_chain_still_accepts_the_other(self):
         self.two_chains()
@@ -2865,7 +2865,7 @@ class FinalReceiptTests(HoldFixture):
         for repair, target in (('R1', 'B1'), ('R2', 'B2')):
             self.task(repair, mode='repair', repair_of=target, files=[target])
             rounds.append(self.engine.status()['tasks'][repair]['final_round'])
-        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), done('Repaired'))
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1', serial='fixture: one card at a time'), done('Repaired'))
         self.task('R3', mode='repair', repair_of='B3', files=['B3'])
         rounds.append(self.engine.status()['tasks']['R3']['final_round'])
         self.assertEqual([1, 1, 2], rounds)
@@ -3174,11 +3174,11 @@ class RouteTests(EngineFixture):
         self.assertNotIn('route', engine.status()['session'])
         self.add(engine, lease, 'b')
         self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[])  # a plan card is allowed
-        token = engine.dispatch('main', lease, 'b', 'w')  # no --helper, no plan card
+        token = engine.dispatch('main', lease, 'b', 'w', serial='fixture: one card at a time')  # no --helper, no plan card
         engine.report('w', token, done('Built b.'))
         engine.accept('main', lease, 'b')
         self.add(engine, lease, 'c')
-        engine.start_inline('main', lease, 'c')
+        engine.start_inline('main', lease, 'c', serial='fixture: one card at a time')
 
 
 class SizeRouteTests(EngineFixture):
@@ -3397,7 +3397,7 @@ class SizeRouteTests(EngineFixture):
                 with self.assertRaisesRegex(EngineError, 'Inline route'):
                     engine.dispatch('main', lease, 'b', 'w')  # the 2.4 route check, not the card size, decides
             else:
-                engine.dispatch('main', lease, 'b', 'w')
+                engine.dispatch('main', lease, 'b', 'w', serial='fixture: one card at a time')
             if name == 'legacy':
                 engine.dispatch('main', lease, 'c', 'x')  # a tiny card on a 2.3 run needs no helper
 
@@ -3422,7 +3422,7 @@ class SizeRouteTests(EngineFixture):
         engine.set_route('main', lease, None, 'grilling passed the ceiling', size='large')
         self.add(engine, lease, 'plan', role='designer-planner', mode='plan', files=[])
         self.add(engine, lease, 'b')  # a large run does not force a plan before builders
-        engine.dispatch('main', lease, 'b', 'w')
+        engine.dispatch('main', lease, 'b', 'w', serial='fixture: one card at a time')
 
     def test_plan_card_allowed_with_session_owner_request(self):
         engine, lease = self.run_with('large', owner_request=True)
@@ -4879,11 +4879,11 @@ class RunHygieneTests(EngineFixture):
             add(name)
         engine.add_task('main', lease, dict(id='inv', role='investigator', mode='code', inputs=['s'], acceptance=['x'],
                                             files=[], resources=[], dependencies=[]))
-        engine.dispatch('main', lease, 'b1', 'w1')
-        engine.dispatch('main', lease, 'b2', 'w2')
+        engine.dispatch('main', lease, 'b1', 'w1', serial='fixture: one card at a time')
+        engine.dispatch('main', lease, 'b2', 'w2', serial='fixture: one card at a time')
         with self.assertRaisesRegex(EngineError, 'Worktree cap: 2'):
             engine.dispatch('main', lease, 'b3', 'w3')
-        engine.dispatch('main', lease, 'inv', 'wi')  # read-only roles do not count
+        engine.dispatch('main', lease, 'inv', 'wi', serial='fixture: one card at a time')  # read-only roles do not count
         engine.start_inline('main', lease, 'b3')  # inline cards do not count
         self.assertEqual(engine.status()['tasks']['b3']['state'], 'running')
 
@@ -4891,7 +4891,7 @@ class RunHygieneTests(EngineFixture):
         for name in ('b1', 'b2', 'b3', 'b4'):
             self.task(name)
         for name in ('b1', 'b2', 'b3'):
-            self.engine.dispatch('main', self.lease, name, 'w' + name)
+            self.engine.dispatch('main', self.lease, name, 'w' + name, serial='fixture: one card at a time')
         with self.assertRaisesRegex(EngineError, 'Worktree cap: 3'):
             self.engine.dispatch('main', self.lease, 'b4', 'wb4')
         for value in (0, -1, True, 1.5, '3'):
@@ -5821,7 +5821,7 @@ class DispatchDefaultTests(EngineFixture):
     def test_default_worker_is_still_reserved_and_never_the_coordinator(self):
         self.task('x')
         self.task('y')
-        self.engine.dispatch('main', self.lease, 'x')
+        self.engine.dispatch('main', self.lease, 'x', serial='fixture: one card at a time')
         with self.assertRaisesRegex(EngineError, 'Worker is already reserved'):
             self.engine.dispatch('main', self.lease, 'y', 'orchestra-x')
         with self.assertRaisesRegex(EngineError, 'Worker must differ from coordinator'):

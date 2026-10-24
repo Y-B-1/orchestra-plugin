@@ -61,7 +61,7 @@ class WorkflowIntegration(unittest.TestCase):
             cmd+=['--lease',self.lease]
         args=list(args)
         if args[:1]==['dispatch']:  # a helper is accepted and ignored on a medium card
-            args+=['--helper','fixture helper']
+            args+=['--helper','fixture helper','--serial','fixture: one card at a time']
         if args[:1]==['report']:
             path=Path(args[3])
             if 'SELF_REVIEW:' not in path.read_text():
@@ -531,8 +531,9 @@ class HarnessSessionIntegration(unittest.TestCase):
         self.hook('SessionEnd',session_id='S',reason='prompt_input_exit')
         self.assertTrue(self.session()['active'])
         where=self.cli('where')
-        self.assertEqual(set(where),{'repo','state','standing_orders'})
-        self.assertEqual((where['repo'],where['state'],where['standing_orders']),(str(self.repo),str(self.state),False))
+        self.assertEqual(set(where),{'repo','state','standing_orders','guard_mode'})
+        self.assertEqual((where['repo'],where['state'],where['standing_orders'],where['guard_mode']),
+                         (str(self.repo),str(self.state),False,'minimal'))
         (self.state/'standing-orders.md').write_text('rules\n')
         self.assertTrue(self.cli('where')['standing_orders'])
 
