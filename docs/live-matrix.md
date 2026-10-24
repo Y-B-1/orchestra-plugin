@@ -59,3 +59,7 @@ For a failure open `OUT_DIR/<id>/result.json`: each check has its detail, and ea
 - Sessions run with `bypassPermissions`, so a deny seen here comes from Orchestra's hooks, not from a permission prompt. Behavior under other permission modes is not covered.
 - The Python version is not varied: `run-hook.sh` picks the newest interpreter on the machine, so the matrix uses whichever it finds. Python 3.11 and 3.13 are covered by `scripts/check.sh`.
 - The scenarios prompt a model to run fixed commands; a model that refuses or rewrites a command makes that check fail as not run, not as a guard result.
+
+The harness writes a `.live-matrix` marker in each scenario directory it makes, and replaces an existing `OUT_DIR/<id>` only when that marker is present; any other directory stops the run with an error naming it.
+
+The d4 check "worker lease-free status allowed" counts only a worker command that runs `orchestra.py status` without `--lease`; `git status` does not count.
