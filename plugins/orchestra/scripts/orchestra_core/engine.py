@@ -1287,6 +1287,11 @@ class Engine:
                 raise EngineError('Only independent review roles can use review_of')
             if set(review_of) & set(task['dependencies']):
                 raise EngineError('Use review_of instead of an accepted dependency for reviewed work')
+            if 'prep_for' in task:
+                if task['role'] != 'investigator':
+                    raise EngineError('Only an investigator card can use prep_for')
+                if task['prep_for'] == task['id'] or task['prep_for'] not in state['tasks']:
+                    raise EngineError('prep_for must name another existing card')
             if task['role'] == 'builder' and task['mode'] == 'repair':
                 repair_of = task.get('repair_of')
                 if repair_of not in state['tasks'] or state['tasks'][repair_of]['role'] != 'builder':
@@ -1821,9 +1826,30 @@ class Engine:
                 if len(task_ids) == 1 and not serial:
                     self._checkpoint(state, actor, task_id, is_inline)
                 tokens[task_id] = self._mark_running(state, task_id, worker, is_inline, helper, lease)
+            capacity = self._capacity(state)
         if serial:
             self._log_serial(task_ids, serial)
-        return dict(assignments=tokens, workers=workers, inline=inline)
+        return dict(assignments=tokens, workers=workers, inline=inline, **capacity)
+
+    def _capacity(self, state):
+        """idle_workers (never below 0) and, when nonempty, prep: the unused capacity and the unprepared blocked cards."""
+        out = dict(idle_workers=self._idle(state))
+        prep = self._prep(state)
+        if prep:
+            out['prep'] = prep
+        return out
+
+    def _idle(self, state):
+        return max(0, self.policy['max_workers'] - sum(t['state'] == 'running' for t in state['tasks'].values()))
+
+    def _prep(self, state):
+        """Queued builder cards that cannot start now (open dependency or reservation overlap) and that no card names in prep_for."""
+        tasks, named = state['tasks'], {t.get('prep_for') for t in state['tasks'].values()}
+        ready = self._ready(state)
+        return [t['id'] for t in self._by_seq(tasks.values())
+                if t['state'] == 'queued' and t['role'] == 'builder' and t['id'] not in named and t['id'] not in ready
+                and (any(tasks[d]['state'] not in ('accepted', 'held') for d in t['dependencies'])
+                     or self._idle(state) > 0)]
 
     def record_bases(self, actor, lease, task_ids, base):
         """Record the run tip a started builder card was cut from; `report` then refuses a commit that does not descend from it."""
@@ -1973,7 +1999,8 @@ class Engine:
                     waves.append(wave)
                 pending = rest
         return dict(overlaps=overlaps, chains=chains, blocked=blocked, waves=waves,
-                    startable_now=list(self._startable(state, actor, cheap)))
+                    startable_now=list(self._startable(state, actor, cheap)),
+                    idle_workers=self._idle(state), prep=self._prep(state))
 
     def view(self, actor='main', session=None):
         """The lease-free board the Kanban mod reads. Built field by field from an allowlist, never from `status()`: no
