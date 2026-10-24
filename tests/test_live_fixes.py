@@ -139,6 +139,16 @@ class StateShellWriteTest(LiveFixture):
         self.assertEqual(self.verdict('cd %s && ls; cd /tmp && echo x > out.txt' % s, session_id='s1'), 'allow')
         self.assertEqual(self.verdict('cd %s && echo x > state.json' % s, session_id='s1'), 'deny')
 
+    def test_a_cd_back_into_the_state_directory_keeps_the_inside_rule(self):
+        s = shlex.quote(str(self.state))
+        for command in ('cd %s && cd /tmp && cd - && echo x >> state.json' % s, 'cd %s; cd ~; cd -; echo x > state.json' % s,
+                        'cd %s; cd /; cd -; rm state.json' % s, 'cd %s && cd "$OLDPWD" && echo x > state.json' % s,
+                        'cd %s && cd $HOME && echo x > state.json' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+        self.assertEqual(self.verdict('cd %s && cd /tmp && echo x > out.txt' % s, session_id='s1'), 'allow')
+        self.assertEqual(self.verdict('cd /tmp && cd %s && cd - && echo x > out.txt' % s, session_id='s1'), 'allow')
+
 
 class ProtectBranchPushTest(LiveFixture):
     def setUp(self):
