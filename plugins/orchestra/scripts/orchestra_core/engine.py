@@ -2647,9 +2647,14 @@ class Engine:
             return None
         chain = {i for r in later for i in r['tasks']}
         # An accepted fix re-review card of that chain is covered whatever its verdict: a BLOCKED one led to the repair
-        # the CLEAN one closed.
+        # the CLEAN one closed. It reviews a repair card of the chain, names only chain cards, and a recorded fix
+        # re-review receipt covers what it names; any other review card still needs its own final receipt.
+        checks = [set(r['tasks']) for r in state['reviews'][ids.index(review['id']) + 1:]
+                  if r.get('repair_check') and self._intact(r)]
         return chain | {t['id'] for t in state['tasks'].values() if t['role'] == 'code-reviewer'
-                        and t['state'] == 'accepted' and chain & set(t.get('review_of', []))}
+                        and t['state'] == 'accepted' and set(t.get('review_of', [])) <= chain
+                        and set(t.get('review_of', [])) & repairs
+                        and any(set(t['review_of']) <= c for c in checks)}
 
     def _review_verdicts(self, state, cache, task_id=None, final=False, keep=False, strict=False):
         """Newest relevant verdict wins; altered evidence cannot restore an older verdict. With `keep`, a stale final

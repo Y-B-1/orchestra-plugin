@@ -103,6 +103,13 @@ class FixReviewCardCoverageTests(te.HoldFixture):
             self.engine.accept('main', self.lease, name)
         self.engine.check_completion('main', self.lease)
 
+    def test_a_later_unrecorded_final_card_on_a_chain_ancestor_is_not_covered(self):
+        self.test_finish_succeeds_after_the_owner_approved_repair_is_cleanly_re_reviewed()
+        self.review_card('L9', ['B1'])
+        self.engine.accept('main', self.lease, 'L9')
+        with self.assertRaisesRegex(EngineError, 'Current final review coverage is incomplete'):
+            self.engine.check_completion('main', self.lease)
+
     def test_a_final_review_stays_uncovered_while_a_later_fix_re_review_has_findings(self):
         self.live_order_until_hold()
         self.assertEqual({}, self.coverage())
