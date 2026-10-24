@@ -175,7 +175,12 @@ export function rig(on: On, options: RigOptions = {}): Rig {
   return state;
 }
 
-export function deferred(): { promise: Promise<void>; resolve: () => void } {
+/** Lets work the module started without awaiting it (a board refresh, a task sync) run to its end. */
+export async function flush(): Promise<void> {
+  await settled();
+}
+
+export function deferred():{ promise: Promise<void>; resolve: () => void } {
   let resolve: () => void = () => undefined;
   const promise = new Promise<void>((r) => {
     resolve = r;

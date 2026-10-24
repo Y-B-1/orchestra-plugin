@@ -2,6 +2,8 @@ import type { Hook, On, Register } from 'claude-code';
 
 import { AUTONOMY_COMMAND, cliResult, cliThrown, commandOutcome, newAutonomy, noteChange, pollDue, pollOutcome, startSession, subOf, USAGE } from './autonomy.js';
 import type { AutonomyState, Cli, Sub } from './autonomy.js';
+import { cardIdOf, matchTasks, paneModel, parseTaskList, parseView, planCreates, planUpdates, runShort } from './board.js';
+import type { Link, View } from './board.js';
 import { classifyCommand, editDenied, editTools, klassOf, loadRules, shellTools } from './guard.js';
 import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, markerPath, sha256Hex, utf8 } from './marker.js';
 
@@ -21,6 +23,14 @@ const MISSING_CWD = 'Session directory no longer exists: cd to an existing direc
 const STATE_DENY = 'Use the structured coordinator API for state; protect installed runtime configuration';
 const VERDICT_SUBS = ['review', 'gate', 'accept'];
 const BOARD = 'orchestra-board';
+/** The board refreshes on events; this is the fallback while the pane is open. */
+const BOARD_FALLBACK_MS = 30000;
+const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskList'];
+/**
+ * Guard `minimal`: a shell command that may write Orchestra's engine state, ledger, policy or installed runtime
+ * files, or carry the owner's approval word, still goes to the Python hook; every other one is Claude Code's call.
+ */
+const ENGINE_TOUCH = /orchestra|ORCHESTRA_|\.claude|ledger|state\.json|policy\.json|standing-orders|approv/i;
 
 type Json = Record<string, unknown>;
 
@@ -62,6 +72,11 @@ function armsAutonomy(command: string): boolean {
   return words[0] === 'autonomy' && words[1] === 'arm';
 }
 
+/** True for a shell command that runs `orchestra.py`: the board may have changed. */
+function runsEngine(command: unknown): boolean {
+  return typeof command === 'string' && /orchestra\.py\b/.test(command);
+}
+
 function toastText(sub: string, out: string): string | null {
   const body = asJson(out);
   if (body === null) return null;
@@ -72,7 +87,7 @@ function toastText(sub: string, out: string): string | null {
 }
 
 type Dollar = Parameters<Hook<'tool.call'>>[0];
-type Where = { repo: string; state: string; standingOrders: boolean };
+type Where = { repo: string; state: string; standingOrders: boolean; guardMode: string | null };
 
 type Run = Awaited<ReturnType<Dollar['process']['run']>>;
 
@@ -155,7 +170,8 @@ async function readWhere($: Dollar): Promise<Where | null> {
   if ('gone' in res) return null;
   const body = res.run.exitCode === 0 ? asJson(res.run.stdout) : null;
   if (body === null) return null;
-  return { repo: String(body['repo'] ?? ''), state: String(body['state'] ?? ''), standingOrders: body['standing_orders'] === true };
+  const mode = body['guard_mode'];
+  return { repo: String(body['repo'] ?? ''), state: String(body['state'] ?? ''), standingOrders: body['standing_orders'] === true, guardMode: typeof mode === 'string' ? mode : null };
 }
 
 async function autonomyCli($: Dollar, sub: Sub): Promise<Cli> {
@@ -188,7 +204,10 @@ async function autonomyRegister($: Dollar, auto: AutonomyState): Promise<void> {
   }
 }
 
-async function autonomyCommand($: Dollar, auto: AutonomyState, args: string): Promise<{ text: string }> {
+/** Told of every autonomy CLI answer, so the caller can follow `last_stop_reason`. */
+type Seen = (sub: Sub, res: Cli) => void;
+
+async function autonomyCommand($: Dollar, auto: AutonomyState, args: string, seen: Seen): Promise<{ text: string }> {
   try {
     const sub = subOf(args);
     if (sub === null) return { text: USAGE };
@@ -196,6 +215,7 @@ async function autonomyCommand($: Dollar, auto: AutonomyState, args: string): Pr
     noteChange(auto, false);
     const res = await autonomyCli($, sub);
     noteChange(auto, false);
+    seen(sub, res);
     const out = commandOutcome(auto, sub, res);
     if (out.band !== undefined) autonomyBand($, auto, out.band.text);
     return { text: out.text };
@@ -205,7 +225,7 @@ async function autonomyCommand($: Dollar, auto: AutonomyState, args: string): Pr
 }
 
 /** One step of the existing tick: reads status at most every 30 s while active; never throws. */
-async function autonomyPoll($: Dollar, auto: AutonomyState): Promise<void> {
+async function autonomyPoll($: Dollar, auto: AutonomyState, seen: Seen): Promise<void> {
   if ((!auto.active && !auto.unknown) || auto.busy) return;
   const epoch = auto.epoch;
   const changes = auto.changes;
@@ -215,6 +235,7 @@ async function autonomyPoll($: Dollar, auto: AutonomyState): Promise<void> {
     if (epoch !== auto.epoch || !pollDue(auto, now)) return;
     const res = await autonomyCli($, 'status');
     if (epoch !== auto.epoch || changes !== auto.changes) return;
+    seen('status', res);
     const out = pollOutcome(auto, res);
     if (!out.changed) return;
     autonomyBand($, auto, out.band);
@@ -224,6 +245,140 @@ async function autonomyPoll($: Dollar, auto: AutonomyState): Promise<void> {
   } finally {
     if (epoch === auto.epoch) auto.busy = false;
   }
+}
+
+type Sync = { wanted: boolean; line: string; runId: string; known: Set<string>; dropped: Set<string> };
+
+/** The board's state, owned by the register closure and passed to the `$` functions below. */
+type Board = {
+  /** The last good `board --view`, when it was read, and since when reads fail (null while they succeed). */
+  view: View | null;
+  okAt: number | null;
+  staleSince: number | null;
+  /** The refresh in flight, if any, and whether one more pass is wanted after it. */
+  running: Promise<void> | null;
+  queued: boolean;
+  links: Map<string, Link>;
+  agents: Map<string, string>;
+  /** Native task mirror: per run, the cards seen with a task and the cards dropped from sync for the rest of the run. */
+  sync: Sync;
+};
+
+function newBoard(): Board {
+  return {
+    view: null, okAt: null, staleSince: null, running: null, queued: false, links: new Map(), agents: new Map(),
+    sync: { wanted: true, line: 'Native tasks: off (no board read yet)', runId: '', known: new Set(), dropped: new Set() },
+  };
+}
+
+/** One task sync against the view just read. Never throws; never asks: a verdict other than allow keeps it off. */
+async function syncTasks($: Dollar, sync: Sync, view: View): Promise<void> {
+  const off = (why: string): void => {
+    sync.line = `Native tasks: off (${why})`;
+  };
+  try {
+    if (!sync.wanted) return off('turned off');
+    if (!view.sessionActive || view.runId === '') return off('no active run');
+    if (!view.bound) return off('this session does not own the run');
+    const names = (await $.tool.list()).map((t) => t.name);
+    if (!TASK_TOOLS.every((n) => names.includes(n))) return off('task tools unavailable');
+    const probe = await $.tool.check({ tool: 'TaskCreate', input: { subject: `[${runShort(view.runId)}] probe`, description: 'Orchestra board probe' } });
+    if (probe.decision !== 'allow') return off(`TaskCreate is not allowed without asking (${probe.decision})`);
+    if (sync.runId !== view.runId) {
+      sync.runId = view.runId;
+      sync.known = new Set();
+      sync.dropped = new Set();
+    }
+    const listed = parseTaskList((await $.tool.call({ tool: 'TaskList' })).result);
+    if (listed === null) return off('TaskList answer unreadable');
+    const matched = matchTasks(runShort(view.runId), listed);
+    // A task this process saw that is gone was deleted by the person: never re-create it.
+    for (const id of sync.known) if (!matched.has(id)) sync.dropped.add(id);
+    for (const c of planCreates(view, matched, sync.dropped)) {
+      try {
+        const made = (await $.tool.call({ tool: 'TaskCreate', subject: c.subject, description: c.description })).result as { task?: { id?: unknown } } | undefined;
+        const id = made?.task?.id;
+        if (typeof id === 'string' && id !== '') matched.set(c.cardId, { id, subject: c.subject, status: 'pending', blockedBy: [] });
+      } catch {
+        // Tried again at the next sync.
+      }
+    }
+    for (const id of matched.keys()) sync.known.add(id);
+    for (const u of planUpdates(view, matched, sync.dropped)) {
+      let ok = false;
+      try {
+        const res = (await $.tool.call({ tool: 'TaskUpdate', taskId: u.taskId, ...u.fields })).result as { success?: unknown } | undefined;
+        ok = res?.success === true;
+      } catch {
+        ok = false;
+      }
+      if (!ok) sync.dropped.add(u.cardId);
+    }
+    sync.line = 'Native tasks: on';
+  } catch {
+    off('sync failed');
+  }
+}
+
+async function refreshOnce($: Dollar, board: Board): Promise<void> {
+  let sid = '';
+  try {
+    sid = await $.session.id();
+  } catch {
+    // Read without a session id: `bound` is then false and sync stays off.
+  }
+  let view: View | null = null;
+  try {
+    const res = await cliRun($, ['board', '--view', ...(sid !== '' ? ['--session', sid] : [])]);
+    if (!('gone' in res) && res.run.exitCode === 0) view = parseView(res.run.stdout);
+  } catch {
+    view = null;
+  }
+  const now = await $.clock.now();
+  if (view === null) {
+    if (board.staleSince === null) board.staleSince = now;
+  } else {
+    board.view = view;
+    board.okAt = now;
+    board.staleSince = null;
+  }
+  try {
+    board.agents = new Map((await $.agent.list()).map((a) => [a.id, a.status]));
+  } catch {
+    // Agent status is a convenience: the last list stays.
+  }
+  if (view !== null) await syncTasks($, board.sync, view);
+  try {
+    $.ui.invalidate('ui.render');
+  } catch {
+    // No pane drawn: nothing to redraw.
+  }
+}
+
+/**
+ * At most one refresh runs and one waits: a call during a run queues one more pass and settles with that run.
+ * Never throws, so a caller may leave it unawaited.
+ */
+async function refreshBoard($: Dollar, board: Board): Promise<void> {
+  if (isWindowsPath($.plugin.root)) return;
+  if (board.running !== null) {
+    board.queued = true;
+    return board.running;
+  }
+  const run = (async (): Promise<void> => {
+    try {
+      do {
+        board.queued = false;
+        await refreshOnce($, board);
+      } while (board.queued);
+    } catch {
+      // A failed read is shown as stale; the next event or the fallback timer tries again.
+    } finally {
+      board.running = null;
+    }
+  })();
+  board.running = run;
+  return run;
 }
 
 export const register: Register = (on: On) => {
@@ -242,7 +397,11 @@ export const register: Register = (on: On) => {
   let where: Where | null = null;
   let boardRegistered = false;
   let boardTimer: { cancel: () => void } | null = null;
-  let boardStatus: Json | null = null;
+  const board = newBoard();
+  // Guard `minimal` fast path inputs: the policy's mode from `where`, and whether the last status read showed a
+  // stopped run (its kept report may hold the unattended lock, which this module cannot see); null is unknown.
+  let guardMode: string | null = null;
+  let runStopped: boolean | null = null;
   const auto = newAutonomy();
   let writers: { fresh: (sid: string) => () => Promise<void>; zero: (sid: string) => () => Promise<void> } | null = null;
 
@@ -257,12 +416,29 @@ export const register: Register = (on: On) => {
     tick = null;
   };
 
+  const seen = (sub: Sub, res: Cli): void => {
+    if (sub !== 'status' || !res.ok || res.body === null) runStopped = null;
+    else runStopped = res.body['last_stop_reason'] !== null && res.body['last_stop_reason'] !== undefined;
+  };
+
+  const applyWhere = (w: Where | null): void => {
+    guardMode = w === null ? null : w.guardMode;
+    if (w !== null && w.standingOrders) where = w;
+  };
+
+  const cancelBoardTimer = (): void => {
+    if (boardTimer) boardTimer.cancel();
+    boardTimer = null;
+  };
+
   on('session.start', async ($, e, next) => {
     // R5 finding 2: the generation is taken before any await, so of overlapping starts only the last runs on.
     cancelTick();
     const mine = gen;
     guardReady = false;
     where = null;
+    guardMode = null;
+    runStopped = null;
     const prevSeen = lastSeen;
     const prevWriters = writers;
     let done: () => void = () => undefined;
@@ -344,7 +520,7 @@ export const register: Register = (on: On) => {
             }
             enqueue(fresh(current));
             // SPEC 12.7: the autonomy read rides this tick (no second timer) and never blocks the marker.
-            void autonomyPoll($, auto);
+            void autonomyPoll($, auto, seen);
           });
         }
         return true;
@@ -363,12 +539,17 @@ export const register: Register = (on: On) => {
       if (starting === settled) starting = null;
     }
     try {
-      if (ready && !boardRegistered) {
+      if (!isWindowsPath($.plugin.root) && !boardRegistered) {
         boardRegistered = true;
         await $.command.register({ name: BOARD, description: 'Show the Orchestra board: cards, session and autonomy' });
       }
     } catch {
       // The board is a convenience; it never takes the guard down.
+    }
+    // Tool calls do not wait for this read: until it lands the guard mode is unknown, which classifies as before.
+    if (ready && mine === gen) {
+      const w = await readWhere($).catch(() => null);
+      if (mine === gen) applyWhere(w);
     }
     try {
       startSession(auto);
@@ -382,6 +563,7 @@ export const register: Register = (on: On) => {
 
   on('session.end', async ($, e, next) => {
     const reason: string = e.reason;
+    cancelBoardTimer();
     if (reason !== 'clear' && reason !== 'resume') cancelTick();
     try {
       if (reason !== 'clear' && reason !== 'resume') {
@@ -416,20 +598,36 @@ export const register: Register = (on: On) => {
       delete toolInput['consent'];
       const reason = await delegate($, tool, toolInput, lastSeen ?? '');
       if (reason !== null) return blocked(reason);
-      return next(e);
+      const passed = await next(e);
+      try {
+        if (runsEngine(input['command'] ?? input['cmd'])) void refreshBoard($, board);
+      } catch {
+        // The board never changes the tool's answer.
+      }
+      return passed;
     }
     if (shellTools().includes(tool)) {
       const raw = input['command'] !== undefined ? input['command'] : input['cmd'];
       if (raw === undefined || Object(raw).constructor !== String) return blocked('Missing shell command');
       const command = String(raw);
-      const d = classifyCommand(command);
-      const klass = klassOf(d);
-      // A softened deny is mode-dependent (normal relaxes it) and the mod reads no policy: Python decides, like a release.
-      if (klass === 'deny' && !d.soften) return blocked(d.reason !== '' ? d.reason : FAIL_CLOSED);
-      if (klass === 'deny' || DELEGATED.includes(klass)) {
-        const sid = lastSeen ?? '';
-        const reason = await delegate($, tool, { command }, sid);
-        if (reason !== null) return blocked(reason);
+      // Guard `minimal` with autonomy known to be off and no stopped run: Claude Code's permission mode owns generic
+      // command classification; only a command that may touch Orchestra's own files still goes to Python.
+      const minimal = guardMode === 'minimal' && !auto.active && !auto.unknown && runStopped === false;
+      if (minimal) {
+        if (ENGINE_TOUCH.test(command)) {
+          const reason = await delegate($, tool, { command }, lastSeen ?? '');
+          if (reason !== null) return blocked(reason);
+        }
+      } else {
+        const d = classifyCommand(command);
+        const klass = klassOf(d);
+        // A softened deny is mode-dependent (normal relaxes it) and the mod reads no policy: Python decides, like a release.
+        if (klass === 'deny' && !d.soften) return blocked(d.reason !== '' ? d.reason : FAIL_CLOSED);
+        if (klass === 'deny' || DELEGATED.includes(klass)) {
+          const sid = lastSeen ?? '';
+          const reason = await delegate($, tool, { command }, sid);
+          if (reason !== null) return blocked(reason);
+        }
       }
       const result = await next(e);
       try {
@@ -447,6 +645,11 @@ export const register: Register = (on: On) => {
         if (armsAutonomy(command)) noteChange(auto, true);
       } catch {
         // Autonomy UI never changes the tool's answer.
+      }
+      try {
+        if (runsEngine(command)) void refreshBoard($, board);
+      } catch {
+        // The board never changes the tool's answer.
       }
       return result;
     }
@@ -473,6 +676,7 @@ export const register: Register = (on: On) => {
 
   on('agent.spawn', async ($, e, next) => {
     if (!e.subagentType.startsWith('orchestra:')) return next(e);
+    let spawn = e;
     try {
       // O21: only a result with standing orders is cached; session.start clears it.
       if (where === null || !where.standingOrders) where = await readWhere($);
@@ -481,64 +685,91 @@ export const register: Register = (on: On) => {
         const text = await $.fs.read(`${w.state}/standing-orders.md`);
         const sha = sha256Hex(utf8(text));
         if (!e.prompt.includes(`sha256: ${sha}`)) {
-          return next({ ...e, prompt: `${e.prompt}\n\n## Standing orders (verbatim)\n\n${text}\n\nsha256: ${sha}\n` });
+          spawn = { ...e, prompt: `${e.prompt}\n\n## Standing orders (verbatim)\n\n${text}\n\nsha256: ${sha}\n` };
         }
       }
     } catch {
       // Standing orders unavailable: the spawn still goes ahead.
     }
-    return next(e);
+    const result = await next(spawn);
+    try {
+      const card = cardIdOf(e.prompt);
+      if (card !== null && result.deny === undefined) {
+        const runId = e.workflow?.runId;
+        board.links.set(card, { ...(result.agentId !== undefined ? { agentId: result.agentId } : {}), ...(runId ? { workflowRunId: runId } : {}), spawnedAt: await $.clock.now() });
+      }
+      void refreshBoard($, board);
+    } catch {
+      // A link is a convenience; the spawn's answer stands.
+    }
+    return result;
+  });
+
+  on('turn.complete', async ($, e, next) => {
+    const result = await next(e);
+    try {
+      if (e.agentId !== undefined) void refreshBoard($, board);
+    } catch {
+      // The board never changes a turn's answer.
+    }
+    return result;
   });
 
   on('command.run', { command: BOARD }, async ($) => {
     try {
       await $.ui.open({ id: BOARD, title: 'Orchestra board', focus: true });
-      const refresh = async (): Promise<void> => {
-        const res = await cliRun($, ['status']);
-        boardStatus = 'gone' in res || res.run.exitCode !== 0 ? null : asJson(res.run.stdout);
-        $.ui.invalidate('ui.render');
-      };
-      await refresh();
-      if (boardTimer) boardTimer.cancel();
-      boardTimer = $.clock.every(HEARTBEAT_MS, refresh);
+      await refreshBoard($, board);
+      cancelBoardTimer();
+      boardTimer = $.clock.every(BOARD_FALLBACK_MS, () => refreshBoard($, board));
     } catch {
       // The board is a convenience; a failure leaves the pane as it was.
     }
     return {};
   });
 
-  on('command.run', { command: AUTONOMY_COMMAND }, async ($, e) => autonomyCommand($, auto, e.args));
+  on('command.run', { command: AUTONOMY_COMMAND }, async ($, e) => {
+    const out = await autonomyCommand($, auto, e.args, seen);
+    applyWhere(await readWhere($).catch(() => null));
+    return out;
+  });
 
   on('ui.close', { id: BOARD }, async (_$, e, next) => {
     const result = await next(e);
-    if (boardTimer) boardTimer.cancel();
-    boardTimer = null;
+    cancelBoardTimer();
     return result;
   });
 
   on('ui.render', { component: 'Pane' }, async ($, e, next) => {
     if (e.requestId !== BOARD) return next(e);
-    const { Box, Text } = $.ui.resolve(e);
-    const status = boardStatus;
-    if (status === null) return Box({ children: [Text({ children: 'Orchestra: no status yet' })] });
-    const rows: string[] = [];
-    let running = 0;
-    const tasks = asJson(JSON.stringify(status['tasks'] ?? {})) ?? {};
-    for (const id of Object.keys(tasks)) {
-      const t = asJson(JSON.stringify(tasks[id])) ?? {};
-      if (t['state'] === 'running') running += 1;
-      rows.push(`${id}  ${String(t['role'] ?? '-')}  ${String(t['mode'] ?? '-')}  ${String(t['state'] ?? '-')}  ${String(t['worker'] ?? '-')}`);
+    const { Box, Text, Button } = $.ui.resolve(e);
+    let now = board.okAt ?? 0;
+    try {
+      now = await $.clock.now();
+    } catch {
+      // Ages read from the last refresh.
     }
-    // The engine's own flags: session.active and autonomy.active (null or absent reads as off).
-    const session = asJson(JSON.stringify(status['session'] ?? null));
-    const autonomy = asJson(JSON.stringify(status['autonomy'] ?? null));
-    const lines = [
-      `Session: ${session !== null && session['active'] === true ? 'active' : 'inactive'}`,
-      `Autonomy: ${autonomy !== null && autonomy['active'] === true ? 'on' : 'off'}`,
-      `Running cards: ${running}`,
-      `Cards: ${rows.length}`,
-      ...rows,
-    ];
-    return Box({ flexDirection: 'column', children: lines.map((line) => Text({ children: line })) });
+    const sync = board.sync;
+    const m = paneModel({ view: board.view, nowMs: now, okAt: board.okAt, staleSince: board.staleSince, links: board.links, agents: board.agents, syncLine: sync.line, bodyColumns: e.props.bodyColumns, surface: e.surface });
+    const buttons = Box({
+      flexDirection: 'row',
+      gap: 1,
+      children: [
+        Button({ key: 'refresh', label: 'Refresh', onPress: () => void refreshBoard($, board) }),
+        Button({
+          key: 'native-tasks',
+          label: sync.wanted ? 'Native tasks: turn off' : 'Native tasks: turn on',
+          onPress: () => {
+            sync.wanted = !sync.wanted;
+            void refreshBoard($, board);
+          },
+        }),
+      ],
+    });
+    const section = (s: { title: string; lines: string[] }, grow: boolean) =>
+      Box({ key: `column-${s.title.split(' ')[0]!.toLowerCase()}`, flexDirection: 'column', ...(grow ? { flexGrow: 1 } : {}), children: [Text({ bold: true, children: s.title }), ...s.lines.map((line) => Text({ wrap: 'truncate', children: line }))] });
+    const body = m.layout === 'columns'
+      ? Box({ key: 'columns', flexDirection: 'row', gap: 1, children: m.sections.map((s) => section(s, true)) })
+      : Box({ key: 'stacked', flexDirection: 'column', children: m.sections.filter((s) => s.lines.length > 0).map((s) => section(s, false)) });
+    return Box({ flexDirection: 'column', children: [...m.header.map((line) => Text({ children: line })), buttons, ...(m.sections.length > 0 ? [body] : [])] });
   });
 };
