@@ -59,6 +59,17 @@
         "matcher": "Agent|Task"
       }
     ],
+    "PostModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.sh\" PostModelSwitch --harness claude",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "Stop": [
       {
         "hooks": [
