@@ -838,15 +838,17 @@ class HookCrashTest(unittest.TestCase):
     @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: the fallback root is a private POSIX temp directory')
     def test_the_state_location_survives_a_missing_home_directory(self):
         from orchestra_core import paths
-        with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
-            location = paths.state_home()
-        self.assertTrue(location.is_absolute())
-        self.assertIn('orchestra-state', location.name)
-        self.assertEqual(location.stat().st_mode & 0o077, 0)  # private to the user
-        location.chmod(0o755)
-        with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
-            again = paths.state_home()
-        self.assertEqual(again.stat().st_mode & 0o077, 0)  # a loosened root is tightened again
+        # A temp folder of its own: check.sh runs two suites at once, and the shared root would race (2.13 gate).
+        with tempfile.TemporaryDirectory() as tmp, mock.patch('tempfile.gettempdir', return_value=tmp):
+            with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
+                location = paths.state_home()
+            self.assertTrue(location.is_absolute())
+            self.assertIn('orchestra-state', location.name)
+            self.assertEqual(location.stat().st_mode & 0o077, 0)  # private to the user
+            location.chmod(0o755)
+            with mock.patch.dict(os.environ, {'XDG_STATE_HOME': ''}), mock.patch.object(Path, 'home', side_effect=RuntimeError('no home')):
+                again = paths.state_home()
+            self.assertEqual(again.stat().st_mode & 0o077, 0)  # a loosened root is tightened again
 
     @unittest.skipIf(portable.IS_WINDOWS, 'POSIX-only: the fallback root uses uids and symlinks')
     def test_an_unsafe_fallback_root_denies_instead_of_reading_as_no_run(self):

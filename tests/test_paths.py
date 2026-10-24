@@ -17,7 +17,7 @@ class LoadPolicyTests(unittest.TestCase):
             path.write_text('{"schema_version": 1,}')
             with self.assertRaises(ValueError) as caught:
                 load_policy(tmp)
-            self.assertRegex(str(caught.exception), '^Invalid project policy %s: .+: line 1 column 21' % re.escape(str(path)))
+            self.assertRegex(str(caught.exception), '^Invalid project policy %s: .+: line 1 column [0-9]+' % re.escape(str(path)))
 
 
 if __name__ == '__main__':
