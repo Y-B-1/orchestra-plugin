@@ -36,6 +36,8 @@ BUSY = 'Orchestra state is busy; retry'
 AGENT_GUARD = ('Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits), because only '
                'those get the worker brief, role limits and standing orders and return evidence the run can review')
 _REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
+_LEASE_FLAG = re.compile(r'(?<![\w-])--lease(?![\w-])')  # not --force-with-lease
+LEASE_COORDINATOR_ONLY = 'The coordinator lease is coordinator-only: a worker never runs orchestra.py with --lease'
 AUTONOMY_STOPPED = 'Orchestra autonomy stopped: %s. The run brief is in %s.'
 STATE_SHELL = ('a shell command may not touch the Orchestra state directory; run orchestra.py for engine commands, and the '
                'Write tool for review packages and progress notes')
@@ -452,6 +454,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     command = data.get('command', data.get('cmd'))
     if not isinstance(command, str):
         return _deny('Missing shell command', True)
+    if role == 'subagent' and str(payload.get('agent_type')).startswith('orchestra:') and 'orchestra.py' in command \
+            and _LEASE_FLAG.search(command):
+        return _deny(LEASE_COORDINATOR_ONLY)  # a worker role limit in every mode
     if role == 'subagent' and str(payload.get('agent_type')).startswith(_REVIEWER_TYPES) and runs_test_suite(command):
         gates = _gate_ids(engine)
         if gates:  # a worker role limit: minimal keeps it like protect; normal warns (row 43)
