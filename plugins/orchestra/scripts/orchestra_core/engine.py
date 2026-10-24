@@ -2275,9 +2275,12 @@ class Engine:
         expected = dict(reviewer=reviewer, categories=categories, tasks=ids, findings=findings,
                         verdict='BLOCKED' if findings else 'CLEAN', artifact=artifact, final=bool(final))
         if not isinstance(body, dict) or any(body.get(k) != v for k, v in expected.items()):
-            raise EngineError('Review report metadata, verdict or artifact does not match')
+            raise EngineError('Review report metadata, verdict or artifact does not match: '
+                              + self._receipt_mismatch(body, expected))
         if not isinstance(body.get('summary'), str) or not body['summary'].strip():
             raise EngineError('Review needs a nonempty semantic summary')
+        if findings and len(ids) == 1 and 'task_findings' not in body:
+            body = dict(body, task_findings={ids[0]: findings})  # one covered card owns every finding
         task_findings = self._check_task_findings(state, body, ids, findings)
         repair_check = self._check_repair_marker(body, final)
         if not final and repair_check:
@@ -2291,6 +2294,8 @@ class Engine:
         cleared = self._check_cleared(state, body, final, task_findings)
         notes = self._check_issues(body, findings, covered)
         out_of_scope = self._check_out_of_scope(body, final)
+        if not final:  # SPEC 5.7 item 2 keeps the field final-only; a checkpoint's items ride along as notes
+            notes, out_of_scope = notes + ['out of scope: ' + i for i in out_of_scope], []
         gate_receipts = self._check_gate_receipts(state, body, findings)
         evidence = self._snapshot(report_path, 'review', normalized)
         receipt = dict(id=uuid.uuid4().hex, reviewer=reviewer, categories=categories,
@@ -2305,6 +2310,27 @@ class Engine:
             receipt['entries'] = self._entry_digests()  # lets a clean fix re-review tell which files changed since
         state['reviews'].append(receipt)
         return copy.deepcopy(receipt)
+
+    @staticmethod
+    def _receipt_mismatch(body, expected):
+        """Each mismatched key with the call value and the file value; for the artifact, the differing fields."""
+        def show(value):
+            text = repr(value)
+            return text if len(text) <= 60 else text[:57] + '...'
+        if not isinstance(body, dict):
+            return 'the report file is not a JSON object (file %s)' % show(body)
+        parts = []
+        for key, value in expected.items():
+            seen = body.get(key)
+            if seen == value:
+                continue
+            if key == 'artifact' and isinstance(seen, dict):
+                fields = [f for f in sorted(set(value) | set(seen)) if value.get(f) != seen.get(f)]
+                parts.append('artifact differs in ' + '; '.join(
+                    '%s: call %s, file %s' % (f, show(value.get(f)), show(seen.get(f))) for f in fields))
+            else:
+                parts.append('%s (call %s, file %s)' % (key, show(value), show(seen)))
+        return '; '.join(parts)
 
     def _saw_clean_head(self, state, text, reviewer, artifact):
         """Whether a reviewer's artifact string `<sha> clean` holds: the sha is a prefix of HEAD, nothing in the receipt's
@@ -2400,9 +2426,15 @@ class Engine:
                 raise EngineError('Cleared entries are allowed only on final receipts')
             return {}
         held = [t['id'] for t in state['tasks'].values() if t['state'] == 'held' and not t.get('repaired_by')]
-        if (not isinstance(cleared, dict)
-                or any(key not in held or not isinstance(reason, str) or not reason.strip() for key, reason in cleared.items())):
-            raise EngineError('Invalid cleared entries: each names a held tip with a non-empty reason')
+        if isinstance(cleared, list) and not cleared:
+            cleared = {}  # [] means no clearances, the same as {}
+        if not isinstance(cleared, dict):
+            raise EngineError('Invalid cleared entries: expected an object of held tip to reason, got %r (held tips: %s)'
+                              % (cleared, ', '.join(held) or 'none'))
+        bad = [key for key, reason in cleared.items() if key not in held or not isinstance(reason, str) or not reason.strip()]
+        if bad:
+            raise EngineError('Invalid cleared entries: %s; each names a held tip with a non-empty reason (held tips: %s)'
+                              % (', '.join(map(str, bad)), ', '.join(held) or 'none'))
         for tip in held:
             if tip not in cleared and not (task_findings or {}).get(tip):
                 raise EngineError('Final receipt must address held tip ' + tip)
@@ -2412,8 +2444,6 @@ class Engine:
     def _check_out_of_scope(body, final):
         """Out-of-scope items never change the verdict and exist only on final receipts (SPEC 5.7 item 2)."""
         items = body.get('out_of_scope', [])
-        if not final and items:
-            raise EngineError('Out-of-scope findings are raised only at the final review')
         if not isinstance(items, list) or any(not isinstance(i, str) or not i.strip() for i in items):
             raise EngineError('Invalid out-of-scope findings')
         return items
