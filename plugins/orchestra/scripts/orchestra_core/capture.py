@@ -1,7 +1,7 @@
 """SubagentStop capture: save an Orchestra worker's final message and record it as the card's report.
 
 The stopped agent maps to its card through the `Assignment: WORKER TOKEN` line (or the prose `Worker name W, assignment
-token T`) in the first user message of its transcript. Caller-supplied identifiers are routing hints, never authority:
+token T`) in a user message within the first 64 lines of its transcript; the first one that names a running card wins. Caller-supplied identifiers are routing hints, never authority:
 the engine still checks the worker name and token against the running card."""
 import json
 from pathlib import Path

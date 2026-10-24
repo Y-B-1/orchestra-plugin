@@ -1501,7 +1501,7 @@ def _writes_state(command, state_dir, cwd):
     (redirects, tee, cp and install may write them). Reads and orchestra.py commands are not writes. Text only: best effort."""
     if _cli_only(command) or not _touches_state(command, state_dir, cwd):
         return False
-    text = re.sub(r'\d*>&\s*(?:\d+|-)', ' ', command)  # a descriptor copy writes no file
+    text = re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()])', ' ', command)  # a descriptor copy writes no file; `>&1new` is a file
     text = text.replace('&>', '>')
     text = re.sub(r'>&(?=\s*[^\s&>])', '>', text)  # `>&FILE` sends stdout and stderr to a file
     inside = False  # an earlier `cd` into the state directory

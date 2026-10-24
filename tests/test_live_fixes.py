@@ -92,6 +92,15 @@ class StateShellWriteTest(LiveFixture):
                         self.assertIn(STATE_SHELL, out['permissionDecisionReason'])
                         self.assertNotIn('Autonomy is active', out['permissionDecisionReason'])
 
+    def test_a_file_name_starting_with_a_digit_is_not_a_descriptor_copy(self):
+        s = shlex.quote(str(self.state))
+        for command in ('cd %s && echo x >&1new.json' % s, 'echo x >& %s/9state.json' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+        for command in ('cd %s && echo x >&2' % s, 'echo x 2>&1', 'echo x >&-'):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'allow')
+
     def test_reads_and_engine_commands_stay_allowed(self):
         for mode in MODES:
             self.set_mode(mode)
