@@ -201,6 +201,9 @@ class CliRefusals(unittest.TestCase):
             self.assertEqual(result.returncode, 2, argv)
             self.assertIn('usage:', result.stderr, argv)
         self.run_cli('where', lease=lease)
+        full = subprocess.run([sys.executable, str(CLI), '--repo', str(self.repo), '--state', str(self.state), '--lease=' + lease, 'where'],
+                              capture_output=True, text=True, timeout=25)
+        self.assertEqual(full.returncode, 0, full.stderr)
         self.run_cli('status', '--full', lease=lease)
         self.run_cli('refusals', '--last', '1')
         self.run_cli('finding', 'list')
