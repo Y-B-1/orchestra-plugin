@@ -474,10 +474,37 @@ def r1b_resume(x, chk):
     chk('the running card survives the restart', x.task('C1').get('state') in ('running', 'queued'), x.task('C1').get('state'))
 
 
+def m1_model_fit(x, chk):
+    """Proves: SessionStart records the session model, and the engine refuses an inline card on another model while a worker start is allowed."""
+    x.start('minimal')
+    x.card('M1', ['m1.txt'], mode='mechanical')
+    x.card('M2', ['m2.txt'])
+    x.claude('Reply OK. No tools.', turns=2, resume=False)
+    model = (x.o('board', '--view', lease=False).get('session') or {}).get('model')
+    family = next((f for f in ('sonnet', 'opus', 'haiku') if f in MODEL.lower()), MODEL)
+    chk('SessionStart recorded the session model', isinstance(model, str) and model and family in model.lower(), model)
+    refused = x.o('inline', 'M1', '--serial', 'live test', check=False)
+    chk('inline card on another model refused with Model fit', 'Model fit' in json.dumps(refused), json.dumps(refused)[:300])
+    ok = x.o('inline', 'M2', '--serial', 'live test', check=False)
+    chk('inline card on the session model allowed', 'error' not in ok and ok.get('inline'), json.dumps(ok)[:300])
+    started = x.o('dispatch', 'M1', '--serial', 'live test', check=False)
+    chk('worker start of the other-model card allowed', 'error' not in started and started.get('assignment'), json.dumps(started)[:300])
+
+
+def s1_role_skills(x, chk):
+    """Proves: The main session can load a role skill with the Skill tool."""
+    ev = x.claude('Call the Skill tool with skill "orchestra:orchestra-design", then call the Skill tool with skill '
+                  '"orchestra:orchestra-build". Then reply with the first heading line of each skill.', turns=6)
+    sk = [c for c in ev['calls'] if c['tool'] == 'Skill']
+    for name in ('orchestra:orchestra-design', 'orchestra:orchestra-build'):
+        hit = [c for c in sk if name in c['input']]
+        chk(f'Skill {name} loaded without error', hit and not hit[0]['error'], hit[0]['text'][:200] if hit else 'not called')
+
+
 SCENARIOS = {f.__name__.split('_')[0]: f for f in (
     g0_no_run, g1_minimal, g2_normal, g3_protect, a1_autonomy_git, a2b_autonomy_locks, a3b_approved,
     d1_agent_capture, d2_workflow_capture, w1_worktree_capture, d3_mode_line, d4_worker_limits, h1_stop_block,
-    h2b_board_on_prompt, r1b_resume, i1_install)}
+    h2b_board_on_prompt, r1b_resume, i1_install, m1_model_fit, s1_role_skills)}
 
 
 def run(root, sid):

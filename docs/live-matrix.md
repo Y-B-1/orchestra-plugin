@@ -4,7 +4,7 @@
 
 ## What it tests
 
-Sixteen scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
+Eighteen scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
 
 - Guard modes: `g0` (no run), `g1` minimal, `g2` normal, `g3` protect.
 - Autonomy: `a1` git limits while armed, `a2b` ledger, settings and cron locks, `a3b` the owner-only `approved` receipt.
@@ -12,6 +12,8 @@ Sixteen scenarios, each in its own scratch repository with a bare origin, so no 
 - Worker limits: `d3` missing Mode line, `d4` lease and delegation denies.
 - Run flow: `h1` the Stop block, `r1b` resume and `start --recover`.
 - Install: `i1` install and uninstall in a clean profile.
+- Model fit: `m1` SessionStart records the session model, the engine refuses an inline card on another model and still allows its worker start.
+- Role skills: `s1` the main session loads `orchestra:orchestra-design` and `orchestra:orchestra-build` with the Skill tool.
 
 Every check reads the stream-json events (tool calls, results, hook responses) or the engine state. None trusts what the model says about itself.
 
