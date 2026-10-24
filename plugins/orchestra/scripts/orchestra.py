@@ -17,10 +17,10 @@ import subprocess
 import sys
 import uuid
 
-from orchestra_core import cli_support, delta, portable
+from orchestra_core import briefs, cli_support, delta, ledger, portable
 from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
-from orchestra_core.paths import atomic, load_policy, repository, state_location
+from orchestra_core.paths import atomic, load_policy, main_checkout, repository, state_location
 
 ROOT = Path(__file__).resolve().parents[1]
 # Commands that add one `board` line to their JSON when a card changed state.
@@ -88,6 +88,14 @@ def parser():
     wave.add_argument('--inline', metavar='ID', help='The card the main session runs')
     wave.add_argument('--helper', metavar='REASON', help='Why helpers do builder cards on a size run or inline route')
     wave.add_argument('--serial', metavar='REASON', help='Start a single card alone although others could start beside it; the reason is logged')
+    wave.add_argument('--emit', action='store_true', help='After the start, print per card the agent type, brief path, prompt and agent() call')
+    card = sub.add_parser('card', help='Print the brief skeleton for a card; no lease, read-only')
+    card.add_argument('task_id')
+    card.add_argument('--out', metavar='FILE', help='Write the brief to FILE')
+    ledger_ = sub.add_parser('ledger', help='Print BUILD-LEDGER rows for accepted cards from engine facts; no lease, read-only')
+    ledger_.add_argument('--cards', help='Comma-separated task IDs (default: every accepted card)')
+    package = sub.add_parser('package', help='Write brief, report, self-review and diff stat for a card under <state>/packages/TASK; no lease')
+    package.add_argument('task_id')
     report = sub.add_parser('report')
     report.add_argument('worker')
     report.add_argument('token')
@@ -200,6 +208,11 @@ def execute(args):
         except ValueError:
             mode = 'minimal'
         return {'repo':str(repo),'state':str(state),'standing_orders':(state/'standing-orders.md').is_file(),'guard_mode':mode},0
+    if not args.state:  # F7: a linked worktree has no run of its own while the main checkout has one
+        main = main_checkout(repo)
+        if main and not (state/'state.json').exists() and (state_location(main)/'state.json').exists():
+            raise EngineError('This is a linked worktree with no run of its own; the run lives in the main checkout %s: '
+                              'run the command with --repo %s' % (main,shlex.quote(str(main))))
     if args.command=='refusals':  # lease-free and read-only; reads the log and nothing else
         return {'refusals':cli_support.read_refusals(state,args.last)},0
     if args.command=='start' and args.policy:
@@ -269,6 +282,16 @@ def execute(args):
     if args.command=='finding' and args.finding_command=='list':  # lease-free, like status
         result = engine.list_findings(args.for_brief)
         return ({'findings':result} if isinstance(result,str) else result),0
+    if args.command=='card':  # lease-free and read-only; --out writes only the file it names
+        text=briefs.card(engine,args.task_id)
+        if args.out:
+            atomic(Path(args.out).expanduser().resolve(),text.encode())
+            return {'path':str(Path(args.out).expanduser().resolve())},0
+        return {'brief':text},0
+    if args.command=='ledger':  # lease-free and read-only
+        return {'ledger':ledger.rows(engine,[i for i in (args.cards or '').split(',') if i] or None)},0
+    if args.command=='package':  # lease-free; writes only under <state>/packages
+        return {'package':str(ledger.package(engine,args.task_id))},0
     if args.command=='waves':  # lease-free and read-only, like status
         return engine.waves(args.actor),0
     if args.command=='board' and args.view:  # lease-free; from an allowlist, no lenses or hashing
@@ -304,7 +327,11 @@ def execute(args):
         token = engine.dispatch(args.actor,args.lease,args.task_id,worker,helper=args.helper,serial=args.serial)
         return {'assignment':token,'task':args.task_id,'worker':worker},0
     if args.command=='wave':
-        return engine.wave(args.actor,args.lease,args.task_ids,inline=args.inline,helper=args.helper,serial=args.serial),0
+        prepared = briefs.prepare(engine,args.task_ids,args.inline) if args.emit else None  # refuses before any card starts
+        result = engine.wave(args.actor,args.lease,args.task_ids,inline=args.inline,helper=args.helper,serial=args.serial)
+        if prepared is not None:
+            result['emit'] = briefs.emit(engine,prepared,result)
+        return result,0
     if args.command=='accept':
         engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
         return {'accepted':args.task_id},0
