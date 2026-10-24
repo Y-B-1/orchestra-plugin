@@ -282,8 +282,16 @@ async function syncTasks($: Dollar, sync: Sync, view: View): Promise<void> {
     if (!view.bound) return off('this session does not own the run');
     const names = (await $.tool.list()).map((t) => t.name);
     if (!TASK_TOOLS.every((n) => names.includes(n))) return off('task tools unavailable');
-    const probe = await $.tool.check({ tool: 'TaskCreate', input: { subject: `[${runShort(view.runId)}] probe`, description: 'Orchestra board probe' } });
-    if (probe.decision !== 'allow') return off(`TaskCreate is not allowed without asking (${probe.decision})`);
+    // Every task tool must pass without a dialog: `$.tool.call` runs the permission check, which can ask.
+    const probes: [string, Json][] = [
+      ['TaskCreate', { subject: `[${runShort(view.runId)}] probe`, description: 'Orchestra board probe' }],
+      ['TaskUpdate', { taskId: 'probe' }],
+      ['TaskList', {}],
+    ];
+    for (const [tool, input] of probes) {
+      const probe = await $.tool.check({ tool, input });
+      if (probe.decision !== 'allow') return off(`${tool} is not allowed without asking (${probe.decision})`);
+    }
     if (sync.runId !== view.runId) {
       sync.runId = view.runId;
       sync.known = new Set();

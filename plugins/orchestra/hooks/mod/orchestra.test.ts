@@ -755,7 +755,7 @@ const fromModRuns = (r: Rig) => r.runs.filter((x) => x.argv.includes('--from-mod
 type Native = { id: string; subject: string; status: string; owner?: string; blockedBy: string[] };
 
 /** The session around the module: the tool, Claude Code's task tools, agents and the UI ops. */
-function stage(on: On, r: Rig, opts: { tools?: string[]; decision?: string } = {}) {
+function stage(on: On, r: Rig, opts: { tools?: string[]; decision?: string; decisions?: Record<string, string> } = {}) {
   const tasks: Native[] = [];
   const taskCalls: Record<string, unknown>[] = [];
   const calls: Record<string, unknown>[] = [];
@@ -791,7 +791,7 @@ function stage(on: On, r: Rig, opts: { tools?: string[]; decision?: string } = {
   on('tool.list', async () => ({ value: (opts.tools ?? ['Bash', 'TaskCreate', 'TaskUpdate', 'TaskList']).map((name) => ({ name, description: '', mcp: false })) }) as never);
   on('tool.check', async (_$, e) => {
     checks.push(e);
-    return { decision: opts.decision ?? 'allow' } as never;
+    return { decision: opts.decisions?.[String((e as { tool?: unknown }).tool)] ?? opts.decision ?? 'allow' } as never;
   });
   on('agent.list', async () => ({ value: agents.map((a) => ({ ...a, description: '', type: 'orchestra:builder' })) }) as never);
   const spawned: { prompt: string }[] = [];
@@ -1012,6 +1012,21 @@ test('native tasks: a permission check that is not allow keeps sync off and rais
   expect(s.checks.length > 0).toBe(true);
   expect(s.taskCalls.length).toBe(0);
 });
+
+for (const [tool, decision] of [['TaskUpdate', 'ask'], ['TaskUpdate', 'deny'], ['TaskList', 'ask'], ['TaskList', 'deny']] as const) {
+  test(`native tasks: TaskCreate allowed but ${tool} ${decision} keeps sync off with no tool call`, async ($, on) => {
+    const r = rig(on);
+    const s = stage(on, r, { decisions: { TaskCreate: 'allow', [tool]: decision } });
+    engine(r, { view: boardView([{ id: 'A', state: 'queued', seq: 1 }]) });
+    await $.session.start(start);
+    await openBoard($);
+    await flush();
+    expect(s.taskCalls.length).toBe(0);
+    const ui = await drawBoard($, 'terminal', 80);
+    expect(texts(await ui.drawn())).toContain(`Native tasks: off (${tool} is not allowed without asking (${decision}))`);
+    await ui.unmount();
+  });
+}
 
 test('native tasks: a deleted task is never re-created and a failed update drops its card', async ($, on) => {
   const r = rig(on);
