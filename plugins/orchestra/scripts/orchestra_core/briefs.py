@@ -3,9 +3,11 @@ import json
 import re
 from pathlib import Path
 
+from . import now
 from .engine import PACKAGE_ROOT, EngineError, KEEP_REMOVE
 from .paths import atomic
 
+RUN_STATE = 'Run state now: %s (read it only when you need to know what other cards are doing).'
 DEFAULT_KEEP = 'Every existing test and public behavior the acceptance lines do not name.'
 
 
@@ -52,6 +54,8 @@ def render(task, repo, base, prep=()):
         parts += ['', '## Prep notes']
         for prep_id, note in prep:
             parts += ['', '### ' + prep_id, note]
+    parts += ['', '## Run state',
+              RUN_STATE % "the run's NOW.md in the state directory that `orchestra.py where` prints"]
     parts += ['', '## Starting point', '- Repository: ' + str(repo), '- Base commit: ' + base,
               '- Plugin root: %s (skills under <root>/skills/, CLI <root>/scripts/orchestra.py)' % PACKAGE_ROOT, '',
               '## Report contract', 'STATUS: PASS|ISSUES|BLOCKED', 'ARTIFACT: <full commit sha> <clean, or dirty-tree fingerprint>']
@@ -118,6 +122,7 @@ def emit(engine, prepared, result):
             isolation = 'worktree' if task['role'] == 'builder' and prepared['size'] > 1 else None
             forward = 'git merge --ff-only ' + prepared['base'] if isolation else None
             prompt = 'Read your brief at %s and do exactly what it says.\nAssignment: %s %s\n' % (path, worker, token)
+            prompt += RUN_STATE % (engine.state_dir / 'NOW.md') + '\n'
             if forward:
                 prompt += ('First run `%s`, and check `git rev-parse HEAD` prints %s before any edit; stop BLOCKED if it does not.\n'
                            % (forward, prepared['base']))
@@ -129,6 +134,7 @@ def emit(engine, prepared, result):
             entry.update(agent_type=agent_type, model_override=override, isolation=isolation, fast_forward=forward,
                          prompt=prompt, agent_call='agent(%s, {%s})' % (json.dumps(prompt), ', '.join(options)))
         entries.append(entry)
+    now.refresh(engine)
     return entries
 
 
