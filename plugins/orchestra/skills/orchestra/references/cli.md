@@ -4,7 +4,7 @@ Use Python 3.11+ with `plugins/orchestra/scripts/orchestra.py`. Common options p
 
 1. Inspect the target repository and applicable project rules.
 2. Run `--repo /path/to/project start --size tiny|medium [--asks N] [--owner-request] --policy policy.json --harness-session SESSION_ID`. A new run needs `--size`: "A new run needs --size tiny, medium or large". `large` needs `--owner-request`; otherwise escalate later with `route --size large`. `--asks` (an integer, 1 or more, default 1) counts the separately stated asks; the tier is the largest ask. On a resumed run the three flags refuse; use `start --new-run`. `start --items` refuses: "--items is the 2.4 flag; start with --size". `start` stores `session.size`, `session.asks`, `session.owner_request` and `session.base`. Take SESSION_ID from the SessionStart context on Claude Code; ending that harness session then releases the run. Save the returned lease: `start` prints it once and `status` never does. Policy and run data stay outside the application. `where` prints the repository, the state directory and whether `standing-orders.md` exists, without the lease.
-3. Add bounded cards with `--lease LEASE add task.json`; run `waves`, then start each wave whole with `wave [--inline ID] ID ...`; `dispatch TASK [WORKER]` (worker `orchestra-TASK` by default) and `inline TASK` start one card and refuse while a disjoint card could start beside it, unless `--serial REASON`. Order cards with `dependencies` only.
+3. Add bounded cards with `--lease LEASE add task.json`; run `waves`, then start each wave whole with `wave [--inline ID] [--helper REASON] ID ...` (workers are `orchestra-<ID>`; `--helper` adds a helper card started beside the wave); `dispatch TASK [WORKER]` (worker `orchestra-TASK` by default) and `inline TASK` start one card and refuse while a disjoint card could start beside it, unless `--serial REASON`. Order cards with `dependencies` only.
 4. Start the actual native worker only after reserving the card. Give the full brief and selected native profile. Return a startup receipt naming actual cwd/root/HEAD. A reservation token alone does not prove a worker is running.
 5. Run `report WORKER TOKEN result.txt`. A builder report, dispatched or inline, carries exactly one `SELF_REVIEW: ` line (below) and a nonempty `ARTIFACT:` line ("Builder report needs a nonempty ARTIFACT line"). Until accept, the same worker and token may report again to replace the report; a review that lists the card, or a repair of it, ends that ("A review covers this report; route a change through a repair card"). Inspect results and group returned builders by hand.
 6. Accept builder cards with `accept TASK`. Before the PR, record the pre-PR review with `--lease LEASE review review.json`, or with `review review.json --token TOKEN` to report the review card, record the final receipt and accept the card in one step.
@@ -30,7 +30,7 @@ Read-only evidence cards need coordinator inspection before acceptance. Use `rev
   "id": "B1", "role": "builder", "mode": "implementation",
   "inputs": ["approved settings spec"], "acceptance": ["invalid values show an error"],
   "files": ["src/settings.py"], "resources": ["preview:5101"], "dependencies": [],
-  "outcome": "settings-validation", "review_group": "settings-validation"
+  "outcome": "settings-validation", "review_group": "settings-validation", "brief": "briefs/B1.md"
 }
 ```
 
@@ -60,7 +60,7 @@ Write the report outside the application. Obtain the exact artifact and enumerat
 {
   "reviewer": "independent-worker-id",
   "categories": ["requirements", "correctness", "security", "tests", "architecture", "standards", "cleanup"],
-  "tasks": ["B1"], "findings": [], "verdict": "CLEAN", "final": true,
+  "tasks": ["B1"], "issues": [], "findings": [], "verdict": "CLEAN", "final": true,
   "summary": "Describe the inspected code, exercised failures, coverage and remaining gaps.",
   "artifact": {"copy": "replace this example with the complete artifact command output"}
 }
@@ -78,7 +78,7 @@ Add at most one operator card with `mode: release`. Dispatch it before `permit`;
 
 For unattended continuation, explicitly create a ledger with completion criteria, scope and authority. Run `autonomy arm` (no lease; ledger at `<state>/autonomy.md`, written from a template when missing), `autonomy disarm` or `autonomy status`. No pass or stall count stops the loop; the deadline is the limit. `max_passes` and `max_stalls` are optional, and a 2.1 ledger that carries them has them recorded, not enforced. The ledger's one `- Release:` line is `no release, permit or deploy` or `pre-authorized <remote> <target>`, which must equal the policy release. The Stop hook continues a turn only when the coordinator can act now (a ready or reported card, an open final finding, a held chain owed its final review), and never sends the same continuation twice for an unchanged progress signature; running workers alone let the turn end. Ending the session ends autonomy when the run was started with `--harness-session`; arm only such a run. Run `park TASK --reason TEXT` and `unpark TASK` under the active lease: a parked card holds no capacity or reservation and blocks `finish`. `start --new-run` is refused while a stopped run's report is kept without an owner receipt (references/approval.md). Stop never arms itself. Use `interrupt` on cancellation; late reports fail. The main must also stop actual workers through the harness. Completed evidence and prior policies stay in external history; the package never adopts unrelated old runs automatically.
 
-Outside a run, the guard allows a non-force push of one branch or tag, `gh pr merge`, a `gh api` merge, a `gh api graphql` mutation or file body, and `gh release create` without `permit`. Inside a run, `normal` mode (the default) allows them too; `protect` mode runs them with a current engine permit and otherwise Claude Code asks the user. While autonomy is active, or a stopped run's report is kept without an owner receipt, they are denied, except the pre-authorized release. The pull request push, branch and worktree cleanup, and merges after `approved` follow references/approval.md and docs/hooks.md.
+Outside a run, the guard allows a non-force push of one branch or tag, `gh pr merge`, a `gh api` merge, a `gh api graphql` mutation or file body, and `gh release create` without `permit`. Inside a run, `minimal` (the default) and `normal` allow them too; `protect` runs them with a current engine permit and otherwise denies. While autonomy is active, or a stopped run's report is kept without an owner receipt, they are denied, except the pre-authorized release. The pull request push, branch and worktree cleanup, and merges after `approved` follow references/approval.md and docs/hooks.md.
 
 ## Gates, findings and briefs
 

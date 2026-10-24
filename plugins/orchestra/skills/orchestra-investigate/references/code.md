@@ -29,7 +29,7 @@ Then build a pass/fail loop that goes red on this bug. Do not read code for a th
 9. a differential run of old against new, or of two configs.
 
 
-The loop is done when one command, already run, is red-capable (it asserts the reported symptom, not "does not crash"), deterministic, fast and runnable unattended. For a flaky bug, raise the reproduction rate until it is debuggable. If you cannot build a loop, stop with `STATUS: BLOCKED`. List what you tried and name what you need: access to the failing environment, a redacted captured artifact, or approval for temporary instrumentation.
+The loop is done when one command, already run, is red-capable (it asserts the reported symptom, not "does not crash"), deterministic, fast and runnable unattended. For a flaky bug, raise the reproduction rate until it is debuggable; propose no retry, longer timeout or skip until the cause is named, and for a test that fails only after others, bisect the earlier tests for the polluter. If you cannot build a loop, stop with `STATUS: BLOCKED`. List what you tried and name what you need: access to the failing environment, a redacted captured artifact, or approval for temporary instrumentation.
 
 ### 2. Reproduce and minimise
 

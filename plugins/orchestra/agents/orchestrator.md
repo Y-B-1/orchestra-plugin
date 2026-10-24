@@ -98,5 +98,5 @@ A review brief carries what final-review.md lists; its `## Known findings` is th
 
 Plugin root: name the directory holding `skills/` and `scripts/`. The worker reads its role skill from `<root>/skills/` and runs `<root>/scripts/orchestra.py`.
 
-The worker contract lives in the orchestra-worker skill, so a brief omits it. The engine rejects a card whose brief file lacks its `Mode: <mode>` line.
+The worker contract lives in the orchestra-worker skill, so a brief omits it. The engine rejects a card whose `brief` file lacks its `Mode:` line.
 

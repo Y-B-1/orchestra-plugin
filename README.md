@@ -54,7 +54,7 @@ From your first message to a finished branch:
    | Size | Diff | Route |
    | --- | --- | --- |
    | tiny | up to 50 changed lines | Inline edit in the main session, no alignment. A tiny builder card needs `dispatch --helper REASON`. |
-   | medium | up to 400 | Grill inline, then build every unit inline in sequence. |
+   | medium | up to 400 | Grill inline, then run `waves` and start each wave whole with `wave`. |
    | large | above 400, or more than one session can align | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it, then a plan card; 2+ units go to builders through Workflow. |
 
    Tiny escalates to medium when an edit needs a decision or the diff passes the guide. Medium escalates to large when grilling outgrows one context or answers open questions faster than they close.
@@ -70,7 +70,7 @@ From your first message to a finished branch:
 13. **Repair, then hold.** A chain with a current finding gets one Opus builder `repair` card, then one fix re-review of the fix diff only (`repair_check: true`). CLEAN accepts the chain. BLOCKED holds it with `orchestra.py hold TASK --finding TEXT`: the work stays in place, the held log records it, and the run continues.
 14. **Findings ledger.** The coordinator tries to refute each finding against the source and records what happened with `finding add`: rejected, deferred, inline, card or brief. Out-of-scope defects never change a verdict; each is fixed inline, made a card or left in the brief. `finding list --for-brief` gives reviewers the items not to re-raise.
 15. **Finish and run brief.** `orchestra.py finish` closes the run once every card is accepted, nothing is parked or held, findings are triaged and the gates are current. Every end of a run appends a run brief to `progress.md`: Needs you first, then Still failing, Held log and Final rounds. `orchestra.py brief` prints it.
-16. **Release.** Release is disabled by default. Project policy must name authorization, remote, target, commands and checks. During a run, a release action runs when a current engine permit matches it; otherwise Claude Code asks you to approve it. Without a release assignment, the brief says "ready to release".
+16. **Release.** Release is disabled by default. Project policy must name authorization, remote, target, commands and checks. During a run, a release action runs when a current engine permit matches it. Orchestra never asks: in `protect` mode a release without a permit is denied, and in `minimal` and `normal` Claude Code's own permission mode decides. Without a release assignment, the brief says "ready to release".
 
 ```text
 message ──> session start ──> read ──> answer? ──yes──> reply, no run
@@ -128,24 +128,20 @@ Workers never delegate, never own coordinator state and never release outside an
 
 ## Guards
 
-The PreToolUse hook classifies shell, edit, agent, scheduler and `SendMessage` calls, then applies the guard mode and the run state. `guard_mode` in `policy.json` is `normal` (default) or `protect`. Normal mode does not block routine git work. An autonomous run, active or stopped with its report kept until you approve it, is always strict, whatever the mode.
+Orchestra's hooks only allow or deny; they never ask. Every ask-or-allow decision belongs to Claude Code's permission mode. `guard_mode` in `policy.json` is `minimal` (default), `normal` or `protect`. An autonomous run, active or stopped with its report kept until you approve it, is always strict, whatever the mode.
 
-| | `normal` | `protect` | Autonomous run, or stopped and waiting for you |
-| --- | --- | --- | --- |
-| `git stash`, amend, multi-ref or refspec push | Allowed with a warning; a push that deletes a tag, the default or a protected branch stays denied | Denied | Denied |
-| `git add .`, `commit -a` | Allowed | Denied | Denied |
-| Force or mirror push, `reset --hard`, `clean -f`, wholesale restore, `--prune` | Denied | Denied | Denied |
-| Release actions: `git push`, `gh pr merge`, a `gh api` merge call, `gh release create`, package publish, deploy tools | Allowed | During a run, a current engine permit or a question to you | Denied, except the pull request push, the merge guard's allow and the pre-authorized release |
-| `gh workflow run`, `gh pr edit --base`, a `gh api` write beyond pull request creation, comments and reviews | Release class, so allowed | Release class | Denied |
-| Run's own branch push, `gh pr create`, `gh pr review` | Allowed | Allowed | Allowed: exactly `git push [-u] <remote> <refspec>` with a configured remote name, a local branch as source and one destination branch other than the default, a protected branch or the release target |
-| Merge into the default branch | Allowed | As a release | Only after you type `approved`, in the receipt's order, at the recorded head (see [Autonomous mode](#autonomous-mode)) |
-| Deletion | Branch and remote branch deletes only when provably merged | Same | The run's own branches and worktrees, files inside a linked worktree, and provably merged branches; each as a plain single command |
-| Scheduler tools (`CronCreate`, `ScheduleWakeup`, `RemoteTrigger`), settings edits | Allowed | Allowed | Denied |
-| A scheduler or `SendMessage` call whose text is only the word `approved` | Denied | Denied | Denied |
-| Credential entry | Not detected | Not detected | Forbidden by procedure, not detected |
-| Agent types | During a run, a non-`orchestra:*` agent is warned about; workers cannot delegate | During a run, only `orchestra:*` agents; workers cannot delegate | Same as protect |
-| Reviewer and critic test runs | Warned while a gate receipt is current | Denied while a gate receipt is current | Same as protect |
-| Run state and installed config files | Protected | Protected | Protected |
+| | `minimal` (default) | `normal` | `protect` | Autonomous run, or stopped and waiting for you |
+| --- | --- | --- | --- | --- |
+| Generic git and shell commands (`stash`, `reset --hard`, force push, `rm`, chained or heredoc commands) | Not checked: Claude Code's permission mode decides | Warned or allowed; force push, `reset --hard`, `clean -f` and `--prune` denied | Destructive git denied | Destructive git denied |
+| Release actions: `git push`, `gh pr merge`, `gh release create`, package publish, deploy tools | Not checked | Allowed | During a run, a current engine permit; otherwise denied | Denied, except the pull request push, the merge guard's allow and the pre-authorized release |
+| Run's own branch push, `gh pr create`, `gh pr review` | Allowed | Allowed | Allowed | Allowed: exactly `git push [-u] <remote> <refspec>` to a branch other than the default, a protected branch or the release target |
+| Merge into the default branch, local moves of it, tag deletes | Not checked, except the merge guard after `approved` | Allowed | As a release | Only after you type `approved`, in the receipt's order, at the recorded head (see [Autonomous mode](#autonomous-mode)) |
+| Deletion | Not checked | Branch deletes only when provably merged | Same | The run's own branches and worktrees, files inside a linked worktree, git-ignored build output, provably merged branches |
+| Scheduler tools, settings edits | Allowed | Allowed | Allowed | Denied |
+| A scheduler or `SendMessage` call whose text is only the word `approved` | Denied | Denied | Denied | Denied |
+| Agent types | During a run, a non-`orchestra:*` agent is warned about; workers cannot delegate | Same | During a run, only `orchestra:*` agents | Same as protect |
+| Reviewer and critic test runs | Denied while a gate receipt is current | Warned | Denied | Denied |
+| Run state, ledger, policy and installed config files | Protected from edit tools; under a lock, from shell writes too | Same | Same | Same |
 
 `orchestra.py classify "COMMAND"` prints the protect verdict whatever the mode.
 
