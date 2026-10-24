@@ -1488,7 +1488,7 @@ def _writes_state(command, state_dir, cwd):
         return False
     text = re.sub(r'\d*>&\s*(?:\d+|-)', ' ', command)  # a descriptor copy writes no file
     text = text.replace('&>', '>')
-    inside = before = False  # the last `cd` went into the state directory; the flag before it, for `cd -`
+    inside = False  # an earlier `cd` into the state directory
     for piece in re.split(r'[;&\n]+|(?<!>)\|+', text):  # `>|` is a clobbering redirect, not a pipe
         for target in re.findall(r'>>?\|?\s*((?:\'[^\']*\'|"[^"]*"|[^\s<>\'"])+)', piece):
             target = target.replace("'", '').replace('"', '')
@@ -1505,14 +1505,7 @@ def _writes_state(command, state_dir, cwd):
         verb = PurePosixPath(words[0]).name.lower()
         args = words[1:]
         if verb == 'cd':
-            if args[:1] == ['-']:
-                inside, before = before, inside  # `cd -` returns to the directory of the cd before
-            elif _touches_state(piece, state_dir, None):
-                inside, before = True, inside
-            elif not args or args[0].startswith(('/', '~')):
-                inside, before = False, inside  # an absolute or home path leaves the state directory
-            else:
-                before = inside  # a relative or variable path ($OLDPWD, $HOME) keeps the flag
+            inside = inside or _touches_state(piece, state_dir, None)
             continue
         flagged = verb == 'sed' and any(re.match(r'-[A-Za-z]*i|--in-place', w) for w in args if w.startswith('-'))
         if verb not in _WRITE_VERBS and not flagged:

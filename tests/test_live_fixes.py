@@ -134,9 +134,9 @@ class StateShellWriteTest(LiveFixture):
             with self.subTest(command=command):
                 self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
 
-    def test_a_cd_out_of_the_state_directory_ends_the_inside_rule(self):
-        s = shlex.quote(str(self.state))
-        self.assertEqual(self.verdict('cd %s && ls; cd /tmp && echo x > out.txt' % s, session_id='s1'), 'allow')
+    def test_a_cd_out_of_the_state_directory_still_denies_a_relative_write_sticky_rule(self):
+        s = shlex.quote(str(self.state))  # sticky: once a cd into the state directory appears, a relative write denies
+        self.assertEqual(self.verdict('cd %s && ls; cd /tmp && echo x > out.txt' % s, session_id='s1'), 'deny')
         self.assertEqual(self.verdict('cd %s && echo x > state.json' % s, session_id='s1'), 'deny')
 
     def test_a_cd_back_into_the_state_directory_keeps_the_inside_rule(self):
@@ -146,8 +146,31 @@ class StateShellWriteTest(LiveFixture):
                         'cd %s && cd $HOME && echo x > state.json' % s):
             with self.subTest(command=command):
                 self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
-        self.assertEqual(self.verdict('cd %s && cd /tmp && echo x > out.txt' % s, session_id='s1'), 'allow')
-        self.assertEqual(self.verdict('cd /tmp && cd %s && cd - && echo x > out.txt' % s, session_id='s1'), 'allow')
+
+    def test_every_return_to_the_state_directory_is_denied(self):
+        s = shlex.quote(str(self.state))
+        for command in ('cd %s && cd /tmp && cd "$OLDPWD" && echo x > state.json' % s,
+                        'cd %s && cd /tmp && cd ${OLDPWD} && echo x > state.json' % s,
+                        'cd %s && cd /tmp && cd ~- && echo x > state.json' % s,
+                        'cd %s && cd /tmp && cd - && echo x >> state.json' % s,
+                        'cd %s && cd ~+ && echo x > state.json' % s,
+                        'cd %s || cd /tmp; cd /tmp; cd -; echo x > state.json' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+
+    def test_a_relative_write_after_leaving_the_state_directory_is_denied_sticky_rule(self):
+        s = shlex.quote(str(self.state))  # was allowed by the cd-out rule; the sticky rule denies it
+        for command in ('cd %s && cd /tmp && echo x > out.txt' % s, 'cd /tmp && cd %s && cd - && echo x > out.txt' % s,
+                        'cd %s; cd ~; rm out.txt' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+
+    def test_a_note_append_after_a_cd_into_the_state_directory_is_allowed(self):
+        s = shlex.quote(str(self.state))
+        for command in ('echo x >> %s/progress.md' % s, 'echo x >> %s/standing-orders.md' % s,
+                        'cd %s && echo x >> progress.md' % s, 'cd %s && echo x >> standing-orders.md' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'allow')
 
 
 class ProtectBranchPushTest(LiveFixture):
