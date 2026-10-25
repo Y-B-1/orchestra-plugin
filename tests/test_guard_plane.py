@@ -794,7 +794,7 @@ class LockedShellTest(PlaneFixture):
         for command in ('rm -rf build f.txt', 'rm -rf scratch', 'rm -rf build/../f.txt', "find . -name '*.pyc' -delete",
                         "find . -name '*.txt' -delete", 'rm -rf build && rm f.txt', 'rm -rf .git/info', 'rm -rf $HOME/build',
                         "find . -name '*.pyc' -newer f.txt -delete", "find . -name '*.pyc' -exec rm {} ;", 'rm -rf pkg',
-                        'rm -rf ../outside/build', 'rm -rf /tmp/build', 'rm -rf build*', 'rm link', 'find / -name x -delete'):
+                        'rm -rf ../outside/build', 'rm -rf /opt/build', 'rm -rf build*', 'rm link', 'find / -name x -delete'):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(command), 'deny')
 

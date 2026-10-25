@@ -546,6 +546,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         cleanup = _autonomy_cleanup(command, decision, cwd, engine)
         if cleanup is not None:
             return cleanup
+        if _rm_in_temp(command):
+            return HookResult({})  # Files under the system temp directory hold no work of the run
         if engine is not None and _rm_in_worktrees(command, cwd):
             return HookResult({})  # Section 3.4: the run may delete files inside a linked worktree
         if engine is not None and _deletes_only_ignored(command, cwd):
@@ -1387,6 +1389,8 @@ def _autonomy_cleanup(command, decision, cwd, engine=None):
     if len(words) == 4 and words[:3] in (['git', 'branch', '-d'], ['git', 'branch', '--delete']):
         branch = words[3]
     elif len(words) == 4 and words[:3] == ['git', 'worktree', 'remove'] and not words[3].startswith('-'):
+        if _merged_run_worktree(cwd, words[3]):
+            return HookResult({})  # A clean run worktree whose commits the current branch already holds
         branch = _worktree_branch(cwd, words[3])
         if isinstance(branch, HookResult):
             return branch
@@ -1397,6 +1401,72 @@ def _autonomy_cleanup(command, decision, cwd, engine=None):
     merged = replace(decision, category='merged-delete', kind='local', branch=branch, remote=None)
     denied = _merged_delete_check(merged, cwd, engine, plane=True)
     return HookResult(denied) if denied else HookResult({})
+
+
+def _merged_run_worktree(cwd, path):
+    """True when `path` is a linked worktree under `<repository>/.claude/worktrees/` that is not the session's own,
+    has no change `git status --porcelain` reports, and whose HEAD is an ancestor of the HEAD at cwd."""
+    code, out = _git_out(cwd, 'worktree', 'list', '--porcelain')
+    if code != 0 or not out.startswith('worktree '):
+        return False
+    main = Path(out.split('\n', 1)[0][len('worktree '):]).resolve()
+    here, target = Path(cwd).resolve(), (Path(cwd) / path).resolve()
+    if target == here or target in here.parents or (main / '.claude' / 'worktrees') not in target.parents:
+        return False
+    if target not in _linked_worktrees(cwd):
+        return False
+    code, status = _git_out(target, 'status', '--porcelain')
+    code_head, head = _git_out(target, 'rev-parse', 'HEAD')
+    if code != 0 or status or code_head != 0 or not head:
+        return False
+    return _git_out(cwd, 'merge-base', '--is-ancestor', head, 'HEAD')[0] == 0
+
+
+_TEMP_PLAIN = re.compile(r'[A-Za-z0-9_./:+=*?\[\]~${}-]+( [A-Za-z0-9_./:+=*?\[\]~${}-]+)*')
+_TMPDIR_PREFIX = re.compile(r'\$(?:TMPDIR|\{TMPDIR\})(?=/|$)')
+
+
+def _rm_in_temp(command):
+    """`rm` with any flags as one plain command whose every operand lies below `/tmp`, `/private/tmp` or `$TMPDIR`.
+    The operand is resolved first, so a `..` or a link that leaves the directory refuses it; a glob is judged by the
+    directory before it and may not start with a dot. The temp directory itself is never an operand."""
+    if not _TEMP_PLAIN.fullmatch(command.strip()):
+        return False
+    words = command.split()
+    if words[0] != 'rm':
+        return False
+    roots = [Path('/tmp').resolve(), Path('/private/tmp').resolve()]
+    tmpdir = os.environ.get('TMPDIR')
+    if tmpdir and os.path.isabs(tmpdir) and len(Path(tmpdir).resolve().parts) >= 3:
+        roots.append(Path(tmpdir).resolve())
+    operands, options = [], True
+    for word in words[1:]:
+        if options and word == '--':
+            options = False
+        elif options and word.startswith('-'):
+            if not _RM_FLAGS.fullmatch(word):
+                return False
+        else:
+            operands.append(word)
+    if not operands:
+        return False
+    for operand in operands:
+        if _TMPDIR_PREFIX.match(operand):
+            if not tmpdir or not os.path.isabs(tmpdir):
+                return False
+            operand = tmpdir.rstrip('/') + operand[_TMPDIR_PREFIX.match(operand).end():]
+        if '$' in operand or '{' in operand or '}' in operand or not operand.startswith('/') or '..' in operand.split('/'):
+            return False
+        parts = operand.split('/')
+        for part in parts:
+            if re.search(r'[*?\[]', part) and (part.startswith('.') or ('[' in part and '.' in part)):
+                return False
+        glob = re.search(r'[*?\[]', operand)
+        base = operand[:glob.start()].rsplit('/', 1)[0] if glob else operand
+        target = Path(base or '/').resolve()
+        if not any(root in target.parents or (glob and target == root) for root in roots):
+            return False
+    return True
 
 
 _RM_PLAIN = re.compile(r'[A-Za-z0-9_./:+=*?\[\]~-]+( [A-Za-z0-9_./:+=*?\[\]~-]+)*')
