@@ -464,3 +464,96 @@ Source: the audit proposals and the friction log of the 2.13 run, planned by a d
 | LADR2 | builder implementation | f2d55e9 | the owner sets repairs per chain in the autonomy ledger, a sibling repair no longer waits on a parent reservation it does not own; 6 checks, 1 red first; no review | accepted |
 | FIXT | builder mechanical | 5fde75b | sibling fixtures follow the acceptance-match rule; 4 checks, 2 red first; no review | accepted |
 | HOOK2 | builder implementation | 401f0b8 | the board as a stone on the path: the prompt hook, a post-agent hook and the Stop hook say what moved and what waits; 6 checks, 1 red first; no review | accepted (ruled) |
+
+## 2.15.0 (2026-10-25)
+
+Source: the 2.15 plan (autonomy that answers its own questions, model fit, fewer engine turns, `NOW.md`, a tiny lane with no run), built card by card, then a pre-PR review, four repairs and a re-review. Rows come from the `ledger` command.
+
+| Card | Role | Commit | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| NOW | builder implementation | 81720ae | 4 checks, 1 red first; review BLOCKED | accepted |
+| ENG | builder implementation | a601de3 | 5 checks, 1 red first; review BLOCKED | accepted |
+| F66 | builder implementation | 1d0b899 | 5 checks, exit 0; review BLOCKED | accepted |
+| CLI | builder implementation | 8d28a1d | 4 checks, 1 red first; review CLEAN | accepted |
+| WIRE | builder implementation | 63aff69 | 4 checks, 1 red first; review BLOCKED | accepted |
+| DOC | builder implementation | 3c61d37 | 3 checks, exit 0; review BLOCKED | accepted |
+| HMOD | builder implementation | 5e2c2ac | 5 checks, 1 red first; review BLOCKED | accepted |
+| LIVE2 | builder implementation | 50a43eb | 3 checks, exit 0; review BLOCKED | accepted |
+| MODUI | builder implementation | 2a65ee5 | 2 checks, 1 red first; review BLOCKED | accepted |
+| GOAL | builder implementation | 4437b89 | 5 checks, exit 0; review CLEAN | accepted |
+| SKD | builder mechanical | fefb4b7 | 3 checks, exit 0; review BLOCKED | accepted |
+| HMOD2 | builder implementation | 1b966e7 | 4 checks, 1 red first; review BLOCKED | accepted |
+| FR1 | builder implementation | f701c8f | 2 checks, exit 0; review BLOCKED | accepted |
+| FR2 | builder implementation | 49a980a | 4 checks, exit 0; review BLOCKED | accepted |
+| FR34 | builder implementation | 01e4fb7 | 6 checks, 2 red first; review BLOCKED | accepted |
+| FR6 | builder implementation | 4e3757d | 3 checks, exit 0; review BLOCKED | accepted |
+| GOAL2 | builder implementation | 4213f38 | 3 checks, exit 0; review BLOCKED | accepted |
+| LIVE3 | builder implementation | 85a2dc6 | 3 checks, exit 0; review BLOCKED | accepted |
+| TOOLS | builder implementation | 6b090d7 | 3 checks, exit 0; review BLOCKED | accepted |
+| SKL | builder implementation | 31c89c6 | 4 checks, 1 red first; review BLOCKED | accepted |
+| RST | builder implementation | 0fc3c34 | 2 checks, exit 0; review BLOCKED | accepted |
+| TASKDOC | builder implementation | 2ed996b | 2 checks, exit 0; review BLOCKED | accepted |
+| TINY | builder implementation | a1b1c2d | 2 checks, exit 0; review BLOCKED | accepted |
+| TOOLS2 | builder implementation | 2bcc577 | 3 checks, exit 0; review BLOCKED | accepted |
+| GRD | builder implementation | 052e391 | 5 checks, exit 0; review CLEAN | accepted |
+| FIXPIN | builder implementation | af6ca42 | 3 checks, exit 0; review BLOCKED | accepted |
+| VER2 | builder implementation | 3c61d37 | 2 checks, exit 0; review BLOCKED | accepted |
+| DOFIX | builder implementation | 401006c | 2 checks, exit 0; review BLOCKED | accepted |
+| OUTFIX | builder implementation | 6aa9389 | 3 checks, exit 0; review CLEAN | accepted |
+| OUTFIX2 | builder implementation | 4c6d34e | 3 checks, exit 0; review BLOCKED | accepted |
+| RVC | code-reviewer final | - | final-review; report only; review BLOCKED | accepted |
+| RVS | code-reviewer final | - | final-review; report only; review BLOCKED | accepted |
+| RVT | code-reviewer final | - | final-review; report only; review BLOCKED | accepted |
+| RGOAL | builder repair | fd7fac6 | 2 checks, exit 0; review CLEAN | accepted |
+| ROUT | builder repair | 3094551 | 2 checks, exit 0; review CLEAN | accepted |
+| RCLI | builder repair | 8d0620a | 3 checks, 1 red first; review CLEAN | accepted |
+| RGRD | builder repair | d74b28b | 3 checks, 1 red first; review CLEAN | accepted |
+| FXA | code-reviewer final | - | report only; no review | accepted |
+| FXC | code-reviewer final | - | report only; no review | accepted |
+| FXG | code-reviewer final | - | report only; no review | accepted |
+| FXR | code-reviewer final | - | report only; no review | accepted |
+| FXO | code-reviewer final | - | report only; no review | accepted |
+
+### Topology study on the candidate
+
+Ten tasks, two runs each; every run passed every hidden grader. Lead and workers on Sonnet 5.5, `claude -p`, `bypassPermissions`. D forces a run with cards. D2 lets Orchestra route itself (tiny lane, model fit); it spawned no subagent, because every task fit one context on the session model.
+
+| Task | Solo (2.14 runs) | D on 2.14 | D on 2.15 | D2 on 2.15 |
+| --- | --- | --- | --- | --- |
+| S | $0.09, 15 s | $0.25, 60 s | $0.22, 41 s | $0.16, 20 s |
+| M | $0.09, 27 s | $0.68, 138 s | $0.64, 224 s | $0.12, 42 s |
+| L | $0.14, 43 s | $0.44, 159 s | $0.33, 127 s | $0.18, 66 s |
+| E | $0.11, 34 s | $0.22, 84 s | $0.23, 86 s | $0.10, 32 s |
+| R | $0.09, 26 s | $0.34, 192 s | $0.48, 290 s | $0.13, 110 s |
+
+Totals: solo $1.03; D on 2.14 $3.85; D on 2.15 $3.82; D2 on 2.15 $1.37.
+
+### Live matrix
+
+Candidate 4c6d34e: 18 scenarios, each run twice (`--repeat 2`); all pass, no flips. Gate receipt 5dbe2e50 on 4c6d34e.
+
+### Held for the owner
+
+| Item | Note |
+| --- | --- |
+| AUQ | The state-write check still strips a descriptor copy before a quoted delimiter, so `cd STATE && echo x >&1" "/../state.json` is not read as a write. Bash wrote `state.json` when a directory named `1 ` (trailing space) exists in the state directory. The fix idea: treat any descriptor copy followed by a quote as a write unless the quote is the last character or an unquoted delimiter follows it. A second repair of this chain needs the owner's words. |
+
+### Deferred to a follow-up (review notes at 4c6d34e and later)
+
+- Model fit is enforced only for builder cards in a sized run (`_check_route` calls `_check_model_fit` on the builder branch alone). Investigator and designer-planner cards start inline on any session model. Either extend the check or narrow the skill and CLI reference text to builder cards.
+- A startable card left out of a wave because `_fit` fails (a second inline-only tiny card, or the worker or worktree cap) appears in neither `wave_now` nor `serialized`. The `wave` command output has no `wave_now` or `serialized`, although the changelog says it prints them; only `waves` does.
+- `open_session` resumes an ended or interrupted run under any `--harness-session`, rebinds it and requeues running cards, with no `--take-over` and no `progress.md` entry. Plain `start` therefore skips the take-over gate.
+- Escalation (`_nudge`) overwrites each non-owner parked reason with `needs-owner:escalated`, so the original reason (such as `lost-worker`) is lost from the card the owner reads.
+- `orchestra.py` refreshes `NOW.md` in `main()` only when `args.lease` is set. `start` and `start --recover` issue a lease without one and leave `NOW.md` stale until the next leased command.
+- `handle_event` (Stop and PreToolUse) and SessionStart call `_record_model` with no `_other_session` check; only `prompt_board` has one. A SessionStart from another session can rewrite the run's recorded model, so the model-fit check then lets a card run inline on the wrong model or refuses it wrongly. This is a model-policy integrity gap, not an exploit.
+- `_rm_in_temp` allows `rm -rf /tmp/*` and `/private/tmp/*/` under autonomy. That deletes every session's scratchpad, including coordinator briefs and task output, and the engine state if `XDG_STATE_HOME` points into temp. The code comment "hold no work of the run" is optimistic.
+- `_merged_run_worktree` allows a non-force `git worktree remove` of any clean, merged worktree under `.claude/worktrees`, including one that belongs to another session. Git deletes ignored files (`.env.e2e.local`, local configs) with the worktree, and `git status --porcelain` does not show them.
+- `_rm_in_worktrees` (older than 2.15) has the same glob pattern: it judges a glob by the directory before its first glob character, so a glob in a middle component may cross a link that leaves a linked worktree. Not verified.
+- The model-fit rule appears in four files the coordinator loads (`SKILL.md`, `coordination.md`, `parallel.md` and the CLI reference), and "A tiny task starts no run" appears in both `SKILL.md` and `triage.md`. The CLI reference step 2 still reads `start --size tiny|medium`, and the same page still describes a tiny dispatch. No sentence repeats verbatim, so no test catches it. The cost is about 5 lines of repeated prose.
+- Three wording claims do not match the code. The deny reason quoted in the changelog and `docs/hooks.md` ("decide it yourself, record the decision, or park the card") differs from `DECIDE_OR_PARK` in `hooks.py`, which the tests pin. The changelog says a park without the `needs-owner:` prefix is undone, but the engine only nudges the coordinator to run `unpark`. `docs/hooks.md` and the changelog say the model is recorded at three hook points; `handle_event` also records it at Stop and at the first PreToolUse command that carries `orchestra.py`.
+- Dead and duplicate code: the brief builder in `engine.py` tests `reason in ('stalled', 'needs-owner:escalated')` and `reason in ('gate-failing', ...)`, but no stop returns `stalled` or `gate-failing` now. `EFFORTS` is defined in both `engine.py` and `hooks.py`. `_transcript_model` and `_ends_with_question` each read the last 256 KB of the transcript with their own loop. `_rm_in_temp` copies the rm flag and `--` operand loop of `_rm_in_worktrees`. `cancelBoardTimer` in `orchestra.ts` is a one-line wrapper over `stopBoardTimer`. `now.py` spaces its operators differently from `engine.py` and `hooks.py`.
+- The README command table does not list the 2.15 commands. (`docs/cli.md` is updated in 2.15.0.)
+- `parallel.md` says "Fold one role at a time, and keep a worker only when the folded version scores worse". "Fold" is defined nowhere in the loaded set, and model fit replaced folding in this release. `docs/live-matrix.md` cites an article on folding subagents without a link and with a detail ("one run out of two"). At most this is idea-level credit.
+- A card commit that changes only sibling-owned files and lies inside that sibling's `base..report_sha` range counts as sibling work, because no commit records which card made it in a shared checkout; the sibling's review covers that range.
+- `--no-merges` skips merge commits, so a merge commit of the card that edits an accepted sibling's file beyond both parents is not seen. A conflict that comes from the card's own commit is still caught through history simplification.
+- A sibling with no recorded base exempts only its exact `report_sha`; its earlier commits flag its files as outside this card. This errs strict.

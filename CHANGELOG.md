@@ -27,6 +27,15 @@ Autonomy works like a goal, a card runs where its model fits, and the coordinato
 - **Generator tool checks:** `generate.py` refuses an unknown tool name and an oversized agent catalog. It checks the worker delegate and read-only rules first, so a worker that pins `Agent` or `Task` fails with "workers never delegate".
 - **Live matrix:** new scenarios `m1` (model fit) and `s1` (role skills); `--repeat N` runs each scenario N times and names flips; `d4` accepts a builder whose `tools:` line has no `Agent`.
 - **Review grants no permission:** the pre-PR review reference says again that a review grants no external permission, with a test that pins it.
+- **A silent worker is gone, not live:** on an unchanged board, an armed run no longer counts a running card whose worker is silent as live work. Only live background workers and the inline card count, so the run nudges and then escalates instead of idling.
+- **`do` refuses owner steps:** `do` refuses `autonomy`, `permit` and `release` steps. The guard reads each quoted `do` step like a direct call, so an armed run cannot disarm itself through `do`.
+- **Temp `rm` globs:** under autonomy, an `rm` below the temp directory may carry a glob only in its last path component. A glob earlier in the path could match a link that leaves the temp directory.
+- **Sibling files in `accept`:** a file that a sibling card owns counts as that sibling's work only when the sibling's own commits made every change to it. A change by this card's commit now lists the file as outside the card.
+
+### Known gaps
+
+- The state-write check strips a descriptor copy before a quoted delimiter, so `cd STATE && echo x >&1" "/../state.json` is not read as a write. Bash writes `state.json` when the state directory holds a subdirectory named `1 ` (one with a trailing space). The fix idea: treat a descriptor copy followed by a quote as a write unless the quote is the last character or an unquoted delimiter follows it. Held for the owner.
+- Review notes deferred to a follow-up are listed in `docs/BUILD-LEDGER.md`.
 
 ## 2.14.2 — 2026-10-24
 
