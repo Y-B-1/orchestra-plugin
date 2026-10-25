@@ -30,8 +30,18 @@ BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','criterion'
 STRICT_PARSER = functools.partial(argparse.ArgumentParser, allow_abbrev=False)
 
 
+def read_text(path):
+    """A file's text; a missing or unreadable file is an engine error that names the path."""
+    try:
+        return Path(path).read_text()
+    except FileNotFoundError:
+        raise EngineError('File not found: ' + str(path)) from None
+    except OSError as exc:
+        raise EngineError('Cannot read %s: %s' % (path, exc.strerror or exc)) from None
+
+
 def read_json(path):
-    return json.loads(Path(path).read_text())
+    return json.loads(read_text(path))
 
 
 def parser():
@@ -96,6 +106,8 @@ def parser():
                           'card needs an accepted designer-planner plan card first')
     inline = sub.add_parser('inline', help='Reserve a card for execution by the main coordinator')
     inline.add_argument('task_id')
+    inline.add_argument('--report', metavar='FILE', help='Also record this result file as the report, in the same step; a refused report reserves nothing')
+    inline.add_argument('--accept', action='store_true', help='With --report: also accept the card in the same step')
     inline.add_argument('--serial', metavar='REASON', help='Start this card alone although others could start beside it; the reason is logged')
     wave = sub.add_parser('wave', help='Start every named card in one step, all or none; at most one is --inline')
     wave.add_argument('task_ids', nargs='+', metavar='ID')
@@ -157,6 +169,10 @@ def parser():
     cancel = sub.add_parser('cancel', help='Drop a queued or parked card that should never run')
     cancel.add_argument('task_id')
     cancel.add_argument('--reason', required=True)
+    own = sub.add_parser('own', help='Add one owned path to a running or reported builder card when no other card holds it')
+    own.add_argument('action', choices=['add'])
+    own.add_argument('task_id')
+    own.add_argument('path')
     unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
     unpark.add_argument('task_id')
     hold = sub.add_parser('hold', help='End the repair ladder: move a blocked repair chain to held and log the finding')
@@ -301,6 +317,13 @@ def execute(args):
         if args.tasks is not None and not ids:
             raise EngineError('--tasks needs at least one task id')
         return engine.artifact(engine.scope_for(ids) if ids else None),0
+    if args.command=='inline' and args.accept and not args.report:
+        raise EngineError('inline --accept needs --report FILE')
+    if args.command=='inline' and args.report:
+        if not args.lease:
+            raise EngineError('Supply the coordinator lease from start for coordinator actions')
+        result = engine.start_inline_report(args.actor,args.lease,args.task_id,read_text(args.report),accept=args.accept,serial=args.serial)
+        return dict(result,executor=args.actor,inline=True),0
     if args.command=='inline':
         return {'token':engine.start_inline(args.actor,args.lease,args.task_id,serial=args.serial), 'executor':args.actor, 'inline':True},0
     if args.command=='finding' and args.finding_command=='list':  # lease-free, like status
@@ -334,9 +357,9 @@ def execute(args):
     if args.command=='report' and args.accept:
         if not args.lease:
             raise EngineError('report --accept needs --lease from start')
-        return engine.report_accept(args.actor,args.lease,args.worker,args.token,Path(args.report).read_text()),0
+        return engine.report_accept(args.actor,args.lease,args.worker,args.token,read_text(args.report)),0
     if args.command=='report':
-        engine.report(args.worker,args.token,Path(args.report).read_text())
+        engine.report(args.worker,args.token,read_text(args.report))
         return {'reported':args.token},0
     if not args.lease:
         raise EngineError('Supply --lease from start for coordinator actions')
@@ -451,6 +474,9 @@ def execute(args):
     if args.command=='cancel':
         engine.cancel(args.actor,args.lease,args.task_id,args.reason)
         return {'cancelled':args.task_id},0
+    if args.command=='own':
+        engine.own_add(args.actor,args.lease,args.task_id,args.path)
+        return {'owned':args.path,'task':args.task_id},0
     if args.command=='unpark':
         engine.unpark(args.actor,args.lease,args.task_id)
         return {'unparked':args.task_id},0
