@@ -471,6 +471,18 @@ class PlaneTest(PlaneFixture):
             with self.subTest(command=command, where='linked'):
                 self.assertEqual(self.hook(command, cwd=self.wt), 'deny')
 
+    def test_rm_in_temp_with_a_glob_before_the_last_component_stays_denied(self):
+        import tempfile
+        from orchestra_core.hooks import _rm_in_temp
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as tmp:
+            pathlib.Path(tmp, 'repo-link').symlink_to(pathlib.Path.home())
+            for command in ('rm -rf %s/repo-lin*/plugins' % tmp, 'rm -rf %s/repo-lin?/plugins' % tmp, 'rm -rf %s/*/plugins' % tmp,
+                            'rm -rf %s/[r]epo-link/x' % tmp):
+                with self.subTest(command=command):
+                    self.assertFalse(_rm_in_temp(command))
+            self.assertFalse(_rm_in_temp('rm -rf %s/repo-link/plugins' % tmp))
+            self.assertTrue(_rm_in_temp('rm -rf %s/x/*.log' % tmp))
+
     def test_rm_is_judged_once_for_the_whole_command(self):
         self.arm()
         for command in ('rm -rf build && rm -rf ..', 'cd .. && rm -rf build', 'rm -rf build; git push origin main',

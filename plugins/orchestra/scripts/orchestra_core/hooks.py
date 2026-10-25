@@ -1441,8 +1441,9 @@ _TMPDIR_PREFIX = re.compile(r'\$(?:TMPDIR|\{TMPDIR\})(?=/|$)')
 
 def _rm_in_temp(command):
     """`rm` with any flags as one plain command whose every operand lies below `/tmp`, `/private/tmp` or `$TMPDIR`.
-    The operand is resolved first, so a `..` or a link that leaves the directory refuses it; a glob is judged by the
-    directory before it and may not start with a dot. The temp directory itself is never an operand."""
+    The operand is resolved first, so a `..` or a link that leaves the directory refuses it; a glob may stand only in the
+    last component (one before it could cross a link), is judged by the directory before it and may not start with a
+    dot. The temp directory itself is never an operand."""
     if not _TEMP_PLAIN.fullmatch(command.strip()):
         return False
     words = command.split()
@@ -1471,6 +1472,8 @@ def _rm_in_temp(command):
         if '$' in operand or '{' in operand or '}' in operand or not operand.startswith('/') or '..' in operand.split('/'):
             return False
         parts = operand.split('/')
+        if any(re.search(r'[*?\[]', part) for part in parts[:-1]):
+            return False
         for part in parts:
             if re.search(r'[*?\[]', part) and (part.startswith('.') or ('[' in part and '.' in part)):
                 return False
