@@ -532,8 +532,8 @@ def run_steps(args):
     for step in args.steps:
         try:
             tokens = shlex.split(step)
-            if not tokens or tokens[0] in ('do','start'):
-                raise StepRefused('A step cannot be `do` or `start`')
+            if not tokens or tokens[0] in ('do','start','autonomy','permit','release'):
+                raise StepRefused('A step cannot be `do`, `start`, `autonomy`, `permit` or `release`; run it as its own command')
             if any(tok.split('=')[0] in GLOBAL_OPTIONS for tok in tokens):
                 raise StepRefused('A step takes no global option; `do` passes its own')
             caught = io.StringIO()

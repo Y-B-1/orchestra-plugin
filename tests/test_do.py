@@ -74,5 +74,15 @@ class DoTests(te.EngineFixture):
         self.assertEqual('accepted', self.engine.status()['tasks']['B1']['state'])
 
 
+    def test_do_refuses_a_lock_relevant_step(self):
+        for step in ('autonomy disarm', 'autonomy arm', 'permit x', 'release x'):
+            with self.subTest(step=step):
+                code, out, err = self.cli('do', step)
+                self.assertEqual(2, code)
+                refused = json.loads(out)['refused']
+                self.assertEqual(step, refused['step'])
+                self.assertIn('cannot be', refused['error'])
+
+
 if __name__ == '__main__':
     unittest.main()

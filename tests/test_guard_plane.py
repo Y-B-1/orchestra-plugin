@@ -379,6 +379,10 @@ class UnattendedLockTest(PlaneFixture):
     def test_disarm_from_a_tool_call_denied_while_active(self):
         self.arm()
         self.assertEqual(self.hook('python3 orchestra.py autonomy disarm'), 'deny')
+        for command in ('python3 orchestra.py --lease L do "autonomy disarm"', "python3 orchestra.py do 'status' 'autonomy disarm'",
+                        'python3 orchestra.py --lease L do "start --size tiny --new-run"'):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command), 'deny')
         self.assertIn(LEDGER_LOCKED, self.hook_reason('python3 orchestra.py autonomy disarm'))
 
     def test_softened_push_all_and_tags_stay_denied(self):

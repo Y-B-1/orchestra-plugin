@@ -162,8 +162,21 @@ def _runs_orchestra(command, pattern, hit):
             if pattern.search(' '.join(words)):
                 return True
         for i, word in enumerate(words):
-            if Path(word).name == 'orchestra.py' and hit(words[i + 1:]):
+            if Path(word).name == 'orchestra.py' and (hit(words[i + 1:]) or _do_step_hits(words[i + 1:], hit)):
                 return True
+    return False
+
+
+def _do_step_hits(rest, hit):
+    """`orchestra.py do "STEP" ...` runs each quoted step as its own command: read every step after `do` word by word."""
+    if 'do' not in rest:
+        return False
+    for step in rest[rest.index('do') + 1:]:
+        try:
+            if hit(shlex.split(step)):
+                return True
+        except ValueError:
+            return True  # An unbalanced step cannot be read word by word: count it
     return False
 
 
