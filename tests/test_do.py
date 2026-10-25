@@ -50,6 +50,13 @@ class DoTests(te.EngineFixture):
                 self.assertEqual(2, code)
                 self.assertIn('error', json.loads(out)['refused'])
 
+    def test_a_step_missing_a_required_flag_gives_json_only_with_the_parser_message(self):
+        code, out, err = self.cli('do', 'cancel B1')
+        self.assertEqual(2, code)
+        body = json.loads(out)  # stdout is the JSON alone: no usage text before it
+        self.assertEqual('cancel B1', body['refused']['step'])
+        self.assertIn('--reason', body['refused']['error'])
+
     def test_a_lease_command_refreshes_now_md(self):
         now = self.engine.state_dir / 'NOW.md'
         self.assertFalse(now.exists())

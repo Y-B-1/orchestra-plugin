@@ -8,6 +8,8 @@ if os.name == 'nt' and not sys.flags.utf8_mode:
     # Windows opens text files in the locale encoding unless Python runs in UTF-8 mode: run again in it.
     raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.argv]))
 import argparse
+import contextlib
+import io
 import functools
 import json
 import os
@@ -534,10 +536,13 @@ def run_steps(args):
                 raise StepRefused('A step cannot be `do` or `start`')
             if any(tok.split('=')[0] in GLOBAL_OPTIONS for tok in tokens):
                 raise StepRefused('A step takes no global option; `do` passes its own')
+            caught = io.StringIO()
             try:
-                sub = parser().parse_args(base+tokens)
+                with contextlib.redirect_stderr(caught):
+                    sub = parser().parse_args(base+tokens)
             except SystemExit:
-                raise StepRefused('Unparsable step') from None
+                lines = [line for line in caught.getvalue().splitlines() if ': error: ' in line]
+                raise StepRefused('Unparsable step: ' + (lines[-1].split(': error: ', 1)[1] if lines else 'see --help')) from None
             result,code = execute(sub)
             engine = getattr(sub,'engine',engine)
             seen = add_board_line(sub,result)
