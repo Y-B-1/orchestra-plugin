@@ -105,3 +105,12 @@ Outside a run, the guard allows a non-force push of one branch or tag, `gh pr me
 `inline TASK --report FILE [--accept]` reserves and reports an inline card in one state write; a refused report (no file, no SELF_REVIEW) reserves nothing and the card stays queued; `--accept` also accepts it.
 `own add TASK PATH` adds one owned path to a running or reported builder card when no other card holds it; progress.md records it. A builder report whose commit range (recorded base to reported commit) touches files outside the card is recorded, but `accept` refuses with "files outside the card: PATH, ...; add them with own add or revert them". Generated `agents/*.md` count as owned when `generate.py --check` passes on the reported commit.
 A card with `"finalize": true` (changelog, version bump, release notes) starts only after every other card is accepted, held or parked: "finalize card waits for: CARD (state)". `accept TASK --ruling TEXT` on a card with no unmet criterion records the ruling in progress.md and accepts.
+
+## 2.15 additions
+
+`do "STEP" "STEP" ...` runs several coordinator commands in one call with this call's `--lease`, in order. It stops at the first refusal and keeps the earlier steps. Each step is one quoted command without `--lease`, for example `do "accept B1" "wave --inline B3 B4"`.
+`finish --accept-reported` first accepts every reported card whose `accept` passes; the other reported cards stay reported. A CLEAN fix re-review recorded with `review --token` also accepts the repair chain it closes, each card only when `accept` would take it.
+`waves` and `wave` also print `wave_now` (the startable cards that can start together) and `serialized` (startable cards left out, each as `{card, waits_for, reason}` naming the shared file or resource). A refused start names the blocking card and the cause.
+A card whose model family differs from the main session's, or whose effort is higher, starts only on a worker; `inline` refuses it with "Model fit: ...". An unknown session model refuses nothing.
+`start --recover --harness-session ID --take-over` moves an ended or interrupted run owned by another session to this one. It is logged in `progress.md` and arms nothing. Without it a forked session reads only. After a restart of the same conversation the coordinator keeps its lease.
+Every command that takes the lease rewrites `NOW.md` in the state directory: the run's present state, at most 60 lines, with the next command.
