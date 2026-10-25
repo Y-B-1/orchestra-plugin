@@ -2536,8 +2536,8 @@ class Engine:
     def _outside_files(self, task, sha, state):
         """Files changed in base..sha that the card does not own, sorted. Empty without a recorded base or commit. Files
         the generator derives from owned files (`agents/*.md`) count as owned when its --check passes on `sha`. In a
-        shared checkout the range also holds sibling cards' commits, so a file a reported or accepted sibling owns is
-        not outside."""
+        shared checkout the range also holds sibling cards' commits, so a file a reported or accepted sibling owns and
+        only its commits changed is not outside."""
         base = task.get('base')
         if not base or not sha:
             return []
@@ -2547,17 +2547,43 @@ class Engine:
             return []
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
         outside = sorted(c for c in changed if not self._in_scope(c, owned))
-        outside = self._not_sibling_owned(task, outside, state)
+        outside = self._not_sibling_owned(task, outside, state, sha)
         derived = [c for c in outside if c.startswith(self.GENERATED_DIR) and c.endswith('.md') and '/' not in c[len(self.GENERATED_DIR):]]
         if derived and self._generator_passes(sha):
             outside = [c for c in outside if c not in derived]
         return outside
 
-    def _not_sibling_owned(self, task, files, state):
-        """The files no reported or accepted sibling card owns: in a shared checkout a report range holds sibling work."""
-        siblings = [Path(f).as_posix() for other in state['tasks'].values()
-                    if other['id'] != task['id'] and other['state'] in ('reported', 'accepted') for f in other.get('files', [])]
-        return [f for f in files if not self._in_scope(f, siblings)]
+    def _not_sibling_owned(self, task, files, state, sha=None):
+        """The files that are not sibling work. In a shared checkout a report range holds sibling commits, so a file is
+        sibling work only when every commit in base..sha that changed it is a sibling's: see `_sibling_commit`."""
+        base, sha = task.get('base'), sha or task.get('report_sha')
+        siblings = [other for other in state['tasks'].values()
+                    if other['id'] != task['id'] and other['state'] in ('reported', 'accepted') and other.get('report_sha')]
+        if not base or not sha or not siblings:
+            return list(files)
+        owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
+        kept = []
+        for name in files:
+            owners = [other for other in siblings if self._in_scope(name, [Path(f).as_posix() for f in other.get('files', [])])]
+            try:
+                commits = self._git('log', '--no-merges', '--format=%H', base + '..' + sha, '--', name).decode().split()
+            except EngineError:
+                commits = []
+            if not owners or not commits or not all(self._sibling_commit(c, owners, owned) for c in commits):
+                kept.append(name)
+        return kept
+
+    def _sibling_commit(self, commit, owners, owned):
+        """Whether `commit` is one of the owners' reported work: it changes no file this card owns, and it is an owner's
+        reported commit or lies in that owner's base..report_sha range."""
+        try:
+            changed = [c for c in self._git('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', commit).decode().split('\0') if c]
+        except EngineError:
+            return False
+        if any(self._in_scope(c, owned) for c in changed):
+            return False
+        return any(commit == other['report_sha'] or other.get('base') and self._is_ancestor(commit, other['report_sha'])
+                   and not self._is_ancestor(commit, other['base']) for other in owners)
 
     def _generator_passes(self, sha):
         """Whether `generate.py --check` exits 0 on the plugin tree of commit `sha`, run in a throwaway copy."""

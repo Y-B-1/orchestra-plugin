@@ -221,6 +221,33 @@ class OutsideFileTests(RefusalFixture):
         self.engine.accept('main', self.lease, 'a')
         self.assertEqual('accepted', self.card()['state'])
 
+    def test_a_card_that_changes_a_file_a_sibling_owns_is_still_flagged(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        sibling = self.running('b', files=['b_file', 'b_other'])
+        self.engine.report('w-b', sibling, report_for(self.commit(b_other='by b')))
+        self.engine.accept('main', self.lease, 'b')
+        self.engine.report('w-a', token, report_for(self.commit(a='new', b_file='by a')))
+        self.assertIn('files outside the card: b_file;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
+
+    def test_a_file_both_cards_changed_stays_flagged(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        sibling = self.running('b', files=['b_file'])
+        self.engine.report('w-b', sibling, report_for(self.commit(b_file='by b')))
+        self.engine.accept('main', self.lease, 'b')
+        self.engine.report('w-a', token, report_for(self.commit(a='new', b_file='by a too')))
+        self.assertIn('files outside the card: b_file;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
+
+    def test_a_card_commit_older_than_the_siblings_report_is_still_flagged(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        sibling = self.running('b', files=['b_file', 'b_other'])
+        self.engine.record_bases('main', self.lease, ['b'], self.git('rev-parse', 'HEAD'))
+        self.engine.report('w-a', token, report_for(self.commit(a='new', b_file='by a')))
+        self.engine.report('w-b', sibling, report_for(self.commit(b_other='by b')))
+        self.assertIn('files outside the card: b_file;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
+
     def test_own_add_clears_the_flag(self):
         self.built(['a'], a='new', other='x')
         self.assertIn('files outside the card: other', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
