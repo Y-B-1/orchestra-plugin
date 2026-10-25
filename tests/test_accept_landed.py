@@ -100,8 +100,8 @@ class AcceptLandedTests(AcceptLandedFixture):
         (self.repo / 'a').write_text('edited after the report')
         with self.assertRaises(EngineError) as ctx:
             self.engine.accept('main', self.lease, 'a')
-        self.assertEqual('Reported artifact is stale: fingerprint, status differ since the report; '
-                         're-report or send a repair card', str(ctx.exception))
+        self.assertEqual('Reported artifact is stale: fingerprint, status differ since the report (changed: a '
+                         '(uncommitted)); re-report or send a repair card', str(ctx.exception))
 
 
 class SelfReviewRefusalTests(te.EngineFixture):
