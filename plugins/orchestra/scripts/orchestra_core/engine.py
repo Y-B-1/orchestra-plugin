@@ -2547,13 +2547,17 @@ class Engine:
             return []
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
         outside = sorted(c for c in changed if not self._in_scope(c, owned))
-        siblings = [Path(f).as_posix() for other in state['tasks'].values()
-                    if other['id'] != task['id'] and other['state'] in ('reported', 'accepted') for f in other.get('files', [])]
-        outside = [c for c in outside if not self._in_scope(c, siblings)]
+        outside = self._not_sibling_owned(task, outside, state)
         derived = [c for c in outside if c.startswith(self.GENERATED_DIR) and c.endswith('.md') and '/' not in c[len(self.GENERATED_DIR):]]
         if derived and self._generator_passes(sha):
             outside = [c for c in outside if c not in derived]
         return outside
+
+    def _not_sibling_owned(self, task, files, state):
+        """The files no reported or accepted sibling card owns: in a shared checkout a report range holds sibling work."""
+        siblings = [Path(f).as_posix() for other in state['tasks'].values()
+                    if other['id'] != task['id'] and other['state'] in ('reported', 'accepted') for f in other.get('files', [])]
+        return [f for f in files if not self._in_scope(f, siblings)]
 
     def _generator_passes(self, sha):
         """Whether `generate.py --check` exits 0 on the plugin tree of commit `sha`, run in a throwaway copy."""
@@ -3122,8 +3126,9 @@ class Engine:
             failed = self._self_review_failure(review, ruled)
             if failed:
                 return 'Self-review has a failing check or unmet criterion: ' + failed
-            if task.get('outside_files'):
-                return 'files outside the card: %s; add them with own add or revert them' % ', '.join(task['outside_files'])
+            outside = self._not_sibling_owned(task, task.get('outside_files', []), state)  # a sibling may own them since
+            if outside:
+                return 'files outside the card: %s; add them with own add or revert them' % ', '.join(outside)
         elif task.get('review_required', False):
             return None if verdicts else 'Task needs current independent review'
         scope = self._scope_of(state, [task_id])

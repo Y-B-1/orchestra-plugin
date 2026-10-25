@@ -209,6 +209,18 @@ class OutsideFileTests(RefusalFixture):
         text = self.refusal(self.engine.accept, 'main', self.lease, 'a')
         self.assertIn('files outside the card: stray;', text)  # the sibling's b_file is not listed
 
+    def test_a_sibling_accepted_after_the_report_clears_its_files_at_accept(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        sibling = self.running('b', files=['b_file'])
+        b_sha = self.commit(b_file='by b')
+        self.engine.report('w-a', token, report_for(self.commit(a='new')))
+        self.assertIn('files outside the card: b_file;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
+        self.engine.report('w-b', sibling, report_for(b_sha))
+        self.engine.accept('main', self.lease, 'b')
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.card()['state'])
+
     def test_own_add_clears_the_flag(self):
         self.built(['a'], a='new', other='x')
         self.assertIn('files outside the card: other', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
