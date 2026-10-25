@@ -173,6 +173,23 @@ class NestedDescriptorCopyTest(LiveFixture):
             with self.subTest(command=command):
                 self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
 
+    def test_a_descriptor_copy_before_a_quoted_delimiter_stays_a_write(self):
+        s = str(self.state)
+        (self.state / '1 ').mkdir()
+        (self.state / '1;').mkdir()
+        (self.state / '1|').mkdir()
+        for tail in ('" "/../state.json', "' '/../state.json", '";"/../state.json', '"|"/../state.json', '" "'):
+            command = 'cd %s && echo x >&1%s' % (s, tail)
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+
+    def test_a_descriptor_copy_that_closes_a_shell_string_stays_allowed(self):
+        s = str(self.state)
+        for command in ('cd %s && bash -c "echo x >&1" ; ls' % s, "cd %s && bash -c 'echo x 2>&1'|cat" % s,
+                        'cd %s && sh -c "echo x >&2";true' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'allow')
+
 
 if __name__ == '__main__':
     unittest.main()

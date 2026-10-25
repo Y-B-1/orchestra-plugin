@@ -1670,13 +1670,45 @@ def _lands_in_state(target, state_dir, cwd, inside, notes_ok=False, at_root=True
     return not _is_state_note(target, state_dir, base)
 
 
+def _quote_open_at(text, end):
+    """The quote character open at offset `end` of `text` ('', "'" or '"'), read the way bash reads quotes."""
+    quote, i = '', 0
+    while i < end:
+        c = text[i]
+        if quote == "'":
+            quote = '' if c == "'" else quote
+        elif c == '\\':
+            i += 1
+        elif quote == '"':
+            quote = '' if c == '"' else quote
+        elif c in '\'"':
+            quote = c
+        i += 1
+    return quote
+
+
+def _strip_descriptor_copies(command):
+    """Blank each descriptor copy (`>&1`, `2>&-`), which writes no file. A copy followed by a quote is a copy only when
+    that quote closes an open quoted string and a delimiter follows, as in `sh -c "echo x >&1"`. A quote that opens a
+    new string joins the word, so `>&1""/x` and `>&1" "/x` redirect to a file, and `>&1new` is a file too."""
+    def blank(match):
+        after = match.end()
+        if after < len(command) and command[after] in '\'"':
+            closes = _quote_open_at(command, match.start()) == command[after]
+            rest = command[after + 1:after + 2]
+            if not (closes and (rest == '' or rest in ' \t\n;&|<>()\'"')):
+                return match.group(0)
+        return ' '
+    return re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()\'"])', blank, command)
+
+
 def _writes_state(command, state_dir, cwd):
     """A shell command that writes into the state directory: an output redirect, tee, cp or install aimed at it, or rm, mv,
     ln, truncate, dd, chmod or `sed -i` there. Outside a lock the coordinator's notes at the state root are not state
     (redirects, tee, cp and install may write them). Reads and orchestra.py commands are not writes. Text only: best effort."""
     if _cli_only(command) or not _touches_state(command, state_dir, cwd):
         return False
-    text = re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()])|\d*>&\s*\d+(?=[\'"](?:[\s;&|<>()]|$))', ' ', command)  # a descriptor copy writes no file; `>&1new` and `>&1""/x` are files
+    text = _strip_descriptor_copies(command)
     text = text.replace('&>', '>')
     text = re.sub(r'>&(?=\s*[^\s&>])', '>', text)  # `>&FILE` sends stdout and stderr to a file
     inside = False  # an earlier `cd` into the state directory
