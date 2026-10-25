@@ -532,11 +532,9 @@ Totals: solo $1.03; D on 2.14 $3.85; D on 2.15 $3.82; D2 on 2.15 $1.37.
 
 Candidate 4c6d34e: 18 scenarios, each run twice (`--repeat 2`); all pass, no flips. Gate receipt 5dbe2e50 on 4c6d34e.
 
-### Held for the owner
+### Second repair (owner-approved)
 
-| Item | Note |
-| --- | --- |
-| AUQ | The state-write check still strips a descriptor copy before a quoted delimiter, so `cd STATE && echo x >&1" "/../state.json` is not read as a write. Bash wrote `state.json` when a directory named `1 ` (trailing space) exists in the state directory. The fix idea: treat any descriptor copy followed by a quote as a write unless the quote is the last character or an unquoted delimiter follows it. A second repair of this chain needs the owner's words. |
+RAUQ2 (`5122b03`) closed the AUQ chain's held finding: a descriptor copy is dropped before a quote only when that quote closes an open string. Fix re-review FXA3 is CLEAN: every reported form is a write, checked through `_writes_state` and real bash, and the new test fails 5 of 5 before the fix. Its note: the quote tracker ignores `$'...'` escapes, `#` comments and heredoc bodies; those forms were missed before the fix too and are listed as accepted limits in `docs/hooks.md`.
 
 ### Deferred to a follow-up (review notes at 4c6d34e and later)
 

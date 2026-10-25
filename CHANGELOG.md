@@ -31,10 +31,11 @@ Autonomy works like a goal, a card runs where its model fits, and the coordinato
 - **`do` refuses owner steps:** `do` refuses `autonomy`, `permit` and `release` steps. The guard reads each quoted `do` step like a direct call, so an armed run cannot disarm itself through `do`.
 - **Temp `rm` globs:** under autonomy, an `rm` below the temp directory may carry a glob only in its last path component. A glob earlier in the path could match a link that leaves the temp directory.
 - **Sibling files in `accept`:** a file that a sibling card owns counts as that sibling's work only when the sibling's own commits made every change to it. A change by this card's commit now lists the file as outside the card.
+- **Quoted delimiters after `>&N`:** the state-write check now reads `cd STATE && echo x >&1" "/../state.json` (and `' '`, `";"`, `"|"`) as a write. It drops a descriptor copy before a quote only when that quote closes an open string. Second repair of this chain, approved by the owner.
 
 ### Known gaps
 
-- The state-write check strips a descriptor copy before a quoted delimiter, so `cd STATE && echo x >&1" "/../state.json` is not read as a write. Bash writes `state.json` when the state directory holds a subdirectory named `1 ` (one with a trailing space). The fix idea: treat a descriptor copy followed by a quote as a write unless the quote is the last character or an unquoted delimiter follows it. Held for the owner.
+- The state-write check reads `>&N` followed by a quote with its own quote tracker, which ignores `$'...'` escapes, `#` comments and heredoc bodies: a quote inside one of those can still hide a write such as `echo $'\'' >&1' '/../state.json`. The guard is best effort.
 - Review notes deferred to a follow-up are listed in `docs/BUILD-LEDGER.md`.
 
 ## 2.14.2 — 2026-10-24
