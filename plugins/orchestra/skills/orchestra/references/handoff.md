@@ -15,7 +15,7 @@ Check in this order:
 2. `python3 <plugin>/scripts/orchestra.py brief`: the newest run brief, written at every run end, armed or not. Its Needs you, Still failing and Held log sections say what is owed. Then `python3 <plugin>/scripts/orchestra.py status`.
 3. Live worker state. Check liveness: a live process, and the transcript's last modification time. A journal line records what started, not what still runs. Look at the process first, then the transcript: a quiet transcript alone is not a stopped worker.
 4. Artifacts: `git log`, `git status`, and each report against its logs.
-5. `python3 <plugin>/scripts/orchestra.py start`: a new lease requeues running cards.
+5. Keep the lease when it still works: a restart of the same conversation keeps it, and its workers keep running (SessionStart names those with a recent transcript). Otherwise run `python3 <plugin>/scripts/orchestra.py start`: a new lease requeues running cards.
 6. Re-dispatch by ledger line: a card with a completion line is never dispatched again. A card whose last line is a repair resumes at the fix re-review; a held card waits for the owner.
 
 Re-inspect the artifact before accepting a report from before the interruption.
