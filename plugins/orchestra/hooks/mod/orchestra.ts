@@ -320,7 +320,7 @@ async function syncTasks($: Dollar, sync: Sync, view: View): Promise<void> {
     if (!view.sessionActive || view.runId === '') return off('no active run');
     if (!view.bound) return off('this session does not own the run');
     const names = (await $.tool.list()).map((t) => t.name);
-    if (!TASK_TOOLS.every((n) => names.includes(n))) return off('task tools unavailable');
+    if (!TASK_TOOLS.every((n) => names.includes(n))) return off('task tools unavailable; on 5.5 models start Claude Code with CLAUDE_CODE_ENABLE_TODO_TOOLS=1');
     // Every task tool must pass without a dialog: `$.tool.call` runs the permission check, which can ask.
     const probes: [string, Json][] = [
       ['TaskCreate', { subject: `[${runShort(view.runId)}] probe`, description: 'Orchestra board probe' }],

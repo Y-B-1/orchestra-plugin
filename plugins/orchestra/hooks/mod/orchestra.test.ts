@@ -1016,7 +1016,7 @@ test('native tasks: off when the task tools are missing, and when the session is
   await flush();
   expect(s.taskCalls.length).toBe(0);
   const ui = await drawBoard($, 'terminal', 80);
-  expect(texts(await ui.drawn()).some((t) => t.startsWith('Native tasks: off'))).toBe(true);
+  expect(texts(await ui.drawn()).some((t) => t.startsWith('Native tasks: off') && t.includes('CLAUDE_CODE_ENABLE_TODO_TOOLS=1'))).toBe(true);
   await ui.unmount();
   e.view = boardView([{ id: 'A', state: 'queued', seq: 1 }], { bound: false });
   await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'python3 x/orchestra.py status' });
