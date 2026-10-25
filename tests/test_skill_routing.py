@@ -43,5 +43,15 @@ class SkillRoutingTests(unittest.TestCase):
         self.assertIn('A review grants no external permission', text)
 
 
+    def test_the_tiny_lane_starts_no_run(self):
+        """A tiny task is edited, checked and committed with no run, no cards and no finish."""
+        skill = (SKILL_DIR / 'SKILL.md').read_text()
+        triage = (SKILL_DIR / 'references' / 'triage.md').read_text()
+        self.assertIn('No run', skill)
+        self.assertNotIn('A tiny builder card needs', skill)
+        self.assertIn('A tiny task starts no run', triage)
+        self.assertNotIn('start --size tiny', triage)
+
+
 if __name__ == '__main__':
     unittest.main()

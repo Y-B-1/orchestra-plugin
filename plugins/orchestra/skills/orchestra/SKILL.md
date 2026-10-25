@@ -24,11 +24,11 @@ Route, reserve, dispatch, check, integrate, review. Every card ends with evidenc
 
 ## Route
 
-Size the work by its diff, then run `start --size` with the tier. Sizing, asks and escalation: [triage](references/triage.md).
+Size the work by its diff; for medium or large, run `start --size` with the tier. Sizing, asks and escalation: [triage](references/triage.md).
 
 | Size | Route |
 | --- | --- |
-| tiny, up to 50 lines | Inline edit, no alignment. A tiny builder card needs `dispatch --helper REASON`. |
+| tiny, up to 50 lines | No run: edit, check and commit inline. No start, cards or finish. |
 | medium, up to 400 | Grill inline, then run `waves` and start each wave whole. |
 | large | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it ([wayfinder](references/wayfinder.md)), then a `plan` card. Units go to workers by model fit. |
 
