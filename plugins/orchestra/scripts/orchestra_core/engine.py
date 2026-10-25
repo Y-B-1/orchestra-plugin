@@ -4014,7 +4014,7 @@ class Engine:
         signature = self._signature(state)
         if signature == auto.get('signature'):
             auto['stalls'] += 1  # The last continuation changed nothing: never repeat it
-            if running or any(t['state'] == 'running' for t in tasks):
+            if running or any(t['state'] == 'running' and t.get('inline') for t in tasks):
                 return None, None  # a worker or the inline card's background shell will wake the session
             return self._nudge(state, 'stalled', '',
                                'the last pass changed nothing%s. Name what is missing and do it: run the next gate, record the '
