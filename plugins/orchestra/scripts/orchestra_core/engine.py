@@ -41,6 +41,19 @@ CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture'
 REBIND_WINDOW_SECONDS = 60
 KEEP_REMOVE = ('## Keep', '## Remove')  # builder briefs carry both headings; checked at add only (SPEC 5.13)
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+BRIEF_RUNNING_MAX, BRIEF_REPORTED_MAX, CRITERION_EVIDENCE_MAX = 20, 40, 1000
+
+
+def _engine_version():
+    """The version in the plugin root's plugin.json, or None when the file is absent or unreadable."""
+    try:
+        version = json.loads((PACKAGE_ROOT / '.claude-plugin' / 'plugin.json').read_text()).get('version')
+    except (OSError, ValueError, AttributeError):
+        return None
+    return version if isinstance(version, str) else None
+
+
+ENGINE_VERSION = _engine_version()
 ALWAYS_LENSES = ('requirements', 'correctness', 'tests', 'architecture')
 INLINE_MAX_ITEMS = 5  # contract item 3: 1 to 5 items run inline, 6 or more go through a plan
 SIZES = ('tiny', 'medium', 'large')
@@ -591,6 +604,7 @@ class Engine:
             except (KeyError, TypeError, AttributeError, IndexError) as exc:
                 raise EngineError('Malformed run state or request: ' + str(exc)) from exc
             if write:
+                state['engine_version'] = ENGINE_VERSION
                 if activity:
                     state['activity'] = state.get('activity', 0) + 1
                 fd, name = tempfile.mkstemp(dir=self.state_dir, prefix='.state-')
@@ -820,6 +834,30 @@ class Engine:
             if lenses:
                 result['required_lenses'] = self._required_lenses(state)
             return result
+
+    def status_brief(self):
+        """Read-only and lease-free: a compact summary whose size does not grow with the card count."""
+        def capped(items, limit):
+            return items[:limit] + (['+%d' % (len(items) - limit)] if len(items) > limit else [])
+        with self._state(False) as state:
+            tasks = list(state['tasks'].values())
+            session, auto = state['session'] or {}, state['autonomy'] or {}
+            now = self._clock()
+            running = [dict(id=t['id'], role=t['role'], mode=t['mode'], worker=t.get('worker'), inline=bool(t.get('inline')),
+                            age_s=max(0, round(now - t['started_at'])) if 'started_at' in t else None)
+                       for t in tasks if t['state'] == 'running']
+            written = state.get('engine_version')
+            versions = dict(engine=ENGINE_VERSION, state=state['version'], written_by=written)
+            if written is not None and written != ENGINE_VERSION:
+                versions['note'] = 'state last written by engine %s; this is engine %s' % (written, ENGINE_VERSION)
+            return dict(counts={name: sum(1 for t in tasks if t['state'] == name) for name in TASK_STATES},
+                        running=capped(running, BRIEF_RUNNING_MAX),
+                        reported=capped([t['id'] for t in tasks if t['state'] == 'reported'], BRIEF_REPORTED_MAX),
+                        lease=dict(holder=session.get('harness_session'), active=bool(session.get('active')),
+                                   outcome=session.get('outcome')),
+                        autonomy=dict(active=self._autonomy_on(state), passes=auto.get('passes'), deadline=auto.get('deadline'),
+                                      last_stop_reason=auto.get('last_stop_reason')),
+                        versions=versions)
 
     def current_gate_ids(self):
         """Ids of the passed gate receipts for the current whole-repository artifact; [] when there are none."""
@@ -2993,6 +3031,37 @@ class Engine:
                 at = self._stamp()
                 task['ruling'] = dict(text=ruling.strip(), at=at)
                 _append_progress(self.state_dir, '- ruled %s: %s (at %s)' % (task_id, ruling.strip(), at))
+
+    def record_criterion(self, actor, lease, task_id, criterion, evidence):
+        """The coordinator's evidence for one unmet self-review criterion of a reported worker card. Only criteria take
+        it: a failing check needs a re-run, and an inline card is the coordinator's own work."""
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = state['tasks'].get(task_id)
+            if task is None:
+                raise EngineError('Unknown task ' + str(task_id))
+            if task['state'] != 'reported':
+                raise EngineError('Task %s is not reported (%s)' % (task_id, task['state']))
+            if task.get('inline'):
+                raise EngineError('An inline card cannot take coordinator evidence: the coordinator would judge its own work')
+            review = task.get('self_review')
+            if review is None:
+                raise EngineError('The card has no self-review to record evidence on')
+            if not isinstance(evidence, str) or not evidence.strip():
+                raise EngineError('A criterion needs nonempty evidence')
+            if len(evidence) > CRITERION_EVIDENCE_MAX:
+                raise EngineError('Criterion evidence is at most %d characters' % CRITERION_EVIDENCE_MAX)
+            failed = self._self_review_failure(review, ruled=True)
+            if failed:
+                raise EngineError('Only criteria take coordinator evidence; a failing check needs a re-run: ' + failed)
+            unmet = [c for c in review['criteria'] if not c['met']]
+            wanted = str(criterion).strip()
+            match = next((c for c in unmet if c['criterion'].strip() == wanted), None)
+            if match is None:
+                raise EngineError('No unmet criterion "%s"; unmet: %s' % (wanted, '; '.join('"%s"' % c['criterion'] for c in unmet) or 'none'))
+            at = self._stamp()
+            match.update(met=True, evidence=evidence.strip(), by='coordinator', at=at)
+            _append_progress(self.state_dir, '- coordinator evidence on %s: "%s": %s (at %s)' % (task_id, wanted, evidence.strip(), at))
 
     def report_accept(self, actor, lease, worker, token, report):
         """Report an inline card and accept it in one state write. When accept refuses, the report stays recorded."""

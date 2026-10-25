@@ -25,7 +25,7 @@ from orchestra_core.paths import atomic, load_policy, main_checkout, repository,
 
 ROOT = Path(__file__).resolve().parents[1]
 # Commands that add one `board` line to their JSON when a card changed state.
-BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','review','park','cancel','unpark','hold'}
+BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','criterion','review','park','cancel','unpark','hold'}
 # No parser takes an abbreviated option: `--leas` must not parse as `--lease`, which the refusal log strips.
 STRICT_PARSER = functools.partial(argparse.ArgumentParser, allow_abbrev=False)
 
@@ -65,6 +65,7 @@ def parser():
                         'do "accept B1" "wave --inline B3 B4"')
     do.add_argument('steps', nargs='+')
     status = sub.add_parser('status', help='Print the run state; review receipts leave out their per-file entries')
+    status.add_argument('--brief', action='store_true', help='Print a compact summary instead (counts, running, reported, lease, autonomy, versions); no lease, read-only')
     status.add_argument('--full', action='store_true', help='Keep the per-file entries of review receipts')
     board = sub.add_parser('board', help='Print card ids by role and state; --view prints the cheap lease-free board the Kanban mod reads')
     board.add_argument('--view', action='store_true')
@@ -115,6 +116,10 @@ def parser():
     report.add_argument('report', help='Nonempty result file')
     report.add_argument('--accept', action='store_true', help='Inline cards only: record the report and accept the card in one call; needs --lease')
     report.add_argument('--lease', default=argparse.SUPPRESS, help='Coordinator lease, for --accept')
+    criterion = sub.add_parser('criterion', help='Record coordinator evidence on one unmet self-review criterion of a reported worker card')
+    criterion.add_argument('task_id')
+    criterion.add_argument('criterion', help='The criterion text, as the report repeats it')
+    criterion.add_argument('--evidence', required=True, metavar='TEXT', help='What you checked, at most 1000 characters')
     accept = sub.add_parser('accept')
     accept.add_argument('task_id')
     accept.add_argument('--ruling', metavar='TEXT', help='Accept a worker card whose only gap is an unmet criterion, with the coordinator reason')
@@ -268,6 +273,8 @@ def execute(args):
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo),'requeued':engine.requeued,'resume':engine.resume},0
+    if args.command=='status' and args.brief:  # lease-free and read-only
+        return engine.status_brief(),0
     if args.command=='status':
         result = engine.status(lenses=True)
         if not args.full:
@@ -358,6 +365,9 @@ def execute(args):
     if args.command=='accept':
         engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
         return {'accepted':args.task_id},0
+    if args.command=='criterion':
+        engine.record_criterion(args.actor,args.lease,args.task_id,args.criterion,args.evidence)
+        return {'criterion':args.task_id},0
     if args.command=='review':
         review = read_json(args.report)
         if not isinstance(review,dict):
@@ -539,7 +549,7 @@ def main(argv=None):
             cli_support.log_refusal(state,raw,exc)
         return 2
     if result is not None:
-        print(json.dumps(result,indent=2))
+        print(json.dumps(result,separators=(',',':')) if args.command=='status' and args.brief else json.dumps(result,indent=2))
     if seen is not None:
         cli_support.store_seen(args.state_dir,seen)
     if getattr(args,'lease',None) and getattr(args,'engine',None) is not None:
