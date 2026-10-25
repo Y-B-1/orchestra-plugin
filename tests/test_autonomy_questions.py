@@ -72,6 +72,16 @@ class AskUserQuestionTest(AskFixture):
         self.assertIn(PARK, out['permissionDecisionReason'])
         self.assertEqual(self.progress(), '')
 
+    def test_a_question_from_another_session_or_a_worker_gets_no_decision(self):
+        engine = self.engine()
+        engine.status.return_value = {'session': {'harness_session': 'H1'}}
+        questions = [question('Which db?', ['Mongo', 'Postgres (Recommended)'])]
+        self.assertEqual(self.ask(questions, engine=engine, session_id='H2'), {})
+        self.assertEqual(self.ask(questions, engine=engine, session_id='H1', agent_id='a1'), {})
+        self.assertEqual(self.progress(), '')
+        out = self.ask(questions, engine=engine, session_id='H1')['hookSpecificOutput']
+        self.assertEqual(out['permissionDecision'], 'allow')
+
     def test_malformed_questions_are_denied(self):
         for questions in ([], 'text', None, [{'question': 'q'}], ['q'], [{'question': 'q', 'options': 'x'}],
                           [{'question': 'q', 'options': ['x (Recommended)']}], [{'options': [{'label': 'x (Recommended)'}]}]):
@@ -153,6 +163,13 @@ class NestedDescriptorCopyTest(LiveFixture):
         s = str(self.state)
         for command in ('cd %s && echo x >&1new.json' % s, 'cd %s && sh -c "echo x >&1new.json"' % s,
                         'cd %s && sh -c \'echo x >&1"new.json"\'' % s):
+            with self.subTest(command=command):
+                self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
+
+    def test_a_descriptor_copy_followed_by_an_empty_quote_pair_and_a_path_stays_a_write(self):
+        s = str(self.state)
+        (self.state / '1').mkdir()
+        for command in ('cd %s && echo x >&1""/../state.json' % s, "cd %s && echo x >&1''/../state.json" % s):
             with self.subTest(command=command):
                 self.assertEqual(self.verdict(command, session_id='s1'), 'deny')
 

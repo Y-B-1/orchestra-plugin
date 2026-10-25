@@ -391,7 +391,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     if not isinstance(name, str) or not name or not isinstance(data, dict):
         return _deny('Malformed tool payload', True)
     if name == 'AskUserQuestion':
-        return _answer_question(data, engine)
+        return _answer_question(payload, data, engine)
     if name in _APPROVAL_TEXT_TOOLS and _carries_approval_text(data):
         return _deny('A message or scheduled prompt that is only the approval word could record the owner\'s approval; '
                      'the owner types it in their own session')
@@ -1660,7 +1660,7 @@ def _writes_state(command, state_dir, cwd):
     (redirects, tee, cp and install may write them). Reads and orchestra.py commands are not writes. Text only: best effort."""
     if _cli_only(command) or not _touches_state(command, state_dir, cwd):
         return False
-    text = re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()])|\d*>&\s*\d+(?=[\'"](?:[\s;&|<>()\'"]|$))', ' ', command)  # a descriptor copy writes no file; `>&1new` is a file
+    text = re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()])|\d*>&\s*\d+(?=[\'"](?:[\s;&|<>()]|$))', ' ', command)  # a descriptor copy writes no file; `>&1new` and `>&1""/x` are files
     text = text.replace('&>', '>')
     text = re.sub(r'>&(?=\s*[^\s&>])', '>', text)  # `>&FILE` sends stdout and stderr to a file
     inside = False  # an earlier `cd` into the state directory
@@ -1958,10 +1958,11 @@ DECIDE_OR_PARK = ('Autonomy is armed and the owner is away. Decide this yourself
                   "'needs-owner: <the question>'` and continue with other cards.")
 
 
-def _answer_question(data, engine):
+def _answer_question(payload, data, engine):
     """AskUserQuestion while autonomy is armed: answer each question with its "(Recommended)" option, log the decisions to
-    progress.md, and deny a question with no such option. Unarmed or without an engine: no decision."""
-    if engine is None or not _armed_now(engine):
+    progress.md, and deny a question with no such option. Unarmed, without an engine, from a worker or from a session the
+    run is not bound to: no decision, so the question reaches the person."""
+    if engine is None or payload.get('agent_id') or _other_session(engine, payload.get('session_id')) or not _armed_now(engine):
         return HookResult({})
     questions = data.get('questions')
     answers = {}
