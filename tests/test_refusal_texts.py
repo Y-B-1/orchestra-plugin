@@ -199,6 +199,16 @@ class OutsideFileTests(RefusalFixture):
         self.assertEqual('reported', self.card()['state'])
         self.assertIn('files outside the card: other, sub_dir_file; add them with own add or revert them', text)
 
+    def test_a_sibling_cards_commit_in_the_range_is_not_outside(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        sibling = self.running('b', files=['b_file'])
+        self.engine.report('w-b', sibling, report_for(self.commit(b_file='by b')))
+        self.engine.accept('main', self.lease, 'b')
+        self.engine.report('w-a', token, report_for(self.commit(a='new', stray='x')))
+        text = self.refusal(self.engine.accept, 'main', self.lease, 'a')
+        self.assertIn('files outside the card: stray;', text)  # the sibling's b_file is not listed
+
     def test_own_add_clears_the_flag(self):
         self.built(['a'], a='new', other='x')
         self.assertIn('files outside the card: other', self.refusal(self.engine.accept, 'main', self.lease, 'a'))

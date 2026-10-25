@@ -2535,7 +2535,9 @@ class Engine:
 
     def _outside_files(self, task, sha, state):
         """Files changed in base..sha that the card does not own, sorted. Empty without a recorded base or commit. Files
-        the generator derives from owned files (`agents/*.md`) count as owned when its --check passes on `sha`."""
+        the generator derives from owned files (`agents/*.md`) count as owned when its --check passes on `sha`. In a
+        shared checkout the range also holds sibling cards' commits, so a file a reported or accepted sibling owns is
+        not outside."""
         base = task.get('base')
         if not base or not sha:
             return []
@@ -2545,6 +2547,9 @@ class Engine:
             return []
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
         outside = sorted(c for c in changed if not self._in_scope(c, owned))
+        siblings = [Path(f).as_posix() for other in state['tasks'].values()
+                    if other['id'] != task['id'] and other['state'] in ('reported', 'accepted') for f in other.get('files', [])]
+        outside = [c for c in outside if not self._in_scope(c, siblings)]
         derived = [c for c in outside if c.startswith(self.GENERATED_DIR) and c.endswith('.md') and '/' not in c[len(self.GENERATED_DIR):]]
         if derived and self._generator_passes(sha):
             outside = [c for c in outside if c not in derived]
