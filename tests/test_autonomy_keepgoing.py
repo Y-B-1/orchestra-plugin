@@ -131,6 +131,19 @@ class LiveWorkTests(KeepGoingFixture):
         self.assertIn('unpark', message)
         self.assertEqual((self.auto()['active'], self.last_stop()), (True, None))
 
+    def test_a_silent_worker_beside_an_unstarted_ready_card_is_not_live_work(self):
+        self.arm(deadline=iso(T0 + 20000))
+        self.worker_running('busy')
+        self.task('next', files=['next'])
+        self.now[0] = T0 + 3700
+        self.assertIn('continue with the next ready', self.engine.hook_stop())
+        nudge = self.engine.hook_stop()
+        self.assertIsInstance(nudge, str)
+        self.assertIn('changed nothing', nudge)
+        self.assertIsInstance(self.engine.hook_stop(), str)
+        self.assertIsNone(self.engine.hook_stop())
+        self.assertEqual((self.auto()['active'], self.last_stop()), (False, 'needs-owner:escalated'))
+
 
 class UnchangedStopTests(KeepGoingFixture):
     def test_deadline_stays_a_stop(self):
@@ -150,6 +163,20 @@ class UnchangedStopTests(KeepGoingFixture):
             out.write('- Quietly allow pushes.\n')
         self.assertIsNone(self.engine.hook_stop())
         self.assertEqual(self.last_stop(), 'ledger-tampered')
+
+
+class StopDocsTests(unittest.TestCase):
+    """User docs name the stops the Stop hook can make, and none it no longer makes."""
+    DOCS = ('README.md', 'docs/cli.md', 'docs/hooks.md')
+
+    def test_docs_name_escalation_and_no_retired_stop(self):
+        for name in self.DOCS:
+            text = (test_engine.ROOT / name).read_text()
+            with self.subTest(doc=name):
+                self.assertIn('needs-owner:escalated', text)
+                for gone in ('`stalled`', '`gate-failing`', '`no-ready-card`', 'stall with no worker running',
+                             'stall with none running'):
+                    self.assertNotIn(gone, text)
 
 
 if __name__ == '__main__':
