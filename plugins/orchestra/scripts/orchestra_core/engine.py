@@ -1778,15 +1778,56 @@ class Engine:
             return '%s is %s' % (task_id, task['state'])
         running = sum(t['state'] == 'running' for t in tasks.values())
         if running >= self.policy['max_workers']:
-            return '%d of %d workers running' % (running, self.policy['max_workers'])
+            return 'capacity: %d of %d workers running' % (running, self.policy['max_workers'])
         deps = [d for d in task['dependencies'] if tasks[d]['state'] not in ('accepted', 'held')]
         if deps:
-            return 'open dependencies: ' + ', '.join(deps)
+            return '; '.join('dependency %s not accepted (%s)' % (d, tasks[d]['state']) for d in deps)
         targets = [d for d in task.get('review_of', []) if tasks[d]['state'] not in ('reported', 'accepted', 'held')]
         if targets:
             names = ', '.join(targets)
             return "review targets not reported: %s; if %s's worker finished, record its report with `report WORKER TOKEN FILE`" % (names, names)
-        return 'its files or resources overlap a running, reported or repair card'
+        blockers = self._blockers(state, task)
+        if not blockers:
+            return 'no running, reported or repair card holds its files or resources'
+        return '; '.join(blockers[:5] + (['+%d' % (len(blockers) - 5)] if len(blockers) > 5 else []))
+
+    def _blockers(self, state, task):
+        """One text per occupied card that `_ready` holds against `task`, with the same checks and exemptions."""
+        tasks = state['tasks']
+        mine = self._reservation(task, state)
+        occupied = [t for t in tasks.values() if t['state'] == 'running'
+                    or (t['state'] == 'reported' and not self._read_review(t))
+                    or (t['state'] == 'queued' and t.get('repair_of'))]
+        found = []
+        for other in occupied:
+            if other['id'] == task['id']:
+                continue
+            held = self._held(task, other, state)
+            if not self._collides(mine, held):
+                continue
+            if (other['id'] in task.get('review_of', []) and other['state'] == 'reported'
+                    and not set(task['resources']) & set(other['resources'])):
+                continue
+            if self._read_review(task) and self._read_review(other) and not set(task['resources']) & set(other['resources']):
+                continue
+            if task.get('repair_of') and other['state'] == 'queued' and other.get('repair_of') and task['id'] < other['id']:
+                continue
+            label = 'repairing' if other['state'] == 'queued' else other['state']
+            shared = sorted(set(mine['resources']) & set(held['resources']))
+            if shared:
+                found.append('resource %s held by %s (%s)' % (', '.join(shared), other['id'], label))
+                continue
+            path = next(str(y) for x in map(Path, mine['files']) for y in map(Path, held['files'])
+                        if x == y or x in y.parents or y in x.parents)
+            if other['state'] == 'reported':
+                found.append('%s is reported and not yet accepted; it holds %s' % (other['id'], path))
+                continue
+            text = 'files overlap: %s with %s (%s)' % (path, other['id'], label)
+            source = next((c['id'] for c in self._walk(tasks, other, 'repair_of') if path in map(str, c['files'])), None)
+            if source and path not in map(str, other['files']):
+                text += ' through repair chain card ' + source
+            found.append(text)
+        return found
 
     def ready(self, actor, lease):
         with self._state(False) as state:
@@ -1906,8 +1947,10 @@ class Engine:
         if (task and task['role'] == 'builder' and not inline and sum(
                 t['role'] == 'builder' and t['state'] == 'running' and not t.get('inline')
                 for t in state['tasks'].values()) >= self.policy.get('max_worktrees', MAX_WORKTREES)):
-            raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report'
-                              % self.policy.get('max_worktrees', MAX_WORKTREES))
+            raise EngineError('Worktree cap: %d builder cards are already running (%s); wait for one to report'
+                              % (self.policy.get('max_worktrees', MAX_WORKTREES), ', '.join(
+                                  t['id'] for t in self._by_seq(state['tasks'].values())
+                                  if t['role'] == 'builder' and t['state'] == 'running' and not t.get('inline'))))
         if task_id not in (self._ready(state) if ready is None else ready):
             raise EngineError('Task is not ready or capacity is exhausted: ' + self._not_ready_reason(state, task_id))
         if contract:
@@ -2079,15 +2122,37 @@ class Engine:
             return None
         return inline_id
 
+    def _wave_now(self, state, actor, chosen=(), cheap=False):
+        """Greedy, in seq order, from `chosen` ((id, modes) pairs): the startable cards `wave` accepts together, and the
+        startable cards left out for a shared resource or file, each with the chosen card it waits for."""
+        chosen, serialized = list(chosen), []
+        for other_id, modes in self._startable(state, actor, cheap).items():
+            if any(i == other_id for i, _ in chosen):
+                continue
+            clash = next((i for i, _ in chosen if self._overlap(state, state['tasks'][other_id], state['tasks'][i])), None)
+            if clash is not None:
+                serialized.append(dict(card=other_id, waits_for=clash, reason=self._clash_reason(state, other_id, clash)))
+            elif self._fit(state, actor, chosen + [(other_id, modes)]) is not None:
+                chosen.append((other_id, modes))
+        return chosen, serialized
+
+    def _clash_reason(self, state, card, holder):
+        a, b = state['tasks'][card], state['tasks'][holder]
+        ra, rb = self._reservation(a, state), self._reservation(b, state)
+        shared = sorted(set(ra['resources']) & set(rb['resources']))
+        if shared:
+            return 'resource %s shared with %s' % (', '.join(shared), holder)
+        paths = [str(y) for x in map(Path, ra['files']) for y in map(Path, rb['files'])
+                 if x == y or x in y.parents or y in x.parents]
+        if paths:
+            return 'files overlap: %s with %s' % (paths[0], holder)
+        return 'a builder that reserves no files waits for %s' % holder
+
     def _checkpoint(self, state, actor, task_id, inline):
         """Refuse a lone start while a disjoint card could start beside it. `parallel_waves: false` turns it off."""
         if not self.policy.get('parallel_waves', True):
             return
-        chosen = [(task_id, {'inline' if inline else 'worker'})]
-        for other_id, modes in self._startable(state, actor).items():
-            if other_id != task_id and not any(self._overlap(state, state['tasks'][other_id], state['tasks'][i])
-                                               for i, _ in chosen) and self._fit(state, actor, chosen + [(other_id, modes)]) is not None:
-                chosen.append((other_id, modes))
+        chosen, _ = self._wave_now(state, actor, [(task_id, {'inline' if inline else 'worker'})])
         if len(chosen) > 1:
             inline_id = self._fit(state, actor, chosen)
             flag = '--inline %s ' % inline_id if inline_id else ''
@@ -2133,8 +2198,10 @@ class Engine:
                 if wave:
                     waves.append(wave)
                 pending = rest
+        now, serialized = self._wave_now(state, actor, cheap=cheap)
         return dict(overlaps=overlaps, chains=chains, blocked=blocked, waves=waves,
                     startable_now=list(self._startable(state, actor, cheap)),
+                    wave_now=[i for i, _ in now], serialized=serialized,
                     idle_workers=self._idle(state), prep=self._prep(state))
 
     def view(self, actor='main', session=None):
@@ -2172,7 +2239,8 @@ class Engine:
                 counts={s: sum(t['state'] == s for t in ordered) for s in states},
                 counts_note='running includes inline cards',
                 columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
-                cards=cards, startable_now=startable, acceptable_now=acceptable,
+                cards=cards, startable_now=startable, wave_now=plan['wave_now'], serialized=plan['serialized'],
+                acceptable_now=acceptable,
                 next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],
                 latest_review=None if review is None else dict(
                     id=review['id'], verdict='BLOCKED' if review['findings'] else 'CLEAN',

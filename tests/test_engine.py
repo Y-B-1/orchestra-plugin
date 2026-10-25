@@ -6286,7 +6286,7 @@ class NextStepRefusalTests(HoldFixture):
     def test_a_start_refusal_says_why_the_card_is_not_ready(self):
         self.task('a')
         self.task('b', dependencies=['a'])
-        for task_id, why in (('nope', 'unknown task nope'), ('b', 'open dependencies: a')):
+        for task_id, why in (('nope', 'unknown task nope'), ('b', 'dependency a not accepted \\(queued\\)')):
             with self.subTest(task_id), self.assertRaisesRegex(EngineError, '^Task is not ready or capacity is exhausted: ' + why):
                 self.engine.dispatch('main', self.lease, task_id, 'w')
         self.engine = Engine(self.root / 'capacity', self.repo, dict(schema_version=1, max_workers=1))
@@ -6294,7 +6294,7 @@ class NextStepRefusalTests(HoldFixture):
         self.task('a')
         self.engine.dispatch('main', self.lease, 'a', 'w')
         self.task('c', files=['c'])
-        with self.assertRaisesRegex(EngineError, '^Task is not ready or capacity is exhausted: 1 of 1 workers running$'):
+        with self.assertRaisesRegex(EngineError, '^Task is not ready or capacity is exhausted: capacity: 1 of 1 workers running$'):
             self.engine.dispatch('main', self.lease, 'c', 'w2')
 
     def test_task_lists_default_to_empty_and_missing_lists_say_missing(self):
