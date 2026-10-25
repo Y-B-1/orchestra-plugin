@@ -101,13 +101,13 @@ def generated(root=ROOT):
                 if not tools:
                     raise ValueError(f"{name}: worker needs a non-empty tools allowlist")
                 bases = {tool.split('(')[0].strip() for tool in tools}
-                for base in sorted(bases):
-                    if base not in KNOWN_TOOLS and not base.startswith('mcp__'):
-                        raise ValueError(f"{name}: unknown tool '{base}'; Claude Code drops an unmatched tools entry")
                 if role.get('read_only') and bases & WRITE_TOOLS:
                     raise ValueError(f"{name}: read-only role lists a write tool")
                 if bases & {'Agent', 'Task'}:
                     raise ValueError(f"{name}: workers never delegate")
+                for base in sorted(bases):
+                    if base not in KNOWN_TOOLS and not base.startswith('mcp__'):
+                        raise ValueError(f"{name}: unknown tool '{base}'; Claude Code drops an unmatched tools entry")
                 front.append(f"tools: {', '.join(tools)}")
             front += ['---', '', instructions.replace('__ORCHESTRA_ROOT__', '${CLAUDE_PLUGIN_ROOT}')]
             output[f'agents/{name}.md'] = '\n'.join(front) + '\n'
