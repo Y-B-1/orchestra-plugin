@@ -458,9 +458,11 @@ class Engine:
 
     @classmethod
     def _noise(cls, name):
-        """Interpreter and OS leftovers that a command leaves behind without changing the work: never evidence."""
+        """Interpreter and OS leftovers that a command leaves behind without changing the work: never evidence. An
+        untracked path under `.claude/worktrees/` is a linked worktree left on disk, not work in this tree (F90)."""
         parts = name.split('/')
-        return name.endswith('.pyc') or any(part in cls._NOISE_PARTS for part in parts)
+        return (name.endswith('.pyc') or any(part in cls._NOISE_PARTS for part in parts)
+                or name.startswith('.claude/worktrees/'))
 
     def _file_entries(self, scope=None):
         """[name, value] for every tracked and untracked nonignored entry, limited to `scope` when given."""
@@ -535,6 +537,15 @@ class Engine:
         if 'scope' in recorded and 'scope' in current:
             recorded, current = ({k: v for k, v in a.items() if k not in ('head', 'tree')} for a in (recorded, current))
         return recorded == current
+
+    def _squashed_same(self, state, recorded, current):
+        """F96: a whole-repository receipt that differs from `current` only in HEAD stays current when the trees are equal
+        and the receipt's HEAD is landed in HEAD (a squash merge puts the reviewed tree under a new commit)."""
+        if not isinstance(recorded, dict) or not isinstance(current, dict) or 'scope' in recorded or 'scope' in current:
+            return False
+        head = recorded.get('head')
+        rest = lambda a: {k: v for k, v in a.items() if k != 'head'}
+        return isinstance(head, str) and rest(recorded) == rest(current) and self._landed(head, state)
 
     def scope_for(self, task_ids):
         """Union of the tasks' reservation files, or None (whole repo) when any task reserves no files."""
@@ -2862,6 +2873,10 @@ class Engine:
         transaction."""
         if defer_reason is not None and (not isinstance(defer_reason, str) or not defer_reason.strip()):
             raise EngineError('--defer-out-of-scope needs a nonempty reason')
+        if report_path is None:  # F85: the report the Stop hook captured for this token
+            if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', token):
+                raise EngineError('Invalid review token')
+            report_path = self.state_dir / 'reports' / (token + '.md')
         if not Path(report_path).is_file():
             raise EngineError('Review report not found: ' + str(report_path))
         try:
@@ -2894,6 +2909,10 @@ class Engine:
                 self._report_in(state, card['worker'], token, text)
                 if card['state'] != 'reported':
                     raise EngineError('The review card did not take the report')
+            elif card.get('report') == text and not any(card['id'] in r.get('tasks', []) for r in state['reviews']):
+                # F87: the Stop hook reported this card earlier, perhaps beside dirty files; its report is now this
+                # receipt, so it is re-taken at the artifact of this transaction and the chain accept can follow.
+                card['report_artifact'] = self.artifact(self._scope_of(state, [card['id']]))
             receipt = self._record_review(state, actor, lease, body['reviewer'], report_path, body['categories'],
                                           ids, final, body['findings'], retasked)
             if defer_reason is not None:
@@ -2950,6 +2969,11 @@ class Engine:
         return True
 
     @staticmethod
+    def _cleanup(task):
+        """A builder cleanup card: its files may join a fix re-review's scope beside the repairs (F67)."""
+        return task['role'] == 'builder' and task['mode'] == 'cleanup'
+
+    @staticmethod
     def _check_fix_review(state, covered):
         """The fix re-review covers repair cards whose chain starts at a final-review finding, plus their ancestors."""
         repairs = [t for t in covered if t['role'] == 'builder' and t['mode'] == 'repair']
@@ -2959,7 +2983,7 @@ class Engine:
             if any(t.get('final_findings') for t in chain):
                 fixes += 1
                 allowed.update(t['id'] for t in chain)
-        if not fixes or fixes != len(repairs) or any(t['id'] not in allowed for t in covered):
+        if not fixes or fixes != len(repairs) or any(t['id'] not in allowed and not Engine._cleanup(t) for t in covered):
             raise EngineError('A fix re-review covers repair cards of a final-review finding and their ancestors')
 
     def _check_chain_tips(self, state, covered, task_findings, kind='repair-diff'):
@@ -3054,7 +3078,7 @@ class Engine:
                  if r.get('repair_check') and not r['findings'] and self._intact(r)
                  and self._same(r['artifact'], self._artifact_cached(cache, r.get('scope')))]
         repairs = {i for r in later for i in r['tasks']
-                   if state['tasks'][i]['role'] == 'builder' and state['tasks'][i]['mode'] == 'repair'}
+                   if state['tasks'][i]['role'] == 'builder' and state['tasks'][i]['mode'] in ('repair', 'cleanup')}
         scope = self._scope_of(state, sorted(repairs)) if repairs else None
         if scope is None:
             return None
@@ -3089,7 +3113,8 @@ class Engine:
                 continue
             # Each receipt is compared against the artifact recomputed with its own stored scope.
             # A stale newest receipt leaves its categories without a current verdict (O19).
-            current = self._same(review['artifact'], self._artifact_cached(cache, review.get('scope')))
+            now = self._artifact_cached(cache, review.get('scope'))
+            current = self._same(review['artifact'], now) or (review['final'] and self._squashed_same(state, review['artifact'], now))
             resolved = None
             if not current and keep and review['final']:
                 resolved = self._kept_current(state, review, cache)
