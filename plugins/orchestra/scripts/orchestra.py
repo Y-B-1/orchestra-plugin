@@ -138,7 +138,8 @@ def parser():
     accept.add_argument('task_id')
     accept.add_argument('--ruling', metavar='TEXT', help='Accept a worker card whose only gap is an unmet criterion, with the coordinator reason')
     review = sub.add_parser('review')
-    review.add_argument('report', help='Structured review JSON path')
+    review.add_argument('report', nargs='?', help='Structured review JSON path; with --token and no path, the report '
+                        'captured for the token')
     review.add_argument('--token', help='Assignment token of the final review card: report it, record the receipt and '
                         'accept the card in one step (a final receipt, a critic receipt or a fix re-review)')
     review.add_argument('--defer-out-of-scope', metavar='REASON', help='With --token: record each out-of-scope item as '
@@ -394,6 +395,12 @@ def execute(args):
         engine.record_criterion(args.actor,args.lease,args.task_id,args.criterion,args.evidence)
         return {'criterion':args.task_id},0
     if args.command=='review':
+        if args.report is None:
+            if not args.token:
+                raise EngineError('review needs a report path or --token')
+            result = engine.review_with_token(args.actor,args.lease,args.token,None,args.defer_out_of_scope)
+            without_entries(result['receipt'])
+            return result,0
         review = read_json(args.report)
         if not isinstance(review,dict):
             raise EngineError('Review report must be a JSON object')

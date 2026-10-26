@@ -2598,6 +2598,16 @@ class FixReviewTests(EngineFixture):
         self.assertEqual(['accepted'] * 3, [self.engine.status()['tasks'][i]['state'] for i in ('B1', 'B2', 'R1')])
         self.engine.check_completion('main', self.lease)  # the repaired file is inside the clean re-review's scope
 
+    def test_cleanup_card_after_the_final_review_stays_inside_the_clean_fix_re_review_scope(self):
+        self.blocked_chain()
+        self.engine.accept('main', self.lease, 'B2')
+        (self.repo / 'C1').write_text('tidied after the final review')
+        self.built('C1', mode='cleanup')
+        self.reviewed('check', ['R1', 'B1', 'C1'], repair_check=True)
+        for name in ('R1', 'B1', 'C1'):
+            self.engine.accept('main', self.lease, name)
+        self.engine.check_completion('main', self.lease)  # the cleanup file is inside the clean re-review's scope
+
     def test_edit_outside_the_fix_re_review_scope_voids_the_final_review(self):
         self.blocked_chain()
         self.engine.accept('main', self.lease, 'B2')
