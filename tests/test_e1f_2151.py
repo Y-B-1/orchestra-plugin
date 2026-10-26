@@ -70,6 +70,12 @@ class RepairReservationTests(te.FinalBlockerTests):
         self.task('RB', mode='repair', repair_of='B2', files=['b', 'x'])
         self.assertEqual(['RA'], self.engine.ready('main', self.lease))
 
+    def test_a_queued_repair_still_holds_its_chain_files_against_a_non_repair_card(self):
+        self.reported_pair()
+        self.task('RA', mode='repair', repair_of='B1', files=['a'])
+        self.task('C', files=['shared'])
+        self.assertNotIn('C', self.engine.ready('main', self.lease))
+
     def test_review_scope_stays_chain_wide(self):
         self.reported_pair()
         self.task('RA', mode='repair', repair_of='B1', files=['a'])
