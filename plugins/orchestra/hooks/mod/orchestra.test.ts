@@ -807,6 +807,7 @@ function stage(on: On, r: Rig, opts: { tools?: string[]; decision?: string; deci
       taskCalls.push(e);
       const t = tasks.find((x) => x.id === e['taskId']);
       if (t === undefined || failUpdates.has(t.id)) return { result: { success: false, taskId: String(e['taskId']), updatedFields: [], error: 'Task not found' }, text: '' } as never;
+      if (typeof e['subject'] === 'string') t.subject = e['subject'];
       if (typeof e['status'] === 'string') t.status = e['status'];
       if (typeof e['owner'] === 'string') t.owner = e['owner'];
       if (Array.isArray(e['addBlockedBy'])) t.blockedBy.push(...(e['addBlockedBy'] as string[]));
@@ -1371,6 +1372,22 @@ test('track: the native task list reads as the track, main owns the track cards 
   await openBoard($);
   await flush();
   expect(s.tasks.map((t) => [t.subject, t.owner])).toEqual([[`[012345] A step 1 builder/implementation`, 'main'], [subj('B'), 'w2']]);
+});
+
+test('track: when the track changes the task subjects renumber and a card that leaves the track loses its step', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const cards = [{ id: 'A', state: 'queued', seq: 1 }, { id: 'B', state: 'queued', seq: 2 }];
+  const e = engine(r, { view: boardView(cards, { track: [{ step: 1, card: 'A', side: [] }, { step: 2, card: 'B', side: [] }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  expect(s.tasks.map((t) => t.subject)).toEqual(['[012345] A step 1 builder/implementation', '[012345] B step 2 builder/implementation']);
+  e.view = boardView(cards, { track: [{ step: 1, card: 'B', side: [] }] });
+  await r.clock.advance(30000);
+  await flush();
+  expect(s.tasks.map((t) => t.subject)).toEqual([subj('A'), '[012345] B step 1 builder/implementation']);
+  expect(s.tasks.map((t) => t.owner)).toEqual(['main', 'main']);
 });
 
 test('track: a reported card shows as an accept entry for main and completes once accepted', async ($, on) => {
