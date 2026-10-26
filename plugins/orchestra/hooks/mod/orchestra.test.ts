@@ -1332,3 +1332,59 @@ test('modui: while autonomy is active the pane shows its status, parked cards an
   expect(again).toContain('pass 3/8');
   expect(again).toContain('Which db? -> sqlite (at 01:02)');
 });
+
+// 2.15.1 T2: the track lane in the pane and the track order in the native task list.
+const NO_FIT = 'no card fits the session model; you coordinate, accept and review';
+
+test('track: the pane shows a Track lane above the columns, each step with its side cards', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  engine(r, { view: boardView([{ id: 'A', state: 'queued', seq: 1 }, { id: 'B', state: 'queued', seq: 2 }, { id: 'C', state: 'queued', seq: 3 }], { track: [{ step: 1, card: 'A', side: ['B'] }, { step: 2, card: 'C', side: [] }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  const ui = await drawBoard($, 'terminal', 120);
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  expect(drawn).toContain('Track');
+  expect(drawn).toContain('Step 1: you run A; side: B');
+  expect(drawn).toContain('Step 2: you run C');
+  expect(drawn.indexOf('Track')).toBeLessThan(drawn.findIndex((t) => t.startsWith('Queued')));
+});
+
+test('track: with no card fitting the session model the pane says so plainly', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  engine(r, { view: boardView([{ id: 'A', state: 'queued', seq: 1 }], { track: [{ step: 1, card: null, side: ['A'], coordinator: 'prepare briefs and review reports' }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  const ui = await drawBoard($, 'terminal', 120);
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  expect(drawn).toContain(`Step 1: ${NO_FIT}; side: A`);
+});
+
+test('track: the native task list reads as the track, main owns the track cards and workers keep the side cards', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  engine(r, { view: boardView([{ id: 'A', state: 'queued', seq: 1 }, { id: 'B', state: 'running', seq: 2, worker: 'w2' }], { track: [{ step: 1, card: 'A', side: ['B'] }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  expect(s.tasks.map((t) => [t.subject, t.owner])).toEqual([[`[012345] A step 1 builder/implementation`, 'main'], [subj('B'), 'w2']]);
+});
+
+test('track: a reported card shows as an accept entry for main and completes once accepted', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const e = engine(r, { view: boardView([{ id: 'A', state: 'reported', seq: 1, worker: 'w1' }], { acceptable_now: ['A'], track: [{ step: 1, card: null, side: [], coordinator: 'prepare briefs and review reports' }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  const accept = s.tasks.find((t) => t.subject.startsWith('[012345] accept-A '));
+  expect(accept === undefined).toBe(false);
+  expect([accept!.owner, accept!.status]).toEqual(['main', 'in_progress']);
+  e.view = boardView([{ id: 'A', state: 'accepted', seq: 1, worker: 'w1' }]);
+  await $.tool.call({ tool: 'Bash', tool_use_id: 't1', command: 'python3 x/orchestra.py accept A' });
+  await flush();
+  expect(s.tasks.find((t) => t.subject.startsWith('[012345] accept-A '))!.status).toBe('completed');
+});
