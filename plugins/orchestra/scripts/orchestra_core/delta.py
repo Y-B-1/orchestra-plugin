@@ -34,8 +34,9 @@ def ids(view, state):
 
 
 def next_command(view):
-    """The command the board waits on: accept the first reported card, else wave the startable ones; None when neither."""
-    reported = ids(view, 'reported')
+    """The command the board waits on: accept the first acceptable card (the reported ones for a view without
+    `acceptable_now`), else wave the startable ones; None when neither."""
+    reported = ids(view, 'reported') if 'acceptable_now' not in (view or {}) else list(view['acceptable_now'])
     if reported:
         return 'orchestra.py accept '+reported[0]
     startable = list((view or {}).get('startable_now') or [])

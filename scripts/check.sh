@@ -32,19 +32,6 @@ run() {  # name, command...
   record "$name" $?
 }
 
-# The unit suites are the slow part: start them first, in the background, one per Python version.
-pids=()
-if [ $quick -eq 0 ]; then
-  "$py311" -m unittest discover -s tests >"$logs/unittest-3.11.log" 2>&1 & pids+=("unittest-3.11:$!")
-  if [ -n "$py313" ]; then
-    "$py313" -m unittest discover -s tests >"$logs/unittest-3.13.log" 2>&1 & pids+=("unittest-3.13:$!")
-  else
-    summary+=("SKIPPED  unittest-3.13 (no Python 3.13: install it, or install uv)")
-  fi
-else
-  summary+=("SKIPPED  unit suite (--quick)")
-fi
-
 run generate "$py311" plugins/orchestra/scripts/generate.py --check
 run mod-fixtures "$py311" plugins/orchestra/hooks/mod/fixtures/sync.py --check
 
@@ -63,6 +50,20 @@ if command -v claude >/dev/null 2>&1; then
   run mod-tests claude plugin test plugins/orchestra
 else
   summary+=("SKIPPED  plugin validation and mod tests (the claude CLI is not on PATH)")
+fi
+
+# The unit suites are the slow part: start them in the background, one per Python version, after the mod tests.
+# The mod tests have a 5 s per-test limit that two suites running beside them can exceed (F57b).
+pids=()
+if [ $quick -eq 0 ]; then
+  "$py311" -m unittest discover -s tests >"$logs/unittest-3.11.log" 2>&1 & pids+=("unittest-3.11:$!")
+  if [ -n "$py313" ]; then
+    "$py313" -m unittest discover -s tests >"$logs/unittest-3.13.log" 2>&1 & pids+=("unittest-3.13:$!")
+  else
+    summary+=("SKIPPED  unittest-3.13 (no Python 3.13: install it, or install uv)")
+  fi
+else
+  summary+=("SKIPPED  unit suite (--quick)")
 fi
 
 for entry in ${pids[@]+"${pids[@]}"}; do

@@ -206,6 +206,66 @@ class StopTests(BoardCase):
         self.assertEqual(out, {'decision': 'block', 'reason': 'Continue one authorized bounded pass'})
         engine.view.assert_not_called()
 
+class AcceptableTests(BoardCase):
+    """F60: the board names only the reported cards that `accept` would not refuse for the repair chain or a pending review."""
+
+    def built(self, name):
+        self.task(name)
+        self.engine.report('w-' + name, self.engine.dispatch('main', self.lease, name, 'w-' + name), te.done('Built ' + name))
+
+    def under_repair_with_recheck_running(self):
+        self.allow_review()
+        self.built('B1')
+        path = self.root / 'blocked.json'
+        self.review(path, tasks=['B1'], findings=['f'])
+        self.engine.record_review('main', self.lease, 'reviewer', path, ['correctness'], ['B1'], findings=['f'])
+        self.task('R1', mode='repair', repair_of='B1', files=['B1'])
+        self.engine.report('r1', self.engine.dispatch('main', self.lease, 'R1', 'r1'), te.done('Repaired'))
+        self.task('L1', role='code-reviewer', mode='final', files=[], review_of=['R1', 'B1'])
+        self.engine.dispatch('main', self.lease, 'L1', 'orchestra-L1')
+
+    def test_a_plain_reported_builder_card_is_acceptable_and_the_stop_names_accept(self):
+        self.built('B1')
+        self.assertEqual(['B1'], self.engine.view()['acceptable_now'])
+        out = self.stop()
+        self.assertEqual('block', out['decision'])
+        self.assertIn('orchestra.py accept B1', out['reason'])
+        self.assertEqual({}, self.stop())
+
+    def test_a_card_under_repair_with_its_fix_re_review_running_is_not_acceptable(self):
+        self.under_repair_with_recheck_running()
+        view = self.engine.view()
+        self.assertEqual(['B1', 'R1'], [c['id'] for c in view['cards'] if c['state'] == 'reported'])
+        self.assertEqual([], view['acceptable_now'])
+        self.assertIsNone(hooks_module.delta.next_command(view))
+        self.assertEqual({}, self.stop())
+
+    def test_a_reported_card_a_queued_review_names_is_not_acceptable(self):
+        self.built('B1')
+        self.task('L1', role='code-reviewer', mode='final', files=[], review_of=['B1'])
+        self.assertEqual([], self.engine.view()['acceptable_now'])
+
+    def test_a_builder_card_reported_with_an_unmet_criterion_is_not_acceptable(self):
+        self.task('B1')
+        unmet = [{'criterion': 'check behavior', 'met': False, 'evidence': 'not yet'}]
+        self.engine.report('w-B1', self.engine.dispatch('main', self.lease, 'B1', 'w-B1'), te.done('Built', criteria=unmet))
+        view = self.engine.view()
+        self.assertEqual(['B1'], hooks_module.delta.ids(view, 'reported'))
+        self.assertEqual([], view['acceptable_now'])
+        self.assertIsNone(hooks_module.delta.next_command(view))
+        self.assertEqual({}, self.stop())
+
+    def test_the_next_command_falls_back_to_the_reported_list_for_an_older_view(self):
+        view = {'cards': [{'id': 'c', 'state': 'reported'}]}
+        self.assertEqual('orchestra.py accept c', hooks_module.delta.next_command(view))
+
+    def test_a_startable_card_still_blocks_beside_an_unacceptable_reported_one(self):
+        self.under_repair_with_recheck_running()
+        self.task('S1')
+        out = self.stop()
+        self.assertEqual('block', out['decision'])
+        self.assertIn('wave S1', out['reason'])
+
 
 if __name__ == '__main__':
     unittest.main()

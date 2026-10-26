@@ -729,7 +729,7 @@ class FinalBlockerTests(EngineFixture):
         self.engine.report('worker2', token, done('First repair'))
         self.record('blocked2', ['B1', 'R1'], findings=['bug2'], task_findings={'R1': ['bug2']})
         self.engine.hold('main', self.lease, 'R1', 'bug2 persists after the first repair')
-        self.task('R2', mode='repair', repair_of='R1', files=['a'])
+        self.task('R2', mode='repair', repair_of='R1', owner_approval='owner: take the repair', files=['a'])
         self.assertEqual(['R2'], self.engine.ready('main', self.lease))
         token = self.engine.dispatch('main', self.lease, 'R2', 'worker3')
         self.engine.report('worker3', token, done('Second repair'))
@@ -2844,7 +2844,7 @@ class HoldTests(HoldFixture):
     def test_repair_of_held_tip_allowed_and_chain_repairing(self):
         self.blocked_chain()
         self.engine.hold('main', self.lease, 'R1', 'g')
-        self.task('R2', mode='repair', repair_of='R1', files=['B1'])
+        self.task('R2', mode='repair', repair_of='R1', owner_approval='owner: take the repair', files=['B1'])
         self.assertEqual(['repairing', 'repairing'], self.states('R1', 'B1'))
         self.assertEqual('R2', self.engine.status()['tasks']['R1']['repaired_by'])
 
