@@ -28,7 +28,7 @@ Friction from the 2.15 live run, and the review notes 2.15.0 deferred.
 
 ### Known gaps
 
-- Items deferred to the next release (F97 to F100) are listed in `docs/BUILD-LEDGER.md`.
+- Items deferred to the next release (F97 to F101) are listed in `docs/BUILD-LEDGER.md`.
 - The `cancelBoardTimer` wrapper in `orchestra.ts` and the repeated "A tiny task starts no run" prose are left: the first sits outside this card's files, and `tests/test_skill_routing.py` pins the second in two files.
 
 ## 2.15.0 — 2026-10-25
