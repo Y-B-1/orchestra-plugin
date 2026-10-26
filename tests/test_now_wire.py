@@ -34,7 +34,9 @@ class NowWire(unittest.TestCase):
             entries, _, engine = self.emit(state, [(TASK, ('Mode: implementation\n', None), ('orchestra:builder', None))])
             lines = entries[0]['prompt'].splitlines()
             self.assertEqual(lines[1], 'Assignment: w1 tok')
-            self.assertEqual(lines[2], 'Run state now: %s %s' % (engine.state_dir / 'NOW.md', SENTENCE))
+            self.assertEqual(lines[2], "Run state now: the run's NOW.md in the state directory that `orchestra.py where` "
+                                       "prints " + SENTENCE)  # F77: a worker is never given a path under the state directory
+            self.assertNotIn(str(engine.state_dir), entries[0]['prompt'])
 
     def test_refresh_once_and_inline_gets_no_prompt(self):
         with tempfile.TemporaryDirectory() as state:

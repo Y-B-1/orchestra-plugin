@@ -77,7 +77,7 @@ class WorktreeRemovalTest(CleanupFixture):
 
 class TempRemovalTest(CleanupFixture):
     def test_rm_under_the_system_temp_directory_is_allowed(self):
-        for command in ('rm -rf /private/tmp/x/y', 'rm -f /tmp/x', 'rm -rf /tmp/x /private/tmp/y', 'rm -rf /tmp/*',
+        for command in ('rm -rf /private/tmp/x/y', 'rm -f /tmp/x', 'rm -rf /tmp/x /private/tmp/y',
                         'rm -rf /tmp/x/*.log'):
             with self.subTest(command=command):
                 self.assertIsNone(self.hook(command))
@@ -97,7 +97,7 @@ class TempRemovalTest(CleanupFixture):
 
     def test_rm_that_leaves_the_temp_directory_stays_denied(self):
         for command in ('rm -rf /tmp/../etc/x', 'rm -rf ~/x', 'rm -rf build /tmp/x', 'rm -rf /tmp', 'rm -rf /tmpx/y',
-                        'rm -rf /tmp/../*', 'rm -rf /tmp/x/../../etc', 'rm -rf /tmp/x; rm -rf build',
+                        'rm -rf /tmp/../*', 'rm -rf /tmp/*', 'rm -rf /tmp/x/../../etc', 'rm -rf /tmp/x; rm -rf build',
                         'rm -rf /tmp/$(echo ..)/x', 'rm -rf $TMPDIR/../x'):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(command), 'deny')

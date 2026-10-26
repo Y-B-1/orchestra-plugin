@@ -121,8 +121,14 @@ def emit(engine, prepared, result):
             agent_type, override = dispatch
             isolation = 'worktree' if task['role'] == 'builder' and prepared['size'] > 1 else None
             forward = 'git merge --ff-only ' + prepared['base'] if isolation else None
-            prompt = 'Read your brief at %s and do exactly what it says.\nAssignment: %s %s\n' % (path, worker, token)
-            prompt += RUN_STATE % (engine.state_dir / 'NOW.md') + '\n'
+            if path.parent == engine.state_dir / 'briefs':  # the autonomy lock blocks a read of the state directory
+                where = 'with `python3 %s card %s`' % (PACKAGE_ROOT / 'scripts/orchestra.py', task['id'])
+                prompt = 'Read your brief %s and do exactly what it says.\n' % where
+                prompt += 'Assignment: %s %s\n' % (worker, token)
+                prompt += RUN_STATE % "the run's NOW.md in the state directory that `orchestra.py where` prints" + '\n'
+            else:
+                prompt = 'Read your brief at %s and do exactly what it says.\nAssignment: %s %s\n' % (path, worker, token)
+                prompt += RUN_STATE % (engine.state_dir / 'NOW.md') + '\n'
             if forward:
                 prompt += ('First run `%s`, and check `git rev-parse HEAD` prints %s before any edit; stop BLOCKED if it does not.\n'
                            % (forward, prepared['base']))
