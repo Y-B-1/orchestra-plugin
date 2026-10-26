@@ -611,6 +611,8 @@ Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's trac
 ### Deferred to a follow-up
 
 - F108: an `accept --ruling` refusal should quote the failing command it wants named.
+- F109: the Stop hook's `Next:` names `accept` for a reported review card, which only `review --token` accepts; it should name that command and what blocks it.
+- F110: a card added while a final review runs makes every receipt of that review refuse ('must explicitly cover every task'); `add` could warn when a final review of the run is running.
+- F111 (fixed here): a reported inline card kept the main session reserved, so `inline` of the next card was refused until acceptance.
 - `t3` records a skip in headless runs because the board mod does not run under `claude -p`; native task renumbering is proven by mod unit tests only.
 - The first prompt after cards are added by CLI shows no board line (the CLI marks the board seen), and the session model reads unknown until the first `orchestra.py` call.
-- The `STATE_COMMANDS` hint in `engine.py` does not list `replace` or `resume`; no test pins it, but the file is outside this card.

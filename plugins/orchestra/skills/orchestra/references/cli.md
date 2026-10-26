@@ -118,7 +118,7 @@ Every command that takes the lease rewrites `NOW.md` in the state directory: the
 ## 2.15.1 additions
 
 `waves` also prints `track`: steps `{step, card, side}` for the main session's own work, with `coordinator` and no card when no ready card fits the session model. `serialized` reasons include `one inline slot`, `worker cap` and `worktree cap`.
-Escalation parks a card as `needs-owner:escalated (ORIGINAL REASON)`. `start` refuses a run owned by another harness session and names `start --recover --take-over`.
+Escalation parks a card `needs-owner:escalated`, adding `(ORIGINAL REASON)` only to a card parked without the `needs-owner:` prefix. `start` refuses a run owned by another harness session and names `start --recover --take-over`.
 `review --token TOKEN` takes no report path: it reads the captured report. `add` refuses a final review brief without `Lens:` (and `Required categories:` for combined) and a unittest acceptance line that matches no test file.
 `do "report W T F" "accept ID"` reports and accepts a worker card in one call; `report --accept` stays inline-only.
 
