@@ -1963,6 +1963,10 @@ class Engine:
                 raise EngineError('Only a reported card can be resumed; ' + self._state_note(state, task_id))
             if any(task_id in r.get('tasks', []) for r in state['reviews']):
                 raise EngineError('A review covers this report; route a change through a repair card')
+            busy = next((t['id'] for t in self._by_seq(state['tasks'].values()) if task.get('inline') and t is not task
+                         and t.get('worker') == task['worker'] and t['state'] == 'running'), None)
+            if busy:
+                raise EngineError('The main session runs inline card %s; resume %s after %s reports' % (busy, task_id, busy))
             if not task.get('inline'):
                 if sum(t['state'] == 'running' for t in state['tasks'].values()) >= self.policy['max_workers']:
                     raise EngineError('Worker cap: %d cards are already running; wait for one to report' % self.policy['max_workers'])
@@ -2381,7 +2385,8 @@ class Engine:
         return '; %d leftover worktree%s under .claude/worktrees; run `worktrees`' % (count, '' if count == 1 else 's') if count else ''
 
     def _slot_free(self, state, actor):
-        return not any(t.get('worker') == actor and t['state'] in ('running', 'reported') for t in state['tasks'].values())
+        # The rule `_start_checks` applies (F111): only a running inline card holds the main session
+        return not any(t.get('worker') == actor and t['state'] == 'running' for t in state['tasks'].values())
 
     def _modes(self, state, actor, task_id, ready, cheap):
         """How a card could start now: 'worker', 'inline', both or neither (a dry run of the real checks)."""
