@@ -1888,6 +1888,8 @@ class Engine:
         """What `other` holds against `task`. A reported repair holds its parents' files only against a non-repair card:
         a repair card meets just the files and resources the reported repair's own card lists, and the reported
         ancestors under that repair hold nothing against it."""
+        if other['state'] == 'queued' and other.get('repair_of'):  # F84: a queued repair holds only its own files
+            return dict(files=list(other['files']), resources=list(other['resources']))
         if task.get('repair_of') and other['state'] == 'reported' and other['role'] == 'builder':
             if other.get('repaired_by'):
                 return dict(files=[], resources=[])
@@ -2507,12 +2509,13 @@ class Engine:
         (`expect: fail`): that one exits non-zero and a later check of the same command, with no `expect`, exits 0.
         `ruled` skips the unmet criteria only: a coordinator ruling never covers a check."""
         checks = review['checks']
+        bare = lambda text: re.sub(r' \([^()]*\)$', '', text)  # F70: one trailing ` (...)` note never changes the command
         for i, check in enumerate(checks):
             command = check['command']
             if check.get('expect') == 'fail':
                 if check['exit_code'] == 0:
                     return 'check "%s" (expect: fail) exited 0' % command
-                if not any(later['command'] == command and later.get('expect', 'pass') == 'pass' and later['exit_code'] == 0
+                if not any(bare(later['command']) == bare(command) and later.get('expect', 'pass') == 'pass' and later['exit_code'] == 0
                            for later in checks[i + 1:]):
                     return 'check "%s" (expect: fail) has no later passing run' % command
             elif check['exit_code'] != 0:
@@ -3627,6 +3630,9 @@ class Engine:
                 if note:
                     raise EngineError(str(exc) + note) from exc
                 raise
+            note = self._leftover_note(state)
+            if note:
+                raise EngineError('Leftover worktrees remain' + note)
             self._end_run(state, 'finished' if self._autonomy_on(state) else 'closed')
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []

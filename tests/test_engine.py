@@ -625,9 +625,9 @@ class FinalBlockerTests(EngineFixture):
         self.record('blocked', ['B1', 'B2'], findings=['Wrong output'])
         self.task('RA', mode='repair', repair_of='B1', files=['a'])
         self.task('RB', mode='repair', repair_of='B2', files=['b', 'shared'])
-        self.assertEqual(['RA'], self.engine.ready('main', self.lease))
+        self.assertEqual(['RA', 'RB'], self.engine.ready('main', self.lease))  # F84: a queued repair holds only its own files
         token = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
-        self.assertEqual([], self.engine.ready('main', self.lease))  # RB still overlaps the running RA
+        self.assertEqual([], self.engine.ready('main', self.lease))  # RB still overlaps the running RA's chain
         self.engine.report('repair-a', token, done('Repaired A'))
         self.assertEqual(['RB'], self.engine.ready('main', self.lease))  # F30: RA's own files are disjoint from RB's
 
@@ -3101,10 +3101,10 @@ class SelfReviewTests(EngineFixture):
         self.assertIn('First.', self.engine.status()['tasks']['a']['report'])
 
     def test_covered_report_takes_a_corrected_self_review_line_only(self):
-        # F32: a red-first check whose command text carries a note never matches its green run. After a review covers
+        # F32: a red-first check whose command text carries a note other than one trailing (...) (F70) never matches its green run. After a review covers
         # the report, the coordinator may correct only the SELF_REVIEW line; any other change still needs a repair card.
         token = self.running()
-        red = [{'command': 'python3 -m unittest t (at base)', 'exit_code': 1, 'expect': 'fail'},
+        red = [{'command': 'python3 -m unittest t # at base', 'exit_code': 1, 'expect': 'fail'},
                {'command': 'python3 -m unittest t', 'exit_code': 0}]
         self.engine.report('w-a', token, done('First.', checks=red))
         path = self.root / 'final-a.json'
