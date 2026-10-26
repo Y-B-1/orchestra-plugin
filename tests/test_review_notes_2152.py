@@ -94,5 +94,25 @@ class ModelLineScopeTests(t2.Fixture):
         self.assertNotIn('R1', line)
 
 
+class InlineAfterReportTests(t2.Fixture):
+    """F111: once the main session reports its inline card it may start the next inline card; a running inline card
+    still reserves it, and a reported worker card still reserves its worker."""
+    def test_a_reported_inline_card_frees_the_main_session(self):
+        self.task('a')
+        self.task('b', files=['b'])
+        token = self.engine.start_inline('main', self.lease, 'a', serial='fixture: one card at a time')
+        with self.assertRaisesRegex(EngineError, 'Worker is already reserved'):
+            self.engine.start_inline('main', self.lease, 'b', serial='fixture: one card at a time')
+        self.engine.report('main', token, t2.te.done('Built a.'))
+        self.engine.start_inline('main', self.lease, 'b', serial='fixture: one card at a time')
+        self.assertEqual('running', self.cards()['b']['state'])
+
+    def test_a_reported_worker_card_still_reserves_its_worker(self):
+        self.reported('a')
+        self.task('b', files=['b'])
+        with self.assertRaisesRegex(EngineError, 'Worker is already reserved'):
+            self.engine.dispatch('main', self.lease, 'b', 'w-a', serial='fixture: one card at a time')
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -2193,7 +2193,8 @@ class Engine:
         task = state['tasks'].get(task_id)
         if inline and task and task['role'] in REVIEW_ROLES:
             raise EngineError('Independent review roles need a separate worker')
-        if any(t.get('worker') == worker and t['state'] in ('running', 'reported') for t in state['tasks'].values()):
+        held = ('running',) if inline else ('running', 'reported')  # F111: a reported inline card frees the main session
+        if any(t.get('worker') == worker and t['state'] in held for t in state['tasks'].values()):
             raise EngineError('Worker is already reserved')
         if task:
             self._check_route(state, task, inline, helper)
