@@ -327,9 +327,17 @@ function acceptCreates(view: View, matched: ReadonlyMap<string, NativeTask>, dro
     .map((c) => ({ cardId: acceptId(c.id), subject: `[${short}] ${acceptId(c.id)} accept the report of ${c.id}`, description: `Orchestra: accept or repair the report of card ${c.id}, run ${view.runId}.` }));
 }
 
+/** The subject a card's task should carry: `step N` after the id while the card is on the track, none once it leaves. */
+function trackSubject(short: string, cardId: string, subject: string, step: number | undefined): string {
+  const head = `[${short}] ${cardId} `;
+  if (!subject.startsWith(head)) return subject;
+  const rest = subject.slice(head.length).replace(/^step \d+ /, '');
+  return `${head}${step === undefined ? '' : `step ${step} `}${rest}`;
+}
+
 function trackUpdates(view: View, track: Track, matched: ReadonlyMap<string, NativeTask>, dropped: ReadonlySet<string>, base: Update[]): Update[] {
-  const out = [...base];
-  const own = (cardId: string, fields: Update['fields']): void => {
+  const out: { cardId: string; taskId: string; fields: Update['fields'] & { subject?: string } }[] = [...base];
+  const own = (cardId: string, fields: Update['fields'] & { subject?: string }): void => {
     const t = matched.get(cardId);
     if (t === undefined || dropped.has(cardId)) return;
     const next = { ...fields };
@@ -338,6 +346,17 @@ function trackUpdates(view: View, track: Track, matched: ReadonlyMap<string, Nat
     if (at >= 0) out[at] = { ...out[at]!, fields: { ...out[at]!.fields, ...next } };
     else if (Object.keys(next).length > 0) out.push({ cardId, taskId: t.id, fields: next });
   };
+  const steps = new Map(track.steps.filter((s) => s.card !== null).map((s) => [s.card as string, s.step]));
+  const short = runShort(view.runId);
+  for (const c of view.cards) {
+    const t = matched.get(c.id);
+    if (t === undefined || dropped.has(c.id)) continue;
+    const subject = trackSubject(short, c.id, t.subject, steps.get(c.id));
+    if (subject === t.subject) continue;
+    const at = out.findIndex((u) => u.cardId === c.id);
+    if (at >= 0) out[at] = { ...out[at]!, fields: { ...out[at]!.fields, subject } };
+    else out.push({ cardId: c.id, taskId: t.id, fields: { subject } });
+  }
   for (const s of track.steps) if (s.card !== null) own(s.card, {});
   for (const c of view.cards) {
     if (c.state !== 'reported' && c.state !== 'accepted') continue;
