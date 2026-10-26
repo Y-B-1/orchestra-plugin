@@ -69,8 +69,8 @@ def _running(engine, worker, token):
     session = state.get('session')
     if not session or not session.get('active'):
         return False
-    return any(t.get('assignment') == token and t.get('worker') == worker and t.get('state') == 'running'
-               for t in state.get('tasks', {}).values())
+    return any(t.get('assignment') == token and t.get('worker') == worker and t.get('state') in ('running', 'reported')
+               for t in state.get('tasks', {}).values())  # a worker resumed after it reported sends a newer report (F102)
 
 
 def capture(payload, engine):

@@ -501,6 +501,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     if mode == 'minimal':
         # A worker's shell call: the role limits above applied; the merge guard too; the rest is Claude Code's call.
         return _minimal_merge_gate(command, payload, state_dir, engine)
+    home = cwd  # the session's own directory: a `cd DIR &&` shape below judges the delete in DIR, never as DIR's owner
     shaped = _cd_delete_shape(command, cwd)
     if shaped:
         found = classify_command(shaped[0])
@@ -558,10 +559,10 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if active:
             return HookResult({})  # Cleanup of merged work is allowed under autonomy
     if active and decision.boundary == 'delete':
-        cleanup = _autonomy_cleanup(command, decision, cwd, engine)
+        cleanup = _autonomy_cleanup(command, decision, cwd, engine, home=home)
         if cleanup is not None:
             return cleanup
-        if _rm_in_temp(command):
+        if _rm_in_temp(command, payload.get('session_id')):
             return HookResult({})  # Files under the system temp directory hold no work of the run
         if engine is not None and _rm_in_worktrees(command, cwd):
             return HookResult({})  # Section 3.4: the run may delete files inside a linked worktree
@@ -1102,6 +1103,8 @@ def _leftovers(engine, transcript_path=None):
                                      timeout=5).stdout.splitlines()
             if changed:
                 dirty.append('%s (%d uncommitted)' % (path.name, len(changed)))
+        gates = _running_gates(engine, status)
+        busy = _busy_worktrees(engine.repo)
     except Exception:
         return ''
     text = ''
@@ -1112,7 +1115,61 @@ def _leftovers(engine, transcript_path=None):
                  + '; '.join(parts) + '.')
     if dirty:
         text += ' Run worktrees with uncommitted work: ' + ', '.join(dirty) + '.'
+    if busy:
+        text += (' Worktrees with a live process (a worker may still run there; do not remove them or take over their '
+                 'card until the process ends): ' + ', '.join(busy) + '.')
+    if gates:
+        text += (' A gate may still be running (log %s); wait for its receipt in `orchestra.py status` and do not start a '
+                 'second gate on this checkout.' % ', '.join(gates))
     return text
+
+
+GATE_LIVE_SECONDS = 600  # a gate log with no receipt and a write this recent is a gate still running
+
+
+def _running_gates(engine, status):
+    """Names of `<state>/gate-*.log` files that no receipt names yet and that were written in the last GATE_LIVE_SECONDS:
+    the engine opens the log before the command starts and writes the receipt only when it ends."""
+    named = {Path(str(g.get('path'))).name for g in status.get('gates') or [] if isinstance(g, dict)}
+    now, found = time.time(), []
+    for log in sorted(Path(engine.state_dir).glob('gate-*.log')):
+        try:
+            if log.name not in named and log.stat().st_mtime >= now - GATE_LIVE_SECONDS:
+                found.append(log.name)
+        except OSError:
+            continue
+    return found[:3]
+
+
+def _process_cwds():
+    """The working directories of this user's live processes, or None when the system offers no lookup (best effort:
+    `/proc/*/cwd` on Linux, `lsof -d cwd` elsewhere, 3 s at most)."""
+    proc = Path('/proc')
+    if (proc / 'self' / 'cwd').exists():
+        found = []
+        for entry in proc.iterdir():
+            if entry.name.isdigit():
+                try:
+                    found.append(os.readlink(entry / 'cwd'))
+                except OSError:
+                    continue
+        return found
+    try:
+        out = subprocess.run(['lsof', '-a', '-u', str(os.getuid()), '-d', 'cwd', '-Fn'], capture_output=True, text=True,
+                             timeout=3).stdout
+    except (OSError, subprocess.SubprocessError, AttributeError):
+        return None
+    return [line[1:] for line in out.splitlines() if line.startswith('n/')]
+
+
+def _busy_worktrees(repo):
+    """Names of the linked worktrees under `<repo>/.claude/worktrees/` that hold a live process's working directory."""
+    cwds = _process_cwds()
+    if not cwds:
+        return []
+    root = os.path.realpath(os.path.join(str(repo), '.claude', 'worktrees')) + os.sep
+    names = {os.path.realpath(c)[len(root):].split(os.sep, 1)[0] for c in cwds if os.path.realpath(c).startswith(root)}
+    return sorted(n for n in names if n)[:10]
 
 
 def _report_context(engine):
@@ -1410,7 +1467,7 @@ def _held_elsewhere(cwd, engine, branch, tip):
 _CLEANUP_PLAIN = re.compile(r'[A-Za-z0-9_./:+=-]+( [A-Za-z0-9_./:+=-]+)*')
 
 
-def _autonomy_cleanup(command, decision, cwd, engine=None):
+def _autonomy_cleanup(command, decision, cwd, engine=None, home=None):
     """Cleanup of merged work under autonomy, for three plain one-command shapes; None for any other command.
     `git branch -d B` and `git worktree remove PATH` (no force) need the merged-delete proof for the branch; the
     worktree must be a linked worktree of this repository, not the session's own. `git worktree prune` only drops
@@ -1423,14 +1480,14 @@ def _autonomy_cleanup(command, decision, cwd, engine=None):
     if len(words) == 4 and words[:3] in (['git', 'branch', '-d'], ['git', 'branch', '--delete']):
         branch = words[3]
     elif len(words) == 4 and words[:3] == ['git', 'worktree', 'remove'] and not words[3].startswith('-'):
-        if _merged_run_worktree(cwd, words[3], engine):
+        if _merged_run_worktree(cwd, words[3], engine, home=home):
             return HookResult({})  # A clean run worktree whose commits the current branch already holds
-        branch = _worktree_branch(cwd, words[3])
+        branch = _worktree_branch(cwd, words[3], home=home)
         if isinstance(branch, HookResult):
             return branch
         target = (Path(cwd) / words[3]).resolve()
         if '/.claude/worktrees/' in target.as_posix() \
-                and (not _run_branch(engine, branch) or _git_out(target, 'status', '--porcelain', '--ignored')[1]):
+                and (not _run_branch(engine, branch) or _worktree_dirty(target)):
             return _deny('Worktree %s is not clean or not on a branch this run made; remove it by hand' % words[3])
     else:
         return None
@@ -1441,23 +1498,37 @@ def _autonomy_cleanup(command, decision, cwd, engine=None):
     return HookResult(denied) if denied else HookResult({})
 
 
-def _merged_run_worktree(cwd, path, engine=None):
+def _worktree_dirty(target):
+    """True when `git status --porcelain --ignored` at target lists anything but Python caches (`__pycache__/`
+    directories and `*.pyc` files), which every builder worktree gains when it runs the tests; failure is dirty."""
+    code, status = _git_out(target, 'status', '--porcelain', '--ignored=matching', '--untracked-files=all')
+    if code != 0:
+        return True  # `matching` names each ignored path itself, so an ignored folder never hides a non-cache file
+    for line in status.splitlines():
+        name = line[3:].strip('"').rstrip('/')
+        if not (line.startswith('!! ') and (name.endswith('.pyc') or name.split('/')[-1] == '__pycache__')):
+            return True
+    return False
+
+
+def _merged_run_worktree(cwd, path, engine=None, home=None):
     """True when `path` is a linked worktree under `<repository>/.claude/worktrees/` that is not the session's own,
     sits on a branch this run made (`_run_branch`), holds no change and no ignored file (`git status --porcelain
-    --ignored`), and whose HEAD is an ancestor of the HEAD at cwd."""
+    --ignored`, Python caches aside), and whose HEAD is an ancestor of the HEAD at cwd. `home` is the session's own
+    directory when the delete is judged in another one (a `cd DIR &&` shape)."""
     code, out = _git_out(cwd, 'worktree', 'list', '--porcelain')
     if code != 0 or not out.startswith('worktree '):
         return False
     main = Path(out.split('\n', 1)[0][len('worktree '):]).resolve()
-    here, target = Path(cwd).resolve(), (Path(cwd) / path).resolve()
+    here, target = Path(home or cwd).resolve(), (Path(cwd) / path).resolve()
     if target == here or target in here.parents or (main / '.claude' / 'worktrees') not in target.parents:
         return False
     if target not in _linked_worktrees(cwd):
         return False
-    code, status = _git_out(target, 'status', '--porcelain', '--ignored')
+    dirty = _worktree_dirty(target)
     code_head, head = _git_out(target, 'rev-parse', 'HEAD')
     code_branch, branch = _git_out(target, 'symbolic-ref', '--short', '-q', 'HEAD')
-    if code != 0 or status or code_head != 0 or not head or code_branch != 0 or not _run_branch(engine, branch):
+    if dirty or code_head != 0 or not head or code_branch != 0 or not _run_branch(engine, branch):
         return False
     return _git_out(cwd, 'merge-base', '--is-ancestor', head, 'HEAD')[0] == 0
 
@@ -1480,11 +1551,20 @@ def _rm_operands(words):
     return operands
 
 
-def _rm_in_temp(command):
+def _claude_temp_ok(rel, glob, session):
+    """For a path below a `claude-<uid>` directory of a temp root (`rel` starts at that directory): Claude Code keeps every
+    session's scratchpad at `claude-<uid>/<project>/<session>/`, so only paths inside one session's directory may go, and
+    only the current session's when its id is known. A glob removes the children of `rel`, one level deeper."""
+    depth = len(rel) + (1 if glob else 0)
+    return depth >= 4 and (not session or rel[2] == session)
+
+
+def _rm_in_temp(command, session=None):
     """`rm` with any flags as one plain command whose every operand lies below `/tmp`, `/private/tmp` or `$TMPDIR`.
     The operand is resolved first, so a `..` or a link that leaves the directory refuses it; a glob may stand only in the
     last component (one before it could cross a link), is judged by the directory before it and may not start with a
-    dot. The temp directory itself is never an operand."""
+    dot. The temp directory itself is never an operand. Directly under a temp root a glob needs a fixed prefix that
+    cannot start `claude-`; below a `claude-<uid>` directory only one session's own files may go (`_claude_temp_ok`)."""
     if not _TEMP_PLAIN.fullmatch(command.strip()):
         return False
     words = command.split()
@@ -1513,10 +1593,17 @@ def _rm_in_temp(command):
         glob = re.search(r'[*?\[]', operand)
         base = operand[:glob.start()].rsplit('/', 1)[0] if glob else operand
         target = Path(base or '/').resolve()
-        if not any(root in target.parents for root in roots):
+        if glob and target in roots:
+            prefix = operand[len(base) + 1:glob.start()]
+            if not prefix or 'claude-'.startswith(prefix) or prefix.startswith('claude-'):
+                return False  # `/tmp/*` or `/tmp/cl*` could take every session's `claude-<uid>` scratchpad with it
+            continue
+        root = next((r for r in roots if r in target.parents), None)
+        if root is None:
             return False
-        if glob and target.parent in roots and target.name.startswith('claude-'):
-            return False  # `/private/tmp/claude-501/*` would empty every session scratchpad
+        rel = target.relative_to(root).parts
+        if rel[0].startswith('claude-') and not _claude_temp_ok(rel, glob, session):
+            return False
     return True
 
 
@@ -1592,10 +1679,10 @@ def _is_autonomy_file_text(text):
     return any(f.casefold() in text for f in _PROTECTED['autonomy_files'])
 
 
-def _worktree_branch(cwd, path):
+def _worktree_branch(cwd, path, home=None):
     """The branch of the linked worktree at `path`, or a deny when it is not one this cleanup may remove."""
     target = (Path(cwd) / path).resolve()
-    here = Path(cwd).resolve()
+    here = Path(home or cwd).resolve()
     if target == here or target in here.parents:
         return _deny('Worktree %s holds the session directory' % path)
     code, out = _git_out(cwd, 'worktree', 'list', '--porcelain')
@@ -2244,13 +2331,12 @@ def _model_line(engine, view):
         if any(c['role'] == 'builder' for c in queued):
             return 'Session model: unknown; the engine refuses no inline card on model grounds.'
         return None
-    away = []
+    away, exact = [], (getattr(engine, 'policy', None) or {}).get('model_fit') == 'exact'
     for card in queued:
-        need_model, need_effort = engine.card_model(card)
-        want, have = engine._family(need_model), engine._family(model)
-        higher = (want == have and need_effort in EFFORTS and effort in EFFORTS
-                  and EFFORTS.index(effort) < EFFORTS.index(need_effort))
-        if want and have and (want != have or higher):
+        try:
+            engine._check_model_fit({'session': session}, card, exact=exact)  # the engine's rule, never a copy of it
+        except Exception:
+            need_model, need_effort = engine.card_model(card)
             away.append('%s (%s %s)' % (card['id'], need_model, need_effort))
     if not away:
         return None
@@ -2496,7 +2582,7 @@ def _model_switch(payload):
                 from .engine import Engine
                 from .paths import load_policy
                 _record_model(Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT),
-                              {'model': payload['to_model']})
+                              {'model': payload['to_model'], 'session_id': payload.get('session_id')})
     except Exception:
         pass
     print('{}')

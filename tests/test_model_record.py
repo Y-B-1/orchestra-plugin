@@ -97,13 +97,14 @@ class ModelSwitchTests(ModelCase):
 
 
 class PromptTests(ModelCase):
-    def test_a_mechanical_card_is_listed_in_a_sonnet_session(self):
+    def test_a_builder_card_is_listed_in_a_weaker_haiku_session(self):
         self.task('m', mode='mechanical')
         self.task('b')
-        text = context(self.prompt(transcript_path=self.transcript([self.assistant(SONNET)])))
-        self.assertIn('Session model: %s' % SONNET, text)
-        self.assertIn('Cards that must go to a worker (another model): m (%s high).' % HAIKU, text)
-        self.assertNotIn('b (', text)
+        with mock.patch.dict('os.environ', {'CLAUDE_EFFORT': 'high'}):  # m needs Haiku high; a lower effort sends it away
+            text = context(self.prompt(transcript_path=self.transcript([self.assistant(HAIKU)])))
+        self.assertIn('Session model: %s' % HAIKU, text)
+        self.assertIn('Cards that must go to a worker (another model): b (%s medium).' % SONNET, text)
+        self.assertNotIn('m (', text)  # 2.15.2: a session runs a card of a lower family inline
 
     def test_nothing_is_listed_when_every_card_fits(self):
         self.task('b')
@@ -111,15 +112,15 @@ class PromptTests(ModelCase):
         self.assertNotIn('Session model', text)
 
     def test_the_effort_comes_from_the_environment(self):
-        self.task('m', mode='mechanical')
+        self.task('b')
         with mock.patch.dict('os.environ', {'CLAUDE_EFFORT': 'high'}):
-            text = context(self.prompt(transcript_path=self.transcript([self.assistant(SONNET)])))
-        self.assertIn('Session model: %s high.' % SONNET, text)
+            text = context(self.prompt(transcript_path=self.transcript([self.assistant(HAIKU)])))
+        self.assertIn('Session model: %s high.' % HAIKU, text)
 
     def test_more_than_eight_cards_end_with_a_count(self):
         for i in range(10):
-            self.task('m%d' % i, mode='mechanical')
-        text = context(self.prompt(transcript_path=self.transcript([self.assistant(SONNET)])))
+            self.task('m%d' % i, files=['f%d' % i])
+        text = context(self.prompt(transcript_path=self.transcript([self.assistant(HAIKU)])))
         self.assertIn('m7 (', text)
         self.assertNotIn('m8 (', text)
         self.assertIn('+2.', text)
@@ -141,8 +142,8 @@ class PromptTests(ModelCase):
         self.assertIsNone(self.recorded())
 
     def test_the_line_repeats_only_when_it_changes(self):
-        self.task('m', mode='mechanical')
-        path = self.transcript([self.assistant(SONNET)])
+        self.task('b')
+        path = self.transcript([self.assistant(HAIKU)])
         self.assertIn('Session model', context(self.prompt(transcript_path=path)))
         self.assertEqual(self.prompt(transcript_path=path), {})
 
