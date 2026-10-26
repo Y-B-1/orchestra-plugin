@@ -4,6 +4,7 @@ payload does not prove a human typed the prompt. It writes state only through `E
 import hashlib
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 from . import portable
@@ -72,11 +73,35 @@ def _sort(entries, live, trunk):
     return prs, sorted(excluded, key=lambda row: row['number'])
 
 
+def stop_at_deadline(state_dir, repo, engine=None):
+    """F93: any prompt ends an armed run whose ledger deadline has passed. Deadline only: the engine is asked as the
+    session the run is bound to, so the stale-run rule for another session does not apply. Best effort; never raises."""
+    try:
+        state = json.loads((Path(state_dir) / 'state.json').read_text())
+        auto = state.get('autonomy')
+        if not (isinstance(auto, dict) and auto.get('active') is True):
+            return
+        now = engine._clock() if engine is not None else time.time()
+        if now < datetime.fromisoformat(auto['deadline']).timestamp():
+            return
+        if engine is None:
+            from .engine import Engine
+            from .hooks import LOCK_WAIT
+            from .paths import load_policy
+            engine = Engine(Path(state_dir), repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT)
+        session = state.get('session') if isinstance(state.get('session'), dict) else {}
+        engine.stop_stale_autonomy(session.get('harness_session'), now)
+    except Exception:
+        pass
+
+
 def handle_prompt(payload, state_dir, repo, gh=None, engine=None):
     """The reply dict for one UserPromptSubmit payload: `{}` for a prompt that is not the approval word or a repository
-    with no run, else `additionalContext` naming what was recorded or the first condition that failed."""
+    with no run, else `additionalContext` naming what was recorded or the first condition that failed. A prompt that is
+    not the approval word still ends a run past its deadline."""
     prompt = payload.get('prompt') if isinstance(payload, dict) else None
     if not isinstance(prompt, str) or not APPROVAL_PROMPT.fullmatch(prompt):
+        stop_at_deadline(state_dir, repo, engine)
         return {}
     state_file = Path(state_dir) / 'state.json'
     try:

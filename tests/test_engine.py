@@ -347,6 +347,14 @@ class IntegrationRepairTests(EngineFixture):
             with self.subTest(timeout=timeout), self.assertRaisesRegex(EngineError, 'Gate timeout must be positive and finite'):
                 self.engine.run_gate('main', self.lease, 'bad', [sys.executable, '-c', 'pass'], timeout=timeout)
 
+    def test_a_timed_out_gate_keeps_the_output_a_python_child_printed_before_the_kill(self):
+        code = "print('step 1 ok'); import time; time.sleep(30)"
+        receipt = self.engine.run_gate('main', self.lease, 'slow', [sys.executable, '-c', code], timeout=1)
+        self.assertEqual(124, receipt['exit_code'])
+        log = pathlib.Path(receipt['path']).read_text()
+        self.assertIn('step 1 ok', log)
+        self.assertIn('Gate timed out', log)
+
     def test_bad_state_is_engine_error(self):
         for value in [[], {}, {'repo': str(self.repo)}, {'version': 1, 'repo': str(self.repo), 'policy': self.engine.policy_hash, 'tasks': []}]:
             self.engine.state_path.write_text(json.dumps(value))
@@ -617,9 +625,9 @@ class FinalBlockerTests(EngineFixture):
         self.record('blocked', ['B1', 'B2'], findings=['Wrong output'])
         self.task('RA', mode='repair', repair_of='B1', files=['a'])
         self.task('RB', mode='repair', repair_of='B2', files=['b', 'shared'])
-        self.assertEqual(['RA'], self.engine.ready('main', self.lease))
+        self.assertEqual(['RA', 'RB'], self.engine.ready('main', self.lease))  # F84: a queued repair holds only its own files
         token = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
-        self.assertEqual([], self.engine.ready('main', self.lease))  # RB still overlaps the running RA
+        self.assertEqual([], self.engine.ready('main', self.lease))  # RB still overlaps the running RA's chain
         self.engine.report('repair-a', token, done('Repaired A'))
         self.assertEqual(['RB'], self.engine.ready('main', self.lease))  # F30: RA's own files are disjoint from RB's
 
@@ -968,7 +976,7 @@ class HarnessSessionTests(EngineFixture):
         self.now[0] = 1000.0
         if self.engine.status()['session']['active']:
             self.engine.interrupt('main', self.raw_lease())
-        self.lease = self.engine.open_session('main', harness_session='S')
+        self.lease = self.engine.recover_lease('main', 'S', take_over=True)  # a plain start no longer rebinds another session's run
 
     def session(self):
         return self.engine.status()['session']
@@ -2245,7 +2253,7 @@ class MaterialityTests(EngineFixture):
     def test_reviewer_brief_needs_no_keep_remove(self):
         self.task('B1')
         self.task('V1', role='code-reviewer', mode='final', files=[], review_of=['B1'],
-                  brief=self.brief('rev.md', 'Mode: final\nObjective.\n'))
+                  brief=self.brief('rev.md', 'Mode: final\nLens: correctness\nObjective.\n'))
         self.assertIn('V1', self.engine.status()['tasks'])
 
     def two_reviews(self, resources1=(), resources2=()):
@@ -2597,6 +2605,16 @@ class FixReviewTests(EngineFixture):
         self.engine.accept('main', self.lease, 'B1')
         self.assertEqual(['accepted'] * 3, [self.engine.status()['tasks'][i]['state'] for i in ('B1', 'B2', 'R1')])
         self.engine.check_completion('main', self.lease)  # the repaired file is inside the clean re-review's scope
+
+    def test_cleanup_card_after_the_final_review_stays_inside_the_clean_fix_re_review_scope(self):
+        self.blocked_chain()
+        self.engine.accept('main', self.lease, 'B2')
+        (self.repo / 'C1').write_text('tidied after the final review')
+        self.built('C1', mode='cleanup')
+        self.reviewed('check', ['R1', 'B1', 'C1'], repair_check=True)
+        for name in ('R1', 'B1', 'C1'):
+            self.engine.accept('main', self.lease, name)
+        self.engine.check_completion('main', self.lease)  # the cleanup file is inside the clean re-review's scope
 
     def test_edit_outside_the_fix_re_review_scope_voids_the_final_review(self):
         self.blocked_chain()
@@ -3083,10 +3101,10 @@ class SelfReviewTests(EngineFixture):
         self.assertIn('First.', self.engine.status()['tasks']['a']['report'])
 
     def test_covered_report_takes_a_corrected_self_review_line_only(self):
-        # F32: a red-first check whose command text carries a note never matches its green run. After a review covers
+        # F32: a red-first check whose command text carries a note other than one trailing (...) (F70) never matches its green run. After a review covers
         # the report, the coordinator may correct only the SELF_REVIEW line; any other change still needs a repair card.
         token = self.running()
-        red = [{'command': 'python3 -m unittest t (at base)', 'exit_code': 1, 'expect': 'fail'},
+        red = [{'command': 'python3 -m unittest t # at base', 'exit_code': 1, 'expect': 'fail'},
                {'command': 'python3 -m unittest t', 'exit_code': 0}]
         self.engine.report('w-a', token, done('First.', checks=red))
         path = self.root / 'final-a.json'
@@ -5229,6 +5247,12 @@ args = sys.argv[1:]
 with open(os.environ['FAKE_GH_LOG'], 'a') as log:
     log.write(json.dumps(args) + '\\n')
 data = json.load(open(os.environ['FAKE_GH_DATA']))
+if args[:2] == ['pr', 'list']:
+    if '__list__' not in data:
+        sys.stderr.write('list failed\\n')
+        sys.exit(1)
+    print(json.dumps(data['__list__']))
+    sys.exit(0)
 if args[:2] != ['pr', 'view'] or len(args) < 3 or args[2] not in data:
     sys.stderr.write('no pull request found\\n')
     sys.exit(1)
@@ -5378,6 +5402,41 @@ class PullRequestTests(PullRequestFixture):
         self.add_view(url3, number=9, state='OPEN', baseRefName='run/z', headRefName='feat/y', isCrossRepository=False,
                       headRefOid=tip)
         self.assertEqual(len(self.engine.record_pr('main', self.lease, url3)), 3)
+
+    def test_pr_base_may_be_the_open_head_of_a_pull_request_recorded_in_the_previous_run(self):
+        self.git('switch', '-qc', 'feat/y')
+        self.commit('y.txt', 'y')
+        tip = self.git('rev-parse', 'HEAD')
+        url2 = 'https://github.example/o/r/pull/8'
+        self.add_view(url2, number=8, state='OPEN', baseRefName='feat/x', headRefName='feat/y', isCrossRepository=False,
+                      headRefOid=tip)
+        history = self.engine.state_dir / 'history'
+        history.mkdir()
+        refused = 'neither the default branch nor a run branch'
+
+        def listed(*heads, cross=False):
+            views = json.loads(self.gh.data.read_text())
+            views['__list__'] = [dict(headRefName=h, isCrossRepository=cross) for h in heads]
+            self.gh.set(views)
+
+        with self.assertRaisesRegex(EngineError, refused):  # gh lists the head but no run recorded it
+            listed('feat/x')
+            self.engine.record_pr('main', self.lease, url2)
+        (history / 'run-old.json').write_text(json.dumps(dict(state=dict(pull_requests=[
+            'https://github.example/o/r/pull/3', dict(url=self.URL, head_ref='feat/x')]))))
+        for shown, why in (((), 'closed'), (('feat/x',), 'cross-repo')):
+            with self.subTest(why=why), self.assertRaisesRegex(EngineError, refused):
+                listed(*shown, cross=why == 'cross-repo')
+                self.engine.record_pr('main', self.lease, url2)
+        views = json.loads(self.gh.data.read_text())
+        del views['__list__']  # gh failing refuses
+        self.gh.set(views)
+        with self.assertRaisesRegex(EngineError, refused):
+            self.engine.record_pr('main', self.lease, url2)
+        listed('feat/x')
+        self.assertEqual(self.engine.record_pr('main', self.lease, url2)[0]['base_ref'], 'feat/x')
+        self.assertIn(['pr', 'list', '--state', 'open', '--json', 'headRefName,isCrossRepository', '--limit', '200'],
+                      self.gh.calls())
 
     def test_pr_rerun_refreshes_head_and_reviewed(self):
         self.view()
@@ -6152,8 +6211,8 @@ class LandedWorkTests(HoldFixture):
         self.git('switch', '-q', '-')
         return sha
 
-    def accepted(self, name, artifact):
-        self.task(name)
+    def accepted(self, name, artifact, files=None):
+        self.task(name, files=files or [name])
         token = self.engine.dispatch('main', self.lease, name, 'w-' + name)
         self.engine.report('w-' + name, token, done('Built %s\nARTIFACT: %s' % (name, artifact)))
         self.engine.accept('main', self.lease, name)
@@ -6190,7 +6249,7 @@ class LandedWorkTests(HoldFixture):
         second = self.git('rev-parse', 'HEAD')
         self.git('switch', '-q', '-')
         self.accepted('B8', first + ' clean')
-        self.accepted('B9', second + ' clean')
+        self.accepted('B9', second + ' clean', files=['B8', 'B9'])
         self.git('switch', '-q', 'pr')
         self.reviewed('final-pr', ['B8', 'B9'], final=True, categories=self.ALL)
         self.git('switch', '-q', '-')

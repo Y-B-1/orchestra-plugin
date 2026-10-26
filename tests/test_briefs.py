@@ -149,7 +149,7 @@ class WaveEmitTests(CliFixture):
             self.assertEqual(state / 'briefs', brief.parent)
             self.assertRegex(brief.read_text(), r'(?m)^Mode: ' + re.escape(self.engine.status()['tasks'][task_id]['mode']) + '$')
             self.assertIn('Assignment: %s %s' % (entry['worker'], entry['token']), entry['prompt'])
-            self.assertIn(entry['brief'], entry['prompt'])
+            self.assertIn('orchestra.py card ' + task_id, entry['prompt'])  # F77: never a path under the state directory
             self.assertTrue(entry['agent_call'].startswith('agent(' + json.dumps(entry['prompt'])), entry['agent_call'])
             self.assertIn("agentType: '%s'" % entry['agent_type'], entry['agent_call'])
         self.assertEqual('orchestra:builder-mechanical', emitted['m']['agent_type'])

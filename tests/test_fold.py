@@ -62,6 +62,32 @@ class ModelFitTests(te.EngineFixture):
         with mock.patch.dict(os.environ, {'CLAUDE_EFFORT': 'high'}):
             self.assertEqual({'inline', 'worker'}, self.modes('B1'))
 
+    def test_an_investigator_on_another_model_is_worker_only(self):
+        self.engine.record_model('claude-sonnet-5-5', 'medium')
+        self.task('I1', role='investigator', mode='code')  # code discovery runs on Haiku
+        self.assertEqual({'worker'}, self.modes('I1'))
+        with self.assertRaisesRegex(EngineError, 'Model fit: I1 needs claude-haiku-5-5 high'):
+            self.engine.start_inline('main', self.lease, 'I1')
+
+    def test_a_designer_planner_on_another_model_is_worker_only(self):
+        self.engine = Engine(self.root / 'large', self.repo)
+        self.lease = self.engine.open_session('main', size='medium', asks=2, owner_request=True)  # a plan card needs an owner request
+        self.engine.record_model('claude-opus-5-5', 'high')
+        self.task('P1', role='designer-planner', mode='plan')
+        self.assertEqual({'worker'}, self.modes('P1'))
+        with self.assertRaisesRegex(EngineError, 'Model fit: P1 needs claude-sonnet-5-5 high'):
+            self.engine.start_inline('main', self.lease, 'P1')
+
+    def test_an_operator_on_another_model_is_worker_only(self):
+        self.engine.record_model('claude-sonnet-5-5', 'high')
+        self.task('O1', role='operator', mode='gate')
+        self.assertEqual({'worker'}, self.modes('O1'))
+
+    def test_a_matching_investigator_still_folds(self):
+        self.engine.record_model('claude-sonnet-5-5', 'medium')
+        self.task('I1', role='investigator', mode='docs')
+        self.assertEqual({'inline', 'worker'}, self.modes('I1'))
+
     def test_a_tiny_card_still_folds_whatever_the_model(self):
         self.engine.record_model('claude-opus-5-5', 'high')
         self.task('T1', size='tiny', mode='mechanical')

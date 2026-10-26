@@ -3,7 +3,7 @@ import type { Hook, On, Register } from 'claude-code';
 import { AUTONOMY_COMMAND, cliResult, cliThrown, commandOutcome, newAutonomy, noteChange, pollDue, pollOutcome, startSession, subOf, USAGE } from './autonomy.js';
 import type { AutonomyState, Cli, Sub } from './autonomy.js';
 import { cardIdOf, diffMoves, matchTasks, paneModel, parseAutonomy, parseDecisions, parseTaskList, parseView, planCreates, planUpdates, runShort } from './board.js';
-import type { Autonomy, Link, View } from './board.js';
+import type { Autonomy, Create, Link, NativeTask, Update, View } from './board.js';
 import { classifyCommand, editDenied, editTools, klassOf, loadRules, shellTools } from './guard.js';
 import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, markerPath, sha256Hex, utf8 } from './marker.js';
 
@@ -279,12 +279,82 @@ async function autonomyPoll($: Dollar, auto: AutonomyState, board: Board, seen: 
   }
 }
 
+/** The main session's own work, from `board --view`: its track steps (the first three). */
+type Step = { step: number; card: string | null; side: string[] };
+type Track = { steps: Step[] };
+const NO_FIT = 'no card fits the session model; you coordinate, accept and review';
+const MAIN = 'main';
+
+function textList(v: unknown): string[] {
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
+function parseTrack(text: string): Track {
+  const body = asJson(text);
+  const raw = body === null ? undefined : body['track'];
+  const steps: Step[] = [];
+  if (Array.isArray(raw)) {
+    for (const item of raw) {
+      const s = asJson(JSON.stringify(item));
+      if (s === null || typeof s['step'] !== 'number') continue;
+      steps.push({ step: s['step'], card: typeof s['card'] === 'string' ? s['card'] : null, side: textList(s['side']) });
+    }
+  }
+  return { steps };
+}
+
+/** The Track lane: one line per step, `Step N: you run X; side: A, B`. */
+function trackLines(track: Track): string[] {
+  return track.steps.map((s) => `Step ${s.step}: ${s.card !== null ? `you run ${s.card}` : NO_FIT}${s.side.length > 0 ? `; side: ${s.side.join(', ')}` : ''}`);
+}
+
+/** Native task order: a track card gets `step N` after its id (the id stays first, so the task still matches) and owner main. */
+function trackCreates(creates: Create[], track: Track): Create[] {
+  const steps = new Map(track.steps.filter((s) => s.card !== null).map((s) => [s.card as string, s.step]));
+  return creates.map((c) => {
+    const n = steps.get(c.cardId);
+    return n === undefined ? c : { ...c, subject: c.subject.replace(` ${c.cardId} `, ` ${c.cardId} step ${n} `) };
+  });
+}
+
+const acceptId = (id: string): string => `accept-${id}`;
+
+/** The coordinator's own steps: an entry `accept-ID` for each reported card, owner main. */
+function acceptCreates(view: View, matched: ReadonlyMap<string, NativeTask>, dropped: ReadonlySet<string>): Create[] {
+  const short = runShort(view.runId);
+  return view.cards
+    .filter((c) => c.state === 'reported' && !matched.has(acceptId(c.id)) && !dropped.has(acceptId(c.id)))
+    .map((c) => ({ cardId: acceptId(c.id), subject: `[${short}] ${acceptId(c.id)} accept the report of ${c.id}`, description: `Orchestra: accept or repair the report of card ${c.id}, run ${view.runId}.` }));
+}
+
+function trackUpdates(view: View, track: Track, matched: ReadonlyMap<string, NativeTask>, dropped: ReadonlySet<string>, base: Update[]): Update[] {
+  const out = [...base];
+  const own = (cardId: string, fields: Update['fields']): void => {
+    const t = matched.get(cardId);
+    if (t === undefined || dropped.has(cardId)) return;
+    const next = { ...fields };
+    if (t.owner !== MAIN) next.owner = MAIN;
+    const at = out.findIndex((u) => u.cardId === cardId);
+    if (at >= 0) out[at] = { ...out[at]!, fields: { ...out[at]!.fields, ...next } };
+    else if (Object.keys(next).length > 0) out.push({ cardId, taskId: t.id, fields: next });
+  };
+  for (const s of track.steps) if (s.card !== null) own(s.card, {});
+  for (const c of view.cards) {
+    if (c.state !== 'reported' && c.state !== 'accepted') continue;
+    const t = matched.get(acceptId(c.id));
+    const status = c.state === 'reported' ? 'in_progress' : 'completed';
+    own(acceptId(c.id), t !== undefined && t.status !== status ? { status } : {});
+  }
+  return out;
+}
+
 type Sync = { wanted: boolean; line: string; runId: string; known: Set<string>; dropped: Set<string> };
 
 /** The board's state, owned by the register closure and passed to the `$` functions below. */
 type Board = {
   /** The last good `board --view`, when it was read, and since when reads fail (null while they succeed). */
   view: View | null;
+  track: Track;
   okAt: number | null;
   staleSince: number | null;
   /** The refresh in flight, if any, and whether one more pass is wanted after it. */
@@ -304,14 +374,14 @@ type Board = {
 
 function newBoard(): Board {
   return {
-    view: null, okAt: null, staleSince: null, running: null, queued: false, links: new Map(), agents: new Map(),
+    view: null, track: { steps: [] }, okAt: null, staleSince: null, running: null, queued: false, links: new Map(), agents: new Map(),
     sync: { wanted: true, line: 'Native tasks: off (no board read yet)', runId: '', known: new Set(), dropped: new Set() },
     timer: null, hinted: false, autonomy: null, decisions: [],
   };
 }
 
 /** One task sync against the view just read. Never throws; never asks: a verdict other than allow keeps it off. */
-async function syncTasks($: Dollar, sync: Sync, view: View): Promise<void> {
+async function syncTasks($: Dollar, sync: Sync, view: View, track: Track): Promise<void> {
   const off = (why: string): void => {
     sync.line = `Native tasks: off (${why})`;
   };
@@ -341,7 +411,7 @@ async function syncTasks($: Dollar, sync: Sync, view: View): Promise<void> {
     const matched = matchTasks(runShort(view.runId), listed);
     // A task this process saw that is gone was deleted by the person: never re-create it.
     for (const id of sync.known) if (!matched.has(id)) sync.dropped.add(id);
-    for (const c of planCreates(view, matched, sync.dropped)) {
+    for (const c of [...trackCreates(planCreates(view, matched, sync.dropped), track), ...acceptCreates(view, matched, sync.dropped)]) {
       try {
         const made = (await $.tool.call({ tool: 'TaskCreate', subject: c.subject, description: c.description })).result as { task?: { id?: unknown } } | undefined;
         const id = made?.task?.id;
@@ -351,7 +421,7 @@ async function syncTasks($: Dollar, sync: Sync, view: View): Promise<void> {
       }
     }
     for (const id of matched.keys()) sync.known.add(id);
-    for (const u of planUpdates(view, matched, sync.dropped)) {
+    for (const u of trackUpdates(view, track, matched, sync.dropped, planUpdates(view, matched, sync.dropped))) {
       let ok = false;
       try {
         const res = (await $.tool.call({ tool: 'TaskUpdate', taskId: u.taskId, ...u.fields })).result as { success?: unknown } | undefined;
@@ -410,9 +480,13 @@ async function refreshOnce($: Dollar, board: Board): Promise<void> {
     // Read without a session id: `bound` is then false and sync stays off.
   }
   let view: View | null = null;
+  let track: Track = { steps: [] };
   try {
     const res = await cliRun($, ['board', '--view', ...(sid !== '' ? ['--session', sid] : [])]);
-    if (!('gone' in res) && res.run.exitCode === 0) view = parseView(res.run.stdout);
+    if (!('gone' in res) && res.run.exitCode === 0) {
+      view = parseView(res.run.stdout);
+      if (view !== null) track = parseTrack(res.run.stdout);
+    }
   } catch {
     view = null;
   }
@@ -422,6 +496,7 @@ async function refreshOnce($: Dollar, board: Board): Promise<void> {
   } else {
     const prev = board.view;
     board.view = view;
+    board.track = track;
     board.okAt = now;
     board.staleSince = null;
     toastMoves($, diffMoves(prev, view));
@@ -432,7 +507,7 @@ async function refreshOnce($: Dollar, board: Board): Promise<void> {
   } catch {
     // Agent status is a convenience: the last list stays.
   }
-  if (view !== null) await syncTasks($, board.sync, view);
+  if (view !== null) await syncTasks($, board.sync, view, track);
   try {
     $.ui.invalidate('ui.render');
   } catch {
@@ -873,6 +948,8 @@ export const register: Register = (on: On) => {
     const body = m.layout === 'columns'
       ? Box({ key: 'columns', flexDirection: 'row', gap: 1, children: m.sections.map((s) => section(s, true)) })
       : Box({ key: 'stacked', flexDirection: 'column', children: m.sections.filter((s) => s.lines.length > 0).map((s) => section(s, false)) });
-    return Box({ flexDirection: 'column', children: [...m.header.map((line) => Text({ children: line })), buttons, ...(m.sections.length > 0 ? [body] : [])] });
+    const lane = trackLines(board.track);
+    const trackLane = Box({ key: 'track', flexDirection: 'column', children: [Text({ bold: true, children: 'Track' }), ...lane.map((line) => Text({ wrap: 'truncate', children: line }))] });
+    return Box({ flexDirection: 'column', children: [...m.header.map((line) => Text({ children: line })), buttons, ...(m.sections.length > 0 && lane.length > 0 ? [trackLane] : []), ...(m.sections.length > 0 ? [body] : [])] });
   });
 };

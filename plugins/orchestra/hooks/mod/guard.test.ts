@@ -172,20 +172,42 @@ test('classifier: malformed input denies, size and depth caps', () => {
   expect(klassOf(classifyCommand('git commit -m "never run git add -A or git stash"'))).toBe('allow');
 });
 
-test('FX6: crafted nested shells deny well inside the hook timeout (reading budget)', () => {
-  const quote = (text: string): string => "'" + text.replace(/'/g, `'"'"'`) + "'";
-  const nested = (levels: number, width: number): string => {
-    let body = 'git status';
-    for (let i = 0; i < levels; i++) body = 'sudo -u $(a) x ' + Array(width).fill('$(b) bash -c ' + quote(body)).join(' ');
-    return body + '; git ' + 'reset --hard';
-  };
-  for (const [levels, width] of [[5, 2], [4, 4], [6, 2], [5, 3]] as const) {
-    const start = performance.now();
-    const decision = classifyCommand(nested(levels, width));
-    expect(performance.now() - start).toBeLessThan(5000);
-    expect(klassOf(decision)).toBe('deny');
-  }
-});
+// F89: a fixed wall-clock budget failed under load. The crafted case is timed against a benign twin of the same
+// shape in the same run, interleaved, so machine load scales both. Measured crafted/benign ratio over 3 runs and 4
+// shapes: 0.82 to 1.11; the factor is more than 7 times the worst. The ceiling is the harness per-test limit named in
+// scripts/check.sh and is never tighter. One test per shape keeps each inside that limit.
+const RATIO_FACTOR = 8;
+const HARNESS_LIMIT_MS = 5000;
+const TEST_TIMEOUT_MS = 30000; // the runner's default 5 s per test is too tight when other suites load the machine; its option is timeoutMs
+for (const [levels, width] of [[5, 2], [4, 4], [6, 2], [5, 3]] as const) {
+  test(`FX6: crafted nested shell ${levels}x${width} denies in time comparable to its benign twin (F89)`, { timeoutMs: TEST_TIMEOUT_MS }, () => {
+    const quote = (text: string): string => "'" + text.replace(/'/g, `'"'"'`) + "'";
+    const nested = (tail: string): string => {
+      let body = 'git status';
+      for (let i = 0; i < levels; i++) body = 'sudo -u $(a) x ' + Array(width).fill('$(b) bash -c ' + quote(body)).join(' ');
+      return body + tail;
+    };
+    const median = (xs: number[]): number => [...xs].sort((x, y) => x - y)[Math.floor(xs.length / 2)] as number;
+    const time = (command: string): { ms: number; klass: string } => {
+      const start = performance.now();
+      const klass = klassOf(classifyCommand(command));
+      return { ms: performance.now() - start, klass };
+    };
+    expect(klassOf(classifyCommand('git status'))).toBe('allow');
+    const benign: number[] = [];
+    const crafted: number[] = [];
+    for (let round = 0; round < 3; round++) {
+      const b = time(nested('; git status'));
+      const c = time(nested('; git ' + 'reset --hard'));
+      expect(b.klass).toBe('deny'); // the shape alone spends the reading budget, so the benign twin denies as malformed too
+      expect(c.klass).toBe('deny');
+      benign.push(b.ms);
+      crafted.push(c.ms);
+    }
+    expect(median(crafted)).toBeLessThan(median(benign) * RATIO_FACTOR);
+    expect(median(crafted)).toBeLessThan(HARNESS_LIMIT_MS);
+  });
+}
 
 test('FX6: a wrapper option substitution before a dash word is dropped as a reading, not denied', () => {
   expect(klassOf(classifyCommand('xargs -P $(nproc) make -s'))).toBe('allow');

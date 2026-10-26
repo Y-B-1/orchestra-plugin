@@ -184,21 +184,26 @@ python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project board
 | Command | Purpose |
 | --- | --- |
 | `start --size tiny\|medium [--asks N]` | Start a run and print the lease once |
-| `status`, `board`, `ready` | Show cards and session state; list dispatchable cards |
+| `status [--brief]`, `board`, `ready`, `where` | Show cards and session state (`--brief` fits in 4096 bytes); list dispatchable cards; print the state directory |
 | `route --size TIER --reason TEXT` | Change the tier mid-run |
-| `add TASK.json`, `dispatch TASK WORKER [--helper REASON]`, `inline TASK` | Add a card; reserve it for a worker or the coordinator |
+| `add TASK.json`, `dispatch TASK WORKER [--helper REASON]`, `inline TASK [--report FILE [--accept]]` | Add a card; reserve it for a worker or the coordinator; `--report` also records the inline report |
+| `waves`, `wave [--emit] ID ...` | Print the waves, the track and the cards startable together; start a whole wave |
+| `do "STEP" "STEP" ...` | Run several coordinator commands in one call; stops at the first refusal |
+| `criterion TASK "CRITERION" --evidence TEXT`, `own add TASK PATH` | Record evidence on an unmet criterion; add an owned path to a card |
+| `card TASK`, `package TASK`, `artifact`, `ledger`, `refusals`, `worktrees` | Read-only: print a card's brief, build a reviewer package, print the artifact, ledger rows, refused commands and worktrees |
+| `scan` | Run the configured secret scan |
 | `report WORKER TOKEN FILE`, `accept TASK` | Record a worker's result; accept a card on current evidence |
 | `gate [--again] [--timeout S] NAME -- COMMAND...` | Run a check and record its receipt |
 | `prepr` | Size check and pre-PR reviewer pick (read-only) |
 | `review REVIEW.json` | Record the pre-PR review or the fix re-review |
 | `finding add\|list`, `hold TASK --finding TEXT` | Findings ledger; end a repair ladder |
 | `park TASK --reason TEXT`, `unpark TASK`, `cancel TASK --reason TEXT` | Set a card aside at a boundary; return it; drop one that should never run |
-| `start --recover --harness-session ID` | Take back a lost coordinator lease |
+| `start --recover --harness-session ID [--take-over]` | Take back a lost coordinator lease; `--take-over` moves a run owned by another session |
 | `pr URL [--task ID]`, `base TASK` | Verify and record a pull request the run opened; print the branch a card's pull request targets |
 | `autonomy arm\|disarm\|status`, `brief` | Autonomous mode; print the newest run brief |
 | `permit REMOTE TARGET`, `release REMOTE TARGET` | Release under configured policy |
 | `classify "COMMAND"` | Print the guard verdict for a command without running it |
-| `interrupt`, `finish` | Stop dispatch; close the run |
+| `interrupt`, `finish [--accept-reported]` | Stop dispatch; close the run (`--accept-reported` first accepts the reported cards that pass) |
 
 Every command, flag and schema: [CLI guide](docs/cli.md) and the package [CLI reference](plugins/orchestra/skills/orchestra/references/cli.md). Run state lives under the user state directory, outside the checkout (`orchestra.py where` prints it).
 

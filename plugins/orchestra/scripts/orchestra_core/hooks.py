@@ -39,6 +39,7 @@ _REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
 _LEASE_FLAG = re.compile(r'(?<![\w-])--lease(?![\w-])')  # not --force-with-lease
 LEASE_COORDINATOR_ONLY = 'The coordinator lease is coordinator-only: a worker never runs orchestra.py with --lease'
 AUTONOMY_STOPPED = 'Orchestra autonomy stopped: %s. The run brief is in %s.'
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')  # The one definition; engine imports it (hooks load engine lazily)
 STATE_SHELL = ('a shell command may not touch the Orchestra state directory; run orchestra.py for engine commands, and the '
                'Write tool for review packages and progress notes')
 SUBAGENT_GUARD = ('Orchestra run active: this agent is not an orchestra:* agent; stop and report. '
@@ -503,7 +504,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     shaped = _cd_delete_shape(command, cwd)
     if shaped:
         found = classify_command(shaped[0])
-        if found.category == 'merged-delete' or (found.boundary == 'delete' and shaped[0].startswith('git branch ')):
+        if found.category == 'merged-delete' or (found.boundary == 'delete'
+                                                 and shaped[0].startswith(('git branch ', 'git worktree remove '))):
             command, cwd = shaped  # judged as the bare delete, in the directory the cd names
     decision = classify_command(command)
     klass = decision.klass
@@ -578,7 +580,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             if not _preauthorized(engine, decision):
                 return _deny('Autonomy is active: ' + refused + ' ' + hint)
         if klass in {'release', 'release-multi'} and not (klass == 'release' and _preauthorized(engine, decision)):
-            return _deny('Autonomy is active: merges and releases wait for the owner. ' + hint)
+            return _deny('Autonomy is active: ' + (_push_shape_note(command, cwd, engine)
+                                                   or 'merges and releases wait for the owner.') + ' ' + hint)
         if decision.boundary == 'delete':
             return _deny('Approval boundary under autonomy: ' + hint)
         if decision.boundary == 'config':
@@ -1059,6 +1062,22 @@ def _live_transcripts(transcript_path):
 LIVE_TRANSCRIPT_SECONDS = 120
 
 
+def _worker_liveness(transcript_path, worker):
+    """`alive`, `gone` or `liveness unknown` for one card's worker: a subagent transcript whose file name carries the
+    worker name is alive when written in the last LIVE_TRANSCRIPT_SECONDS and gone when older; no such file is unknown,
+    never gone."""
+    if not isinstance(transcript_path, str) or not transcript_path.endswith('.jsonl') or not worker:
+        return 'liveness unknown'
+    root = Path(transcript_path[:-len('.jsonl')]) / 'subagents'
+    try:
+        stamps = [f.stat().st_mtime for f in root.rglob('*.jsonl') if str(worker) in f.stem]
+    except OSError:
+        return 'liveness unknown'
+    if not stamps:
+        return 'liveness unknown'
+    return 'alive' if max(stamps) >= time.time() - LIVE_TRANSCRIPT_SECONDS else 'gone'
+
+
 def _leftovers(engine, transcript_path=None):
     """After a restart: the running worker cards, how many worker transcripts are still being written (a worker can
     outlive the restart), and the run worktrees that hold uncommitted work, so the coordinator knows what to resume
@@ -1067,7 +1086,9 @@ def _leftovers(engine, transcript_path=None):
         status = engine.status()
         running = [(i, t) for i, t in sorted((status.get('tasks') or {}).items())
                    if t.get('state') == 'running' and not t.get('inline')]
-        parts = ['%s (worker %s, started %s)' % (i, t.get('worker'), _age(t.get('started_at'))) for i, t in running[:10]]
+        parts = ['%s (worker %s, started %s, %s)' % (i, t.get('worker'), _age(t.get('started_at')),
+                                                     _worker_liveness(transcript_path, t.get('worker')))
+                 for i, t in running[:10]]
         dirty = []
         listing = subprocess.run(['git', '-C', str(engine.repo), 'worktree', 'list', '--porcelain'], capture_output=True,
                                  text=True, timeout=5).stdout
@@ -1195,7 +1216,7 @@ def _branch_merged(repo, tip, default):
 
 _CD_WORD = r'[A-Za-z0-9_./:+=@%,]'
 _CD_PATH = r"%s[A-Za-z0-9_./:+=@%%,-]*|\"%s[A-Za-z0-9_./:+=@%%, -]*\"|'%s[A-Za-z0-9_./:+=@%%, -]*'" % ((_CD_WORD,) * 3)
-_CD_DELETE = re.compile(r'(?:cd (?P<dir>%s) && )?(?P<delete>git (?:branch|push) [A-Za-z0-9_./:+=@%%, -]+?)'
+_CD_DELETE = re.compile(r'(?:cd (?P<dir>%s) && )?(?P<delete>git (?:branch|push|worktree remove) [A-Za-z0-9_./:+=@%%, -]+?)'
                         r'(?P<err> 2>&1)?(?: \| (?P<pipe>(?:tail|head|grep|cat)(?: [A-Za-z0-9_./:+=@%%,-]+)*))?' % _CD_PATH)
 _PIPE_LETTERS = {'cat': 'AbeEnstTuv', 'head': '0123456789ncqv', 'tail': '0123456789ncqv', 'grep': 'ivwxcnoqsEFGHhlLaI'}
 
@@ -1402,11 +1423,15 @@ def _autonomy_cleanup(command, decision, cwd, engine=None):
     if len(words) == 4 and words[:3] in (['git', 'branch', '-d'], ['git', 'branch', '--delete']):
         branch = words[3]
     elif len(words) == 4 and words[:3] == ['git', 'worktree', 'remove'] and not words[3].startswith('-'):
-        if _merged_run_worktree(cwd, words[3]):
+        if _merged_run_worktree(cwd, words[3], engine):
             return HookResult({})  # A clean run worktree whose commits the current branch already holds
         branch = _worktree_branch(cwd, words[3])
         if isinstance(branch, HookResult):
             return branch
+        target = (Path(cwd) / words[3]).resolve()
+        if '/.claude/worktrees/' in target.as_posix() \
+                and (not _run_branch(engine, branch) or _git_out(target, 'status', '--porcelain', '--ignored')[1]):
+            return _deny('Worktree %s is not clean or not on a branch this run made; remove it by hand' % words[3])
     else:
         return None
     if not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9._/+-]*', branch):
@@ -1416,9 +1441,10 @@ def _autonomy_cleanup(command, decision, cwd, engine=None):
     return HookResult(denied) if denied else HookResult({})
 
 
-def _merged_run_worktree(cwd, path):
+def _merged_run_worktree(cwd, path, engine=None):
     """True when `path` is a linked worktree under `<repository>/.claude/worktrees/` that is not the session's own,
-    has no change `git status --porcelain` reports, and whose HEAD is an ancestor of the HEAD at cwd."""
+    sits on a branch this run made (`_run_branch`), holds no change and no ignored file (`git status --porcelain
+    --ignored`), and whose HEAD is an ancestor of the HEAD at cwd."""
     code, out = _git_out(cwd, 'worktree', 'list', '--porcelain')
     if code != 0 or not out.startswith('worktree '):
         return False
@@ -1428,15 +1454,30 @@ def _merged_run_worktree(cwd, path):
         return False
     if target not in _linked_worktrees(cwd):
         return False
-    code, status = _git_out(target, 'status', '--porcelain')
+    code, status = _git_out(target, 'status', '--porcelain', '--ignored')
     code_head, head = _git_out(target, 'rev-parse', 'HEAD')
-    if code != 0 or status or code_head != 0 or not head:
+    code_branch, branch = _git_out(target, 'symbolic-ref', '--short', '-q', 'HEAD')
+    if code != 0 or status or code_head != 0 or not head or code_branch != 0 or not _run_branch(engine, branch):
         return False
     return _git_out(cwd, 'merge-base', '--is-ancestor', head, 'HEAD')[0] == 0
 
 
 _TEMP_PLAIN = re.compile(r'[A-Za-z0-9_./:+=*?\[\]~${}-]+( [A-Za-z0-9_./:+=*?\[\]~${}-]+)*')
 _TMPDIR_PREFIX = re.compile(r'\$(?:TMPDIR|\{TMPDIR\})(?=/|$)')
+
+
+def _rm_operands(words):
+    """The operands of `rm WORD...` (words after `rm`), or None when a flag is not a plain rm flag."""
+    operands, options = [], True
+    for word in words:
+        if options and word == '--':
+            options = False
+        elif options and word.startswith('-'):
+            if not _RM_FLAGS.fullmatch(word):
+                return None
+        else:
+            operands.append(word)
+    return operands
 
 
 def _rm_in_temp(command):
@@ -1453,15 +1494,7 @@ def _rm_in_temp(command):
     tmpdir = os.environ.get('TMPDIR')
     if tmpdir and os.path.isabs(tmpdir) and len(Path(tmpdir).resolve().parts) >= 3:
         roots.append(Path(tmpdir).resolve())
-    operands, options = [], True
-    for word in words[1:]:
-        if options and word == '--':
-            options = False
-        elif options and word.startswith('-'):
-            if not _RM_FLAGS.fullmatch(word):
-                return False
-        else:
-            operands.append(word)
+    operands = _rm_operands(words[1:])
     if not operands:
         return False
     for operand in operands:
@@ -1480,8 +1513,10 @@ def _rm_in_temp(command):
         glob = re.search(r'[*?\[]', operand)
         base = operand[:glob.start()].rsplit('/', 1)[0] if glob else operand
         target = Path(base or '/').resolve()
-        if not any(root in target.parents or (glob and target == root) for root in roots):
+        if not any(root in target.parents for root in roots):
             return False
+        if glob and target.parent in roots and target.name.startswith('claude-'):
+            return False  # `/private/tmp/claude-501/*` would empty every session scratchpad
     return True
 
 
@@ -1502,20 +1537,15 @@ def _linked_worktrees(cwd):
 def _rm_in_worktrees(command, cwd):
     """Section 3.4: `rm` or `find ... -delete` as one plain command whose every operand lies inside a linked worktree
     and outside `.git`. An operand with `$`, a backtick or a leading `~` is never resolved. A glob operand is judged by
-    the directory before its first glob character, which may be a worktree root; a hidden-name pattern is refused."""
+    the directory before its glob, which may be a worktree root; a hidden-name pattern, a glob before the last component
+    and a `..` anywhere are refused."""
     if cwd is None or not _RM_PLAIN.fullmatch(command.strip()):
         return False  # Quoting, chaining, redirects and substitution: not a plain command
     words = command.split()
     if words[0] == 'rm':
-        operands, options = [], True
-        for word in words[1:]:
-            if options and word == '--':
-                options = False
-            elif options and word.startswith('-'):
-                if not _RM_FLAGS.fullmatch(word):
-                    return False
-            else:
-                operands.append(word)
+        operands = _rm_operands(words[1:])
+        if operands is None:
+            return False
     elif words[0] == 'find' and '-delete' in words and not _FIND_ACTIONS & set(words):
         operands = []
         for word in words[1:]:
@@ -1530,13 +1560,13 @@ def _rm_in_worktrees(command, cwd):
         return False
     for operand in operands:
         glob = re.search(r'[*?\[]', operand)
-        if operand.startswith('~'):
+        if operand.startswith('~') or '..' in operand.split('/'):
             return False
         if glob:
             head = operand[:glob.start()]
             tail = operand.rsplit('/', 1)[-1]
-            if tail.startswith('.') or '..' in head.split('/'):
-                return False
+            if tail.startswith('.') or re.search(r'[*?\[]', operand.rpartition('/')[0]):
+                return False  # a glob may stand only in the last component
             target = (Path(cwd) / (head.rsplit('/', 1)[0] if '/' in head else '')).resolve()
             if not any(target == root or root in target.parents for root in roots):
                 return False
@@ -1882,6 +1912,25 @@ def _minimal_merge_gate(command, payload, state_dir, engine):
     return _deny(merged[1]) if merged is not None and merged[0] == 'deny' else HookResult({})
 
 
+_SHAPE_OTHERS = ('cd', 'tail', 'head', 'grep', 'cat')
+
+
+def _push_shape_note(command, cwd, engine):
+    """F91: deny text only. When the one `git push` in a `;`, `&&` or `|` chain of `cd` and output readers would be
+    allowed as a plain command, say the push shape is what refused it; None otherwise. It allows nothing."""
+    if cwd is None:
+        return None
+    segments = [s.strip() for s in re.split(r'\s*(?:;|&&|\|)\s*', command) if s.strip()]
+    pushes = [re.sub(r'\s*2>&1$', '', s) for s in segments if s.startswith('git push ')]
+    others = [s for s in segments if not s.startswith('git push ')]
+    if len(pushes) != 1 or any(s.split()[0] not in _SHAPE_OTHERS for s in others):
+        return None
+    if _pull_request_push(pushes[0], cwd, engine) is not None:
+        return None
+    return ('this push is refused for its shape, not its branch: run `%s` as a plain single command, with no `;`, `&&`, '
+            'pipe or redirect.' % pushes[0])
+
+
 def _routine_push(command):
     """GF4: the push of `GIT ... && git push ...` when every command before the last `&&` is a plain `git VERB` (no
     global option, wrapper or assignment) that the classifier allows; None otherwise."""
@@ -2042,6 +2091,15 @@ def _answer_question(payload, data, engine):
                                               'updatedInput': {**data, 'answers': answers}}})
 
 
+def _transcript_tail(path):
+    """The lines of the last 256 KB of a transcript."""
+    with open(path, 'rb') as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - 256 * 1024))
+        return handle.read().decode('utf-8', 'replace').splitlines()
+
+
 def _ends_with_question(payload):
     """True when the last assistant message ends with a question (a `?` in its last 600 characters): the message from the
     Stop payload, else the last assistant text of the transcript (its last 256 KB). Any error means no question."""
@@ -2049,12 +2107,7 @@ def _ends_with_question(payload):
         text = payload.get('last_assistant_message')
         if not isinstance(text, str):
             text = ''
-            with open(payload['transcript_path'], 'rb') as handle:
-                handle.seek(0, os.SEEK_END)
-                size = handle.tell()
-                handle.seek(max(0, size - 256 * 1024))
-                lines = handle.read().decode('utf-8', 'replace').splitlines()
-            for line in reversed(lines):
+            for line in reversed(_transcript_tail(payload['transcript_path'])):
                 try:
                     row = json.loads(line)
                     message = row['message']
@@ -2144,18 +2197,10 @@ def _board_stop(engine, payload):
         return {}
 
 
-EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')  # As engine.EFFORTS; hooks import the engine lazily
-
-
 def _transcript_model(path):
     """The model of the last assistant entry in the last 256 KB of a transcript, or None for any error."""
     try:
-        with open(path, 'rb') as handle:
-            handle.seek(0, 2)
-            size = handle.tell()
-            handle.seek(max(0, size - 262144))
-            lines = handle.read().decode('utf-8', 'replace').splitlines()
-        for line in reversed(lines):
+        for line in reversed(_transcript_tail(path)):
             try:
                 entry = json.loads(line)
             except ValueError:
@@ -2172,8 +2217,8 @@ def _transcript_model(path):
 def _record_model(engine, payload, effort=None):
     """Record the main session's model (payload, else the transcript) and effort. Bookkeeping: every error is swallowed."""
     try:
-        if engine is None or payload.get('agent_id'):
-            return
+        if engine is None or payload.get('agent_id') or _other_session(engine, payload.get('session_id')):
+            return  # a worker, or a session the run is not bound to, is not the coordinator's model
         model = payload.get('model')
         if not (isinstance(model, str) and model.strip()):
             path = payload.get('transcript_path')

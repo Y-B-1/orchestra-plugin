@@ -71,6 +71,21 @@ def store(directory, name, view):
         pass
 
 
+NO_FIT = 'no card fits the session model; you coordinate, accept and review'
+
+
+def track_text(view):
+    """`Track: you run E2; side: H, M` for the first track step of the board, or the plain no-fit text when no card fits the
+    session model; None when the board has no track."""
+    steps = (view or {}).get('track') or []
+    if not steps:
+        return None
+    first = steps[0]
+    side = first.get('side') or []
+    main = 'you run '+first['card'] if first.get('card') else NO_FIT
+    return 'Track: '+main+('; side: '+', '.join(side) if side else '')
+
+
 def line(view, seen):
     """`Orchestra board: ...` naming the moved cards (or, with no card states stored, the waiting ones) and the next
     command, or None when the board is not live or its signature equals the stored one."""
@@ -83,4 +98,5 @@ def line(view, seen):
                                                          ('startable', list(view.get('startable_now') or []))) if found]
         moved = '; '.join(waits) or ', '.join('%s %d' % (s, n) for s, n in (view.get('counts') or {}).items() if n)
     command = next_command(view)
-    return PREFIX+moved+('. Next: '+command if command else '')
+    track = track_text(view)
+    return PREFIX+moved+('. Next: '+command if command else '')+('. '+track if track else '')

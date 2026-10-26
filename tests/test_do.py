@@ -57,6 +57,21 @@ class DoTests(te.EngineFixture):
         self.assertEqual('cancel B1', body['refused']['step'])
         self.assertIn('--reason', body['refused']['error'])
 
+    def test_a_step_asking_for_help_is_refused_with_json_only(self):
+        code, out, err = self.cli('do', 'cancel -h')
+        self.assertEqual(2, code)
+        body = json.loads(out)  # no argparse help text before the JSON
+        self.assertEqual('cancel -h', body['refused']['step'])
+        self.assertIn('help is not a step', body['refused']['error'])
+
+    def test_start_refreshes_now_md(self):
+        now = self.engine.state_dir / 'NOW.md'
+        self.assertFalse(now.exists())
+        self.engine.interrupt('main', self.lease)
+        code, out, err = te.run_cli(self, 'start')
+        self.assertEqual(0, code, err)
+        self.assertTrue(now.is_file())
+
     def test_a_lease_command_refreshes_now_md(self):
         now = self.engine.state_dir / 'NOW.md'
         self.assertFalse(now.exists())

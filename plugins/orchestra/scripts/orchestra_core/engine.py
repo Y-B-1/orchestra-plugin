@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import fnmatch
 import hashlib
 import json
 import os
@@ -20,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .guards import classify_command
+from .hooks import EFFORTS
 from . import portable
 from .paths import push_url_digest
 
@@ -38,6 +40,8 @@ class StateBusy(EngineError):
     """The state lock stayed held past `lock_wait` (SPEC 5.16 item 3)."""
 
 REVIEW_ROLES = ('code-reviewer', 'critic')
+GENERATED_OUTPUTS = {'plugins/orchestra/config/guard-rules.json': 'plugins/orchestra/hooks/mod/fixtures/guard-fixtures.ts',
+                     'plugins/orchestra/config/guard-corpus.json': 'plugins/orchestra/hooks/mod/fixtures/guard-fixtures.ts'}
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
 REBIND_WINDOW_SECONDS = 60
 KEEP_REMOVE = ('## Keep', '## Remove')  # builder briefs carry both headings; checked at add only (SPEC 5.13)
@@ -65,12 +69,12 @@ REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
-EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 MODEL_FAMILIES = ('opus', 'sonnet', 'haiku', 'fable')
 PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop loop gives up as `stalled`
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
 GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which the Stop hook asks for a repair card
 ESCALATION_LIMIT = 3  # Unchanged nudges for one reason after which every unfinished card is parked for the owner
+TRACK_COORDINATOR = 'prepare briefs and review reports'  # The track step when no ready card fits the session model
 OWNER_PARK = 'needs-owner:'  # A parked reason prefix: only the owner can unblock the card (a secret, a code, an account action)
 LARGE_FILE_BYTES = 64 * 1024 * 1024  # Files over this are bound by size, mtime and sampled content, not read whole
 SAMPLE_BYTES = 1024 * 1024
@@ -458,9 +462,11 @@ class Engine:
 
     @classmethod
     def _noise(cls, name):
-        """Interpreter and OS leftovers that a command leaves behind without changing the work: never evidence."""
+        """Interpreter and OS leftovers that a command leaves behind without changing the work: never evidence. An
+        untracked path under `.claude/worktrees/` is a linked worktree left on disk, not work in this tree (F90)."""
         parts = name.split('/')
-        return name.endswith('.pyc') or any(part in cls._NOISE_PARTS for part in parts)
+        return (name.endswith('.pyc') or any(part in cls._NOISE_PARTS for part in parts)
+                or name.startswith('.claude/worktrees/'))
 
     def _file_entries(self, scope=None):
         """[name, value] for every tracked and untracked nonignored entry, limited to `scope` when given."""
@@ -535,6 +541,15 @@ class Engine:
         if 'scope' in recorded and 'scope' in current:
             recorded, current = ({k: v for k, v in a.items() if k not in ('head', 'tree')} for a in (recorded, current))
         return recorded == current
+
+    def _squashed_same(self, state, recorded, current):
+        """F96: a whole-repository receipt that differs from `current` only in HEAD stays current when the trees are equal
+        and the receipt's HEAD is landed in HEAD (a squash merge puts the reviewed tree under a new commit)."""
+        if not isinstance(recorded, dict) or not isinstance(current, dict) or 'scope' in recorded or 'scope' in current:
+            return False
+        head = recorded.get('head')
+        rest = lambda a: {k: v for k, v in a.items() if k != 'head'}
+        return isinstance(head, str) and rest(recorded) == rest(current) and self._landed(head, state)
 
     def scope_for(self, task_ids):
         """Union of the tasks' reservation files, or None (whole repo) when any task reserves no files."""
@@ -819,6 +834,43 @@ class Engine:
                 raise EngineError('Task brief must be an existing nonempty file: ' + str(brief))
             if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', brief.read_text(errors='replace'), re.M):
                 raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
+
+    def _check_final_brief(self, task):
+        brief = Path(task['brief'])
+        text = (brief if brief.is_absolute() else self.repo / brief).read_text(errors='replace')
+        lens = re.search(r'^Lens:[ \t]+(\S.*?)[ \t]*$', text, re.M)
+        if not lens:
+            raise EngineError('Final review brief needs a Lens: line (correctness, security, standards, combined or specialist:NAME)')
+        if lens.group(1) == 'combined' and not re.search(r'^Required categories:[ \t]+\S', text, re.M):
+            raise EngineError('A combined final review brief needs a Required categories: line copied from the lenses prepr printed')
+
+    def _check_acceptance_match(self, line, owned):
+        """An acceptance line that runs `unittest discover` with -s or -p must match a test file in the repository or
+        one the card owns, so a pattern typo is refused at add and not found at accept."""
+        try:
+            lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            tokens = list(lex)
+        except ValueError:
+            return
+        if 'unittest' not in tokens or 'discover' not in tokens:
+            return
+        values = {}
+        for flag, long in (('-s', '--start-directory'), ('-p', '--pattern')):
+            for n, tok in enumerate(tokens[:-1]):
+                if tok in (flag, long):
+                    values[flag] = tokens[n + 1]
+        if not values:
+            return
+        directory, pattern = values.get('-s', '.'), values.get('-p', 'test*.py')
+        root = self.repo / directory
+        if root.is_dir() and any(fnmatch.fnmatch(f.name, pattern) for f in root.rglob('*') if f.is_file()):
+            return
+        prefix = Path(directory).as_posix().rstrip('/')
+        if any(fnmatch.fnmatch(Path(f).name, pattern) and (prefix in ('', '.') or Path(f).as_posix().startswith(prefix + '/'))
+               for f in owned):
+            return
+        raise EngineError('Acceptance matches no test file: %s (directory %s, pattern %s)' % (line, directory, pattern))
 
     def _check_keep_remove(self, task):
         brief = Path(task['brief'])
@@ -1134,6 +1186,10 @@ class Engine:
                                   '`start --recover --harness-session ID`')
             lease = uuid.uuid4().hex
             prior = state['session']
+            owner = (prior or {}).get('harness_session')
+            if prior and prior.get('outcome') != 'completed' and harness_session and owner and owner != harness_session:
+                raise EngineError('This run belongs to session %s; this session reads only. To move the run here, run '
+                                  '`start --recover --take-over` (logged; it arms no autonomy)' % owner)
             if prior is not None and items is not None:
                 raise EngineError('--items applies only to a new run; use route to change it')
             if prior is not None and (size is not None or asks is not None or owner_request):
@@ -1368,6 +1424,11 @@ class Engine:
                     raise EngineError('Duplicate ' + key)
             for name in task['files']:
                 self._check_owned_path(name)
+            for source, output in GENERATED_OUTPUTS.items():  # an owned source owns the file a script derives from it
+                if source in task['files'] and output not in task['files']:
+                    task['files'].append(output)
+            for line in task['acceptance']:
+                self._check_acceptance_match(line, task['files'])
             if any(dep not in state['tasks'] for dep in task['dependencies']):
                 raise EngineError('Unknown dependency or cycle')
             review_of = task.get('review_of', [])
@@ -1377,6 +1438,9 @@ class Engine:
                 raise EngineError('Review targets must name existing tasks')
             if task['role'] == 'code-reviewer' and not review_of:
                 raise EngineError('A code-reviewer card needs review_of naming the tasks it reviews')
+            if (task['role'], task['mode']) == ('code-reviewer', 'final') and 'brief' in task and not any(
+                    state['tasks'][i]['mode'] == 'repair' for i in review_of):  # a fix re-review needs neither line
+                self._check_final_brief(task)
             if review_of and task['role'] not in REVIEW_ROLES:
                 raise EngineError('Only independent review roles can use review_of')
             if set(review_of) & set(task['dependencies']):
@@ -1543,6 +1607,29 @@ class Engine:
             made = set(self._git('for-each-ref', '--format=%(refname:short)', 'refs/heads').decode().split()) - known
         return made | {e['head_ref'] for e in prs if e.get('head_ref')}
 
+    def _stacked_base(self, base):
+        """True when `base` is the head branch of a pull request the previous run recorded and `gh pr list` shows it
+        open and from this repository (a stacked train). False when gh is missing, fails or answers oddly."""
+        archives = sorted((self.state_dir / 'history').glob('run-*.json'), key=lambda p: p.stat().st_mtime)
+        try:
+            recorded = json.loads(archives[-1].read_text())['state'].get('pull_requests', [])
+        except (IndexError, OSError, ValueError, KeyError, AttributeError):
+            return False
+        if not any(isinstance(e, dict) and e.get('head_ref') == base for e in recorded):
+            return False
+        gh = shutil.which('gh')
+        if not gh:
+            return False
+        try:
+            done = subprocess.run([gh, 'pr', 'list', '--state', 'open', '--json', 'headRefName,isCrossRepository',
+                                   '--limit', '200'], cwd=self.repo, capture_output=True, text=True, timeout=10,
+                                  stdin=subprocess.DEVNULL, env=dict(os.environ, GH_PROMPT_DISABLED='1'))
+            data = json.loads(done.stdout) if done.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return False
+        return isinstance(data, list) and any(isinstance(e, dict) and e.get('headRefName') == base
+                                              and e.get('isCrossRepository') is False for e in data)
+
     def record_pr(self, actor, lease, url, tasks=None):
         """Record a pull request the run opened, so the run brief asks the owner to review and merge it. `gh pr view`
         (no lock held) must find it open, from this repository, based on the default or a run branch, and headed by the
@@ -1568,7 +1655,8 @@ class Engine:
             if view.get('isCrossRepository') is True:
                 raise EngineError('Pull request %s comes from another repository' % url)
             base, head = view['baseRefName'], view['headRefName']
-            if base != self._default_branch(auto) and base not in self._run_branches(auto, seen):
+            if (base != self._default_branch(auto) and base not in self._run_branches(auto, seen)
+                    and not self._stacked_base(base)):
                 raise EngineError('Pull request base %s is neither the default branch nor a run branch' % base)
             tip = self._local_branch(head)
             if tip is None:
@@ -1805,6 +1893,9 @@ class Engine:
         """What `other` holds against `task`. A reported repair holds its parents' files only against a non-repair card:
         a repair card meets just the files and resources the reported repair's own card lists, and the reported
         ancestors under that repair hold nothing against it."""
+        # F84: a queued repair holds only its own files against another repair; against any other card, its chain's.
+        if other['state'] == 'queued' and other.get('repair_of') and task.get('repair_of'):
+            return dict(files=list(other['files']), resources=list(other['resources']))
         if task.get('repair_of') and other['state'] == 'reported' and other['role'] == 'builder':
             if other.get('repaired_by'):
                 return dict(files=[], resources=[])
@@ -1923,9 +2014,9 @@ class Engine:
     def _check_route(state, task, inline, helper):
         """Contract item 3. A state with no `route` (made by 2.3) is not checked."""
         session = state['session']
-        if task['role'] == 'builder' and 'size' in session:
+        if 'size' in session:
             size = task.get('size') or ('medium' if session['size'] == 'large' else session['size'])
-            if size == 'tiny' and not inline and not (isinstance(helper, str) and helper.strip()):
+            if task['role'] == 'builder' and size == 'tiny' and not inline and not (isinstance(helper, str) and helper.strip()):
                 raise EngineError('Tiny unit: the main session does this work; pass --helper REASON to dispatch a helper')
             if inline and size != 'tiny':
                 Engine._check_model_fit(state, task)
@@ -2058,6 +2149,10 @@ class Engine:
             if not serial:
                 self._checkpoint(state, actor, task_id, inline)
             token = self._mark_running(state, task_id, worker, inline, helper, lease)
+            task = state['tasks'][task_id]
+            if task['role'] == 'builder' and not task.get('base'):  # `wave --emit` records it earlier; a lone dispatch had none
+                with contextlib.suppress(EngineError):
+                    task['base'] = self._git('rev-parse', 'HEAD').decode().strip()
         if serial:
             self._log_serial([task_id], serial)  # after the state write succeeded
         return token
@@ -2237,24 +2332,28 @@ class Engine:
     def _fit(self, state, actor, chosen):
         """The card of `chosen` ((id, modes) pairs) to run inline, '' for none, or None when they cannot all start
         together: one inline slot, review roles never inline, the worker cap and the worktree cap."""
+        return self._fit_why(state, actor, chosen)[0]
+
+    def _fit_why(self, state, actor, chosen):
+        """(`_fit`, why): why is None for a fit, else 'one inline slot', 'worker cap' or 'worktree cap'."""
         tasks = state['tasks']
         inline_only = [i for i, m in chosen if m == {'inline'}]
         slot = self._slot_free(state, actor)
         if len(inline_only) > 1 or (inline_only and not slot):
-            return None
+            return None, 'one inline slot'
         inline_id = inline_only[0] if inline_only else ''
         workers, worktrees = self._caps(state, True)
         if len(chosen) > workers:
-            return None
+            return None, 'worker cap'
         if sum(tasks[i]['role'] == 'builder' and i != inline_id for i, _ in chosen) > worktrees and not inline_id and slot:
             inline_id = next((i for i, m in chosen if 'inline' in m and tasks[i]['role'] == 'builder'), '')  # saves a worktree
         if sum(tasks[i]['role'] == 'builder' and i != inline_id for i, _ in chosen) > worktrees:
-            return None
-        return inline_id
+            return None, 'worktree cap'
+        return inline_id, None
 
     def _wave_now(self, state, actor, chosen=(), cheap=False):
         """Greedy, in seq order, from `chosen` ((id, modes) pairs): the startable cards `wave` accepts together, and the
-        startable cards left out for a shared resource or file, each with the chosen card it waits for."""
+        startable cards left out for a shared resource or file or for a slot or cap, each with the chosen card it waits for."""
         chosen, serialized = list(chosen), []
         for other_id, modes in self._startable(state, actor, cheap).items():
             if any(i == other_id for i, _ in chosen):
@@ -2262,8 +2361,15 @@ class Engine:
             clash = next((i for i, _ in chosen if self._overlap(state, state['tasks'][other_id], state['tasks'][i])), None)
             if clash is not None:
                 serialized.append(dict(card=other_id, waits_for=clash, reason=self._clash_reason(state, other_id, clash)))
-            elif self._fit(state, actor, chosen + [(other_id, modes)]) is not None:
-                chosen.append((other_id, modes))
+            else:
+                fit, why = self._fit_why(state, actor, chosen + [(other_id, modes)])
+                if fit is not None:
+                    chosen.append((other_id, modes))
+                else:
+                    holder = chosen[0][0] if chosen else None
+                    if why == 'one inline slot':
+                        holder = next((i for i, m in chosen if m == {'inline'}), holder)
+                    serialized.append(dict(card=other_id, waits_for=holder, reason=why))
         return chosen, serialized
 
     def _clash_reason(self, state, card, holder):
@@ -2331,8 +2437,58 @@ class Engine:
         now, serialized = self._wave_now(state, actor, cheap=cheap)
         return dict(overlaps=overlaps, chains=chains, blocked=blocked, waves=waves,
                     startable_now=list(self._startable(state, actor, cheap)),
-                    wave_now=[i for i, _ in now], serialized=serialized,
+                    wave_now=[i for i, _ in now], serialized=serialized, track=self._track(state),
                     idle_workers=self._idle(state), prep=self._prep(state))
+
+    def _routes(self, state, task, inline):
+        try:
+            self._check_route(state, task, inline, None)
+        except EngineError:
+            return False
+        return True
+
+    def _track(self, state):
+        """The order the main session works through the queued cards: one step per inline card, each with the `side`
+        cards workers run beside it (disjoint, within the worker and worktree caps). A step takes a ready card (a
+        dependency counts once it is accepted, held, running or reported) that fits the session model, the one that
+        unblocks the most other cards first, then the earliest; with none that fits the step is `coordinator` work."""
+        tasks = state['tasks']
+        queued, blocked = [], set()
+        for task in self._by_seq(tasks.values()):
+            if task['state'] != 'queued':
+                continue
+            needs = task['dependencies'] + task.get('review_of', [])
+            if any(tasks[d]['state'] == 'parked' or d in blocked for d in needs):
+                blocked.add(task['id'])
+            else:
+                queued.append(task)
+        done = {i for i, t in tasks.items() if t['state'] in ('accepted', 'held', 'running', 'reported')}
+        steps, free = [], True
+        while queued:
+            ready = [t for t in queued if all(d in done for d in t['dependencies'] + t.get('review_of', []))
+                     and not (t.get('finalize') and any(o is not t and not o.get('finalize') for o in queued))]
+            inline = [t for t in ready if t['role'] not in REVIEW_ROLES and self._routes(state, t, True)]
+            pick = min(inline, key=lambda t: (-sum(t['id'] in o['dependencies'] + o.get('review_of', [])
+                                                   for o in queued if o is not t), t.get('seq', 0)), default=None)
+            workers, worktrees = self._caps(state, free)
+            free = False
+            used, side = ([pick] if pick else []), []
+            for task in ready:
+                if (task is pick or len(used) >= workers or not self._routes(state, task, False)
+                        or (task['role'] == 'builder' and sum(tasks[i]['role'] == 'builder' for i in side) >= worktrees)
+                        or any(self._overlap(state, task, other) for other in used)):
+                    continue
+                side.append(task['id'])
+                used.append(task)
+            if not used:
+                break
+            step = dict(step=len(steps) + 1, card=pick['id'] if pick else None, side=side)
+            if not pick:
+                step['coordinator'] = TRACK_COORDINATOR
+            steps.append(step)
+            done.update(t['id'] for t in used)
+            queued = [t for t in queued if t not in used]
+        return steps
 
     def view(self, actor='main', session=None):
         """The lease-free board the Kanban mod reads. Built field by field from an allowlist, never from `status()`: no
@@ -2370,6 +2526,7 @@ class Engine:
                 counts_note='running includes inline cards',
                 columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
                 cards=cards, startable_now=startable, wave_now=plan['wave_now'], serialized=plan['serialized'],
+                track=plan['track'][:3],
                 acceptable_now=acceptable,
                 next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],
                 latest_review=None if review is None else dict(
@@ -2420,12 +2577,13 @@ class Engine:
         (`expect: fail`): that one exits non-zero and a later check of the same command, with no `expect`, exits 0.
         `ruled` skips the unmet criteria only: a coordinator ruling never covers a check."""
         checks = review['checks']
+        bare = lambda text: re.sub(r' \([^()]*\)$', '', text)  # F70: one trailing ` (...)` note never changes the command
         for i, check in enumerate(checks):
             command = check['command']
             if check.get('expect') == 'fail':
                 if check['exit_code'] == 0:
                     return 'check "%s" (expect: fail) exited 0' % command
-                if not any(later['command'] == command and later.get('expect', 'pass') == 'pass' and later['exit_code'] == 0
+                if not any(bare(later['command']) == bare(command) and later.get('expect', 'pass') == 'pass' and later['exit_code'] == 0
                            for later in checks[i + 1:]):
                     return 'check "%s" (expect: fail) has no later passing run' % command
             elif check['exit_code'] != 0:
@@ -2862,6 +3020,10 @@ class Engine:
         transaction."""
         if defer_reason is not None and (not isinstance(defer_reason, str) or not defer_reason.strip()):
             raise EngineError('--defer-out-of-scope needs a nonempty reason')
+        if report_path is None:  # F85: the report the Stop hook captured for this token
+            if not isinstance(token, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', token):
+                raise EngineError('Invalid review token')
+            report_path = self.state_dir / 'reports' / (token + '.md')
         if not Path(report_path).is_file():
             raise EngineError('Review report not found: ' + str(report_path))
         try:
@@ -2894,6 +3056,10 @@ class Engine:
                 self._report_in(state, card['worker'], token, text)
                 if card['state'] != 'reported':
                     raise EngineError('The review card did not take the report')
+            elif card.get('report') == text and not any(card['id'] in r.get('tasks', []) for r in state['reviews']):
+                # F87: the Stop hook reported this card earlier, perhaps beside dirty files; its report is now this
+                # receipt, so it is re-taken at the artifact of this transaction and the chain accept can follow.
+                card['report_artifact'] = self.artifact(self._scope_of(state, [card['id']]))
             receipt = self._record_review(state, actor, lease, body['reviewer'], report_path, body['categories'],
                                           ids, final, body['findings'], retasked)
             if defer_reason is not None:
@@ -2950,6 +3116,11 @@ class Engine:
         return True
 
     @staticmethod
+    def _cleanup(task):
+        """A builder cleanup card: its files may join a fix re-review's scope beside the repairs (F67)."""
+        return task['role'] == 'builder' and task['mode'] == 'cleanup'
+
+    @staticmethod
     def _check_fix_review(state, covered):
         """The fix re-review covers repair cards whose chain starts at a final-review finding, plus their ancestors."""
         repairs = [t for t in covered if t['role'] == 'builder' and t['mode'] == 'repair']
@@ -2959,7 +3130,7 @@ class Engine:
             if any(t.get('final_findings') for t in chain):
                 fixes += 1
                 allowed.update(t['id'] for t in chain)
-        if not fixes or fixes != len(repairs) or any(t['id'] not in allowed for t in covered):
+        if not fixes or fixes != len(repairs) or any(t['id'] not in allowed and not Engine._cleanup(t) for t in covered):
             raise EngineError('A fix re-review covers repair cards of a final-review finding and their ancestors')
 
     def _check_chain_tips(self, state, covered, task_findings, kind='repair-diff'):
@@ -3054,7 +3225,7 @@ class Engine:
                  if r.get('repair_check') and not r['findings'] and self._intact(r)
                  and self._same(r['artifact'], self._artifact_cached(cache, r.get('scope')))]
         repairs = {i for r in later for i in r['tasks']
-                   if state['tasks'][i]['role'] == 'builder' and state['tasks'][i]['mode'] == 'repair'}
+                   if state['tasks'][i]['role'] == 'builder' and state['tasks'][i]['mode'] in ('repair', 'cleanup')}
         scope = self._scope_of(state, sorted(repairs)) if repairs else None
         if scope is None:
             return None
@@ -3089,7 +3260,8 @@ class Engine:
                 continue
             # Each receipt is compared against the artifact recomputed with its own stored scope.
             # A stale newest receipt leaves its categories without a current verdict (O19).
-            current = self._same(review['artifact'], self._artifact_cached(cache, review.get('scope')))
+            now = self._artifact_cached(cache, review.get('scope'))
+            current = self._same(review['artifact'], now) or (review['final'] and self._squashed_same(state, review['artifact'], now))
             resolved = None
             if not current and keep and review['final']:
                 resolved = self._kept_current(state, review, cache)
@@ -3358,6 +3530,7 @@ class Engine:
                     code = 126
                 else:
                     process = subprocess.Popen(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT,
+                                               env=dict(os.environ, PYTHONUNBUFFERED='1'),  # a killed gate keeps what it printed
                                                **portable.group_kwargs())
                     portable.track(process)
                     try:
@@ -3525,6 +3698,9 @@ class Engine:
                 if note:
                     raise EngineError(str(exc) + note) from exc
                 raise
+            note = self._leftover_note(state)
+            if note:
+                raise EngineError('Leftover worktrees remain' + note)
             self._end_run(state, 'finished' if self._autonomy_on(state) else 'closed')
             state['session'].update(active=False, outcome='completed')
             state['permits'] = []
@@ -3815,9 +3991,9 @@ class Engine:
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
         needs += ['review and merge pull request ' + entry['url'] for entry in self._pull_requests(state)]
-        if reason in ('stalled', 'needs-owner:escalated') and (auto or {}).get('pr_gap'):
+        if reason == 'needs-owner:escalated' and (auto or {}).get('pr_gap'):
             needs.append('publish the work: ' + auto['pr_gap'])
-        gate = self._failing_gate(state) if reason in ('gate-failing', 'needs-owner:escalated') else None
+        gate = self._failing_gate(state) if reason == 'needs-owner:escalated' else None
         if gate:
             log = [g['path'] for g in state['gates'] if g['name'] == gate][-1]
             needs.append('required gate %s failed %d times in a row -- read its log %s, fix the cause, then arm again'
@@ -4073,7 +4249,8 @@ class Engine:
                 if task['state'] in PARKABLE:
                     self._set_aside(state, task, OWNER_PARK + 'escalated')
                 elif task['state'] == 'parked' and not task.get('parked_reason', '').startswith(OWNER_PARK):
-                    task['parked_reason'] = OWNER_PARK + 'escalated'
+                    was = task.get('parked_reason', '').strip()
+                    task['parked_reason'] = OWNER_PARK + 'escalated' + (' (%s)' % was if was else '')
             return 'needs-owner:escalated', None
         auto['stalls'] = 0 if count == 1 else auto['stalls'] + 1
         auto['signature'] = self._signature(state)

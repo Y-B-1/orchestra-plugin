@@ -111,7 +111,7 @@ In a compound command, `normal` relaxes only the softened items: the rest of the
 While autonomy is armed the owner is away, so a question must not wait for a click. Unarmed, `AskUserQuestion` is left alone. Armed:
 
 1. `AskUserQuestion` is answered by the hook when every question has a "(Recommended)" option: the hook returns `allow` with the original questions and an `answers` map (a multi-select joins its labels with ", ") and appends one `decided for the owner` line per question to `progress.md`.
-2. A question with no recommended option, or a malformed one, is denied with the reason "decide it yourself, record the decision, or park the card". An answer is never approval text.
+2. A question with no recommended option, or a malformed one, is denied with `DECIDE_OR_PARK` (`hooks.py`): "Autonomy is armed and the owner is away. Decide this yourself: take the option you would recommend, record the decision in your next message, and continue." followed by the instruction to park the card with a `needs-owner:` reason when only the owner can answer. An answer is never approval text.
 3. A Stop whose last assistant message ends with a question (a `?` in its last 600 characters) gets the same decide-or-park text added to the continuation reason.
 
 ## The unattended lock
@@ -144,9 +144,11 @@ When autonomy arms, the mod opens the pane by itself (unfocused; a terminal too 
 
 The mod links each card to its worker: `agent.spawn` records the agent id and Workflow run id. When the session is the run's own and Claude Code exposes `TaskCreate`, `TaskUpdate` and `TaskList` with an `allow` verdict, the mod mirrors each card as a native task (subject `[run] ID role/mode: outcome`, status, owner, blocked-by) and reconciles by subject, so the app's task list matches the coordinator's board. Without the tools, or with any other verdict, sync stays off and the pane says why; it never raises a permission dialog. Claude Code withholds the task tools on Opus 5.5, Sonnet 5.5 and Haiku 5.5 unless the session opts in: start it with `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` (or `--allowedTools TaskCreate`). Background and cloud sessions have them on every model.
 
+The main session is the main track. The pane has a Track lane above the columns: the first three steps from `board --view`, each `Step N: you run X; side: A, B` (the main session runs X inline, workers run the side cards beside it). When no ready card fits the session model the step reads `no card fits the session model; you coordinate, accept and review`, with the side cards after it. The native task list follows the same order: a track card is created as `[run] ID step N role/mode` (the id stays first, so reconciling by subject still works) with owner `main`; side cards keep their worker as owner. Each reported card also gets an `accept-ID` entry owned by `main`, in progress while the report waits and completed once the card is accepted, so the list shows the coordinator's own steps even when the track holds no build card.
+
 ## Board hooks and worker reports
 
-The board is the one view of what moved and what waits. Four hooks carry it to the coordinator without a poll: SubagentStop saves the worker's final message under `<state>/reports/<token>.md`, records it as the report and notes the move as a pending delta; PostToolUse on `Agent|Task` delivers that delta once; UserPromptSubmit adds one board line only when the board signature differs from the last one shown; Stop (outside autonomy) blocks once while a card waits and again only after the signature changes. Agents started inside a Workflow reach the coordinator through UserPromptSubmit and Stop only, because their calls do not pass the coordinator's PostToolUse.
+The board is the one view of what moved and what waits. Four hooks carry it to the coordinator without a poll: SubagentStop saves the worker's final message under `<state>/reports/<token>.md`, records it as the report and notes the move as a pending delta; PostToolUse on `Agent|Task` delivers that delta once; UserPromptSubmit adds one board line only when the board signature differs from the last one shown (an acceptable card comes first in `Next:`, then the line ends `Track: you run E2; side: H, M`, or the no-fit text, for the first track step); Stop (outside autonomy) blocks once while a card waits and again only after the signature changes. Agents started inside a Workflow reach the coordinator through UserPromptSubmit and Stop only, because their calls do not pass the coordinator's PostToolUse.
 
 ## Worker limits added in 2.14
 
@@ -155,7 +157,7 @@ The board is the one view of what moved and what waits. Four hooks carry it to t
 
 ## Model fit
 
-The main session's model is recorded at three hook points, never for a worker or subagent: SessionStart (the payload `model`, else the last assistant entry of the transcript), PostModelSwitch (`to_model`; it prints `{}` and never blocks) and UserPromptSubmit (the transcript tail, and `CLAUDE_EFFORT` for the effort). The prompt then adds one `Session model:` line naming queued cards that must go to a worker: another model family, or a higher effort on the same model, starts only on a worker. An unknown model refuses nothing; the line says so only while a builder card is queued.
+The main session's model is recorded at five hook events, never for a worker or subagent: SessionStart (the payload `model`, else the last assistant entry of the transcript), Stop and a PreToolUse shell command that names `orchestra.py` (the same sources, so the first turn has a record), PostModelSwitch (`to_model`; it prints `{}` and never blocks) and UserPromptSubmit (the transcript tail, and `CLAUDE_EFFORT` for the effort). The prompt then adds one `Session model:` line naming queued cards that must go to a worker: another model family, or a higher effort on the same model, starts only on a worker. An unknown model refuses nothing; the line says so only while a builder card is queued.
 
 ## Release hooks
 

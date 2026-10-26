@@ -2,11 +2,40 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.15.1 — 2026-10-26
+
+Friction from the 2.15 live run, and the review notes 2.15.0 deferred.
+
+- **Model fit for every role:** in a sized run the engine checks the session model for investigator, designer-planner and every other worker card, not only builders. The rule is stated once in the coordinator skill.
+- **`waves` returns `track`:** the order the main session works the queue, as steps `{step, card, side}`; a step has `coordinator` and no card when no ready card fits the session model. `serialized` also names a slot or cap as its reason (`one inline slot`, `worker cap`, `worktree cap`). Only `waves` prints `wave_now` and `serialized`; `wave` does not, and the CLI reference now says so. The board line ends `Track: you run E2; side: H, M`, the Kanban pane orders cards by step, and the native task list gets an `accept-ID` entry per reported card.
+- **Escalation keeps the reason:** a parked card becomes `needs-owner:escalated (ORIGINAL REASON)`, so the reason the owner reads is not lost.
+- **Take-over:** a plain `start` refuses a run owned by another harness session and names `start --recover --take-over`. `start` and `start --recover` rewrite `NOW.md`. A SessionStart, Stop or PreToolUse from a session the run is not bound to no longer rewrites the recorded model.
+- **Review:** `review --token TOKEN` takes no report path and reads the captured report. A final review stays current after a squash merge when the trees are equal. A reported review card is re-taken at the review's artifact so the chain accept follows. A fix re-review may cover a cleanup card beside the repairs.
+- **`add` checks:** a final review brief needs a `Lens:` line (and `Required categories:` for a combined lens); an acceptance line with `unittest discover -s/-p` must match a test file; an owned generator source also owns the file its script derives. `dispatch` records the card's base.
+- **Repairs and checks:** a queued repair holds only its own files against another repair and its chain's files against any other card. A red-first check ignores one trailing parenthetical note. `gate` keeps the output of a command it killed. A `pr` may be stacked on the head branch of an open pull request the previous run recorded. Merges stay one pull request into the default branch at a time.
+- **`finish` and `status`:** `finish` refuses leftover worktrees and points to `worktrees`; an untracked `.claude/worktrees/` entry is not evidence. `do -h` is refused as a step.
+- **Guard (denies only get sharper or more precise):** autonomy cleanup removes a worktree only when it is clean (no ignored file), merged and on a branch the run made. An `rm` glob under the temp directory may not empty a `claude-*` scratch directory, and a worktree `rm` refuses a `..` operand or a glob before the last component. A refused `git push` chain says the push shape is the cause. A silent worker is listed as `alive`, `gone` or `liveness unknown`. A prompt that is not the approval word still ends an armed run past its deadline. Worker briefs point to `orchestra.py card ID`, because the state directory is closed to workers while autonomy is armed.
+- **Tests:** the F89 timing tests compare a crafted nested shell with a benign twin instead of a fixed 5 s, and the M3 card gave them a 30 s per-test timeout (`timeoutMs`).
+- **Code cleanup:** the dead `stalled` and `gate-failing` reason tests are gone from the run-brief builder; `EFFORTS` has one definition; the hooks share one transcript tail reader and one `rm` operand reader.
+- **Docs:** the README command table lists every subcommand (checked by `tests/test_readme_commands.py`); `do "report W T F" "accept ID"` is documented as the one-call report and accept for a worker card; the repeated model-fit prose and the fold sentence are gone from the loaded skills.
+
+### Corrections to 2.15.0 wording
+
+- The deny text for a question with no recommended option is `DECIDE_OR_PARK` in `hooks.py`: "Autonomy is armed and the owner is away. Decide this yourself: take the option you would recommend, record the decision in your next message, and continue", then how to park. The 2.15.0 entry quoted shorter wording.
+- A park without the `needs-owner:` prefix is not undone by a hook. The Stop nudge tells the coordinator to run `unpark`, and escalation relabels an unprefixed park `needs-owner:escalated (REASON)`.
+- The model is recorded at five hook events, not three: SessionStart, Stop, a PreToolUse shell command that names `orchestra.py`, PostModelSwitch and UserPromptSubmit.
+- Escalation comes on the third unchanged pass (two nudges, then the park); earlier text counted three nudges.
+
+### Known gaps
+
+- Items deferred to the next release (F97 to F101) are listed in `docs/BUILD-LEDGER.md`.
+- The `cancelBoardTimer` wrapper in `orchestra.ts` and the repeated "A tiny task starts no run" prose are left: the first sits outside this card's files, and `tests/test_skill_routing.py` pins the second in two files.
+
 ## 2.15.0 — 2026-10-25
 
 Autonomy works like a goal, a card runs where its model fits, and the coordinator needs fewer engine turns.
 
-- **Autonomy keeps going like a goal:** the Stop hook nudges an idle board, a failing gate, an unchanged pass, a silent worker or an unpublished branch instead of stopping. After three unchanged nudges it parks every unfinished card `needs-owner:escalated` and stops the run. A park without the `needs-owner:` prefix is undone, and both park instructions give the prefix.
+- **Autonomy keeps going like a goal:** the Stop hook nudges an idle board, a failing gate, an unchanged pass, a silent worker or an unpublished branch instead of stopping. On the third unchanged pass (two nudges, then the park) it parks every unfinished card `needs-owner:escalated` and stops the run. A park without the `needs-owner:` prefix is undone, and both park instructions give the prefix.
 - **Autonomy answers its own questions:** while armed, an `AskUserQuestion` whose questions all have a "(Recommended)" option is answered by the hook and logged as `decided for the owner` in `progress.md`. Any other question is denied with "decide it yourself, record the decision, or park the card", and a Stop that ends with a question gets the same text.
 - **Autonomy cleanup allowances:** an armed run removes its merged clean worktrees, deletes branches provably merged or made by the run, and deletes files under the system temp directory. Every other deletion stays denied.
 - **Model fit replaces folding:** hooks record the session model at SessionStart, PostModelSwitch and UserPromptSubmit, and the prompt adds a `Session model:` line naming queued cards that need a worker. A card on another model family, or a higher effort, starts only on a worker; `inline` refuses it. Critic and reviewer cards always go to workers.
