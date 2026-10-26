@@ -580,8 +580,12 @@ Source: a read-only triage of the 2.15 live run (friction F67 to F96) and the re
 - Note 1: model fit applies to every role in a sized run. Note 3: `--take-over` is required when the harness session differs.
 - F69: no code; document the `do` form.
 
-### Deferred to the next release (live friction F97 to F100)
+### Deferred to the next release (live friction F97 to F101)
 
-- F97 to F100 were seen in this run and are not fixed here. The docs card was given their numbers only, so this section does not describe them; add the descriptions from the coordinator's record.
+- F97: E1's self-review again annotated its expect-fail check with a trailing note, "(base engine.py and orchestra.py)", so accept refused it under F70, and the coordinator stripped the note and re-reported. Proposed fix: E2 fixes the match so that a trailing parenthetical note on an expect-fail check is ignored.
+- F98: Replacing a reported card (M) took five steps: park it, cancel its dependent (D), cancel M, re-add M2, and re-add D as D2, because no command retargets a dependency or replaces a card in place. Proposed fix: a `replace OLD NEW` step that moves the dependents, so the same change is one call.
+- F99: E2's self-review labeled its red run "(first run, before the change)" although it ran a wider command than its green run, and it listed the full suite as a failing check for failures it did not cause; accept has no way to rule on a failing check (`--ruling` covers criteria only), so the coordinator rewrote the check list. Proposed fix: `accept --ruling` covers a failing check when the ruling names its cause.
+- F100: With an Opus main session, every builder card (Sonnet by role) is refused inline on model fit, so the main session gets no track work except repairs and Opus reviews, and a 40-line engine fix (E1F) had to go to a worker. Proposed fix: the track (T2) shows this honestly, and a card can opt into the session model with `model: session` when the owner prefers inline.
+- F101: The coordinator accepted E1 and E1F on targeted suites only, and the full suite later found a regression in each: one in finish leftovers and one in F84 freeing chain files. Proposed fix: after any card that edits engine.py, accept only on the full suite or a frozen-copy run of it.
 - Not done in 2.15.1 for lack of ownership: dropping the repeated "A tiny task starts no run" prose (pinned by `tests/test_skill_routing.py`) and the `cancelBoardTimer` wrapper in `orchestra.ts`.
 - Unchecked: the F89 reproduction was not rerun by the docs card; live `report` inside `do` is unchecked.
