@@ -1504,6 +1504,13 @@ class Engine:
             if 'owner_approval' in task:
                 _append_progress(self.state_dir, '- owner approved repair %s of %s: %s'
                                  % (task['id'], task['repair_of'], task['owner_approval']))
+            finals = sorted(t['id'] for t in state['tasks'].values() if t['state'] == 'running'
+                            and t['role'] == 'code-reviewer' and t['mode'] == 'final')
+            if finals:  # F110: their receipts must cover every card, so this one makes them refuse
+                return dict(warning='final review %s is running; its receipts must cover every card, so recording them '
+                                    'will refuse until %s is covered: rerun the review after %s is accepted'
+                                    % (', '.join(finals), task['id'], task['id']))
+        return {}
 
     def _drop_replaced(self, state, old_id, task):
         """F98: check that card `old_id` may be replaced by `task` and remove it from `state`; return it."""
@@ -2623,6 +2630,7 @@ class Engine:
             startable = plan['startable_now']
             pending = {d for t in ordered if t['state'] in ('queued', 'running') for d in t.get('review_of', [])}
             acceptable = [t['id'] for t in ordered if t['state'] == 'reported' and not t.get('repaired_by')
+                          and t['role'] != 'code-reviewer'  # F109: a code review card is accepted by its receipt
                           and t['id'] not in pending and not self._self_review_blocks(t)]
             return dict(
                 run_id=state.get('run_id'), session=dict(active=bool(run.get('active')), size=run.get('size'), model=run.get('model'), effort=run.get('effort')),
@@ -3464,7 +3472,9 @@ class Engine:
                 return SELF_REVIEW_ERROR
             failed = self._self_review_failure(review, ruled, ruling)
             if failed:
-                return 'Self-review has a failing check or unmet criterion: ' + failed
+                hint = ('; name it, or its test target, in --ruling' if ruling is not None and failed.startswith('check "')
+                        and '(expect: fail)' not in failed else '')  # F108
+                return 'Self-review has a failing check or unmet criterion: ' + failed + hint
             full = self._full_check_gap(task, review)
             if full:
                 return full

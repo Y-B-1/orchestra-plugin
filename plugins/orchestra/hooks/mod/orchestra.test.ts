@@ -738,7 +738,7 @@ test('isWindowsPath: drive letters and backslashes read as Windows, POSIX paths 
 // M1: the live board, worker links, the native task mirror and the guard `minimal` fast path.
 const RUN_ID = '0123456789abcdef';
 const COUNTS = { queued: 0, running: 0, reported: 0, repairing: 0, held: 0, parked: 0, accepted: 0 };
-type CardIn = { id: string; state: string; seq: number; worker?: string | null; dependencies?: string[]; started_at?: number | null };
+type CardIn = { id: string; state: string; seq: number; worker?: string | null; dependencies?: string[]; started_at?: number | null; role?: string; mode?: string };
 
 function boardView(cards: CardIn[], extra: Record<string, unknown> = {}) {
   const counts: Record<string, number> = { ...COUNTS };
@@ -1401,6 +1401,18 @@ test('track: when the track changes the task subjects renumber and a card that l
   await flush();
   expect(s.tasks.map((t) => t.subject)).toEqual([subj('A'), '[012345] B step 1 builder/implementation']);
   expect(s.tasks.map((t) => t.owner)).toEqual(['main', 'main']);
+});
+
+test('track: a reported review card shows as a review entry, since its receipt accepts it (F109)', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  engine(r, { view: boardView([{ id: 'R1', role: 'code-reviewer', mode: 'final', state: 'reported', seq: 1, worker: 'w1' }]) });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  const entry = s.tasks.find((t) => t.subject.startsWith('[012345] accept-R1 '));
+  expect(entry === undefined).toBe(false);
+  expect(entry!.subject).toBe('[012345] accept-R1 record the review receipt of R1');
 });
 
 test('track: a reported card shows as an accept entry for main and completes once accepted', async ($, on) => {

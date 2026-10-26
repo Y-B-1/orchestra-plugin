@@ -35,10 +35,15 @@ def ids(view, state):
 
 def next_command(view):
     """The command the board waits on: accept the first acceptable card (the reported ones for a view without
-    `acceptable_now`), else wave the startable ones; None when neither."""
-    reported = ids(view, 'reported') if 'acceptable_now' not in (view or {}) else list(view['acceptable_now'])
+    `acceptable_now`), else record a reported code review card's receipt (F109), else wave the startable ones; None when none."""
+    cards = (view or {}).get('cards', [])
+    reviews = [c['id'] for c in cards if c.get('state') == 'reported' and c.get('role') == 'code-reviewer']
+    reported = [i for i in ids(view, 'reported') if i not in reviews] if 'acceptable_now' not in (view or {}) \
+        else list(view['acceptable_now'])
     if reported:
         return 'orchestra.py accept '+reported[0]
+    if reviews:  # F109: a code review card is accepted by recording its receipt, never by `accept`
+        return 'orchestra.py review --token TOKEN for %s (its receipt accepts it)' % reviews[0]
     startable = list((view or {}).get('startable_now') or [])
     return 'orchestra.py wave '+' '.join(startable) if startable else None
 

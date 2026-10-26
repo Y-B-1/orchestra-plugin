@@ -114,5 +114,43 @@ class InlineAfterReportTests(t2.Fixture):
             self.engine.dispatch('main', self.lease, 'b', 'w-a', serial='fixture: one card at a time')
 
 
+class RulingHintTests(t2.Fixture):
+    """F108: a ruling that names no failing check is refused with the command it must name."""
+    def test_the_refusal_says_what_the_ruling_must_name(self):
+        self.reported('a', checks=[{'command': 'python3 -m unittest tests/test_flaky.py', 'exit_code': 1}])
+        with self.assertRaisesRegex(EngineError, 'name it, or its test target, in --ruling'):
+            self.engine.accept('main', self.lease, 'a', ruling='it is fine')
+
+
+class ReviewNextTests(t2.Fixture):
+    """F109: a reported review card is recorded with `review`, so it is not acceptable and Next names `review`."""
+    def test_a_reported_review_card_is_not_acceptable_and_next_names_review(self):
+        from orchestra_core import delta
+        self.reported('B1')
+        self.engine.accept('main', self.lease, 'B1')
+        self.task('R1', role='code-reviewer', mode='final', review_of=['B1'], files=[])
+        token = self.engine.dispatch('main', self.lease, 'R1', 'w-R1')
+        self.engine.report('w-R1', token, 'STATUS: PASS\nARTIFACT: x clean\n\nReviewed.')
+        view = self.engine.view()
+        self.assertEqual([], view['acceptable_now'])
+        self.assertEqual('orchestra.py review --token TOKEN for R1 (its receipt accepts it)', delta.next_command(view))
+
+
+class AddDuringFinalReviewTests(t2.Fixture):
+    """F110: adding a card while a final review runs warns that the review's receipts will not cover it."""
+    def test_add_warns_while_a_final_review_runs(self):
+        self.reported('B1')
+        self.engine.accept('main', self.lease, 'B1')
+        self.task('R1', role='code-reviewer', mode='final', review_of=['B1'], files=[])
+        self.engine.dispatch('main', self.lease, 'R1', 'w-R1')
+        out = self.engine.add_task('main', self.lease, t2.card('B2'))
+        self.assertIn('R1', out.get('warning', ''))
+        self.assertIn('B2', out.get('warning', ''))
+
+    def test_add_without_a_running_final_review_has_no_warning(self):
+        out = self.engine.add_task('main', self.lease, t2.card('B2'))
+        self.assertNotIn('warning', out)
+
+
 if __name__ == '__main__':
     unittest.main()

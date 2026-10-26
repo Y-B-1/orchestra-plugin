@@ -382,8 +382,8 @@ def execute(args):
             engine.interrupt(args.actor,args.lease)
         return {'session':args.command,'state':str(state)},0
     if args.command=='add':
-        engine.add_task(args.actor,args.lease,read_json(args.task))
-        return {'added':read_json(args.task)['id']},0
+        warned=engine.add_task(args.actor,args.lease,read_json(args.task)) or {}
+        return {'added':read_json(args.task)['id'],**warned},0
     if args.command=='replace':
         task = read_json(args.task)
         engine.replace_task(args.actor,args.lease,args.old,task)

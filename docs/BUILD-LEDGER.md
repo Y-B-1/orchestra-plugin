@@ -601,6 +601,7 @@ Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's trac
 | Guard and hooks (`13c7488`, `e9bacb9`) | Own-session scratchpad deletes, temp file globs, `cd DIR && git worktree remove` home check, cache cleanup, `PostModelSwitch` session id, engine model-fit line, resumed report replaces the first (F102), restart note gates (F103) and live worktrees (F106); F107 flaky test fixed | hook tests |
 | Engine friction (`e67c6da`, `0843e61`) | `replace` (F98), `accept --ruling` on a failing check (F99), `resume` (F102), `deferred` out-of-scope and `needs_triage` (F104), F70 subshell matcher, policy `full_check` (F101) | `tests/test_engine_2152.py` |
 | Acceptance check (`430c676`) | Reads each markdown code span on its own (F105) | engine tests |
+| Review notes (`171c888`, `3422fdb`, `58d2670`, `d9705cc`, NE, ND) | Pre-PR review fixes: acceptance check also reads prose outside code spans (RVC blocking), whole-word rulings, `resume` restarts the silence clock, `replace` waits for a running review, case-blind temp check, files inside ignored cache folders block cleanup, the Track lane shows `wait`, the live `t1` write check reads only file writes; F108 to F111 | `tests/test_review_notes_2152.py`, hook and mod tests |
 | Live matrix (`611c21f`, `98120bc`) | 22 scenarios. `t1`: in a real Opus session the board said `Track: you run A; side: C`, the main session ran A inline and wrote `a.txt` itself, a worker ran C before A was accepted, and the track then named B. `a4`: the scratchpad delete rule on a decoy Claude temp tree. `t2` and `t3` ran with them | `scripts/live-matrix.py` |
 
 ### Corrections to the 2.15.1 ledger
@@ -608,11 +609,14 @@ Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's trac
 - `cancelBoardTimer` is used twice in `orchestra.ts`; the 2.15.1 note that it is unused was wrong.
 - `rm -rf /tmp/*` was denied in 2.15.1, as the section above now says.
 
-### Deferred to a follow-up
+### Friction found during the 2.15.2 run, fixed here
 
-- F108: an `accept --ruling` refusal should quote the failing command it wants named.
-- F109: the Stop hook's `Next:` names `accept` for a reported review card, which only `review --token` accepts; it should name that command and what blocks it.
-- F110: a card added while a final review runs makes every receipt of that review refuse ('must explicitly cover every task'); `add` could warn when a final review of the run is running.
-- F111 (fixed here): a reported inline card kept the main session reserved, so `inline` of the next card was refused until acceptance.
+- F108: an `accept --ruling` refusal now ends `name it, or its test target, in --ruling`.
+- F109: a reported code review card is no longer acceptable; `Next:` names `review --token` for it and the native task says `record the review receipt`.
+- F110: `add` returns a `warning` naming the running final review whose receipts will not cover the new card.
+- F111: a reported inline card kept the main session reserved, so `inline` of the next card was refused until acceptance. Seen live: `inline ND` was refused while NE waited for its full suite, and the same call started once the fix landed.
+
+### Known limits
+
 - `t3` records a skip in headless runs because the board mod does not run under `claude -p`; native task renumbering is proven by mod unit tests only.
 - The first prompt after cards are added by CLI shows no board line (the CLI marks the board seen), and the session model reads unknown until the first `orchestra.py` call.

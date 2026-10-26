@@ -325,7 +325,9 @@ function acceptCreates(view: View, matched: ReadonlyMap<string, NativeTask>, dro
   const short = runShort(view.runId);
   return view.cards
     .filter((c) => c.state === 'reported' && !matched.has(acceptId(c.id)) && !dropped.has(acceptId(c.id)))
-    .map((c) => ({ cardId: acceptId(c.id), subject: `[${short}] ${acceptId(c.id)} accept the report of ${c.id}`, description: `Orchestra: accept or repair the report of card ${c.id}, run ${view.runId}.` }));
+    .map((c) => c.role === 'code-reviewer'  // F109: a code review card is accepted by recording its receipt
+      ? { cardId: acceptId(c.id), subject: `[${short}] ${acceptId(c.id)} record the review receipt of ${c.id}`, description: `Orchestra: record the receipt of review card ${c.id} with \`review --token\`, run ${view.runId}.` }
+      : { cardId: acceptId(c.id), subject: `[${short}] ${acceptId(c.id)} accept the report of ${c.id}`, description: `Orchestra: accept or repair the report of card ${c.id}, run ${view.runId}.` });
 }
 
 /** The subject a card's task should carry: `step N` after the id while the card is on the track, none once it leaves. */
