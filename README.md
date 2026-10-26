@@ -198,6 +198,7 @@ python3.11 plugins/orchestra/scripts/orchestra.py --repo /path/to/project board
 | `review REVIEW.json` | Record the pre-PR review or the fix re-review |
 | `finding add\|list`, `hold TASK --finding TEXT` | Findings ledger; end a repair ladder |
 | `park TASK --reason TEXT`, `unpark TASK`, `cancel TASK --reason TEXT` | Set a card aside at a boundary; return it; drop one that should never run |
+| `replace OLD TASK.json`, `resume TASK` | Swap a card for a new one, moving its dependents; send a reported card back to its worker |
 | `start --recover --harness-session ID [--take-over]` | Take back a lost coordinator lease; `--take-over` moves a run owned by another session |
 | `pr URL [--task ID]`, `base TASK` | Verify and record a pull request the run opened; print the branch a card's pull request targets |
 | `autonomy arm\|disarm\|status`, `brief` | Autonomous mode; print the newest run brief |
