@@ -6235,8 +6235,10 @@ class LandedWorkTests(HoldFixture):
 
     def test_patch_equivalent_work_counts_as_landed(self):
         sha = self.side_commit('side', 'B4')
+        self.accepted('B4', sha[:7] + ' clean')  # dispatched on the base the side commit descends from
         self.git('cherry-pick', sha)
-        self.accepted('B4', sha[:7] + ' clean')
+        self.git('commit', '--amend', '-q', '--no-edit', '--date', '2000-01-01T00:00:00')  # never the same hash as sha
+        self.assertNotEqual(sha, self.git('rev-parse', 'HEAD'))
         self.assertEqual({'B4': True}, self.landed())
 
     def squash_setup(self, move_main=False):
