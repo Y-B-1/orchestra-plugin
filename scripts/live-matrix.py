@@ -9,6 +9,7 @@ import argparse
 import concurrent.futures as cf
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -51,8 +52,12 @@ def clear_scenario_dir(path):
 
 def is_orchestra_status(command):
     """A lease-free `orchestra.py status` command (d4); `git status` and lease commands do not count."""
-    words = command.split()
-    return any(w.endswith('orchestra.py') for w in words) and 'status' in words and '--lease' not in command
+    for segment in re.split(r';|&&|\|\||\||\n', command):
+        words = segment.split()
+        for i, w in enumerate(words):
+            if w.endswith('orchestra.py') and 'status' in words[i + 1:] and '--lease' not in segment:
+                return True
+    return False
 
 
 class Ctx:
