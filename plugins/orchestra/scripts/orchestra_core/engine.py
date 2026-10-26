@@ -845,9 +845,18 @@ class Engine:
 
     def _check_acceptance_match(self, line, owned):
         """An acceptance line that runs `unittest discover` with -s or -p must match a test file in the repository or
-        one the card owns, so a pattern typo is refused at add and not found at accept."""
+        one the card owns, so a pattern typo is refused at add and not found at accept. A line with markdown code spans
+        is checked span by span, so a closing backtick never joins a quoted pattern (F105)."""
+        spans = re.findall(r'`([^`]+)`', line)
+        if spans:
+            for span in spans:
+                self._check_command_match(span, line, owned)
+            return
+        self._check_command_match(line, line, owned)
+
+    def _check_command_match(self, command, line, owned):
         try:
-            lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lex = shlex.shlex(command, posix=True, punctuation_chars=True)
             lex.whitespace_split = True
             tokens = list(lex)
         except ValueError:
