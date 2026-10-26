@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .guards import classify_command
+from .hooks import EFFORTS
 from . import portable
 from .paths import push_url_digest
 
@@ -68,7 +69,6 @@ REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
-EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
 MODEL_FAMILIES = ('opus', 'sonnet', 'haiku', 'fable')
 PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop loop gives up as `stalled`
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
@@ -3991,9 +3991,9 @@ class Engine:
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
         needs += ['review and merge pull request ' + entry['url'] for entry in self._pull_requests(state)]
-        if reason in ('stalled', 'needs-owner:escalated') and (auto or {}).get('pr_gap'):
+        if reason == 'needs-owner:escalated' and (auto or {}).get('pr_gap'):
             needs.append('publish the work: ' + auto['pr_gap'])
-        gate = self._failing_gate(state) if reason in ('gate-failing', 'needs-owner:escalated') else None
+        gate = self._failing_gate(state) if reason == 'needs-owner:escalated' else None
         if gate:
             log = [g['path'] for g in state['gates'] if g['name'] == gate][-1]
             needs.append('required gate %s failed %d times in a row -- read its log %s, fix the cause, then arm again'

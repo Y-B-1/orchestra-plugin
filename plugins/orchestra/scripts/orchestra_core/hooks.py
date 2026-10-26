@@ -39,6 +39,7 @@ _REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
 _LEASE_FLAG = re.compile(r'(?<![\w-])--lease(?![\w-])')  # not --force-with-lease
 LEASE_COORDINATOR_ONLY = 'The coordinator lease is coordinator-only: a worker never runs orchestra.py with --lease'
 AUTONOMY_STOPPED = 'Orchestra autonomy stopped: %s. The run brief is in %s.'
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')  # The one definition; engine imports it (hooks load engine lazily)
 STATE_SHELL = ('a shell command may not touch the Orchestra state directory; run orchestra.py for engine commands, and the '
                'Write tool for review packages and progress notes')
 SUBAGENT_GUARD = ('Orchestra run active: this agent is not an orchestra:* agent; stop and report. '
@@ -1465,6 +1466,20 @@ _TEMP_PLAIN = re.compile(r'[A-Za-z0-9_./:+=*?\[\]~${}-]+( [A-Za-z0-9_./:+=*?\[\]
 _TMPDIR_PREFIX = re.compile(r'\$(?:TMPDIR|\{TMPDIR\})(?=/|$)')
 
 
+def _rm_operands(words):
+    """The operands of `rm WORD...` (words after `rm`), or None when a flag is not a plain rm flag."""
+    operands, options = [], True
+    for word in words:
+        if options and word == '--':
+            options = False
+        elif options and word.startswith('-'):
+            if not _RM_FLAGS.fullmatch(word):
+                return None
+        else:
+            operands.append(word)
+    return operands
+
+
 def _rm_in_temp(command):
     """`rm` with any flags as one plain command whose every operand lies below `/tmp`, `/private/tmp` or `$TMPDIR`.
     The operand is resolved first, so a `..` or a link that leaves the directory refuses it; a glob may stand only in the
@@ -1479,15 +1494,7 @@ def _rm_in_temp(command):
     tmpdir = os.environ.get('TMPDIR')
     if tmpdir and os.path.isabs(tmpdir) and len(Path(tmpdir).resolve().parts) >= 3:
         roots.append(Path(tmpdir).resolve())
-    operands, options = [], True
-    for word in words[1:]:
-        if options and word == '--':
-            options = False
-        elif options and word.startswith('-'):
-            if not _RM_FLAGS.fullmatch(word):
-                return False
-        else:
-            operands.append(word)
+    operands = _rm_operands(words[1:])
     if not operands:
         return False
     for operand in operands:
@@ -1536,15 +1543,9 @@ def _rm_in_worktrees(command, cwd):
         return False  # Quoting, chaining, redirects and substitution: not a plain command
     words = command.split()
     if words[0] == 'rm':
-        operands, options = [], True
-        for word in words[1:]:
-            if options and word == '--':
-                options = False
-            elif options and word.startswith('-'):
-                if not _RM_FLAGS.fullmatch(word):
-                    return False
-            else:
-                operands.append(word)
+        operands = _rm_operands(words[1:])
+        if operands is None:
+            return False
     elif words[0] == 'find' and '-delete' in words and not _FIND_ACTIONS & set(words):
         operands = []
         for word in words[1:]:
@@ -2090,6 +2091,15 @@ def _answer_question(payload, data, engine):
                                               'updatedInput': {**data, 'answers': answers}}})
 
 
+def _transcript_tail(path):
+    """The lines of the last 256 KB of a transcript."""
+    with open(path, 'rb') as handle:
+        handle.seek(0, os.SEEK_END)
+        size = handle.tell()
+        handle.seek(max(0, size - 256 * 1024))
+        return handle.read().decode('utf-8', 'replace').splitlines()
+
+
 def _ends_with_question(payload):
     """True when the last assistant message ends with a question (a `?` in its last 600 characters): the message from the
     Stop payload, else the last assistant text of the transcript (its last 256 KB). Any error means no question."""
@@ -2097,12 +2107,7 @@ def _ends_with_question(payload):
         text = payload.get('last_assistant_message')
         if not isinstance(text, str):
             text = ''
-            with open(payload['transcript_path'], 'rb') as handle:
-                handle.seek(0, os.SEEK_END)
-                size = handle.tell()
-                handle.seek(max(0, size - 256 * 1024))
-                lines = handle.read().decode('utf-8', 'replace').splitlines()
-            for line in reversed(lines):
+            for line in reversed(_transcript_tail(payload['transcript_path'])):
                 try:
                     row = json.loads(line)
                     message = row['message']
@@ -2192,18 +2197,10 @@ def _board_stop(engine, payload):
         return {}
 
 
-EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')  # As engine.EFFORTS; hooks import the engine lazily
-
-
 def _transcript_model(path):
     """The model of the last assistant entry in the last 256 KB of a transcript, or None for any error."""
     try:
-        with open(path, 'rb') as handle:
-            handle.seek(0, 2)
-            size = handle.tell()
-            handle.seek(max(0, size - 262144))
-            lines = handle.read().decode('utf-8', 'replace').splitlines()
-        for line in reversed(lines):
+        for line in reversed(_transcript_tail(path)):
             try:
                 entry = json.loads(line)
             except ValueError:

@@ -111,7 +111,7 @@ In a compound command, `normal` relaxes only the softened items: the rest of the
 While autonomy is armed the owner is away, so a question must not wait for a click. Unarmed, `AskUserQuestion` is left alone. Armed:
 
 1. `AskUserQuestion` is answered by the hook when every question has a "(Recommended)" option: the hook returns `allow` with the original questions and an `answers` map (a multi-select joins its labels with ", ") and appends one `decided for the owner` line per question to `progress.md`.
-2. A question with no recommended option, or a malformed one, is denied with the reason "decide it yourself, record the decision, or park the card". An answer is never approval text.
+2. A question with no recommended option, or a malformed one, is denied with `DECIDE_OR_PARK` (`hooks.py`): "Autonomy is armed and the owner is away. Decide this yourself: take the option you would recommend, record the decision in your next message, and continue." followed by the instruction to park the card with a `needs-owner:` reason when only the owner can answer. An answer is never approval text.
 3. A Stop whose last assistant message ends with a question (a `?` in its last 600 characters) gets the same decide-or-park text added to the continuation reason.
 
 ## The unattended lock
@@ -157,7 +157,7 @@ The board is the one view of what moved and what waits. Four hooks carry it to t
 
 ## Model fit
 
-The main session's model is recorded at three hook points, never for a worker or subagent: SessionStart (the payload `model`, else the last assistant entry of the transcript), PostModelSwitch (`to_model`; it prints `{}` and never blocks) and UserPromptSubmit (the transcript tail, and `CLAUDE_EFFORT` for the effort). The prompt then adds one `Session model:` line naming queued cards that must go to a worker: another model family, or a higher effort on the same model, starts only on a worker. An unknown model refuses nothing; the line says so only while a builder card is queued.
+The main session's model is recorded at five hook events, never for a worker or subagent: SessionStart (the payload `model`, else the last assistant entry of the transcript), Stop and a PreToolUse shell command that names `orchestra.py` (the same sources, so the first turn has a record), PostModelSwitch (`to_model`; it prints `{}` and never blocks) and UserPromptSubmit (the transcript tail, and `CLAUDE_EFFORT` for the effort). The prompt then adds one `Session model:` line naming queued cards that must go to a worker: another model family, or a higher effort on the same model, starts only on a worker. An unknown model refuses nothing; the line says so only while a builder card is queued.
 
 ## Release hooks
 

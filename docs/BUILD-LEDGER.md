@@ -536,22 +536,52 @@ Candidate 4c6d34e: 18 scenarios, each run twice (`--repeat 2`); all pass, no fli
 
 RAUQ2 (`5122b03`) closed the AUQ chain's held finding: a descriptor copy is dropped before a quote only when that quote closes an open string. Fix re-review FXA3 is CLEAN: every reported form is a write, checked through `_writes_state` and real bash, and the new test fails 5 of 5 before the fix. Its note: the quote tracker ignores `$'...'` escapes, `#` comments and heredoc bodies; those forms were missed before the fix too and are listed as accepted limits in `docs/hooks.md`.
 
-### Deferred to a follow-up (review notes at 4c6d34e and later)
+### Deferred to a follow-up (review notes at 4c6d34e and later; the ones 2.15.1 closed are removed, see the 2.15.1 section)
 
-- Model fit is enforced only for builder cards in a sized run (`_check_route` calls `_check_model_fit` on the builder branch alone). Investigator and designer-planner cards start inline on any session model. Either extend the check or narrow the skill and CLI reference text to builder cards.
-- A startable card left out of a wave because `_fit` fails (a second inline-only tiny card, or the worker or worktree cap) appears in neither `wave_now` nor `serialized`. The `wave` command output has no `wave_now` or `serialized`, although the changelog says it prints them; only `waves` does.
-- `open_session` resumes an ended or interrupted run under any `--harness-session`, rebinds it and requeues running cards, with no `--take-over` and no `progress.md` entry. Plain `start` therefore skips the take-over gate.
-- Escalation (`_nudge`) overwrites each non-owner parked reason with `needs-owner:escalated`, so the original reason (such as `lost-worker`) is lost from the card the owner reads.
-- `orchestra.py` refreshes `NOW.md` in `main()` only when `args.lease` is set. `start` and `start --recover` issue a lease without one and leave `NOW.md` stale until the next leased command.
-- `handle_event` (Stop and PreToolUse) and SessionStart call `_record_model` with no `_other_session` check; only `prompt_board` has one. A SessionStart from another session can rewrite the run's recorded model, so the model-fit check then lets a card run inline on the wrong model or refuses it wrongly. This is a model-policy integrity gap, not an exploit.
-- `_rm_in_temp` allows `rm -rf /tmp/*` and `/private/tmp/*/` under autonomy. That deletes every session's scratchpad, including coordinator briefs and task output, and the engine state if `XDG_STATE_HOME` points into temp. The code comment "hold no work of the run" is optimistic.
-- `_merged_run_worktree` allows a non-force `git worktree remove` of any clean, merged worktree under `.claude/worktrees`, including one that belongs to another session. Git deletes ignored files (`.env.e2e.local`, local configs) with the worktree, and `git status --porcelain` does not show them.
-- `_rm_in_worktrees` (older than 2.15) has the same glob pattern: it judges a glob by the directory before its first glob character, so a glob in a middle component may cross a link that leaves a linked worktree. Not verified.
-- The model-fit rule appears in four files the coordinator loads (`SKILL.md`, `coordination.md`, `parallel.md` and the CLI reference), and "A tiny task starts no run" appears in both `SKILL.md` and `triage.md`. The CLI reference step 2 still reads `start --size tiny|medium`, and the same page still describes a tiny dispatch. No sentence repeats verbatim, so no test catches it. The cost is about 5 lines of repeated prose.
-- Three wording claims do not match the code. The deny reason quoted in the changelog and `docs/hooks.md` ("decide it yourself, record the decision, or park the card") differs from `DECIDE_OR_PARK` in `hooks.py`, which the tests pin. The changelog says a park without the `needs-owner:` prefix is undone, but the engine only nudges the coordinator to run `unpark`. `docs/hooks.md` and the changelog say the model is recorded at three hook points; `handle_event` also records it at Stop and at the first PreToolUse command that carries `orchestra.py`.
-- Dead and duplicate code: the brief builder in `engine.py` tests `reason in ('stalled', 'needs-owner:escalated')` and `reason in ('gate-failing', ...)`, but no stop returns `stalled` or `gate-failing` now. `EFFORTS` is defined in both `engine.py` and `hooks.py`. `_transcript_model` and `_ends_with_question` each read the last 256 KB of the transcript with their own loop. `_rm_in_temp` copies the rm flag and `--` operand loop of `_rm_in_worktrees`. `cancelBoardTimer` in `orchestra.ts` is a one-line wrapper over `stopBoardTimer`. `now.py` spaces its operators differently from `engine.py` and `hooks.py`.
-- The README command table does not list the 2.15 commands. (`docs/cli.md` is updated in 2.15.0.)
-- `parallel.md` says "Fold one role at a time, and keep a worker only when the folded version scores worse". "Fold" is defined nowhere in the loaded set, and model fit replaced folding in this release. `docs/live-matrix.md` cites an article on folding subagents without a link and with a detail ("one run out of two"). At most this is idea-level credit.
-- A card commit that changes only sibling-owned files and lies inside that sibling's `base..report_sha` range counts as sibling work, because no commit records which card made it in a shared checkout; the sibling's review covers that range.
-- `--no-merges` skips merge commits, so a merge commit of the card that edits an accepted sibling's file beyond both parents is not seen. A conflict that comes from the card's own commit is still caught through history simplification.
-- A sibling with no recorded base exempts only its exact `report_sha`; its earlier commits flag its files as outside this card. This errs strict.
+- `_rm_in_temp` still allows `rm -rf /tmp/*` under autonomy. 2.15.1 refuses a glob that would empty a `claude-*` scratch directory; the rest of the temp directory stays deletable, and the code comment "hold no work of the run" is optimistic.
+- "A tiny task starts no run" still appears in both `SKILL.md` and `triage.md`: `tests/test_skill_routing.py` pins each. Dropping one needs that test changed.
+- `cancelBoardTimer` in `orchestra.ts` is still a one-line wrapper over `stopBoardTimer`, and `now.py` spaces its operators differently from `engine.py` and `hooks.py` (style only, accepted).
+- Accepted limit (note 15): a card commit that changes only sibling-owned files and lies inside that sibling's `base..report_sha` range counts as sibling work, because no commit records which card made it in a shared checkout; the sibling's review covers that range.
+- Accepted limit (note 16): `--no-merges` skips merge commits, so a merge commit of the card that edits an accepted sibling's file beyond both parents is not seen. A conflict that comes from the card's own commit is still caught through history simplification.
+- Accepted limit (note 17): a sibling with no recorded base exempts only its exact `report_sha`; its earlier commits flag its files as outside this card. This errs strict.
+
+## 2.15.1 (2026-10-26)
+
+Source: a read-only triage of the 2.15 live run (friction F67 to F96) and the review notes 2.15.0 deferred, built card by card on branch `orchestra-2.15.1` from main `bc43423`. The changes are listed in `CHANGELOG.md`. Rows come from the `ledger` command.
+
+| Card | Role | Commit | Evidence | Status |
+| --- | --- | --- | --- | --- |
+| TA, TB, TC | investigator code | - | report only; no review | accepted |
+| E1 | builder implementation | 2b87bba | 6 checks, 1 red first; no review | accepted |
+| H | builder implementation | 5eaaa2d | 4 checks, 1 red first; no review | accepted |
+| E2 | builder implementation | a8f18c9 | 3 checks, 1 red first; no review | accepted |
+| E3 | builder implementation | ad54000 | 11 checks, 4 red first; no review | accepted |
+| M2 | builder implementation | 6eaaf9b | 3 checks, 1 red first; no review | accepted |
+| T2 | builder implementation | 4598be1 | 5 checks, 2 red first; no review | accepted |
+| E1F | builder implementation | f6b7f91 | 4 checks, exit 0; no review | accepted |
+| E1F2 | builder implementation | e1b3d04 | 4 checks, exit 0; no review | accepted |
+| M3 | builder implementation | 2892cde | 3 checks, exit 0; no review | accepted |
+| D2 | builder implementation | the commit that adds this section | red-first docs tests in `tests/test_readme_commands.py` and the version pin | reported |
+
+### Triage verdicts
+
+- Fixed by 2.15.0 and needing no change: F68, F72 (the stop), F74, F76, F78, F79.
+- Fixed in 2.15.1: F67, F70, F71, F80, F84, F85, F87, F88, F89, F90, F91, F92, F93, F94, F96, the deferred 2.15.0 notes 1 to 6, 8, 9, 11, 13 and 14, and the closed parts of notes 7, 10 and 12.
+- Accepted limits: notes 15 to 17 (listed in the 2.15.0 section). F69 closed with no code: `do "report W T F" "accept ID"` already reports and accepts a worker card in one call.
+- Not reproduced: the F81 `cancel VER` symptom on bc43423 (which build the live run used is unknown).
+
+### Owner decisions
+
+- F70: strip one trailing parenthetical note when comparing a red-first check.
+- F84: a queued repair reserves only its own files against another repair.
+- F86: receipts stay strict; the review is recorded after the sibling commits.
+- F92: the stacked base is recorded; merges stay one pull request into the default branch at a time.
+- F93: only `approved` counts; the deadline now ends autonomy.
+- Note 1: model fit applies to every role in a sized run. Note 3: `--take-over` is required when the harness session differs.
+- F69: no code; document the `do` form.
+
+### Deferred to the next release (live friction F97 to F100)
+
+- F97 to F100 were seen in this run and are not fixed here. The docs card was given their numbers only, so this section does not describe them; add the descriptions from the coordinator's record.
+- Not done in 2.15.1 for lack of ownership: dropping the repeated "A tiny task starts no run" prose (pinned by `tests/test_skill_routing.py`) and the `cancelBoardTimer` wrapper in `orchestra.ts`.
+- Unchecked: the F89 reproduction was not rerun by the docs card; live `report` inside `do` is unchecked.

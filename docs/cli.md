@@ -19,7 +19,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `package TASK` | Write a reviewer package (brief, report, self-review, diff stat) under `<state>/packages` and print its path. | no |
 | `wave [--inline ID] [--helper REASON] [--serial REASON] [--emit] ID ...` | Start every named card in one step, all or none. `--emit` also prints per card `agent_type`, `model_override`, `isolation`, `fast_forward`, `prompt` (with an `Assignment: WORKER TOKEN` line) and `agent_call`; a card may carry `variant` (`standards` or `medium`). `wave --emit` records each card's base for the `report` base check. | yes |
 | `artifact [--tasks ID[,ID]]` | Print the whole-repo artifact, or with `--tasks` the artifact scoped to those cards' reserved files plus HEAD. | no |
-| `report [--accept --lease LEASE] WORKER TOKEN FILE` | Record a worker's result file against its assignment token. The same worker may replace the report until the card is accepted or a review covers it. A builder report must answer every acceptance line verbatim. It is refused when its commit is not built on the card's recorded base (recorded by `wave --emit`; `dispatch` and `inline` record none). `--accept` (inline cards only) records the report and accepts the card in one call. | no (`--accept`: yes) |
+| `report [--accept --lease LEASE] WORKER TOKEN FILE` | Record a worker's result file against its assignment token. The same worker may replace the report until the card is accepted or a review covers it. A builder report must answer every acceptance line verbatim. It is refused when its commit is not built on the card's recorded base (recorded by `wave --emit`, or when `dispatch` or `inline` starts the card and none is set). `--accept` (inline cards only) records the report and accepts the card in one call. | no (`--accept`: yes) |
 | `autonomy arm\|disarm\|status` | Arm, disarm or inspect the autonomous loop. | no |
 | `brief` | Print the newest run brief. Read-only. | no |
 | `finding list [--for-brief]` | List the findings ledger, or render a "Known findings" block for reviewer briefs. | no |
@@ -48,6 +48,19 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |
 | `finish [--accept-reported]` | Close the run after completion checks. A parked card blocks it. `--accept-reported` first accepts every reported card whose `accept` passes; the rest stay reported. A refusal for leftover worktrees points to `worktrees`. A run that changed files needs a current final review even with no cards. | yes |
 
+## Changes in 2.15.1
+
+- `do "report W T F" "accept ID"` reports a worker card and accepts it in one call. `report --accept` stays limited to inline cards.
+- `waves` adds `track`: the order the main session works the queue, as steps `{step, card, side}`. A step has `coordinator` and no card when no ready card fits the session model. `serialized` also names a slot or cap (`one inline slot`, `worker cap`, `worktree cap`) as the reason. `wave` prints neither `wave_now` nor `serialized`.
+- Model fit covers every role in a sized run, not only builders. Escalation parks a card as `needs-owner:escalated (ORIGINAL REASON)`.
+- `start` and `start --recover` rewrite `NOW.md`. `open_session` refuses a run owned by another harness session and names `start --recover --take-over`.
+- `review --token TOKEN` takes no report path: it reads the report the Stop hook captured. A reported review card is re-taken at the review's artifact so the chain accept can follow.
+- `add` refuses a final review brief without a `Lens:` line (and without `Required categories:` for a combined lens), and an acceptance line with `unittest discover -s/-p` that matches no test file. An owned generator source also owns the file the script derives from it. `dispatch` records the card's base.
+- `finish` refuses leftover worktrees and points to `worktrees`. A final review stays current after a squash merge when the trees are equal. Untracked `.claude/worktrees/` entries are not evidence.
+- A red-first check ignores one trailing parenthetical note. A queued repair holds only its own files against another repair, and its chain's files against any other card. A fix re-review may cover a cleanup card beside the repairs.
+- `gate` keeps the output of a killed command. `pr` accepts a stacked base: the head branch of an open pull request the previous run recorded.
+- `do -h` is refused as a step. A worker brief points to `orchestra.py card ID` while autonomy is armed.
+
 ## Changes in 2.15.0
 
 - New commands: `do`, `criterion` and `own add`. New flags: `status --brief`, `finish --accept-reported`, `inline --report FILE [--accept]` and `start --recover --take-over`. `waves` adds `wave_now` and `serialized`.
@@ -56,7 +69,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 - A card with `"finalize": true` starts only after every other card is accepted, held or parked.
 - Refusals name the blocking card, the owning session or the next command.
 - The engine rewrites `NOW.md` in the state directory when a lease command runs or a wave is emitted.
-- Under autonomy, `do` refuses `autonomy`, `permit` and `release` steps, and the Stop hook nudges a silent worker, then parks the unfinished cards `needs-owner:escalated` after three unchanged nudges.
+- Under autonomy, `do` refuses `autonomy`, `permit` and `release` steps, and the Stop hook nudges a silent worker, then parks the unfinished cards `needs-owner:escalated` on the third unchanged pass (two nudges, then the park).
 
 ## Changes in 2.14.0
 
