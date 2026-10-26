@@ -846,13 +846,10 @@ class Engine:
     def _check_acceptance_match(self, line, owned):
         """An acceptance line that runs `unittest discover` with -s or -p must match a test file in the repository or
         one the card owns, so a pattern typo is refused at add and not found at accept. A line with markdown code spans
-        is checked span by span, so a closing backtick never joins a quoted pattern (F105)."""
-        spans = re.findall(r'`([^`]+)`', line)
-        if spans:
-            for span in spans:
-                self._check_command_match(span, line, owned)
-            return
-        self._check_command_match(line, line, owned)
+        is checked span by span and then outside the spans, so a closing backtick never joins a quoted pattern (F105)."""
+        for span in re.findall(r'`([^`]+)`', line):
+            self._check_command_match(span, line, owned)
+        self._check_command_match(re.sub(r'`[^`]*`', ' ', line), line, owned)  # the prose outside the spans too
 
     def _check_command_match(self, command, line, owned):
         try:
@@ -1520,6 +1517,10 @@ class Engine:
             raise EngineError('A card in a repair chain cannot be replaced')
         if any(old_id in r.get('tasks', []) for r in state['reviews']):
             raise EngineError('A review covers this card, so it stays in the record')
+        busy = [t['id'] for t in state['tasks'].values() if t['state'] == 'running' and old_id in t.get('review_of', [])]
+        if busy:
+            raise EngineError('Card %s is under review by running card %s; wait for the review to report'
+                              % (old_id, ', '.join(sorted(busy))))
         if task.get('id') == old_id:
             raise EngineError('The replacement card needs an id of its own')
         del state['tasks'][old_id]
@@ -1966,6 +1967,7 @@ class Engine:
             for key in ('report', 'report_artifact', 'report_sha', 'self_review', 'outside_files'):
                 task.pop(key, None)
             task['state'] = 'running'
+            task['started_at'] = self._clock()  # the silence clock starts again, so a resumed worker is not lost at once
             for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair runs again: its chain is under repair
                 ancestor['state'] = 'repairing'
                 ancestor['review_since'] = len(state['reviews'])
@@ -2608,6 +2610,8 @@ class Engine:
                             landed=self._landed(t['report_sha'], state) if t.get('report_sha') else None)
                 if 'outcome' in t:
                     card['outcome'] = t['outcome']
+                if 'size' in t:
+                    card['size'] = t['size']  # the prompt Model fit line skips a tiny card, as model fit does
                 cards.append(card)
             states = ('queued', 'running', 'reported', 'repairing', 'held', 'parked', 'accepted')
             review = state['reviews'][-1] if state['reviews'] else None
@@ -2682,11 +2686,14 @@ class Engine:
     @staticmethod
     def _ruling_names(ruling, command):
         """F99: whether a ruling names a check: its whole command, or a test target of it (a word of six or more
-        characters with a `/`, `.`, `:` or `_` in it, other than the interpreter), compared without case."""
+        characters with a `/`, `.`, `:` or `_` in it, other than the interpreter or a `cd` operand), compared without
+        case, as a whole word that no option follows."""
         text, command = ' '.join(ruling.lower().split()), ' '.join(command.lower().split())
-        return command in text or any(
-            len(word) >= 6 and not word.startswith('-') and re.search(r'[/.:_]', word) and not re.fullmatch(r'python[\d.]*', word)
-            and word in text for word in command.split())
+        words = command.split()
+        targets = [w for i, w in enumerate(words) if len(w) >= 6 and not w.startswith('-') and re.search(r'[/.:_]', w)
+                   and not re.fullmatch(r'python[\d.]*', w) and not (i and words[i - 1] == 'cd')]
+        # a whole word, not the start of a longer one, and not followed by an option (`check.sh --quick` is another run)
+        return any(re.search(r'(?<![\w./:-])%s(?![\w./:-])(?!\s+-)' % re.escape(n), text) for n in [command] + targets)
 
     @classmethod
     def _ruled_checks(cls, review, ruling):

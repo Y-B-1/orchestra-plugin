@@ -2335,6 +2335,8 @@ def _model_line(engine, view):
         return None
     away, exact = [], (getattr(engine, 'policy', None) or {}).get('model_fit') == 'exact'
     for card in queued:
+        if card['role'] in ('code-reviewer', 'critic') or (card.get('size') or session.get('size')) == 'tiny':
+            continue  # a review always runs on a worker and a tiny card folds whatever the model: neither is a model case
         try:
             engine._check_model_fit({'session': session}, card, exact=exact)  # the engine's rule, never a copy of it
         except Exception:
