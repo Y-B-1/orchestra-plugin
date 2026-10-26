@@ -545,9 +545,11 @@ def run_steps(args):
                 raise StepRefused('A step takes no global option; `do` passes its own')
             caught = io.StringIO()
             try:
-                with contextlib.redirect_stderr(caught):
+                with contextlib.redirect_stderr(caught), contextlib.redirect_stdout(caught):
                     sub = parser().parse_args(base+tokens)
-            except SystemExit:
+            except SystemExit as stop:
+                if stop.code in (0,None):
+                    raise StepRefused('help is not a step; run `CMD --help` on its own') from None
                 lines = [line for line in caught.getvalue().splitlines() if ': error: ' in line]
                 raise StepRefused('Unparsable step: ' + (lines[-1].split(': error: ', 1)[1] if lines else 'see --help')) from None
             result,code = execute(sub)
@@ -590,7 +592,7 @@ def main(argv=None):
         print(json.dumps(result,separators=(',',':')) if args.command=='status' and args.brief else json.dumps(result,indent=2))
     if seen is not None:
         cli_support.store_seen(args.state_dir,seen)
-    if getattr(args,'lease',None) and getattr(args,'engine',None) is not None:
+    if (getattr(args,'lease',None) or args.command=='start') and getattr(args,'engine',None) is not None:
         now.refresh(args.engine)  # never raises
     return code
 

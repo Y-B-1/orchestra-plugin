@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import fnmatch
 import hashlib
 import json
 import os
@@ -38,6 +39,8 @@ class StateBusy(EngineError):
     """The state lock stayed held past `lock_wait` (SPEC 5.16 item 3)."""
 
 REVIEW_ROLES = ('code-reviewer', 'critic')
+GENERATED_OUTPUTS = {'plugins/orchestra/config/guard-rules.json': 'plugins/orchestra/hooks/mod/fixtures/guard-fixtures.ts',
+                     'plugins/orchestra/config/guard-corpus.json': 'plugins/orchestra/hooks/mod/fixtures/guard-fixtures.ts'}
 CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
 REBIND_WINDOW_SECONDS = 60
 KEEP_REMOVE = ('## Keep', '## Remove')  # builder briefs carry both headings; checked at add only (SPEC 5.13)
@@ -831,6 +834,43 @@ class Engine:
             if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', brief.read_text(errors='replace'), re.M):
                 raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
 
+    def _check_final_brief(self, task):
+        brief = Path(task['brief'])
+        text = (brief if brief.is_absolute() else self.repo / brief).read_text(errors='replace')
+        lens = re.search(r'^Lens:[ \t]+(\S.*?)[ \t]*$', text, re.M)
+        if not lens:
+            raise EngineError('Final review brief needs a Lens: line (correctness, security, standards, combined or specialist:NAME)')
+        if lens.group(1) == 'combined' and not re.search(r'^Required categories:[ \t]+\S', text, re.M):
+            raise EngineError('A combined final review brief needs a Required categories: line copied from the lenses prepr printed')
+
+    def _check_acceptance_match(self, line, owned):
+        """An acceptance line that runs `unittest discover` with -s or -p must match a test file in the repository or
+        one the card owns, so a pattern typo is refused at add and not found at accept."""
+        try:
+            lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            tokens = list(lex)
+        except ValueError:
+            return
+        if 'unittest' not in tokens or 'discover' not in tokens:
+            return
+        values = {}
+        for flag, long in (('-s', '--start-directory'), ('-p', '--pattern')):
+            for n, tok in enumerate(tokens[:-1]):
+                if tok in (flag, long):
+                    values[flag] = tokens[n + 1]
+        if not values:
+            return
+        directory, pattern = values.get('-s', '.'), values.get('-p', 'test*.py')
+        root = self.repo / directory
+        if root.is_dir() and any(fnmatch.fnmatch(f.name, pattern) for f in root.rglob('*') if f.is_file()):
+            return
+        prefix = Path(directory).as_posix().rstrip('/')
+        if any(fnmatch.fnmatch(Path(f).name, pattern) and (prefix in ('', '.') or Path(f).as_posix().startswith(prefix + '/'))
+               for f in owned):
+            return
+        raise EngineError('Acceptance matches no test file: %s (directory %s, pattern %s)' % (line, directory, pattern))
+
     def _check_keep_remove(self, task):
         brief = Path(task['brief'])
         if not brief.is_absolute():
@@ -1379,6 +1419,11 @@ class Engine:
                     raise EngineError('Duplicate ' + key)
             for name in task['files']:
                 self._check_owned_path(name)
+            for source, output in GENERATED_OUTPUTS.items():  # an owned source owns the file a script derives from it
+                if source in task['files'] and output not in task['files']:
+                    task['files'].append(output)
+            for line in task['acceptance']:
+                self._check_acceptance_match(line, task['files'])
             if any(dep not in state['tasks'] for dep in task['dependencies']):
                 raise EngineError('Unknown dependency or cycle')
             review_of = task.get('review_of', [])
@@ -1388,6 +1433,9 @@ class Engine:
                 raise EngineError('Review targets must name existing tasks')
             if task['role'] == 'code-reviewer' and not review_of:
                 raise EngineError('A code-reviewer card needs review_of naming the tasks it reviews')
+            if (task['role'], task['mode']) == ('code-reviewer', 'final') and 'brief' in task and not any(
+                    state['tasks'][i]['mode'] == 'repair' for i in review_of):  # a fix re-review needs neither line
+                self._check_final_brief(task)
             if review_of and task['role'] not in REVIEW_ROLES:
                 raise EngineError('Only independent review roles can use review_of')
             if set(review_of) & set(task['dependencies']):
@@ -1554,6 +1602,29 @@ class Engine:
             made = set(self._git('for-each-ref', '--format=%(refname:short)', 'refs/heads').decode().split()) - known
         return made | {e['head_ref'] for e in prs if e.get('head_ref')}
 
+    def _stacked_base(self, base):
+        """True when `base` is the head branch of a pull request the previous run recorded and `gh pr list` shows it
+        open and from this repository (a stacked train). False when gh is missing, fails or answers oddly."""
+        archives = sorted((self.state_dir / 'history').glob('run-*.json'), key=lambda p: p.stat().st_mtime)
+        try:
+            recorded = json.loads(archives[-1].read_text())['state'].get('pull_requests', [])
+        except (IndexError, OSError, ValueError, KeyError, AttributeError):
+            return False
+        if not any(isinstance(e, dict) and e.get('head_ref') == base for e in recorded):
+            return False
+        gh = shutil.which('gh')
+        if not gh:
+            return False
+        try:
+            done = subprocess.run([gh, 'pr', 'list', '--state', 'open', '--json', 'headRefName,isCrossRepository',
+                                   '--limit', '200'], cwd=self.repo, capture_output=True, text=True, timeout=10,
+                                  stdin=subprocess.DEVNULL, env=dict(os.environ, GH_PROMPT_DISABLED='1'))
+            data = json.loads(done.stdout) if done.returncode == 0 else None
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return False
+        return isinstance(data, list) and any(isinstance(e, dict) and e.get('headRefName') == base
+                                              and e.get('isCrossRepository') is False for e in data)
+
     def record_pr(self, actor, lease, url, tasks=None):
         """Record a pull request the run opened, so the run brief asks the owner to review and merge it. `gh pr view`
         (no lock held) must find it open, from this repository, based on the default or a run branch, and headed by the
@@ -1579,7 +1650,8 @@ class Engine:
             if view.get('isCrossRepository') is True:
                 raise EngineError('Pull request %s comes from another repository' % url)
             base, head = view['baseRefName'], view['headRefName']
-            if base != self._default_branch(auto) and base not in self._run_branches(auto, seen):
+            if (base != self._default_branch(auto) and base not in self._run_branches(auto, seen)
+                    and not self._stacked_base(base)):
                 raise EngineError('Pull request base %s is neither the default branch nor a run branch' % base)
             tip = self._local_branch(head)
             if tip is None:
@@ -2069,6 +2141,10 @@ class Engine:
             if not serial:
                 self._checkpoint(state, actor, task_id, inline)
             token = self._mark_running(state, task_id, worker, inline, helper, lease)
+            task = state['tasks'][task_id]
+            if task['role'] == 'builder' and not task.get('base'):  # `wave --emit` records it earlier; a lone dispatch had none
+                with contextlib.suppress(EngineError):
+                    task['base'] = self._git('rev-parse', 'HEAD').decode().strip()
         if serial:
             self._log_serial([task_id], serial)  # after the state write succeeded
         return token
@@ -3383,6 +3459,7 @@ class Engine:
                     code = 126
                 else:
                     process = subprocess.Popen(argv, cwd=self.repo, stdout=out, stderr=subprocess.STDOUT,
+                                               env=dict(os.environ, PYTHONUNBUFFERED='1'),  # a killed gate keeps what it printed
                                                **portable.group_kwargs())
                     portable.track(process)
                     try:
