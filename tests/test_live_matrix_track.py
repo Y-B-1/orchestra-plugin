@@ -150,3 +150,12 @@ class ScratchpadScenarioTest(unittest.TestCase):
         body = source[source.index('def a4_'):source.index('\n\n\ndef ', source.index('def a4_'))]
         self.assertNotIn('getuid', body)
         self.assertNotIn('claude-501', body)
+
+
+class ExactRuleScenarioTest(unittest.TestCase):
+    """2.15.2 M1F: live m1 proves the opt-in `model_fit: exact` rule; t1 and t2 prove the default rank rule."""
+
+    def test_m1_starts_its_run_with_the_exact_rule(self):
+        source = PATH.read_text()
+        body = source[source.index('def m1_'):source.index('\n\n\ndef ', source.index('def m1_'))]
+        self.assertIn("model_fit='exact'", body)

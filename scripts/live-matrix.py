@@ -94,9 +94,10 @@ class Ctx:
             raise RuntimeError(f'orchestra {args}: {out}')
         return out
 
-    def start(self, guard='minimal', size='medium'):
+    def start(self, guard='minimal', size='medium', **policy):
         pol = json.loads((PLUGIN / 'config/policy.default.json').read_text())
         pol['guard_mode'] = guard
+        pol.update(policy)
         p = self.dir / 'policy.json'
         p.write_text(json.dumps(pol))
         out = self.o('start', '--policy', str(p), '--size', size, lease=False)
@@ -597,8 +598,8 @@ def r1b_resume(x, chk):
 
 
 def m1_model_fit(x, chk):
-    """Proves: SessionStart records the session model, and the engine refuses an inline card on another model while a worker start is allowed."""
-    x.start('minimal')
+    """Proves: SessionStart records the session model, and under policy `model_fit: exact` the engine refuses an inline card on another model while a worker start is allowed (t1 and t2 prove the default rank rule)."""
+    x.start('minimal', model_fit='exact')
     x.card('M1', ['m1.txt'], mode='mechanical')
     x.card('M2', ['m2.txt'])
     x.claude('Reply OK. No tools.', turns=2, resume=False)
