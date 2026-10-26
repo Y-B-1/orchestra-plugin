@@ -32,7 +32,8 @@ export type AutonomyState = {
 
 export type Cli = { ok: boolean; body: Json | null; error: string };
 /** `band`: undefined leaves it, `{ text }` sets it, `{ text: undefined }` clears it. */
-export type Outcome = { text: string; band?: { text: string | undefined } };
+/** `armed`: autonomy went from not active to active with this answer. */
+export type Outcome = { text: string; band?: { text: string | undefined }; armed?: boolean };
 
 export function newAutonomy(): AutonomyState {
   return { registered: false, active: false, lastRead: null, busy: false, band: false, epoch: 0, unknown: true, changes: 0, stopText: undefined };
@@ -132,6 +133,7 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
   if (!res.ok || res.body === null) return { text: `Orchestra autonomy: ${res.error}` };
   const body = res.body;
   if (sub === 'arm') {
+    const was = auto.active;
     auto.active = body['active'] === true;
     auto.unknown = false;
     auto.lastRead = null;
@@ -139,7 +141,7 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
     const pre = parse(JSON.stringify(body['preconditions'] ?? null)) ?? {};
     const lines = [`Orchestra autonomy: armed. Ledger: ${String(body['ledger'] ?? '?')}`];
     for (const key of Object.keys(pre)) lines.push(`${key}: ${String(pre[key])}`);
-    return { text: lines.join('\n'), band: { text: undefined } };
+    return { text: lines.join('\n'), band: { text: undefined }, armed: !was && auto.active };
   }
   if (sub === 'disarm') {
     auto.active = false;
@@ -149,10 +151,12 @@ export function commandOutcome(auto: AutonomyState, sub: Sub, res: Cli): Outcome
     const line = body['was_active'] === true ? `Orchestra autonomy: disarmed${text !== '' ? `\n${text}` : ''}` : 'Orchestra autonomy: disarmed (it was not active)';
     return { text: line, band: { text: undefined } };
   }
+  const was = auto.active;
   const seen = apply(auto, body);
+  const armed = !was && auto.active;
   const parked = Array.isArray(body['parked']) ? body['parked'].length : 0;
   const band = { text: seen.band };
-  if (body['active'] === true) return { text: `${bandText(body)}\nstalls ${num(body['stalls'])}, parked ${String(parked)}`, band };
+  if (body['active'] === true) return { text: `${bandText(body)}\nstalls ${num(body['stalls'])}, parked ${String(parked)}`, band, armed };
   const last = body['last_stop_reason'];
   return { text: `Orchestra autonomy: inactive${last !== undefined && last !== null ? ` (last stop: ${String(last)})` : ''}`, band };
 }
@@ -169,10 +173,11 @@ export function pollDue(auto: AutonomyState, now: number, watch = false): boolea
 }
 
 /** What a tick's status read shows: a band change, and a toast text when a stop was just seen. */
-export function pollOutcome(auto: AutonomyState, res: Cli): { band: string | undefined; toast: string | null; changed: boolean } {
-  if (!res.ok || res.body === null) return { band: undefined, toast: null, changed: false };
+export function pollOutcome(auto: AutonomyState, res: Cli): { band: string | undefined; toast: string | null; changed: boolean; armed: boolean } {
+  if (!res.ok || res.body === null) return { band: undefined, toast: null, changed: false, armed: false };
+  const was = auto.active;
   const seen = apply(auto, res.body);
-  return { band: seen.band, toast: seen.stopped ? stopLine(res.body) : null, changed: true };
+  return { band: seen.band, toast: seen.stopped ? stopLine(res.body) : null, changed: true, armed: !was && auto.active };
 }
 
 /** `session.start`: forget the last session's flags. */

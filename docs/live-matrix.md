@@ -4,7 +4,7 @@
 
 ## What it tests
 
-Sixteen scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
+Eighteen scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
 
 - Guard modes: `g0` (no run), `g1` minimal, `g2` normal, `g3` protect.
 - Autonomy: `a1` git limits while armed, `a2b` ledger, settings and cron locks, `a3b` the owner-only `approved` receipt.
@@ -12,6 +12,8 @@ Sixteen scenarios, each in its own scratch repository with a bare origin, so no 
 - Worker limits: `d3` missing Mode line, `d4` lease and delegation denies.
 - Run flow: `h1` the Stop block, `r1b` resume and `start --recover`.
 - Install: `i1` install and uninstall in a clean profile.
+- Model fit: `m1` SessionStart records the session model, the engine refuses an inline card on another model and still allows its worker start.
+- Role skills: `s1` the main session loads `orchestra:orchestra-design` and `orchestra:orchestra-build` with the Skill tool.
 
 Every check reads the stream-json events (tool calls, results, hook responses) or the engine state. None trusts what the model says about itself.
 
@@ -27,6 +29,7 @@ python3 scripts/live-matrix.py --list
 - `--plugin-dir DIR`: load this plugin directory into every session in place of the installed copy, for example `plugins/orchestra` of a release candidate. Claude Code then loads only that copy (one SessionStart answer), so a candidate is tested live before it ships.
 - `--model ID`: model for every session. Default `claude-sonnet-5-5`.
 - `--parallel N`: scenarios at once. Default 4.
+- `--repeat N`: runs of each scenario. Default 1, which keeps `OUT_DIR/<id>/`. With N above 1 each run gets its own `OUT_DIR/<id>.rK/`, a scenario passes only when every run passes, and the summary names each scenario whose runs disagreed as a `FLIP` with the failing checks. One run hides flaky behavior: Anthropic's article on folding subagents says to run each task more than once, because a break showed in only one run out of two.
 - `--source DIR`: marketplace source for `i1`. Default: this repository's root.
 - `OUT_DIR`: output root. Each scenario writes `OUT_DIR/<id>/` with `repo/`, `origin.git/`, one `run<N>.jsonl` and `run<N>.err` per session, and `result.json`.
 

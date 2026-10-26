@@ -20,6 +20,8 @@ A defect no card's change introduced is out of scope. So is a defect from a card
 
 ## After the review
 
+A review grants no external permission: a CLEAN verdict accepts cards, and never stands in for a release permit or the owner's `approved`.
+
 Accept first: the lens cards, investigator cards and every acceptable chain. A held tip that every lens cleared accepts with no repair.
 
 Add one Opus repair card per chain with a current attributed finding, then one fix re-review of the fix diff (references/repair-rounds.md). After a CLEAN fix re-review, the pre-PR review stays current when every file changed since it belongs to a repair the fix re-review covered. Otherwise re-gate and review again. A BLOCKED chain is held for the owner.

@@ -61,6 +61,9 @@ VARIANT_NOTES = {('investigator', 'code'): ' Mode: code. Read-only bounded code 
                  ('builder', 'mechanical'): ' Mode: mechanical. One stated transform applied across many sites.',
                  ('builder', 'cleanup'): ' Mode: cleanup. End-of-run simplify pass on confirmed review findings.'}
 WRITE_TOOLS = {'Edit', 'Write', 'NotebookEdit'}
+KNOWN_TOOLS = {'Read', 'Edit', 'Write', 'Bash', 'PowerShell', 'WebFetch', 'WebSearch', 'NotebookEdit', 'Monitor',
+               'TaskStop', 'ToolSearch', 'Skill'}
+CATALOG_TOKEN_LIMIT = 15000
 
 
 def mode_note(role_id, preset):
@@ -73,6 +76,7 @@ def generated(root=ROOT):
     check_resolution(root, roles)
     skills = root / 'skills'
     output = {}
+    catalog_chars = 0
     for role in roles:
         orchestrator = role['id'] == 'orchestrator'
         instructions = role['prompt']
@@ -86,7 +90,11 @@ def generated(root=ROOT):
         preload = [role['skill']] if orchestrator else ['orchestra-worker', role['skill']]
         for preset, values in variants_of(models['claude'][role['id']]).items():
             name = role['id'] if preset == 'default' else role['id'] + '-' + preset
-            front = ['---', f'name: {name}', f"description: {json.dumps(role['description'] + mode_note(role['id'], preset))}",
+            description = role['description'] + mode_note(role['id'], preset)
+            catalog_chars += len(name) + len(description)
+            if catalog_chars / 4 >= CATALOG_TOKEN_LIMIT:
+                raise ValueError(f"{name}: agent names and descriptions reach {CATALOG_TOKEN_LIMIT} estimated tokens")
+            front = ['---', f'name: {name}', f"description: {json.dumps(description)}",
                      *selection_lines(values), f"skills: [{', '.join(preload)}]"]
             if not orchestrator:
                 tools = role.get('preset_tools', {}).get(preset, role.get('tools'))
@@ -97,6 +105,9 @@ def generated(root=ROOT):
                     raise ValueError(f"{name}: read-only role lists a write tool")
                 if bases & {'Agent', 'Task'}:
                     raise ValueError(f"{name}: workers never delegate")
+                for base in sorted(bases):
+                    if base not in KNOWN_TOOLS and not base.startswith('mcp__'):
+                        raise ValueError(f"{name}: unknown tool '{base}'; Claude Code drops an unmatched tools entry")
                 front.append(f"tools: {', '.join(tools)}")
             front += ['---', '', instructions.replace('__ORCHESTRA_ROOT__', '${CLAUDE_PLUGIN_ROOT}')]
             output[f'agents/{name}.md'] = '\n'.join(front) + '\n'

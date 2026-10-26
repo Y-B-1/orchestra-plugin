@@ -379,6 +379,10 @@ class UnattendedLockTest(PlaneFixture):
     def test_disarm_from_a_tool_call_denied_while_active(self):
         self.arm()
         self.assertEqual(self.hook('python3 orchestra.py autonomy disarm'), 'deny')
+        for command in ('python3 orchestra.py --lease L do "autonomy disarm"', "python3 orchestra.py do 'status' 'autonomy disarm'",
+                        'python3 orchestra.py --lease L do "start --size tiny --new-run"'):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command), 'deny')
         self.assertIn(LEDGER_LOCKED, self.hook_reason('python3 orchestra.py autonomy disarm'))
 
     def test_softened_push_all_and_tags_stay_denied(self):
@@ -466,6 +470,18 @@ class PlaneTest(PlaneFixture):
                         'rm -rf /', 'rm -rf build ../repo/a', 'rm -rf -- -x ..', 'find .. -delete', 'rmdir empty'):
             with self.subTest(command=command, where='linked'):
                 self.assertEqual(self.hook(command, cwd=self.wt), 'deny')
+
+    def test_rm_in_temp_with_a_glob_before_the_last_component_stays_denied(self):
+        import tempfile
+        from orchestra_core.hooks import _rm_in_temp
+        with tempfile.TemporaryDirectory(dir='/private/tmp') as tmp:
+            pathlib.Path(tmp, 'repo-link').symlink_to(pathlib.Path.home())
+            for command in ('rm -rf %s/repo-lin*/plugins' % tmp, 'rm -rf %s/repo-lin?/plugins' % tmp, 'rm -rf %s/*/plugins' % tmp,
+                            'rm -rf %s/[r]epo-link/x' % tmp):
+                with self.subTest(command=command):
+                    self.assertFalse(_rm_in_temp(command))
+            self.assertFalse(_rm_in_temp('rm -rf %s/repo-link/plugins' % tmp))
+            self.assertTrue(_rm_in_temp('rm -rf %s/x/*.log' % tmp))
 
     def test_rm_is_judged_once_for_the_whole_command(self):
         self.arm()
@@ -794,7 +810,7 @@ class LockedShellTest(PlaneFixture):
         for command in ('rm -rf build f.txt', 'rm -rf scratch', 'rm -rf build/../f.txt', "find . -name '*.pyc' -delete",
                         "find . -name '*.txt' -delete", 'rm -rf build && rm f.txt', 'rm -rf .git/info', 'rm -rf $HOME/build',
                         "find . -name '*.pyc' -newer f.txt -delete", "find . -name '*.pyc' -exec rm {} ;", 'rm -rf pkg',
-                        'rm -rf ../outside/build', 'rm -rf /tmp/build', 'rm -rf build*', 'rm link', 'find / -name x -delete'):
+                        'rm -rf ../outside/build', 'rm -rf /opt/build', 'rm -rf build*', 'rm link', 'find / -name x -delete'):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(command), 'deny')
 

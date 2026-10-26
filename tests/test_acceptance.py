@@ -118,12 +118,11 @@ class RulingTests(GateFixture):
             self.engine.accept('main', self.lease, 'a', ruling='Rule past the finding.')
         self.assertEqual('reported', self.state_of()['state'])
 
-    def test_card_with_no_gap_is_refused(self):
+    def test_a_ruling_on_a_card_with_no_gap_accepts_it(self):
         token = self.running()
         self.engine.report('w-a', token, report_text([('check behavior', True)]))
-        with self.assertRaisesRegex(EngineError, 'no unmet criterion'):
-            self.engine.accept('main', self.lease, 'a', ruling='Nothing to rule on.')
-        self.assertEqual('reported', self.state_of()['state'])
+        self.engine.accept('main', self.lease, 'a', ruling='Nothing to rule on.')
+        self.assertEqual('accepted', self.state_of()['state'])
 
     def test_inline_card_cannot_be_ruled_on(self):
         self.task('a')

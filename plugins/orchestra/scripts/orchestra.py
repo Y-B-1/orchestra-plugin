@@ -8,6 +8,8 @@ if os.name == 'nt' and not sys.flags.utf8_mode:
     # Windows opens text files in the locale encoding unless Python runs in UTF-8 mode: run again in it.
     raise SystemExit(subprocess.call([sys.executable, '-X', 'utf8', *sys.argv]))
 import argparse
+import contextlib
+import io
 import functools
 import json
 import os
@@ -18,20 +20,30 @@ import subprocess
 import sys
 import uuid
 
-from orchestra_core import briefs, cli_support, delta, ledger, portable
+from orchestra_core import briefs, cli_support, delta, ledger, now, portable
 from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, main_checkout, repository, state_location
 
 ROOT = Path(__file__).resolve().parents[1]
 # Commands that add one `board` line to their JSON when a card changed state.
-BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','review','park','cancel','unpark','hold'}
+BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','criterion','review','park','cancel','unpark','hold'}
 # No parser takes an abbreviated option: `--leas` must not parse as `--lease`, which the refusal log strips.
 STRICT_PARSER = functools.partial(argparse.ArgumentParser, allow_abbrev=False)
 
 
+def read_text(path):
+    """A file's text; a missing or unreadable file is an engine error that names the path."""
+    try:
+        return Path(path).read_text()
+    except FileNotFoundError:
+        raise EngineError('File not found: ' + str(path)) from None
+    except OSError as exc:
+        raise EngineError('Cannot read %s: %s' % (path, exc.strerror or exc)) from None
+
+
 def read_json(path):
-    return json.loads(Path(path).read_text())
+    return json.loads(read_text(path))
 
 
 def parser():
@@ -51,11 +63,21 @@ def parser():
     start.add_argument('--items', type=int, help='The 2.4 flag; refused, start with --size')
     start.add_argument('--recover', action='store_true', help='Take back the lease of the run this harness session already owns '
                        '(needs --harness-session); running cards keep their assignments')
+    start.add_argument('--take-over', action='store_true', help='With --recover: move an ended or interrupted run owned by another '
+                       'session to this one (logged in progress.md; arms nothing)')
     start.add_argument('--new-run', action='store_true', help='Archive a previously inactive run before starting')
     sub.add_parser('where', help='Print the repository, state directory and whether standing-orders.md exists')
-    for name in ['ready','interrupt','finish','scan']:
+    for name in ['ready','interrupt','scan']:
         sub.add_parser(name)
+    finish = sub.add_parser('finish', help='Check and close the run')
+    finish.add_argument('--accept-reported', action='store_true',
+                        help='First accept every reported card whose accept passes; the rest stay reported')
+    do = sub.add_parser('do', help='Run several coordinator commands in one call, in order, with this call\'s --lease; '
+                        'stops at the first refusal and keeps the earlier steps. Each step is one quoted command, e.g. '
+                        'do "accept B1" "wave --inline B3 B4"')
+    do.add_argument('steps', nargs='+')
     status = sub.add_parser('status', help='Print the run state; review receipts leave out their per-file entries')
+    status.add_argument('--brief', action='store_true', help='Print a compact summary instead (counts, running, reported, lease, autonomy, versions); no lease, read-only')
     status.add_argument('--full', action='store_true', help='Keep the per-file entries of review receipts')
     board = sub.add_parser('board', help='Print card ids by role and state; --view prints the cheap lease-free board the Kanban mod reads')
     board.add_argument('--view', action='store_true')
@@ -86,6 +108,8 @@ def parser():
                           'card needs an accepted designer-planner plan card first')
     inline = sub.add_parser('inline', help='Reserve a card for execution by the main coordinator')
     inline.add_argument('task_id')
+    inline.add_argument('--report', metavar='FILE', help='Also record this result file as the report, in the same step; a refused report reserves nothing')
+    inline.add_argument('--accept', action='store_true', help='With --report: also accept the card in the same step')
     inline.add_argument('--serial', metavar='REASON', help='Start this card alone although others could start beside it; the reason is logged')
     wave = sub.add_parser('wave', help='Start every named card in one step, all or none; at most one is --inline')
     wave.add_argument('task_ids', nargs='+', metavar='ID')
@@ -106,6 +130,10 @@ def parser():
     report.add_argument('report', help='Nonempty result file')
     report.add_argument('--accept', action='store_true', help='Inline cards only: record the report and accept the card in one call; needs --lease')
     report.add_argument('--lease', default=argparse.SUPPRESS, help='Coordinator lease, for --accept')
+    criterion = sub.add_parser('criterion', help='Record coordinator evidence on one unmet self-review criterion of a reported worker card')
+    criterion.add_argument('task_id')
+    criterion.add_argument('criterion', help='The criterion text, as the report repeats it')
+    criterion.add_argument('--evidence', required=True, metavar='TEXT', help='What you checked, at most 1000 characters')
     accept = sub.add_parser('accept')
     accept.add_argument('task_id')
     accept.add_argument('--ruling', metavar='TEXT', help='Accept a worker card whose only gap is an unmet criterion, with the coordinator reason')
@@ -143,6 +171,10 @@ def parser():
     cancel = sub.add_parser('cancel', help='Drop a queued or parked card that should never run')
     cancel.add_argument('task_id')
     cancel.add_argument('--reason', required=True)
+    own = sub.add_parser('own', help='Add one owned path to a running or reported builder card when no other card holds it')
+    own.add_argument('action', choices=['add'])
+    own.add_argument('task_id')
+    own.add_argument('path')
     unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
     unpark.add_argument('task_id')
     hold = sub.add_parser('hold', help='End the repair ladder: move a blocked repair chain to held and log the finding')
@@ -238,10 +270,12 @@ def execute(args):
     if args.command=='start':
         if args.items is not None:
             raise EngineError('--items is the 2.4 flag; start with --size')
+        if args.take_over and not args.recover:
+            raise EngineError('--take-over needs --recover')
         if args.recover:
             if args.new_run or args.size or args.asks or args.owner_request:
                 raise EngineError('--recover takes only --harness-session')
-            return {'lease':engine.recover_lease(args.actor,args.harness_session),'state':str(state),'repo':str(repo)},0
+            return {'lease':engine.recover_lease(args.actor,args.harness_session,take_over=args.take_over),'state':str(state),'repo':str(repo)},0
         asks = parse_asks(args.asks)
         if args.new_run:  # refuse before archiving, so the ended run stays in place
             engine._check_start(args.size,asks,args.owner_request)
@@ -257,6 +291,8 @@ def execute(args):
         if args.policy:
             atomic(state/'policy.json',(json.dumps(policy,indent=2)+'\n').encode())
         return {'lease':lease,'state':str(state),'repo':str(repo),'requeued':engine.requeued,'resume':engine.resume},0
+    if args.command=='status' and args.brief:  # lease-free and read-only
+        return engine.status_brief(),0
     if args.command=='status':
         result = engine.status(lenses=True)
         if not args.full:
@@ -283,6 +319,13 @@ def execute(args):
         if args.tasks is not None and not ids:
             raise EngineError('--tasks needs at least one task id')
         return engine.artifact(engine.scope_for(ids) if ids else None),0
+    if args.command=='inline' and args.accept and not args.report:
+        raise EngineError('inline --accept needs --report FILE')
+    if args.command=='inline' and args.report:
+        if not args.lease:
+            raise EngineError('Supply the coordinator lease from start for coordinator actions')
+        result = engine.start_inline_report(args.actor,args.lease,args.task_id,read_text(args.report),accept=args.accept,serial=args.serial)
+        return dict(result,executor=args.actor,inline=True),0
     if args.command=='inline':
         return {'token':engine.start_inline(args.actor,args.lease,args.task_id,serial=args.serial), 'executor':args.actor, 'inline':True},0
     if args.command=='finding' and args.finding_command=='list':  # lease-free, like status
@@ -316,9 +359,9 @@ def execute(args):
     if args.command=='report' and args.accept:
         if not args.lease:
             raise EngineError('report --accept needs --lease from start')
-        return engine.report_accept(args.actor,args.lease,args.worker,args.token,Path(args.report).read_text()),0
+        return engine.report_accept(args.actor,args.lease,args.worker,args.token,read_text(args.report)),0
     if args.command=='report':
-        engine.report(args.worker,args.token,Path(args.report).read_text())
+        engine.report(args.worker,args.token,read_text(args.report))
         return {'reported':args.token},0
     if not args.lease:
         raise EngineError('Supply --lease from start for coordinator actions')
@@ -326,7 +369,7 @@ def execute(args):
         return {'ready':engine.ready(args.actor,args.lease)},0
     if args.command in ['interrupt','finish']:
         if args.command=='finish':
-            engine.close_session(args.actor,args.lease)
+            engine.close_session(args.actor,args.lease,accept_reported=args.accept_reported)
         else:
             engine.interrupt(args.actor,args.lease)
         return {'session':args.command,'state':str(state)},0
@@ -347,6 +390,9 @@ def execute(args):
     if args.command=='accept':
         engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
         return {'accepted':args.task_id},0
+    if args.command=='criterion':
+        engine.record_criterion(args.actor,args.lease,args.task_id,args.criterion,args.evidence)
+        return {'criterion':args.task_id},0
     if args.command=='review':
         review = read_json(args.report)
         if not isinstance(review,dict):
@@ -430,6 +476,9 @@ def execute(args):
     if args.command=='cancel':
         engine.cancel(args.actor,args.lease,args.task_id,args.reason)
         return {'cancelled':args.task_id},0
+    if args.command=='own':
+        engine.own_add(args.actor,args.lease,args.task_id,args.path)
+        return {'owned':args.path,'task':args.task_id},0
     if args.command=='unpark':
         engine.unpark(args.actor,args.lease,args.task_id)
         return {'unparked':args.task_id},0
@@ -465,9 +514,61 @@ def refused_state(args):
         return None
 
 
+GLOBAL_OPTIONS = ('--repo','--state','--actor','--lease')
+
+
+class StepRefused(Exception):
+    pass
+
+
+def run_steps(args):
+    """`do`: each step is parsed as its own command with this call's global options; the first refusal stops the rest."""
+    base = []
+    for name in GLOBAL_OPTIONS:
+        value = getattr(args,name[2:])
+        if value is not None:
+            base += [name,value]
+    done, refused, engine = [], None, None
+    for step in args.steps:
+        try:
+            tokens = shlex.split(step)
+            if not tokens or tokens[0] in ('do','start','autonomy','permit','release'):
+                raise StepRefused('A step cannot be `do`, `start`, `autonomy`, `permit` or `release`; run it as its own command')
+            if any(tok.split('=')[0] in GLOBAL_OPTIONS for tok in tokens):
+                raise StepRefused('A step takes no global option; `do` passes its own')
+            caught = io.StringIO()
+            try:
+                with contextlib.redirect_stderr(caught):
+                    sub = parser().parse_args(base+tokens)
+            except SystemExit:
+                lines = [line for line in caught.getvalue().splitlines() if ': error: ' in line]
+                raise StepRefused('Unparsable step: ' + (lines[-1].split(': error: ', 1)[1] if lines else 'see --help')) from None
+            result,code = execute(sub)
+            engine = getattr(sub,'engine',engine)
+            seen = add_board_line(sub,result)
+            if seen is not None:
+                cli_support.store_seen(sub.state_dir,seen)
+            done.append({'step':step,'result':result,'code':code})
+        except (StepRefused,EngineError,ValueError,OSError,KeyError,TypeError,AttributeError,subprocess.SubprocessError) as exc:
+            refused = {'step':step,'error':str(exc)}
+            break
+    if engine is not None:
+        now.refresh(engine)
+    body = {'steps':done}
+    if refused:
+        body['refused'] = refused
+    print(json.dumps(body,indent=2))
+    return 2 if refused else 0
+
+
 def main(argv=None):
     raw = list(sys.argv[1:] if argv is None else argv)
     args=parser().parse_args(raw)
+    if args.command=='do':
+        if not args.lease:
+            print(json.dumps({'steps':[],'refused':{'step':'','error':'Supply --lease from start for coordinator actions'}}))
+            return 2
+        return run_steps(args)
     state=refused_state(args)
     known=state is not None and state.is_dir()  # a command run before any state exists logs nothing and creates nothing
     try:
@@ -479,9 +580,11 @@ def main(argv=None):
             cli_support.log_refusal(state,raw,exc)
         return 2
     if result is not None:
-        print(json.dumps(result,indent=2))
+        print(json.dumps(result,separators=(',',':')) if args.command=='status' and args.brief else json.dumps(result,indent=2))
     if seen is not None:
         cli_support.store_seen(args.state_dir,seen)
+    if getattr(args,'lease',None) and getattr(args,'engine',None) is not None:
+        now.refresh(args.engine)  # never raises
     return code
 
 

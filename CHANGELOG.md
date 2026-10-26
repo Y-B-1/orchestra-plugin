@@ -2,6 +2,42 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.15.0 — 2026-10-25
+
+Autonomy works like a goal, a card runs where its model fits, and the coordinator needs fewer engine turns.
+
+- **Autonomy keeps going like a goal:** the Stop hook nudges an idle board, a failing gate, an unchanged pass, a silent worker or an unpublished branch instead of stopping. After three unchanged nudges it parks every unfinished card `needs-owner:escalated` and stops the run. A park without the `needs-owner:` prefix is undone, and both park instructions give the prefix.
+- **Autonomy answers its own questions:** while armed, an `AskUserQuestion` whose questions all have a "(Recommended)" option is answered by the hook and logged as `decided for the owner` in `progress.md`. Any other question is denied with "decide it yourself, record the decision, or park the card", and a Stop that ends with a question gets the same text.
+- **Autonomy cleanup allowances:** an armed run removes its merged clean worktrees, deletes branches provably merged or made by the run, and deletes files under the system temp directory. Every other deletion stays denied.
+- **Model fit replaces folding:** hooks record the session model at SessionStart, PostModelSwitch and UserPromptSubmit, and the prompt adds a `Session model:` line naming queued cards that need a worker. A card on another model family, or a higher effort, starts only on a worker; `inline` refuses it. Critic and reviewer cards always go to workers.
+- **The coordinator skill routes by context, model fit and failure kind:** split by context, not by role; the agent that holds a unit's context does all of it. Role skill descriptions say the main session may load them for an inline card.
+- **`do`:** `do "STEP" "STEP" ...` runs several coordinator commands in one call and stops at the first refusal.
+- **`--accept` closes in one call:** `inline TASK --report FILE --accept` reserves, reports and accepts an inline card in one state write. `inline TASK --report FILE` without `--accept` records the report and leaves the card reported; a refused report reserves nothing.
+- **Chain accept:** a CLEAN fix re-review recorded with `review --token` also accepts the repair chain it closes, each card only when `accept` would take it.
+- **`finish --accept-reported`:** first accepts every reported card whose `accept` passes; the rest stay reported.
+- **`criterion`:** `criterion TASK "CRITERION" --evidence TEXT` records your evidence on an unmet criterion of a reported worker card, so `accept` can pass.
+- **`status --brief`:** prints counts, running and reported cards, lease, autonomy and versions in under 4096 bytes, with no lease.
+- **`own add TASK PATH`:** adds one owned path to a running or reported builder card. `accept` refuses a report that changed files outside the card and names them.
+- **`NOW.md`:** the engine rewrites one short present-state file in the state directory whenever a lease command runs or a wave is emitted. Worker briefs point to it.
+- **A tiny task starts no run:** edit, check and commit inline, with no `start`, cards or `finish`.
+- **Lease and restart:** after a restart of the same conversation the coordinator keeps its lease. A forked session reads only until `start --recover --take-over`. SessionStart lists dead workers, dirty worktrees, the brief's age and the worker transcripts written in the last 2 minutes.
+- **Clearer refusals:** a refused start names the blocking card and the cause, and refusals list valid values and the next command. Lease refusals name the owning session and the fix. `waves` adds `wave_now` (the cards that can start together) and `serialized` (startable cards that must wait).
+- **`finalize` card:** a card with `"finalize": true` starts only after every other card is accepted, held or parked.
+- **The board pane in the app:** the pane opens by itself when autonomy arms. The header shows the pass, stall, deadline and worker line, and the pane adds "Needs you" and "Decided for you" sections and a toast for each card that parks, reports or is accepted. The native task mirror needs `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` on 5.5 models, and the pane says so.
+- **Generator tool checks:** `generate.py` refuses an unknown tool name and an oversized agent catalog. It checks the worker delegate and read-only rules first, so a worker that pins `Agent` or `Task` fails with "workers never delegate".
+- **Live matrix:** new scenarios `m1` (model fit) and `s1` (role skills); `--repeat N` runs each scenario N times and names flips; `d4` accepts a builder whose `tools:` line has no `Agent`.
+- **Review grants no permission:** the pre-PR review reference says again that a review grants no external permission, with a test that pins it.
+- **A silent worker is gone, not live:** on an unchanged board, an armed run no longer counts a running card whose worker is silent as live work. Only live background workers and the inline card count, so the run nudges and then escalates instead of idling.
+- **`do` refuses owner steps:** `do` refuses `autonomy`, `permit` and `release` steps. The guard reads each quoted `do` step like a direct call, so an armed run cannot disarm itself through `do`.
+- **Temp `rm` globs:** under autonomy, an `rm` below the temp directory may carry a glob only in its last path component. A glob earlier in the path could match a link that leaves the temp directory.
+- **Sibling files in `accept`:** a file that a sibling card owns counts as that sibling's work only when the sibling's own commits made every change to it. A change by this card's commit now lists the file as outside the card.
+- **Quoted delimiters after `>&N`:** the state-write check now reads `cd STATE && echo x >&1" "/../state.json` (and `' '`, `";"`, `"|"`) as a write. It drops a descriptor copy before a quote only when that quote closes an open string. Second repair of this chain, approved by the owner.
+
+### Known gaps
+
+- The state-write check reads `>&N` followed by a quote with its own quote tracker, which ignores `$'...'` escapes, `#` comments and heredoc bodies: a quote inside one of those can still hide a write such as `echo $'\'' >&1' '/../state.json`. The guard is best effort.
+- Review notes deferred to a follow-up are listed in `docs/BUILD-LEDGER.md`.
+
 ## 2.14.2 — 2026-10-24
 
 Fixes for the friction the 2.14.1 run hit, and the guard gaps its reviews found.

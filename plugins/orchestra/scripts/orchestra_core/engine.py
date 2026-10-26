@@ -12,6 +12,7 @@ import shlex
 import shutil
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.parse
@@ -41,18 +42,36 @@ CATEGORIES = ['requirements', 'correctness', 'security', 'tests', 'architecture'
 REBIND_WINDOW_SECONDS = 60
 KEEP_REMOVE = ('## Keep', '## Remove')  # builder briefs carry both headings; checked at add only (SPEC 5.13)
 PACKAGE_ROOT = Path(__file__).resolve().parents[2]
+BRIEF_RUNNING_MAX, BRIEF_REPORTED_MAX, CRITERION_EVIDENCE_MAX = 20, 40, 1000
+
+
+def _engine_version():
+    """The version in the plugin root's plugin.json, or None when the file is absent or unreadable."""
+    try:
+        version = json.loads((PACKAGE_ROOT / '.claude-plugin' / 'plugin.json').read_text()).get('version')
+    except (OSError, ValueError, AttributeError):
+        return None
+    return version if isinstance(version, str) else None
+
+
+ENGINE_VERSION = _engine_version()
 ALWAYS_LENSES = ('requirements', 'correctness', 'tests', 'architecture')
 INLINE_MAX_ITEMS = 5  # contract item 3: 1 to 5 items run inline, 6 or more go through a plan
 SIZES = ('tiny', 'medium', 'large')
 TIER_GUIDE = {'tiny': 50, 'medium': 400}  # contract item 1: changed lines per ask
 CARD_SIZES = ('tiny', 'medium')  # a card's own size; a large run sizes its cards as one of these
+SIZE_ERROR = 'Invalid task size; use one of: ' + ', '.join(CARD_SIZES)
 REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')
+MODEL_FAMILIES = ('opus', 'sonnet', 'haiku', 'fable')
 PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop loop gives up as `stalled`
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
-GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which an unattended run stops
+GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which the Stop hook asks for a repair card
+ESCALATION_LIMIT = 3  # Unchanged nudges for one reason after which every unfinished card is parked for the owner
+OWNER_PARK = 'needs-owner:'  # A parked reason prefix: only the owner can unblock the card (a secret, a code, an account action)
 LARGE_FILE_BYTES = 64 * 1024 * 1024  # Files over this are bound by size, mtime and sampled content, not read whole
 SAMPLE_BYTES = 1024 * 1024
 STALE_REVIEW = 'Review with findings is stale; re-review'
@@ -60,7 +79,8 @@ FINDING_ROUTES = '; add a repair card (`repair_of`) or record the finding with `
 # Keys the engine writes on a card; a task file never supplies them (repair_of only on a builder repair card).
 ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
                     'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
-                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha', 'ruling', 'base')
+                    'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha', 'ruling', 'base',
+                    'outside_files')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -121,6 +141,9 @@ AUTONOMY_FIXED = (
 AUTONOMY_KEEP_AWAKE = 'User step: enable keep-awake in Claude Desktop (or keep the machine awake) for an overnight run.'
 CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
 PARKABLE = ('queued', 'running', 'reported')
+STATE_COMMANDS = dict(queued='dispatch, inline, wave, park, cancel', running='report, park, own add',
+                      reported='accept, criterion, review, park, own add', parked='unpark, cancel',
+                      repairing='wait for its repair card', accepted='none', held='none')
 DISPOSITIONS = dict(finding=('rejected', 'deferred', 'inline', 'card', 'brief'),
                     out_of_scope=('inline', 'card', 'brief'))  # SPEC 5.12 item 1
 TASK_STATES = ('queued', 'running', 'reported', 'repairing', 'accepted', 'parked', 'held')
@@ -587,6 +610,7 @@ class Engine:
             except (KeyError, TypeError, AttributeError, IndexError) as exc:
                 raise EngineError('Malformed run state or request: ' + str(exc)) from exc
             if write:
+                state['engine_version'] = ENGINE_VERSION
                 if activity:
                     state['activity'] = state.get('activity', 0) + 1
                 fd, name = tempfile.mkstemp(dir=self.state_dir, prefix='.state-')
@@ -715,10 +739,15 @@ class Engine:
                 raise EngineError('Invalid task dispatch_policy')
             if 'report_sha' in task and not isinstance(task['report_sha'], str):
                 raise EngineError('Invalid task report_sha')
+            if 'outside_files' in task and (not isinstance(task['outside_files'], list)
+                                            or any(not isinstance(f, str) or not f for f in task['outside_files'])):
+                raise EngineError('Invalid task outside_files')
             if 'base' in task and (not isinstance(task['base'], str) or not task['base']):
                 raise EngineError('Invalid task base')
             if 'size' in task and task['size'] not in CARD_SIZES:
-                raise EngineError('Invalid task size')
+                raise EngineError(SIZE_ERROR)
+            if 'finalize' in task and not isinstance(task['finalize'], bool):
+                raise EngineError('Invalid task finalize')
             if 'self_review' in task and not cls._self_review_ok(task['self_review']):
                 raise EngineError('Invalid task self_review')
             for key in ('repair_of', 'repaired_by'):
@@ -787,7 +816,7 @@ class Engine:
             if not brief.is_absolute():
                 brief = self.repo / brief
             if not brief.is_file() or not brief.read_bytes().strip():
-                raise EngineError('Task brief must be an existing nonempty file')
+                raise EngineError('Task brief must be an existing nonempty file: ' + str(brief))
             if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', brief.read_text(errors='replace'), re.M):
                 raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
 
@@ -798,7 +827,7 @@ class Engine:
         text = brief.read_text(errors='replace')
         for heading in KEEP_REMOVE:
             if not re.search(r'^' + re.escape(heading) + r'[ \t]*$', text, re.M):
-                raise EngineError('Builder brief needs the heading ' + heading)
+                raise EngineError('Builder brief needs the heading %s (required headings: %s)' % (heading, ', '.join(KEEP_REMOVE)))
 
     @staticmethod
     def _redact_leases(value):
@@ -816,6 +845,30 @@ class Engine:
             if lenses:
                 result['required_lenses'] = self._required_lenses(state)
             return result
+
+    def status_brief(self):
+        """Read-only and lease-free: a compact summary whose size does not grow with the card count."""
+        def capped(items, limit):
+            return items[:limit] + (['+%d' % (len(items) - limit)] if len(items) > limit else [])
+        with self._state(False) as state:
+            tasks = list(state['tasks'].values())
+            session, auto = state['session'] or {}, state['autonomy'] or {}
+            now = self._clock()
+            running = [dict(id=t['id'], role=t['role'], mode=t['mode'], worker=t.get('worker'), inline=bool(t.get('inline')),
+                            age_s=max(0, round(now - t['started_at'])) if 'started_at' in t else None)
+                       for t in tasks if t['state'] == 'running']
+            written = state.get('engine_version')
+            versions = dict(engine=ENGINE_VERSION, state=state['version'], written_by=written)
+            if written is not None and written != ENGINE_VERSION:
+                versions['note'] = 'state last written by engine %s; this is engine %s' % (written, ENGINE_VERSION)
+            return dict(counts={name: sum(1 for t in tasks if t['state'] == name) for name in TASK_STATES},
+                        running=capped(running, BRIEF_RUNNING_MAX),
+                        reported=capped([t['id'] for t in tasks if t['state'] == 'reported'], BRIEF_REPORTED_MAX),
+                        lease=dict(holder=session.get('harness_session'), active=bool(session.get('active')),
+                                   outcome=session.get('outcome')),
+                        autonomy=dict(active=self._autonomy_on(state), passes=auto.get('passes'), deadline=auto.get('deadline'),
+                                      last_stop_reason=auto.get('last_stop_reason')),
+                        versions=versions)
 
     def current_gate_ids(self):
         """Ids of the passed gate receipts for the current whole-repository artifact; [] when there are none."""
@@ -1003,9 +1056,26 @@ class Engine:
     @staticmethod
     def _lease(state, actor, lease):
         session = state['session']
-        if not session or not session['active'] or session['actor'] != actor or session['lease'] != lease:
-            raise EngineError('Invalid or interrupted coordinator lease. If this session lost its lease, take it back with '
-                              '`start --recover --harness-session ID` (the id is in the SessionStart context)')
+        if session and session['active'] and session['actor'] == actor and session['lease'] == lease:
+            return
+        raise EngineError('Invalid or interrupted coordinator lease: ' + Engine._lease_refusal(session, actor))
+
+    @staticmethod
+    def _lease_refusal(session, actor):
+        """Why a lease is refused and the one command that fixes it, chosen from the run state."""
+        if not session or session.get('outcome') == 'completed':
+            return 'The run finished; use `start` for a new run'
+        owner = session.get('harness_session')
+        recover = ('`start --recover --harness-session %s` (it arms no autonomy and releases nothing)' % owner if owner
+                   else '`start --recover --harness-session ID`, ID from the SessionStart context')
+        if not session['active']:
+            return ('The coordinator lease of session %s was released when the run %s; that session takes it back with %s. '
+                    'Another session takes the run over with --take-over added' % (owner or 'unknown',
+                    'ended with its session' if session.get('outcome') == 'ended' else 'was interrupted', recover))
+        if session['actor'] != actor:
+            return 'This run is coordinated by actor %s, not %s' % (session['actor'], actor)
+        return 'This lease was replaced by a newer one held by session %s; if this session lost its lease, it takes a fresh one with %s' % (
+            owner or 'unknown', recover)
 
     def validate_lease(self, actor, lease):
         """Check coordinator consistency; caller identifiers are not authentication."""
@@ -1139,7 +1209,7 @@ class Engine:
         with self._state() as state:
             self._lease(state, actor, lease)
             self._end_run(state, 'interrupted')
-            state['session']['active'] = False
+            state['session'].update(active=False, outcome='interrupted')
             state['permits'] = []
             state['autonomy'] = self._kept_autonomy(state)
 
@@ -1152,7 +1222,7 @@ class Engine:
             if not (state['session'] and state['session']['active']):
                 return False
             self._end_run(state, 'interrupted')
-            state['session']['active'] = False
+            state['session'].update(active=False, outcome='interrupted')
             state['permits'] = []
             state['autonomy'] = self._kept_autonomy(state)
             return True
@@ -1196,6 +1266,23 @@ class Engine:
             state['autonomy'] = self._kept_autonomy(state)
             return True
 
+    def revive_harness_session(self, session_id):
+        """A restart of the same conversation (same harness session id) reopens the run its end closed, with the same
+        lease. Only an `ended` run revives: an interrupt or a finish stays as it is. Arms nothing, issues nothing."""
+        def revivable(state):
+            session = state['session']
+            return bool(session and not session['active'] and session.get('outcome') == 'ended'
+                        and session.get('harness_session') == session_id)
+        with self._state(False) as state:
+            if not revivable(state):
+                return False
+        with self._state(activity=False) as state:
+            if not revivable(state):
+                return False
+            state['session'].update(active=True)
+            state['session'].pop('outcome', None)
+            return True
+
     def mark_harness_rebind(self, session_id):
         """/clear or /resume: the process continues under a new id; record the pending hand-over."""
         with self._state(False) as state:
@@ -1221,6 +1308,18 @@ class Engine:
                 return False
             session['harness_session'] = session_id
             return True
+
+    def _check_owned_path(self, name):
+        if not isinstance(name, str):
+            raise EngineError('File ownership needs explicit paths')
+        p = Path(name)
+        if any(char in name for char in '*?[]'):
+            raise EngineError('File ownership needs explicit paths, not globs')
+        if p.is_absolute() or '..' in p.parts or not p.parts or p.parts[0] == '.git':
+            raise EngineError('File ownership must stay inside repository')
+        resolved = (self.repo / p).resolve()
+        if self.repo not in resolved.parents:
+            raise EngineError('File ownership escapes repository')
 
     def add_task(self, actor, lease, task):
         if not isinstance(task, dict):
@@ -1248,7 +1347,9 @@ class Engine:
                     and session['size'] != 'large' and not session['owner_request'] and task.get('owner_request') is not True):
                 raise EngineError('Plan card needs a large run or an owner request; escalate with route --size large --reason TEXT')
             if 'size' in task and task['size'] not in CARD_SIZES:
-                raise EngineError('Invalid task size')
+                raise EngineError(SIZE_ERROR)
+            if 'finalize' in task and not isinstance(task['finalize'], bool):
+                raise EngineError('Invalid task finalize')
             if task['role'] == 'builder' and 'brief' in task:
                 self._check_keep_remove(task)
             if self._is_release(task) and any(self._is_release(t) for t in state['tasks'].values()):
@@ -1266,14 +1367,7 @@ class Engine:
                 if len(values) != len(set(values)):
                     raise EngineError('Duplicate ' + key)
             for name in task['files']:
-                p = Path(name)
-                if any(char in name for char in '*?[]'):
-                    raise EngineError('File ownership needs explicit paths, not globs')
-                if p.is_absolute() or '..' in p.parts or not p.parts or p.parts[0] == '.git':
-                    raise EngineError('File ownership must stay inside repository')
-                resolved = (self.repo / p).resolve()
-                if self.repo not in resolved.parents:
-                    raise EngineError('File ownership escapes repository')
+                self._check_owned_path(name)
             if any(dep not in state['tasks'] for dep in task['dependencies']):
                 raise EngineError('Unknown dependency or cycle')
             review_of = task.get('review_of', [])
@@ -1592,13 +1686,20 @@ class Engine:
                 raise EngineError('A card under repair cannot be parked; park its open repair card '
                                   + self._open_repair(state, task)['id'])
             if not task or task['state'] not in PARKABLE:
-                raise EngineError('Only a queued, running or reported card can be parked')
+                raise EngineError('Only a queued, running or reported card can be parked; ' + self._state_note(state, task_id))
             self._set_aside(state, task, reason.strip())
+
+    def _state_note(self, state, task_id):
+        """'card X is in state S; commands it allows: ...', or 'unknown task X'."""
+        task = state['tasks'].get(task_id)
+        if task is None:
+            return 'unknown task %s' % task_id
+        return 'card %s is in state %s; it allows: %s' % (task_id, task['state'], STATE_COMMANDS.get(task['state'], 'none'))
 
     def _set_aside(self, state, task, reason):
         """Park a card: drop its assignment, reservation and report, and put its repair chain under repair again."""
         task.update(state='parked', parked_reason=reason)
-        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'report_sha', 'started_at'):
+        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'report_sha', 'started_at', 'outside_files'):
             task.pop(key, None)
         for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair's report is dropped: its chain is under repair again
             ancestor['state'] = 'repairing'
@@ -1615,7 +1716,8 @@ class Engine:
             if not task:
                 raise EngineError('Unknown task: ' + str(task_id))
             if task['state'] not in ('queued', 'parked'):
-                raise EngineError('Only a queued or parked card can be cancelled; park a running or reported card first')
+                raise EngineError('Only a queued or parked card can be cancelled; %s; park it first with `park %s --reason TEXT`'
+                                  % (self._state_note(state, task_id), task_id))
             if task.get('repair_of') or task.get('repaired_by') or task.get('held_finding'):
                 raise EngineError('A card in a repair chain cannot be cancelled')
             users = [t['id'] for t in state['tasks'].values()
@@ -1628,7 +1730,7 @@ class Engine:
             state.setdefault('cancelled', []).append(dict(id=task_id, reason=reason.strip(), at=self._clock(),
                                                           was=task['state']))
 
-    def recover_lease(self, actor, harness_session):
+    def recover_lease(self, actor, harness_session, take_over=False):
         """Issue a fresh coordinator lease to the session that already owns the run. The lease is a consistency token, not
         a credential (README, Safety): when the coordinator has lost it (compaction, a restart) the same harness session,
         named by the SessionStart context, takes it back. Running cards keep their assignments."""
@@ -1637,11 +1739,25 @@ class Engine:
             raise EngineError('Recovering the lease needs --harness-session from the SessionStart context')
         with self._state() as state:
             session = state['session']
-            if not session or not session['active']:
-                raise EngineError('No active run to recover; use start')
-            if session['actor'] != actor or session.get('harness_session') != harness_session:
-                raise EngineError('This run belongs to another session; the owner ends it with interrupt or starts over. After a '
-                                  'crash, read session.lease from %s, then `interrupt --lease LEASE`' % self.state_path)
+            if not session or session.get('outcome') == 'completed':
+                raise EngineError('The run finished; nothing to recover: use `start` for a new run')
+            owner = session.get('harness_session')
+            if session['actor'] != actor:
+                raise EngineError('This run is coordinated by actor %s, not %s' % (session['actor'], actor))
+            if owner != harness_session:
+                if not take_over:
+                    raise EngineError('This run belongs to session %s; this session reads only. To move the run here, %s'
+                                      % (owner, 'stop that session first, then add --take-over' if session['active']
+                                         else 'add --take-over (logged; it arms no autonomy)'))
+                if session['active']:
+                    raise EngineError('Session %s still holds the run as active; --take-over needs it ended or interrupted'
+                                      % owner)
+                session['harness_session'] = harness_session
+                _append_progress(self.state_dir, '- session %s took over the run from %s (at %s)' % (
+                    harness_session, owner, datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds')))
+            if not session['active']:
+                session.update(active=True)
+                session.pop('outcome', None)
             lease = uuid.uuid4().hex
             session['lease'] = lease
             for task in state['tasks'].values():
@@ -1672,7 +1788,7 @@ class Engine:
             self._lease(state, actor, lease)
             task = state['tasks'].get(task_id)
             if not task or task['state'] != 'parked':
-                raise EngineError('Task is not parked')
+                raise EngineError('Task is not parked; ' + self._state_note(state, task_id))
             task['state'] = 'queued'
             task.pop('parked_reason', None)
 
@@ -1703,6 +1819,7 @@ class Engine:
         if sum(t['state'] == 'running' for t in occupied) >= self.policy['max_workers']:
             return []
         return [t['id'] for t in state['tasks'].values() if t['state'] == 'queued'
+                and not self._finalize_waits(state, t)
                 and all(state['tasks'][d]['state'] in ('accepted', 'held') for d in t['dependencies'])
                 and all(state['tasks'][d]['state'] in ('reported', 'accepted', 'held') for d in t.get('review_of', []))
                 and not any(other['id'] != t['id']
@@ -1716,6 +1833,15 @@ class Engine:
                                      and t['id'] < other['id'])
                             for other in occupied)]
 
+    @staticmethod
+    def _finalize_waits(state, task):
+        """'CARD (state)' for each card a finalize card (changelog, version bump, release notes) still waits for: every
+        other card not accepted, held or parked. Another finalize card is not waited for, so two never block each other."""
+        if not task.get('finalize'):
+            return []
+        return ['%s (%s)' % (t['id'], t['state']) for t in state['tasks'].values()
+                if t['id'] != task['id'] and not t.get('finalize') and t['state'] not in ('accepted', 'held', 'parked')]
+
     def _not_ready_reason(self, state, task_id):
         """Why `_ready` leaves this card out, in the order it checks."""
         tasks = state['tasks']
@@ -1724,17 +1850,61 @@ class Engine:
             return 'unknown task %s' % task_id
         if task['state'] != 'queued':
             return '%s is %s' % (task_id, task['state'])
+        waits = self._finalize_waits(state, task)
+        if waits:
+            return 'finalize card waits for: ' + ', '.join(waits)
         running = sum(t['state'] == 'running' for t in tasks.values())
         if running >= self.policy['max_workers']:
-            return '%d of %d workers running' % (running, self.policy['max_workers'])
+            return 'capacity: %d of %d workers running' % (running, self.policy['max_workers'])
         deps = [d for d in task['dependencies'] if tasks[d]['state'] not in ('accepted', 'held')]
         if deps:
-            return 'open dependencies: ' + ', '.join(deps)
+            return '; '.join('dependency %s not accepted (%s)' % (d, tasks[d]['state']) for d in deps)
         targets = [d for d in task.get('review_of', []) if tasks[d]['state'] not in ('reported', 'accepted', 'held')]
         if targets:
             names = ', '.join(targets)
             return "review targets not reported: %s; if %s's worker finished, record its report with `report WORKER TOKEN FILE`" % (names, names)
-        return 'its files or resources overlap a running, reported or repair card'
+        blockers = self._blockers(state, task)
+        if not blockers:
+            return 'no running, reported or repair card holds its files or resources'
+        return '; '.join(blockers[:5] + (['+%d' % (len(blockers) - 5)] if len(blockers) > 5 else []))
+
+    def _blockers(self, state, task):
+        """One text per occupied card that `_ready` holds against `task`, with the same checks and exemptions."""
+        tasks = state['tasks']
+        mine = self._reservation(task, state)
+        occupied = [t for t in tasks.values() if t['state'] == 'running'
+                    or (t['state'] == 'reported' and not self._read_review(t))
+                    or (t['state'] == 'queued' and t.get('repair_of'))]
+        found = []
+        for other in occupied:
+            if other['id'] == task['id']:
+                continue
+            held = self._held(task, other, state)
+            if not self._collides(mine, held):
+                continue
+            if (other['id'] in task.get('review_of', []) and other['state'] == 'reported'
+                    and not set(task['resources']) & set(other['resources'])):
+                continue
+            if self._read_review(task) and self._read_review(other) and not set(task['resources']) & set(other['resources']):
+                continue
+            if task.get('repair_of') and other['state'] == 'queued' and other.get('repair_of') and task['id'] < other['id']:
+                continue
+            label = 'repairing' if other['state'] == 'queued' else other['state']
+            shared = sorted(set(mine['resources']) & set(held['resources']))
+            if shared:
+                found.append('resource %s held by %s (%s)' % (', '.join(shared), other['id'], label))
+                continue
+            path = next(str(y) for x in map(Path, mine['files']) for y in map(Path, held['files'])
+                        if x == y or x in y.parents or y in x.parents)
+            if other['state'] == 'reported':
+                found.append('%s is reported and not yet accepted; it holds %s' % (other['id'], path))
+                continue
+            text = 'files overlap: %s with %s (%s)' % (path, other['id'], label)
+            source = next((c['id'] for c in self._walk(tasks, other, 'repair_of') if path in map(str, c['files'])), None)
+            if source and path not in map(str, other['files']):
+                text += ' through repair chain card ' + source
+            found.append(text)
+        return found
 
     def ready(self, actor, lease):
         with self._state(False) as state:
@@ -1757,6 +1927,8 @@ class Engine:
             size = task.get('size') or ('medium' if session['size'] == 'large' else session['size'])
             if size == 'tiny' and not inline and not (isinstance(helper, str) and helper.strip()):
                 raise EngineError('Tiny unit: the main session does this work; pass --helper REASON to dispatch a helper')
+            if inline and size != 'tiny':
+                Engine._check_model_fit(state, task)
             return
         route = session.get('route')
         if route is None or task['role'] != 'builder':
@@ -1767,6 +1939,65 @@ class Engine:
                 raise EngineError('Workflow route: accept the designer-planner plan card first')
         elif not inline and not (isinstance(helper, str) and helper.strip()):
             raise EngineError('Inline route: the main session does this work; pass --helper REASON to dispatch a helper')
+
+    @staticmethod
+    def card_model(task):
+        """(model, effort) a card runs on, from config/models.json: the role's preset for the card's mode, else the role."""
+        try:
+            roles = json.loads((PACKAGE_ROOT / 'config/models.json').read_text())['claude']
+        except (OSError, ValueError, KeyError):
+            return None, None
+        role = roles.get(task['role'])
+        if not isinstance(role, dict) or 'model' not in role:
+            return None, None
+        preset = (role.get('presets') or {}).get(task['mode']) or role
+        return preset.get('model', role['model']), preset.get('effort', role.get('effort'))
+
+    @staticmethod
+    def _family(model):
+        return next((f for f in MODEL_FAMILIES if isinstance(model, str) and f in model.lower()), None)
+
+    @staticmethod
+    def session_model(state):
+        """(model, effort) of the main session: the model the hooks recorded, the effort from $CLAUDE_EFFORT (the
+        engine runs under the session's Bash tool) or the recorded one. Either is None when unknown."""
+        session = state.get('session') or {}
+        effort = os.environ.get('CLAUDE_EFFORT') or session.get('effort')
+        return session.get('model'), effort if effort in EFFORTS else None
+
+    @staticmethod
+    def _check_model_fit(state, task):
+        """Inline work runs on the session's model and effort, which cannot change per card. A card whose models.json
+        model family differs, or whose effort is above the session's on the same model, goes to a worker. An unknown model refuses nothing."""
+        need_model, need_effort = Engine.card_model(task)
+        have_model, have_effort = Engine.session_model(state)
+        want, have = Engine._family(need_model), Engine._family(have_model)
+        low = (want and want == have and need_effort in EFFORTS and have_effort in EFFORTS
+               and EFFORTS.index(have_effort) < EFFORTS.index(need_effort))  # effort compares only within one model
+        if (want and have and want != have) or low:
+            raise EngineError('Model fit: %s needs %s %s and the main session runs %s %s; start it on a worker, '
+                              'which runs on the card\'s own model (`wave` or `dispatch`)'
+                              % (task['id'], need_model, need_effort, have_model or 'unknown', have_effort or 'unknown'))
+
+    def record_model(self, model=None, effort=None):
+        """Record the main session's model (SessionStart, PostModelSwitch or the transcript) and effort for an active run.
+        Hook bookkeeping, not progress: no lease and no activity bump. Returns True when the record changed."""
+        if model is not None and (not isinstance(model, str) or not model.strip() or len(model) > 100):
+            return False
+        if effort is not None and effort not in EFFORTS:
+            return False
+        if not self.state_path.exists():
+            return False
+        with self._state(activity=False, block=True) as state:
+            session = state.get('session')
+            if not isinstance(session, dict) or not session.get('active'):
+                return False
+            changed = False
+            for key, value in (('model', model), ('effort', effort)):
+                if value is not None and session.get(key) != value:
+                    session[key] = value
+                    changed = True
+            return changed
 
     def _start_checks(self, state, actor, task_id, worker, inline, helper=None, ready=None, cheap=False, contract=True):
         """Every refusal a start can make, with no change to the state. `ready` is a precomputed `_ready` list. `cheap`
@@ -1793,8 +2024,10 @@ class Engine:
         if (task and task['role'] == 'builder' and not inline and sum(
                 t['role'] == 'builder' and t['state'] == 'running' and not t.get('inline')
                 for t in state['tasks'].values()) >= self.policy.get('max_worktrees', MAX_WORKTREES)):
-            raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report'
-                              % self.policy.get('max_worktrees', MAX_WORKTREES))
+            raise EngineError('Worktree cap: %d builder cards are already running (%s); wait for one to report'
+                              % (self.policy.get('max_worktrees', MAX_WORKTREES), ', '.join(
+                                  t['id'] for t in self._by_seq(state['tasks'].values())
+                                  if t['role'] == 'builder' and t['state'] == 'running' and not t.get('inline'))))
         if task_id not in (self._ready(state) if ready is None else ready):
             raise EngineError('Task is not ready or capacity is exhausted: ' + self._not_ready_reason(state, task_id))
         if contract:
@@ -1828,6 +2061,59 @@ class Engine:
         if serial:
             self._log_serial([task_id], serial)  # after the state write succeeded
         return token
+
+    def start_inline_report(self, actor, lease, task_id, report, accept=False, serial=None):
+        """Reserve an inline card and record its report in one state write; when the start or the report is refused,
+        nothing is reserved. With `accept` the card is then accepted if accept passes (else the report stays recorded)."""
+        serial = self._check_serial(serial)
+        if not isinstance(report, str) or not report.strip():
+            raise EngineError('Empty worker report')
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            self._start_checks(state, actor, task_id, actor, True)
+            if not serial:
+                self._checkpoint(state, actor, task_id, True)
+            token = self._mark_running(state, task_id, actor, True, None, lease)
+            self._report_in(state, actor, token, report)
+            refusal = self._accept_refusal(state, {}, task_id) if accept and state['tasks'][task_id]['state'] == 'reported' else None
+            if accept and state['tasks'][task_id]['state'] == 'reported' and refusal is None:
+                state['tasks'][task_id]['state'] = 'accepted'
+            result = dict(token=token, card=task_id, state=state['tasks'][task_id]['state'])
+            if refusal:
+                result['refusal'] = refusal
+        if serial:
+            self._log_serial([task_id], serial)
+        return result
+
+    def own_add(self, actor, lease, task_id, path):
+        """Add one owned path to a running or reported builder card when no other card's reservation overlaps it (the
+        start check). Files the report flagged as outside the card clear once they are owned. Recorded in progress.md."""
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = state['tasks'].get(task_id)
+            if task is None:
+                raise EngineError('Unknown task: ' + str(task_id))
+            if task['role'] != 'builder' or task['state'] not in ('running', 'reported'):
+                raise EngineError('own add needs a running or reported builder card; ' + self._state_note(state, task_id))
+            self._check_owned_path(path)
+            if path in task['files']:
+                raise EngineError('Card %s already owns %s' % (task_id, path))
+            scope, fresh = self._scope_of(state, [task_id]), False
+            if task['state'] == 'reported':
+                fresh = self._same(task['report_artifact'], self.artifact(scope))  # re-bind only evidence that is current
+            task['files'].append(path)
+            blockers = self._blockers(state, task)
+            if blockers:
+                task['files'].remove(path)
+                raise EngineError('Cannot own %s: %s' % (path, '; '.join(blockers)))
+            owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
+            left = [f for f in task.get('outside_files', []) if not self._in_scope(f, owned)]
+            task.pop('outside_files', None)
+            if left:
+                task['outside_files'] = left
+            if fresh:
+                task['report_artifact'] = self.artifact(self._scope_of(state, [task_id]))
+        _append_progress(self.state_dir, '- own add %s %s (at %s)' % (task_id, path, self._stamp()))
 
     def wave(self, actor, lease, task_ids, inline=None, helper=None, serial=None):
         """Start every named card in one state write; any refusal leaves the state unsaved."""
@@ -1966,15 +2252,37 @@ class Engine:
             return None
         return inline_id
 
+    def _wave_now(self, state, actor, chosen=(), cheap=False):
+        """Greedy, in seq order, from `chosen` ((id, modes) pairs): the startable cards `wave` accepts together, and the
+        startable cards left out for a shared resource or file, each with the chosen card it waits for."""
+        chosen, serialized = list(chosen), []
+        for other_id, modes in self._startable(state, actor, cheap).items():
+            if any(i == other_id for i, _ in chosen):
+                continue
+            clash = next((i for i, _ in chosen if self._overlap(state, state['tasks'][other_id], state['tasks'][i])), None)
+            if clash is not None:
+                serialized.append(dict(card=other_id, waits_for=clash, reason=self._clash_reason(state, other_id, clash)))
+            elif self._fit(state, actor, chosen + [(other_id, modes)]) is not None:
+                chosen.append((other_id, modes))
+        return chosen, serialized
+
+    def _clash_reason(self, state, card, holder):
+        a, b = state['tasks'][card], state['tasks'][holder]
+        ra, rb = self._reservation(a, state), self._reservation(b, state)
+        shared = sorted(set(ra['resources']) & set(rb['resources']))
+        if shared:
+            return 'resource %s shared with %s' % (', '.join(shared), holder)
+        paths = [str(y) for x in map(Path, ra['files']) for y in map(Path, rb['files'])
+                 if x == y or x in y.parents or y in x.parents]
+        if paths:
+            return 'files overlap: %s with %s' % (paths[0], holder)
+        return 'a builder that reserves no files waits for %s' % holder
+
     def _checkpoint(self, state, actor, task_id, inline):
         """Refuse a lone start while a disjoint card could start beside it. `parallel_waves: false` turns it off."""
         if not self.policy.get('parallel_waves', True):
             return
-        chosen = [(task_id, {'inline' if inline else 'worker'})]
-        for other_id, modes in self._startable(state, actor).items():
-            if other_id != task_id and not any(self._overlap(state, state['tasks'][other_id], state['tasks'][i])
-                                               for i, _ in chosen) and self._fit(state, actor, chosen + [(other_id, modes)]) is not None:
-                chosen.append((other_id, modes))
+        chosen, _ = self._wave_now(state, actor, [(task_id, {'inline' if inline else 'worker'})])
         if len(chosen) > 1:
             inline_id = self._fit(state, actor, chosen)
             flag = '--inline %s ' % inline_id if inline_id else ''
@@ -2020,8 +2328,10 @@ class Engine:
                 if wave:
                     waves.append(wave)
                 pending = rest
+        now, serialized = self._wave_now(state, actor, cheap=cheap)
         return dict(overlaps=overlaps, chains=chains, blocked=blocked, waves=waves,
                     startable_now=list(self._startable(state, actor, cheap)),
+                    wave_now=[i for i, _ in now], serialized=serialized,
                     idle_workers=self._idle(state), prep=self._prep(state))
 
     def view(self, actor='main', session=None):
@@ -2053,13 +2363,14 @@ class Engine:
             acceptable = [t['id'] for t in ordered if t['state'] == 'reported' and not t.get('repaired_by')
                           and t['id'] not in pending and not self._self_review_blocks(t)]
             return dict(
-                run_id=state.get('run_id'), session=dict(active=bool(run.get('active')), size=run.get('size')),
+                run_id=state.get('run_id'), session=dict(active=bool(run.get('active')), size=run.get('size'), model=run.get('model'), effort=run.get('effort')),
                 bound=session is not None and run.get('harness_session') == session,
                 autonomy=dict(active=self._autonomy_on(state)),
                 counts={s: sum(t['state'] == s for t in ordered) for s in states},
                 counts_note='running includes inline cards',
                 columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
-                cards=cards, startable_now=startable, acceptable_now=acceptable,
+                cards=cards, startable_now=startable, wave_now=plan['wave_now'], serialized=plan['serialized'],
+                acceptable_now=acceptable,
                 next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],
                 latest_review=None if review is None else dict(
                     id=review['id'], verdict='BLOCKED' if review['findings'] else 'CLEAN',
@@ -2147,11 +2458,22 @@ class Engine:
         with self._state() as state:
             self._report_in(state, worker, token, report)
 
+    @staticmethod
+    def _assignment_error(task, worker, review=False):
+        """'Invalid assignment' and which cause: an unknown token, a token of another worker, or the card's state."""
+        if task is None:
+            return 'Invalid assignment: unknown token'
+        if review and task['role'] not in REVIEW_ROLES:
+            return 'Invalid assignment: card %s is a %s card, not a review card' % (task['id'], task['role'])
+        if task['worker'] != worker:
+            return 'Invalid assignment: token of another worker'
+        return 'Invalid assignment: card %s is in state %s' % (task['id'], task['state'])
+
     def _report_in(self, state, worker, token, report):
         task = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
         replacing = bool(task) and task['state'] == 'reported'  # a repair needs a covering review, refused below
         if not task or task['worker'] != worker or not (task['state'] == 'running' or replacing):
-            raise EngineError('Invalid assignment')
+            raise EngineError(self._assignment_error(task, worker))
         covered = replacing and any(task['id'] in r.get('tasks', []) for r in state['reviews'])
         if covered:
             # The review bound the reported work and files. Only the command text of the builder's checks may be
@@ -2193,16 +2515,91 @@ class Engine:
         if sha and task.get('base') and not self._is_ancestor(task['base'], sha):
             raise EngineError('Reported commit %s was built on the wrong base: the card base is %s and the commit does not '
                               'descend from it; rebuild on the base (`git merge --ff-only %s` first)' % (sha, task['base'], task['base']))
+        outside = self._outside_files(task, sha, state) if task['role'] == 'builder' else []
         task.update(state='reported', report=report,
                     report_artifact=self.artifact(self._scope_of(state, [task['id']])))
         task.pop('report_sha', None)
+        task.pop('outside_files', None)
         if sha:
             task['report_sha'] = sha
+        if outside:
+            task['outside_files'] = outside
         if review is not None:
             task['self_review'] = review
         for ancestor in self._walk(state['tasks'], task, 'repair_of'):
             ancestor['state'] = 'reported'
             ancestor['report_artifact'] = self.artifact(self._scope_of(state, [ancestor['id']]))  # the repair changed its files
+
+    GENERATED_DIR = 'plugins/orchestra/agents/'
+    GENERATOR = 'plugins/orchestra/scripts/generate.py'
+
+    def _outside_files(self, task, sha, state):
+        """Files changed in base..sha that the card does not own, sorted. Empty without a recorded base or commit. Files
+        the generator derives from owned files (`agents/*.md`) count as owned when its --check passes on `sha`. In a
+        shared checkout the range also holds sibling cards' commits, so a file a reported or accepted sibling owns and
+        only its commits changed is not outside."""
+        base = task.get('base')
+        if not base or not sha:
+            return []
+        try:
+            changed = [c for c in self._git('diff', '--name-only', '-z', base, sha).decode().split('\0') if c]
+        except EngineError:
+            return []
+        owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
+        outside = sorted(c for c in changed if not self._in_scope(c, owned))
+        outside = self._not_sibling_owned(task, outside, state, sha)
+        derived = [c for c in outside if c.startswith(self.GENERATED_DIR) and c.endswith('.md') and '/' not in c[len(self.GENERATED_DIR):]]
+        if derived and self._generator_passes(sha):
+            outside = [c for c in outside if c not in derived]
+        return outside
+
+    def _not_sibling_owned(self, task, files, state, sha=None):
+        """The files that are not sibling work. In a shared checkout a report range holds sibling commits, so a file is
+        sibling work only when every commit in base..sha that changed it is a sibling's: see `_sibling_commit`."""
+        base, sha = task.get('base'), sha or task.get('report_sha')
+        siblings = [other for other in state['tasks'].values()
+                    if other['id'] != task['id'] and other['state'] in ('reported', 'accepted') and other.get('report_sha')]
+        if not base or not sha or not siblings:
+            return list(files)
+        owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
+        kept = []
+        for name in files:
+            owners = [other for other in siblings if self._in_scope(name, [Path(f).as_posix() for f in other.get('files', [])])]
+            try:
+                commits = self._git('log', '--no-merges', '--format=%H', base + '..' + sha, '--', name).decode().split()
+            except EngineError:
+                commits = []
+            if not owners or not commits or not all(self._sibling_commit(c, owners, owned) for c in commits):
+                kept.append(name)
+        return kept
+
+    def _sibling_commit(self, commit, owners, owned):
+        """Whether `commit` is one of the owners' reported work: it changes no file this card owns, and it is an owner's
+        reported commit or lies in that owner's base..report_sha range."""
+        try:
+            changed = [c for c in self._git('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', commit).decode().split('\0') if c]
+        except EngineError:
+            return False
+        if any(self._in_scope(c, owned) for c in changed):
+            return False
+        return any(commit == other['report_sha'] or other.get('base') and self._is_ancestor(commit, other['report_sha'])
+                   and not self._is_ancestor(commit, other['base']) for other in owners)
+
+    def _generator_passes(self, sha):
+        """Whether `generate.py --check` exits 0 on the plugin tree of commit `sha`, run in a throwaway copy."""
+        import io
+        import tarfile
+        try:
+            self._git('cat-file', '-e', sha + ':' + self.GENERATOR)
+            archive = self._git('archive', '--format=tar', sha, '--', 'plugins/orchestra')
+            with tempfile.TemporaryDirectory(prefix='orchestra-generate-') as tmp, tarfile.open(fileobj=io.BytesIO(archive)) as tar:
+                members = [m for m in tar.getmembers() if not (os.path.isabs(m.name) or '..' in Path(m.name).parts)
+                           and (m.isfile() or m.isdir())]
+                tar.extractall(tmp, members=members, **({'filter': 'data'} if hasattr(tarfile, 'data_filter') else {}))
+                return subprocess.run([sys.executable, str(Path(tmp) / self.GENERATOR), '--check'],
+                                      capture_output=True, timeout=120).returncode == 0
+        except (EngineError, OSError, tarfile.TarError, subprocess.SubprocessError):
+            return False
 
     def _reported_commit(self, report):
         """The commit named by the first 7 to 40 hex characters of the report's first ARTIFACT line, or None."""
@@ -2465,6 +2862,8 @@ class Engine:
         transaction."""
         if defer_reason is not None and (not isinstance(defer_reason, str) or not defer_reason.strip()):
             raise EngineError('--defer-out-of-scope needs a nonempty reason')
+        if not Path(report_path).is_file():
+            raise EngineError('Review report not found: ' + str(report_path))
         try:
             text = Path(report_path).read_text()
             body = json.loads(text)
@@ -2478,7 +2877,7 @@ class Engine:
             card = next((t for t in state['tasks'].values() if t.get('assignment') == token), None)
             if (not card or card['role'] not in REVIEW_ROLES or card['worker'] != body['reviewer']
                     or card['state'] not in ('running', 'reported')):
-                raise EngineError('Invalid assignment')
+                raise EngineError(self._assignment_error(card, body['reviewer'], review=True))
             final = body['final']
             if final is not True and not (final is False and (body.get('repair_check') is True or card['role'] == 'critic')):
                 raise EngineError('review --token records final receipts only')
@@ -2503,7 +2902,28 @@ class Engine:
             refusal = self._accept_refusal(state, {}, card['id'])
             if refusal is None:
                 card['state'] = 'accepted'
-            return dict(receipt=receipt, card=card['id'], accepted=refusal is None, refusal=refusal)
+            chain = []
+            if refusal is None and body.get('repair_check') is True and not receipt['findings']:
+                chain = self._accept_chain(state, ids)
+            return dict(receipt=receipt, card=card['id'], accepted=refusal is None, refusal=refusal, chain_accepted=chain)
+
+    def _accept_chain(self, state, ids):
+        """F65: after a CLEAN fix re-review, accept the builder cards it names and their repair ancestors, newest first,
+        each only when `accept` would take it. Returns the ids accepted, in order."""
+        tasks, names = state['tasks'], set()
+        for task_id in ids:
+            while task_id in tasks and tasks[task_id]['role'] == 'builder' and task_id not in names:
+                names.add(task_id)
+                task_id = tasks[task_id].get('repair_of')
+        accepted, moved = [], True
+        while moved:
+            moved = False
+            for task in sorted((tasks[i] for i in names), key=lambda t: -t.get('seq', 0)):
+                if task['state'] != 'accepted' and self._accept_refusal(state, {}, task['id']) is None:
+                    task['state'] = 'accepted'
+                    accepted.append(task['id'])
+                    moved = True
+        return accepted
 
     def _check_task_findings(self, state, body, ids, findings):
         """Per-task findings (SPEC 5.1 item 4): covered keys only, and the ordered union equals `findings`."""
@@ -2714,7 +3134,7 @@ class Engine:
         """Why `accept` would refuse this card now, or None when every accept check passes."""
         task = state['tasks'].get(task_id)
         if not task or task['state'] not in ('reported', 'held'):
-            return 'Task has no reported result'
+            return 'Task has no reported result: ' + self._state_note(state, task_id)
         verdicts = self._review_verdicts(state, cache, task_id=task_id, strict=True)
         if verdicts is None:
             return STALE_REVIEW
@@ -2732,6 +3152,9 @@ class Engine:
             failed = self._self_review_failure(review, ruled)
             if failed:
                 return 'Self-review has a failing check or unmet criterion: ' + failed
+            outside = self._not_sibling_owned(task, task.get('outside_files', []), state)  # a sibling may own them since
+            if outside:
+                return 'files outside the card: %s; add them with own add or revert them' % ', '.join(outside)
         elif task.get('review_required', False):
             return None if verdicts else 'Task needs current independent review'
         scope = self._scope_of(state, [task_id])
@@ -2741,17 +3164,35 @@ class Engine:
         # modified or untracked any more (within its scope): then HEAD holds exactly the reported files.
         clean = now.get('status') == _hash(b'')
         if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'scope')) or not clean and reported != now:
-            return self._stale_report(reported, now)
+            return self._stale_report(reported, now, scope)
         if reported.get('fingerprint') != now.get('fingerprint') and not self._reported_work_in_head(task, scope, state['tasks']):
-            return self._stale_report(reported, now)
+            return self._stale_report(reported, now, scope)
         return None
 
-    @staticmethod
-    def _stale_report(reported, now):
+    def _stale_report(self, reported, now, scope):
         keys = [k for k in reported.keys() | now.keys() if reported.get(k) != now.get(k)]
         order = list(now) + [k for k in reported if k not in now]
-        return 'Reported artifact is stale: %s differ since the report; re-report or send a repair card' % ', '.join(
-            sorted(keys, key=order.index))
+        changed = self._changed_since(reported.get('head'), scope)
+        return 'Reported artifact is stale: %s differ since the report%s; re-report or send a repair card' % (
+            ', '.join(sorted(keys, key=order.index)), ' (changed: %s)' % changed if changed else '')
+
+    def _changed_since(self, head, scope):
+        """'PATH (short sha), ...' for the paths in `scope` that differ from the tree at `head`, each with the commit
+        that last changed it or 'uncommitted'. Empty when `head` is unknown or git cannot say."""
+        if not isinstance(head, str) or not head:
+            return ''
+        spec = ['--', *scope] if scope else []
+        try:
+            paths = set(self._git('diff', '--name-only', '-z', head, *spec).decode().split('\0'))
+            paths |= set(self._git('ls-files', '--others', '--exclude-standard', '-z', *spec).decode().split('\0'))
+            dirty = {line[3:] for line in self._git('status', '--porcelain=v1', '--untracked-files=all', *spec).decode().splitlines()}
+            notes = []
+            for path in sorted(p for p in paths if p):
+                last = '' if path in dirty else self._git('log', '-1', '--format=%h', '--', path).decode().strip()
+                notes.append('%s (%s)' % (path, last or 'uncommitted'))
+        except EngineError:
+            return ''
+        return ', '.join(notes[:10] + (['+%d' % (len(notes) - 10)] if len(notes) > 10 else []))
 
     def _reported_work_in_head(self, task, scope, tasks=None):
         """Whether the commit the report names is in HEAD (an ancestor, or applied as patch-equivalent commits) and HEAD
@@ -2770,27 +3211,61 @@ class Engine:
 
     def accept(self, actor, lease, task_id, ruling=None):
         """Accept a reported card. `ruling` is the coordinator's reason for accepting a worker card whose only gap is a
-        criterion with met false; a failing check, a current finding or a card with no gap stays refused."""
+        criterion with met false; a failing check or a current finding stays refused. On a card with no unmet criterion
+        the ruling is a note in progress.md and the card is accepted as without it."""
         with self._state() as state:
             self._lease(state, actor, lease)
             task = state['tasks'].get(task_id)
+            unmet = False
             if ruling is not None:
                 if not isinstance(ruling, str) or not ruling.strip():
                     raise EngineError('A ruling needs a nonempty reason')
                 if task and task.get('inline'):
                     raise EngineError('An inline card cannot take a ruling: the coordinator would rule on its own unmet criterion')
                 review = task.get('self_review') if task and task['role'] == 'builder' else None
-                if review is None or all(c['met'] for c in review['criteria']):
-                    raise EngineError('The card has no unmet criterion to rule on')
-            refusal = self._accept_refusal(state, {}, task_id, ruled=ruling is not None)
+                unmet = review is not None and not all(c['met'] for c in review['criteria'])
+            refusal = self._accept_refusal(state, {}, task_id, ruled=unmet)
             if refusal:
                 raise EngineError(refusal)
             task = state['tasks'][task_id]
             task['state'] = 'accepted'
             if ruling is not None:
                 at = self._stamp()
-                task['ruling'] = dict(text=ruling.strip(), at=at)
-                _append_progress(self.state_dir, '- ruled %s: %s (at %s)' % (task_id, ruling.strip(), at))
+                if unmet:
+                    task['ruling'] = dict(text=ruling.strip(), at=at)
+                _append_progress(self.state_dir, '- ruled %s: %s (at %s)' % (task_id, ruling.strip(), at) if unmet else
+                                 '- ruling note on %s (no unmet criterion): %s (at %s)' % (task_id, ruling.strip(), at))
+
+    def record_criterion(self, actor, lease, task_id, criterion, evidence):
+        """The coordinator's evidence for one unmet self-review criterion of a reported worker card. Only criteria take
+        it: a failing check needs a re-run, and an inline card is the coordinator's own work."""
+        with self._state() as state:
+            self._lease(state, actor, lease)
+            task = state['tasks'].get(task_id)
+            if task is None:
+                raise EngineError('Unknown task ' + str(task_id))
+            if task['state'] != 'reported':
+                raise EngineError('Task %s is not reported (%s)' % (task_id, task['state']))
+            if task.get('inline'):
+                raise EngineError('An inline card cannot take coordinator evidence: the coordinator would judge its own work')
+            review = task.get('self_review')
+            if review is None:
+                raise EngineError('The card has no self-review to record evidence on')
+            if not isinstance(evidence, str) or not evidence.strip():
+                raise EngineError('A criterion needs nonempty evidence')
+            if len(evidence) > CRITERION_EVIDENCE_MAX:
+                raise EngineError('Criterion evidence is at most %d characters' % CRITERION_EVIDENCE_MAX)
+            failed = self._self_review_failure(review, ruled=True)
+            if failed:
+                raise EngineError('Only criteria take coordinator evidence; a failing check needs a re-run: ' + failed)
+            unmet = [c for c in review['criteria'] if not c['met']]
+            wanted = str(criterion).strip()
+            match = next((c for c in unmet if c['criterion'].strip() == wanted), None)
+            if match is None:
+                raise EngineError('No unmet criterion "%s"; unmet: %s' % (wanted, '; '.join('"%s"' % c['criterion'] for c in unmet) or 'none'))
+            at = self._stamp()
+            match.update(met=True, evidence=evidence.strip(), by='coordinator', at=at)
+            _append_progress(self.state_dir, '- coordinator evidence on %s: "%s": %s (at %s)' % (task_id, wanted, evidence.strip(), at))
 
     def report_accept(self, actor, lease, worker, token, report):
         """Report an inline card and accept it in one state write. When accept refuses, the report stays recorded."""
@@ -3022,8 +3497,20 @@ class Engine:
             self._lease(state, actor, lease)
             return self._completion_evidence(state)
 
-    def close_session(self, actor, lease):
-        """Check and close under one lock, keeping completion distinct from interruption."""
+    def close_session(self, actor, lease, accept_reported=False):
+        """Check and close under one lock, keeping completion distinct from interruption. With `accept_reported`, first
+        accept (in their own write, kept when the close refuses) every reported card whose accept passes, repeating
+        until none moves so a repair chain accepts in order; a card whose accept is refused stays reported."""
+        if accept_reported:
+            with self._state() as state:
+                self._lease(state, actor, lease)
+                moved = True
+                while moved:
+                    moved = False
+                    for task in self._by_seq(state['tasks'].values()):
+                        if task['state'] == 'reported' and not self._accept_refusal(state, {}, task['id']):
+                            task['state'] = 'accepted'
+                            moved = True
         with self._state() as state:
             self._lease(state, actor, lease)
             try:
@@ -3328,9 +3815,9 @@ class Engine:
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'brief']
         needs += ['%s -- %s' % (e['text'], e['reason']) for e in findings if e['disposition'] == 'deferred']
         needs += ['review and merge pull request ' + entry['url'] for entry in self._pull_requests(state)]
-        if reason == 'stalled' and (auto or {}).get('pr_gap'):
+        if reason in ('stalled', 'needs-owner:escalated') and (auto or {}).get('pr_gap'):
             needs.append('publish the work: ' + auto['pr_gap'])
-        gate = self._failing_gate(state) if reason == 'gate-failing' else None
+        gate = self._failing_gate(state) if reason in ('gate-failing', 'needs-owner:escalated') else None
         if gate:
             log = [g['path'] for g in state['gates'] if g['name'] == gate][-1]
             needs.append('required gate %s failed %d times in a row -- read its log %s, fix the cause, then arm again'
@@ -3462,9 +3949,13 @@ class Engine:
                 return 'complete', None
             passes = auto.get('pr_passes', 0)
             if passes >= PR_CONTINUATIONS:
-                auto['stalls'] += 1
                 auto['pr_gap'] = gap
-                return 'stalled', None
+                return self._nudge(state, 'stalled', gap,
+                                   'still unpublished: %s. Run the push and `gh pr create` yourself, read the exact git or gh '
+                                   'error and fix it; park the card `needs-owner:` only when the push needs a credential or an '
+                                   'account action.' % gap,
+                                   'the push is still not done: %s. Read the last git or gh error again and fix its cause; '
+                                   'another unchanged pass hands the run to the owner.' % gap)
             auto.update(pr_passes=passes + 1, accepted=self._accepted(state))
             auto['passes'] += 1
             return None, 'Autonomy pass %d: %s; push the branch, open the pull request, then record it with `pr URL`.' % (
@@ -3476,8 +3967,6 @@ class Engine:
                 and any(t['state'] == 'held' and not t.get('repaired_by') and not self._final_receipts(state, t['id'])
                         for t in tasks))
         failing = self._failing_gate(state)
-        if failing:
-            return 'gate-failing', None
         stale_after = self.policy.get('worker_stale_seconds', WORKER_STALE_SECONDS)
         silent = self._silent_workers(state)
         running = any(t['state'] == 'running' and not t.get('inline') and t not in silent for t in tasks)
@@ -3491,6 +3980,13 @@ class Engine:
         final_owed = (not (running or actionable or held or final_open or parked)
                       and all(t['state'] == 'accepted' for t in tasks)
                       and bool(tasks or (base is not None and self._run_changed(state)[0])))
+        if failing and not (running or actionable):
+            log = [g['path'] for g in state['gates'] if g['name'] == failing][-1]
+            return self._nudge(state, 'gate-failing', failing,
+                               'required gate %s failed %d times in a row. Read its log %s and add a repair card for the cause; '
+                               'run the gate again once the card is accepted.' % (failing, GATE_FAILURE_LIMIT, log),
+                               'required gate %s still fails (log %s). Add or dispatch the repair card now; another unchanged '
+                               'pass hands the run to the owner.' % (failing, log))
         if silent and not (running or actionable or held or final_open or final_owed):
             auto['accepted'] = self._accepted(state)
             names = ', '.join(t['id'] for t in silent)
@@ -3501,13 +3997,34 @@ class Engine:
             signature = self._signature(state)
             if signature == auto.get('signature'):
                 auto['stalls'] += 1
-                return 'stalled', None
+                for task in silent:
+                    self._set_aside(state, task, 'lost-worker')
+                auto['signature'] = self._signature(state)
+                auto['passes'] += 1
+                return None, ('Autonomy pass %d: %s parked as lost-worker. Re-plan: `unpark` and dispatch each again, or add a '
+                              'card that does the work another way.' % (auto['passes'], names))
             auto['signature'] = signature
             auto['stalls'] = 0
             auto['passes'] += 1
             return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
         if not (running or actionable or held or final_open or final_owed):
-            return ('parked-only' if parked else 'no-ready-card'), None
+            if not parked:
+                return self._nudge(state, 'no-ready-card', '',
+                                   'no card is ready, running or owed a review and the ledger is not met. Re-plan: compare the '
+                                   'ledger goal and checks with the cards, then add each missing card or park it with a reason '
+                                   '(`needs-owner:` when only the owner can unblock it).',
+                                   'still nothing to do after the re-plan%s. Add a card for each unmet ledger goal or check, or '
+                                   'park the blocked ones; another unchanged pass hands the run to the owner.'
+                                   % self._board_diff(state))
+            waiting = ['%s (%s)' % (t['id'], t.get('parked_reason', '')) for t in tasks
+                       if t['state'] == 'parked' and not t.get('parked_reason', '').startswith(OWNER_PARK)]
+            if not waiting:
+                return 'parked-only', None  # every parked card needs an owner input
+            return self._nudge(state, 'parked-only', ', '.join(waiting),
+                               'parked cards need no owner input: %s. `unpark` them and continue; keep `needs-owner:` parks '
+                               'for a secret, a code or an account action.' % ', '.join(waiting),
+                               'those cards are still parked: %s. `unpark` them now or re-park with a `needs-owner:` reason; '
+                               'another unchanged pass hands the run to the owner.' % ', '.join(waiting))
         auto['accepted'] = self._accepted(state)
         if actionable:
             message = 'continue with the next ready or reported card; park any card that reaches an approval boundary.'
@@ -3522,12 +4039,47 @@ class Engine:
                        'then push the branch and open the pull request.')
         signature = self._signature(state)
         if signature == auto.get('signature'):
-            auto['stalls'] += 1  # The last continuation changed nothing: end the turn instead of repeating it
-            return (None if running else 'stalled'), None  # with no worker to wake the session, stop and brief
+            auto['stalls'] += 1  # The last continuation changed nothing: never repeat it
+            if running or any(t['state'] == 'running' and t.get('inline') for t in tasks):
+                return None, None  # a worker or the inline card's background shell will wake the session
+            return self._nudge(state, 'stalled', '',
+                               'the last pass changed nothing%s. Name what is missing and do it: run the next gate, record the '
+                               'review, or add the card the ledger still needs.' % self._board_diff(state),
+                               'still nothing changed%s. Park what only the owner can unblock with a `needs-owner:` reason; '
+                               'another unchanged pass hands the run to the owner.' % self._board_diff(state))
         auto['signature'] = signature
         auto['stalls'] = 0
+        auto.pop('escalations', None)
         auto['passes'] += 1
         return None, 'Autonomy pass %d: %s' % (auto['passes'], message)
+
+    @staticmethod
+    def _board_diff(state):
+        """The unfinished cards and their states, for a nudge that must differ from the one before it."""
+        cards = ', '.join('%s %s' % (t['id'], t['state']) for t in state['tasks'].values() if t['state'] != 'accepted')
+        return ' (unfinished: %s)' % cards if cards else ''
+
+    def _nudge(self, state, reason, key, first, again):
+        """Keep an armed run going: the first nudge for an unchanged board, a different one on the next, and after
+        ESCALATION_LIMIT with the board still unchanged every unfinished card is parked for the owner and the run stops
+        `needs-owner:escalated`. Returns the `_stop_check` pair."""
+        auto = state['autonomy']
+        signature = _digest([self._signature(state), reason, key])
+        seen = (auto.get('escalations') or {}).get(reason) or {}
+        count = seen.get('count', 0) + 1 if seen.get('signature') == signature else 1
+        auto['escalations'] = {reason: dict(signature=signature, count=count)}
+        if count >= ESCALATION_LIMIT:
+            for task in state['tasks'].values():
+                if task['state'] in PARKABLE:
+                    self._set_aside(state, task, OWNER_PARK + 'escalated')
+                elif task['state'] == 'parked' and not task.get('parked_reason', '').startswith(OWNER_PARK):
+                    task['parked_reason'] = OWNER_PARK + 'escalated'
+            return 'needs-owner:escalated', None
+        auto['stalls'] = 0 if count == 1 else auto['stalls'] + 1
+        auto['signature'] = self._signature(state)
+        auto['accepted'] = self._accepted(state)
+        auto['passes'] += 1
+        return None, 'Autonomy pass %d: %s' % (auto['passes'], first if count == 1 else again)
 
     def _publication_gap(self, state):
         """Why finished work is not yet published, or None: the branch holds commits beyond the session base and no
@@ -3557,12 +4109,12 @@ class Engine:
         return None
 
     def hook_stop(self):
-        """The Stop continuation of SPEC 5.8: no count stops it, only the deadline, completion, tamper, disarm, an
-        idle run, a required gate that failed three times in a row (`gate-failing`) and a stall with no worker running
-        (`stalled`). When every worker is silent past `worker_stale_seconds` the turn continues once with a message to
-        park or re-dispatch the lost card, then stops as `stalled`. Finished work counts as `complete` only once a
-        verified pull request has the current head or nothing lies beyond the base; two nudges to push and open it
-        come first. Caller identifiers do not authenticate."""
+        """The Stop continuation of SPEC 5.8: a fixed goal. Only the deadline, completion, tamper, disarm, a stale
+        loop, parked cards that all need the owner (`parked-only`) and `needs-owner:escalated` stop it. An idle board,
+        a failing gate, a stall, a silent worker and an unpublished branch each get a nudge that differs from the
+        last; the same unchanged board three times parks the unfinished cards for the owner. Finished work counts as
+        `complete` only once a verified pull request has the current head or nothing lies beyond the base. Caller
+        identifiers do not authenticate."""
         with self._state(False) as state:
             if not self._autonomy_on(state):
                 return None  # Read-only unless autonomy is active in a session

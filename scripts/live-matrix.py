@@ -1,6 +1,6 @@
 """Live scenario matrix for an installed Orchestra plugin. Run it by hand before a release; scripts/check.sh never runs it.
 
-Usage: live-matrix.py [--plugin DIR | --plugin-dir DIR] [--model ID] [--parallel N] [--source DIR] [--list] ROOT [SCENARIO ...]
+Usage: live-matrix.py [--plugin DIR | --plugin-dir DIR] [--model ID] [--parallel N] [--repeat N] [--source DIR] [--list] ROOT [SCENARIO ...]
 
 Each scenario gets ROOT/<id>/ with a scratch repo (repo/), a bare origin (origin.git), real headless `claude -p`
 sessions against the installed plugin, and a result.json. Checks read the stream-json events and engine state, never
@@ -56,8 +56,8 @@ def is_orchestra_status(command):
 
 
 class Ctx:
-    def __init__(self, root, sid):
-        self.dir = Path(root) / sid
+    def __init__(self, root, sid, name=None):
+        self.dir = Path(root) / (name or sid)
         clear_scenario_dir(self.dir)
         self.repo = self.dir / 'repo'
         self.repo.mkdir(parents=True)
@@ -320,6 +320,14 @@ def d3_mode_line(x, chk):
     chk('spawn without a Mode line refused', ag and ag[0]['error'] and 'mode' in ag[0]['text'].lower(), ag[0]['text'][:250] if ag else 'no call')
 
 
+def builder_tools_line():
+    """The value of the builder agent file's tools: line, or None when the file has no such line."""
+    for line in (PLUGIN / 'agents/builder.md').read_text().splitlines():
+        if line.startswith('tools:'):
+            return line[len('tools:'):].strip()
+    return None
+
+
 def d4_worker_limits(x, chk):
     """Proves: A worker cannot run a lease command or delegate, but can run lease-free status."""
     x.start('minimal')
@@ -339,8 +347,12 @@ def d4_worker_limits(x, chk):
     chk('worker lease-free status allowed', plain and not plain[0]['error'], plain[0]['text'][:150] if plain else 'not run')
     nested = [c for c in sub if c['tool'] in ('Agent', 'Task')]
     # A worker's tools: allowlist leaves out Agent, so Claude Code itself refuses the call; either refusal enforces it.
-    chk('worker delegation refused', nested and nested[0]['error'] and (orch_denied(nested[0]) or 'no such tool' in nested[0]['text'].lower()),
-        nested[0]['text'][:200] if nested else 'not attempted')
+    # With no call at all, the builder's tools: line is the proof: it must leave Agent out.
+    tools = builder_tools_line()
+    no_agent = not nested and tools is not None and 'Agent' not in tools.replace(',', ' ').split()
+    chk('worker delegation refused',
+        (nested and nested[0]['error'] and (orch_denied(nested[0]) or 'no such tool' in nested[0]['text'].lower())) or no_agent,
+        f'builder has no Agent tool (tools: {tools})' if no_agent else (nested[0]['text'][:200] if nested else 'not attempted'))
 
 
 def h1_stop_block(x, chk):
@@ -462,29 +474,56 @@ def r1b_resume(x, chk):
     chk('the running card survives the restart', x.task('C1').get('state') in ('running', 'queued'), x.task('C1').get('state'))
 
 
+def m1_model_fit(x, chk):
+    """Proves: SessionStart records the session model, and the engine refuses an inline card on another model while a worker start is allowed."""
+    x.start('minimal')
+    x.card('M1', ['m1.txt'], mode='mechanical')
+    x.card('M2', ['m2.txt'])
+    x.claude('Reply OK. No tools.', turns=2, resume=False)
+    model = (x.o('board', '--view', lease=False).get('session') or {}).get('model')
+    family = next((f for f in ('sonnet', 'opus', 'haiku') if f in MODEL.lower()), MODEL)
+    chk('SessionStart recorded the session model', isinstance(model, str) and model and family in model.lower(), model)
+    refused = x.o('inline', 'M1', '--serial', 'live test', check=False)
+    chk('inline card on another model refused with Model fit', 'Model fit' in json.dumps(refused), json.dumps(refused)[:300])
+    ok = x.o('inline', 'M2', '--serial', 'live test', check=False)
+    chk('inline card on the session model allowed', 'error' not in ok and ok.get('inline'), json.dumps(ok)[:300])
+    started = x.o('dispatch', 'M1', '--serial', 'live test', check=False)
+    chk('worker start of the other-model card allowed', 'error' not in started and started.get('assignment'), json.dumps(started)[:300])
+
+
+def s1_role_skills(x, chk):
+    """Proves: The main session can load a role skill with the Skill tool."""
+    ev = x.claude('Call the Skill tool with skill "orchestra:orchestra-design", then call the Skill tool with skill '
+                  '"orchestra:orchestra-build". Then reply with the first heading line of each skill.', turns=6)
+    sk = [c for c in ev['calls'] if c['tool'] == 'Skill']
+    for name in ('orchestra:orchestra-design', 'orchestra:orchestra-build'):
+        hit = [c for c in sk if name in c['input']]
+        chk(f'Skill {name} loaded without error', hit and not hit[0]['error'], hit[0]['text'][:200] if hit else 'not called')
+
+
 SCENARIOS = {f.__name__.split('_')[0]: f for f in (
     g0_no_run, g1_minimal, g2_normal, g3_protect, a1_autonomy_git, a2b_autonomy_locks, a3b_approved,
     d1_agent_capture, d2_workflow_capture, w1_worktree_capture, d3_mode_line, d4_worker_limits, h1_stop_block,
-    h2b_board_on_prompt, r1b_resume, i1_install)}
+    h2b_board_on_prompt, r1b_resume, i1_install, m1_model_fit, s1_role_skills)}
 
 
-def run(root, sid):
+def run(root, sid, name=None):
     chk = Check()
     t0 = time.time()
     err = None
     x = None
     try:
-        x = Ctx(root, sid)
+        x = Ctx(root, sid, name)
         SCENARIOS[sid](x, chk)
     except Exception as e:  # noqa: BLE001 - one scenario's crash is a result, not a harness stop
         err = f'{type(e).__name__}: {e}'[:800]
     res = {'id': sid, 'seconds': round(time.time() - t0), 'error': err, 'checks': chk.rows,
            'runs': [{'seconds': r['seconds'], 'texts': r['texts'][-3:], 'calls': r['calls'],
                      'hooks': [h for h in r['hooks'] if h['event'] not in ('PostToolUse',)][:60]} for r in (x.runs if x else [])]}
-    out = Path(root) / sid / 'result.json'
+    out = Path(root) / (name or sid) / 'result.json'
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(res, indent=1))
-    print(f'{sid}: {sum(r["pass"] for r in chk.rows)}/{len(chk.rows)} pass' + (f' ERROR {err[:200]}' if err else ''), flush=True)
+    print(f'{name or sid}: {sum(r["pass"] for r in chk.rows)}/{len(chk.rows)} pass' + (f' ERROR {err[:200]}' if err else ''), flush=True)
     return res
 
 
@@ -493,6 +532,22 @@ def newest_plugin():
         return tuple(int(n) if n.isdigit() else 0 for n in p.name.split('.'))
     found = sorted((p for p in CACHE.glob('*') if (p / 'scripts/orchestra.py').is_file()), key=key)
     return found[-1] if found else None
+
+
+def run_failed(r):
+    return bool(r['error'] or not r['checks'] or any(not c['pass'] for c in r['checks']))
+
+
+def merge_runs(runs):
+    """One result for N runs of a scenario: it passes only when every run passes. When runs disagree the result is the
+    first failing run, marked flip with the count of failing runs."""
+    if len(runs) == 1:
+        return runs[0]
+    failing = [r for r in runs if run_failed(r)]
+    if not failing:
+        return {**runs[0], 'seconds': sum(r['seconds'] for r in runs), 'repeat': len(runs)}
+    return {**failing[0], 'seconds': sum(r['seconds'] for r in runs), 'repeat': len(runs),
+            'flip': f'{len(failing)}/{len(runs)}' if len(failing) < len(runs) else None}
 
 
 def summary(results):
@@ -504,6 +559,10 @@ def summary(results):
         bad += len(failed) + bool(r['error']) + (not rows)
         note = r['error'] or ('; '.join(c['check'] for c in failed) if failed else ('no checks ran' if not rows else ''))
         print(f'{r["id"]:<10}{len(rows):>7}{len(failed):>8}{r["seconds"]:>9}  {note[:120]}')
+    for r in results:
+        if r.get('flip'):
+            names = [c['check'] for c in r['checks'] if not c['pass']]
+            print(f'FLIP {r["id"]}: {r["flip"]} runs failed: ' + ('; '.join(names) or r['error'] or 'no checks ran')[:200])
     print('RESULT: ' + ('FAIL' if bad else 'PASS'))
     return 1 if bad else 0
 
@@ -517,6 +576,7 @@ def main(argv=None):
     ap.add_argument('--plugin-dir', metavar='DIR', help='load this plugin directory (for example plugins/orchestra of a candidate) into every session in place of the installed copy; implies --plugin DIR')
     ap.add_argument('--model', default=MODEL, help='model for every claude session (default %(default)s)')
     ap.add_argument('--parallel', type=int, default=4, metavar='N', help='scenarios run at once (default %(default)s)')
+    ap.add_argument('--repeat', type=int, default=1, metavar='N', help='runs of each scenario, each in ROOT/<id>.rK (default %(default)s: ROOT/<id>); a scenario passes only when every run passes, and runs that disagree are named as a flip')
     ap.add_argument('--source', metavar='DIR', default=str(SOURCE), help='marketplace source for the i1 install scenario (default: this repository root)')
     ap.add_argument('--list', action='store_true', help='print scenario ids and descriptions, run nothing')
     a = ap.parse_args(argv)
@@ -527,8 +587,8 @@ def main(argv=None):
     if not a.root:
         ap.error('the output root is required unless --list is given')
     unknown = [s for s in a.scenarios if s not in SCENARIOS]
-    if unknown or a.parallel < 1:
-        ap.error(f'unknown scenario {unknown}' if unknown else '--parallel must be at least 1')
+    if unknown or a.parallel < 1 or a.repeat < 1:
+        ap.error(f'unknown scenario {unknown}' if unknown else '--parallel must be at least 1' if a.parallel < 1 else '--repeat must be at least 1')
     LOAD = Path(a.plugin_dir).expanduser().resolve() if a.plugin_dir else None
     PLUGIN = LOAD or (Path(a.plugin).expanduser() if a.plugin else newest_plugin())
     if PLUGIN is None or not (PLUGIN / 'scripts/orchestra.py').is_file():
@@ -536,7 +596,12 @@ def main(argv=None):
     O, MODEL, SOURCE = str(PLUGIN / 'scripts/orchestra.py'), a.model, Path(a.source).expanduser()
     ids = a.scenarios or list(SCENARIOS)
     with cf.ThreadPoolExecutor(max_workers=a.parallel) as pool:
-        results = list(pool.map(lambda s: run(a.root, s), ids))
+        if a.repeat == 1:
+            results = list(pool.map(lambda s: run(a.root, s), ids))
+        else:
+            jobs = [(s, k) for s in ids for k in range(1, a.repeat + 1)]
+            done = list(pool.map(lambda j: run(a.root, j[0], f'{j[0]}.r{j[1]}'), jobs))
+            results = [merge_runs([r for (s, _), r in zip(jobs, done) if s == sid]) for sid in ids]
     return summary(results)
 
 

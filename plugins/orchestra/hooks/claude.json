@@ -20,7 +20,7 @@
             "timeout": 30
           }
         ],
-        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Agent|Task|CronCreate|ScheduleWakeup|RemoteTrigger|SendMessage"
+        "matcher": "Bash|PowerShell|Edit|Write|MultiEdit|NotebookEdit|Agent|Task|CronCreate|ScheduleWakeup|RemoteTrigger|SendMessage|AskUserQuestion"
       }
     ],
     "SubagentStart": [
@@ -57,6 +57,17 @@
           }
         ],
         "matcher": "Agent|Task"
+      }
+    ],
+    "PostModelSwitch": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/bin/sh \"${CLAUDE_PLUGIN_ROOT}/scripts/run-hook.sh\" PostModelSwitch --harness claude",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "Stop": [

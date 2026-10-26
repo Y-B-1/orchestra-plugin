@@ -2,8 +2,8 @@ import type { Hook, On, Register } from 'claude-code';
 
 import { AUTONOMY_COMMAND, cliResult, cliThrown, commandOutcome, newAutonomy, noteChange, pollDue, pollOutcome, startSession, subOf, USAGE } from './autonomy.js';
 import type { AutonomyState, Cli, Sub } from './autonomy.js';
-import { cardIdOf, matchTasks, paneModel, parseTaskList, parseView, planCreates, planUpdates, runShort } from './board.js';
-import type { Link, View } from './board.js';
+import { cardIdOf, diffMoves, matchTasks, paneModel, parseAutonomy, parseDecisions, parseTaskList, parseView, planCreates, planUpdates, runShort } from './board.js';
+import type { Autonomy, Link, View } from './board.js';
 import { classifyCommand, editDenied, editTools, klassOf, loadRules, shellTools } from './guard.js';
 import { fromBase64, GUARD_DIGEST_FILES, guardDigest, HEARTBEAT_MS, markerJson, markerPath, sha256Hex, utf8 } from './marker.js';
 
@@ -25,6 +25,9 @@ const VERDICT_SUBS = ['review', 'gate', 'accept'];
 const BOARD = 'orchestra-board';
 /** The board refreshes on events; this is the fallback while the pane is open. */
 const BOARD_FALLBACK_MS = 30000;
+const BOARD_HINT = 'Orchestra board ready: type /orchestra-board';
+/** Card moves toast at most this many lines per refresh, then a count of the rest. */
+const MOVE_TOASTS = 3;
 const TASK_TOOLS = ['TaskCreate', 'TaskUpdate', 'TaskList'];
 /**
  * Guard `minimal`: a shell command that may write Orchestra's engine state, ledger, policy or installed runtime
@@ -222,10 +225,15 @@ async function autonomyRegister($: Dollar, auto: AutonomyState): Promise<void> {
   }
 }
 
+function stopBoardTimer(board: Board): void {
+  if (board.timer) board.timer.cancel();
+  board.timer = null;
+}
+
 /** Told of every autonomy CLI answer, so the caller can follow `last_stop_reason`. */
 type Seen = (sub: Sub, res: Cli) => void;
 
-async function autonomyCommand($: Dollar, auto: AutonomyState, args: string, seen: Seen): Promise<{ text: string }> {
+async function autonomyCommand($: Dollar, auto: AutonomyState, board: Board, args: string, seen: Seen): Promise<{ text: string }> {
   try {
     const sub = subOf(args);
     if (sub === null) return { text: USAGE };
@@ -236,6 +244,8 @@ async function autonomyCommand($: Dollar, auto: AutonomyState, args: string, see
     seen(sub, res);
     const out = commandOutcome(auto, sub, res);
     if (out.band !== undefined) autonomyBand($, auto, out.band.text);
+    if (out.armed === true) void openBoard($, board, { auto: true });
+    if (sub === 'disarm' && res.ok) stopBoardTimer(board);
     return { text: out.text };
   } catch (error) {
     return { text: `Orchestra autonomy: ${String(error instanceof Error ? error.message : error)}` };
@@ -243,7 +253,7 @@ async function autonomyCommand($: Dollar, auto: AutonomyState, args: string, see
 }
 
 /** One step of the existing tick: reads status at most every 30 s while active, every tick while `watch`; never throws. */
-async function autonomyPoll($: Dollar, auto: AutonomyState, seen: Seen, watch: boolean): Promise<void> {
+async function autonomyPoll($: Dollar, auto: AutonomyState, board: Board, seen: Seen, watch: boolean): Promise<void> {
   if ((!auto.active && !auto.unknown && !watch) || auto.busy) return;
   const epoch = auto.epoch;
   const changes = auto.changes;
@@ -257,7 +267,11 @@ async function autonomyPoll($: Dollar, auto: AutonomyState, seen: Seen, watch: b
     const out = pollOutcome(auto, res);
     if (!out.changed) return;
     autonomyBand($, auto, out.band);
-    if (out.toast !== null) $.ui.toast(out.toast);
+    if (out.toast !== null) {
+      stopBoardTimer(board);
+      $.ui.toast(out.toast);
+    }
+    if (out.armed) void openBoard($, board, { auto: true });
   } catch {
     // A failed read is retried at the next interval; a tick never throws.
   } finally {
@@ -280,12 +294,19 @@ type Board = {
   agents: Map<string, string>;
   /** Native task mirror: per run, the cards seen with a task and the cards dropped from sync for the rest of the run. */
   sync: Sync;
+  /** The fallback refresh timer while the pane is open, and whether the pane-not-placed hint was shown. */
+  timer: { cancel: () => void } | null;
+  hinted: boolean;
+  /** Autonomy status and the owner's decisions, read while autonomy is active; the last good value stays on a failed read. */
+  autonomy: Autonomy | null;
+  decisions: string[];
 };
 
 function newBoard(): Board {
   return {
     view: null, okAt: null, staleSince: null, running: null, queued: false, links: new Map(), agents: new Map(),
     sync: { wanted: true, line: 'Native tasks: off (no board read yet)', runId: '', known: new Set(), dropped: new Set() },
+    timer: null, hinted: false, autonomy: null, decisions: [],
   };
 }
 
@@ -299,7 +320,7 @@ async function syncTasks($: Dollar, sync: Sync, view: View): Promise<void> {
     if (!view.sessionActive || view.runId === '') return off('no active run');
     if (!view.bound) return off('this session does not own the run');
     const names = (await $.tool.list()).map((t) => t.name);
-    if (!TASK_TOOLS.every((n) => names.includes(n))) return off('task tools unavailable');
+    if (!TASK_TOOLS.every((n) => names.includes(n))) return off('task tools unavailable; on 5.5 models start Claude Code with CLAUDE_CODE_ENABLE_TODO_TOOLS=1');
     // Every task tool must pass without a dialog: `$.tool.call` runs the permission check, which can ask.
     const probes: [string, Json][] = [
       ['TaskCreate', { subject: `[${runShort(view.runId)}] probe`, description: 'Orchestra board probe' }],
@@ -346,6 +367,41 @@ async function syncTasks($: Dollar, sync: Sync, view: View): Promise<void> {
   }
 }
 
+/** One toast per move, at most MOVE_TOASTS, then the count of the rest; a toast that fails is skipped. */
+function toastMoves($: Dollar, lines: string[]): void {
+  try {
+    for (const line of lines.slice(0, MOVE_TOASTS)) $.ui.toast(line);
+    if (lines.length > MOVE_TOASTS) $.ui.toast(`Orchestra: +${lines.length - MOVE_TOASTS} more`);
+  } catch {
+    // A toast is a convenience.
+  }
+}
+
+/** While autonomy is active: its status and the last decisions taken for the owner. A failed read keeps the last value. */
+async function readAutonomy($: Dollar, board: Board, view: View): Promise<void> {
+  if (!view.autonomyActive) {
+    board.autonomy = null;
+    board.decisions = [];
+    return;
+  }
+  try {
+    const res = await cliRun($, ['autonomy', 'status']);
+    if (!('gone' in res)) {
+      const parsed = cliResult(res.run.exitCode, res.run.stdout, res.run.stderr);
+      const status = parsed.ok ? parseAutonomy(parsed.body) : null;
+      if (status !== null) board.autonomy = status;
+    }
+  } catch {
+    // The last status stays.
+  }
+  try {
+    const w = await readWhere($);
+    if (w !== null && w.state !== '') board.decisions = parseDecisions(await $.fs.read(`${w.state}/progress.md`));
+  } catch {
+    // The last decisions stay.
+  }
+}
+
 async function refreshOnce($: Dollar, board: Board): Promise<void> {
   let sid = '';
   try {
@@ -364,10 +420,13 @@ async function refreshOnce($: Dollar, board: Board): Promise<void> {
   if (view === null) {
     if (board.staleSince === null) board.staleSince = now;
   } else {
+    const prev = board.view;
     board.view = view;
     board.okAt = now;
     board.staleSince = null;
+    toastMoves($, diffMoves(prev, view));
   }
+  if (view !== null) await readAutonomy($, board, view);
   try {
     board.agents = new Map((await $.agent.list()).map((a) => [a.id, a.status]));
   } catch {
@@ -407,6 +466,29 @@ async function refreshBoard($: Dollar, board: Board): Promise<void> {
   return run;
 }
 
+/**
+ * Opens the board pane and keeps it fresh. `auto` is the open autonomy asks for when it arms: no focus, and one hint
+ * toast per process when the terminal is too narrow to place it. The command's open takes the focus. Never throws.
+ */
+async function openBoard($: Dollar, board: Board, o: { auto: boolean }): Promise<void> {
+  try {
+    const res = await $.ui.open(o.auto ? { id: BOARD, title: 'Orchestra board' } : { id: BOARD, title: 'Orchestra board', focus: true });
+    if (o.auto && res.isPlaced === false && !board.hinted) {
+      board.hinted = true;
+      try {
+        $.ui.toast(BOARD_HINT);
+      } catch {
+        // A toast is a convenience.
+      }
+    }
+    await refreshBoard($, board);
+    stopBoardTimer(board);
+    board.timer = $.clock.every(BOARD_FALLBACK_MS, () => refreshBoard($, board));
+  } catch {
+    // The board is a convenience; a failure leaves the pane as it was.
+  }
+}
+
 export const register: Register = (on: On) => {
   let tick: { cancel: () => void } | null = null;
   let gen = 0;
@@ -422,7 +504,6 @@ export const register: Register = (on: On) => {
   let starting: Promise<void> | null = null;
   let where: Where | null = null;
   let boardRegistered = false;
-  let boardTimer: { cancel: () => void } | null = null;
   const board = newBoard();
   // Guard `minimal` fast path inputs: the policy's mode from `where`, and whether the last status read showed a
   // stopped run (its kept report may hold the unattended lock, which this module cannot see); null is unknown.
@@ -452,10 +533,7 @@ export const register: Register = (on: On) => {
     if (w !== null && w.standingOrders) where = w;
   };
 
-  const cancelBoardTimer = (): void => {
-    if (boardTimer) boardTimer.cancel();
-    boardTimer = null;
-  };
+  const cancelBoardTimer = (): void => stopBoardTimer(board);
 
   on('session.start', async ($, e, next) => {
     // R5 finding 2: the generation is taken before any await, so of overlapping starts only the last runs on.
@@ -549,7 +627,7 @@ export const register: Register = (on: On) => {
             enqueue(fresh(current));
             // SPEC 12.7: the autonomy read rides this tick (no second timer) and never blocks the marker.
             // Under guard `minimal` the fast path rests on this read, so it runs at every tick while not active.
-            void autonomyPoll($, auto, seen, guardMode === 'minimal');
+            void autonomyPoll($, auto, board, seen, guardMode === 'minimal');
           });
         }
         return true;
@@ -570,7 +648,7 @@ export const register: Register = (on: On) => {
     try {
       if (!isWindowsPath($.plugin.root) && !boardRegistered) {
         boardRegistered = true;
-        await $.command.register({ name: BOARD, description: 'Show the Orchestra board: cards, session and autonomy' });
+        await $.command.register({ name: BOARD, description: 'Show the Orchestra board: cards, session and autonomy', immediate: true });
       }
     } catch {
       // The board is a convenience; it never takes the guard down.
@@ -748,19 +826,12 @@ export const register: Register = (on: On) => {
   });
 
   on('command.run', { command: BOARD }, async ($) => {
-    try {
-      await $.ui.open({ id: BOARD, title: 'Orchestra board', focus: true });
-      await refreshBoard($, board);
-      cancelBoardTimer();
-      boardTimer = $.clock.every(BOARD_FALLBACK_MS, () => refreshBoard($, board));
-    } catch {
-      // The board is a convenience; a failure leaves the pane as it was.
-    }
+    await openBoard($, board, { auto: false });
     return {};
   });
 
   on('command.run', { command: AUTONOMY_COMMAND }, async ($, e) => {
-    const out = await autonomyCommand($, auto, e.args, seen);
+    const out = await autonomyCommand($, auto, board, e.args, seen);
     applyWhere(await readWhere($).catch(() => null));
     return out;
   });
@@ -781,7 +852,7 @@ export const register: Register = (on: On) => {
       // Ages read from the last refresh.
     }
     const sync = board.sync;
-    const m = paneModel({ view: board.view, nowMs: now, okAt: board.okAt, staleSince: board.staleSince, links: board.links, agents: board.agents, syncLine: sync.line, bodyColumns: e.props.bodyColumns, surface: e.surface });
+    const m = paneModel({ view: board.view, nowMs: now, okAt: board.okAt, staleSince: board.staleSince, links: board.links, agents: board.agents, syncLine: sync.line, bodyColumns: e.props.bodyColumns, surface: e.surface, autonomy: board.autonomy, decisions: board.decisions });
     const buttons = Box({
       flexDirection: 'row',
       gap: 1,

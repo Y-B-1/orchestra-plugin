@@ -51,6 +51,7 @@ CONTEXT = (
     'artifact evidence, independent review and integration. Workers never delegate '
     'or change coordinator state. Session start injects context only; do not repair '
     'the repository, resume prior runs or arm autonomy without an explicit request. '
+    '`start --recover` of this session\'s own run is not a resume: it arms no autonomy. '
     'Release needs configured authorization and current evidence. Native hook '
     'identity and shell inspection are best effort, not hostile-worker isolation.'
 )
@@ -161,8 +162,21 @@ def _runs_orchestra(command, pattern, hit):
             if pattern.search(' '.join(words)):
                 return True
         for i, word in enumerate(words):
-            if Path(word).name == 'orchestra.py' and hit(words[i + 1:]):
+            if Path(word).name == 'orchestra.py' and (hit(words[i + 1:]) or _do_step_hits(words[i + 1:], hit)):
                 return True
+    return False
+
+
+def _do_step_hits(rest, hit):
+    """`orchestra.py do "STEP" ...` runs each quoted step as its own command: read every step after `do` word by word."""
+    if 'do' not in rest:
+        return False
+    for step in rest[rest.index('do') + 1:]:
+        try:
+            if hit(shlex.split(step)):
+                return True
+        except ValueError:
+            return True  # An unbalanced step cannot be read word by word: count it
     return False
 
 
@@ -256,6 +270,11 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     `unattended` marks a stopped run whose report is kept without an owner receipt: it locks like an active run.
     A warning collected while deciding rides on an otherwise empty answer as `additionalContext`."""
     notes = []
+    if engine is not None and not busy and isinstance(payload, dict) and not payload.get('agent_id') and (
+            event == 'Stop' or (event == 'PreToolUse' and payload.get('tool_name') in _SHELL_TOOLS
+                                and 'orchestra.py' in str((payload.get('tool_input') or {}).get('command') or ''))):
+        level = (payload.get('effort') or {}).get('level') if isinstance(payload.get('effort'), dict) else None
+        _record_model(engine, payload, level if level in EFFORTS else None)  # live m1: the first turn has no earlier record
     result = _decide(event, payload, notes, mode if mode in ('minimal', 'normal') else 'protect', harness=harness, state_dir=state_dir,
                      engine=engine, armed=armed, autonomy=autonomy, busy=busy, missing_cwd=missing_cwd, started=started,
                      unattended=unattended is True)
@@ -294,16 +313,23 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
                 engine.apply_harness_rebind(session_id)  # B-F5: the one SessionStart write
             except Exception:
                 pass  # An unloadable state or changed contract never blocks the context
+        if not worker and engine is not None and payload.get('source') != 'fork' and isinstance(session_id, str) and session_id:
+            try:
+                engine.revive_harness_session(session_id)  # A restart of the same conversation keeps its lease
+            except Exception:
+                pass
+        if not worker:
+            _record_model(engine, payload)  # Bookkeeping, not progress; any error is swallowed
         if not worker and engine is not None:
             line, armed = _run_line(engine)
             context += line
             if not armed:
                 context += _report_context(engine)  # while autonomy is armed the last brief's stop reason is stale
+            context += _leftovers(engine, payload.get('transcript_path'))
             if _other_session(engine, session_id) and _run_active(engine):
                 context += (' An Orchestra run is active in this repository but bound to another session, so this session is not '
-                            'its coordinator and may use any agent type. If that session is gone, the owner recovers it with '
-                            '`orchestra.py --actor main --lease L interrupt`, L read from session.lease in '
-                            + str(engine.state_path) + '.')
+                            'its coordinator: it reads only and may use any agent type. To move the run here once that session '
+                            'has ended, run `orchestra.py start --recover --take-over --harness-session ' + str(session_id) + '`.')
         if not worker and isinstance(session_id, str) and session_id:
             context += ' Harness session id: ' + session_id + '. Pass --harness-session ' + session_id + ' to orchestra.py start.'
         return HookResult({'hookSpecificOutput': {'hookEventName': event, 'additionalContext': context}})
@@ -364,6 +390,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             armed_before = _armed_now(engine)
             reason = engine.hook_stop()
             if isinstance(reason, str) and reason:
+                if armed_before and _ends_with_question(payload):
+                    reason += ' ' + DECIDE_OR_PARK
                 return HookResult({'decision': 'block', 'reason': reason})
             if armed_before:
                 return HookResult(_stopped_note(engine) if not _armed_now(engine) else {})
@@ -375,6 +403,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
     name, data = payload.get('tool_name'), payload.get('tool_input')
     if not isinstance(name, str) or not name or not isinstance(data, dict):
         return _deny('Malformed tool payload', True)
+    if name == 'AskUserQuestion':
+        return _answer_question(payload, data, engine)
     if name in _APPROVAL_TEXT_TOOLS and _carries_approval_text(data):
         return _deny('A message or scheduled prompt that is only the approval word could record the owner\'s approval; '
                      'the owner types it in their own session')
@@ -529,6 +559,8 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         cleanup = _autonomy_cleanup(command, decision, cwd, engine)
         if cleanup is not None:
             return cleanup
+        if _rm_in_temp(command):
+            return HookResult({})  # Files under the system temp directory hold no work of the run
         if engine is not None and _rm_in_worktrees(command, cwd):
             return HookResult({})  # Section 3.4: the run may delete files inside a linked worktree
         if engine is not None and _deletes_only_ignored(command, cwd):
@@ -848,7 +880,7 @@ def _pull_request_push(command, cwd, engine, plain=False):
     return None
 
 
-_PARK_HINT = 'park this card with `orchestra.py park TASK --reason ...` and continue with other cards.'
+_PARK_HINT = "park this card with `orchestra.py park TASK --reason 'needs-owner: WHY'` and continue with other cards."
 
 
 def _hint(engine, state_dir):
@@ -992,11 +1024,83 @@ def _compact_brief(text):
     return '\n'.join(out).strip()
 
 
+_STATE_ORDER = ('queued', 'running', 'reported', 'repairing', 'parked', 'held', 'accepted')
+
+
+def _age(at):
+    """'Nm ago' or 'Nh ago' for an ISO time; 'at an unknown time' when it does not parse."""
+    try:
+        seconds = max(0, int(datetime.now(timezone.utc).timestamp() - datetime.fromisoformat(str(at)).timestamp()))
+    except (TypeError, ValueError):
+        return 'at an unknown time'
+    return '%dm ago' % (seconds // 60) if seconds < 7200 else '%dh ago' % (seconds // 3600)
+
+
+def _live_counts(status):
+    counts = {}
+    for task in (status.get('tasks') or {}).values():
+        counts[task.get('state')] = counts.get(task.get('state'), 0) + 1
+    return ', '.join('%s %d' % (s, counts[s]) for s in _STATE_ORDER if counts.get(s)) or 'no cards'
+
+
+def _live_transcripts(transcript_path):
+    """How many subagent transcripts of this conversation were written in the last LIVE_TRANSCRIPT_SECONDS: a worker
+    can outlive a restart, and a recently written transcript means one is still working. None when unknown."""
+    if not isinstance(transcript_path, str) or not transcript_path.endswith('.jsonl'):
+        return None
+    root = Path(transcript_path[:-len('.jsonl')]) / 'subagents'
+    try:
+        cutoff = time.time() - LIVE_TRANSCRIPT_SECONDS
+        return sum(1 for f in root.rglob('*.jsonl') if f.stat().st_mtime >= cutoff)
+    except OSError:
+        return None
+
+
+LIVE_TRANSCRIPT_SECONDS = 120
+
+
+def _leftovers(engine, transcript_path=None):
+    """After a restart: the running worker cards, how many worker transcripts are still being written (a worker can
+    outlive the restart), and the run worktrees that hold uncommitted work, so the coordinator knows what to resume
+    and does not start a second worker beside a live one. Empty when there is nothing; never raises."""
+    try:
+        status = engine.status()
+        running = [(i, t) for i, t in sorted((status.get('tasks') or {}).items())
+                   if t.get('state') == 'running' and not t.get('inline')]
+        parts = ['%s (worker %s, started %s)' % (i, t.get('worker'), _age(t.get('started_at'))) for i, t in running[:10]]
+        dirty = []
+        listing = subprocess.run(['git', '-C', str(engine.repo), 'worktree', 'list', '--porcelain'], capture_output=True,
+                                 text=True, timeout=5).stdout
+        for line in listing.splitlines():
+            if not line.startswith('worktree '):
+                continue
+            path = Path(line[len('worktree '):])
+            if '.claude/worktrees/' not in path.as_posix() or len(dirty) >= 10:
+                continue
+            changed = subprocess.run(['git', '-C', str(path), 'status', '--porcelain'], capture_output=True, text=True,
+                                     timeout=5).stdout.splitlines()
+            if changed:
+                dirty.append('%s (%d uncommitted)' % (path.name, len(changed)))
+    except Exception:
+        return ''
+    text = ''
+    if parts:
+        live = _live_transcripts(transcript_path)
+        alive = '' if live is None else (' %d worker transcript%s written in the last 2 minutes;' % (live, '' if live == 1 else 's'))
+        text += (' Running worker cards:' + alive + ' check each worker is gone before you redispatch its card: '
+                 + '; '.join(parts) + '.')
+    if dirty:
+        text += ' Run worktrees with uncommitted work: ' + ', '.join(dirty) + '.'
+    return text
+
+
 def _report_context(engine):
     try:
-        brief = engine.status().get('last_brief')
+        status = engine.status()
+        brief = status.get('last_brief')
         if isinstance(brief, dict) and isinstance(brief.get('text'), str):
-            return ' Run brief (' + str(brief.get('reason')) + '): ' + _compact_brief(brief['text'])[:2000] \
+            return ' Run brief (' + str(brief.get('reason')) + ', written ' + _age(brief.get('at')) + '; live board: ' \
+                + _live_counts(status) + '): ' + _compact_brief(brief['text'])[:2000] \
                 + ' Full report: ' + str(brief.get('path')) + '.'
         report = engine.autonomy_report()
     except Exception:
@@ -1298,6 +1402,8 @@ def _autonomy_cleanup(command, decision, cwd, engine=None):
     if len(words) == 4 and words[:3] in (['git', 'branch', '-d'], ['git', 'branch', '--delete']):
         branch = words[3]
     elif len(words) == 4 and words[:3] == ['git', 'worktree', 'remove'] and not words[3].startswith('-'):
+        if _merged_run_worktree(cwd, words[3]):
+            return HookResult({})  # A clean run worktree whose commits the current branch already holds
         branch = _worktree_branch(cwd, words[3])
         if isinstance(branch, HookResult):
             return branch
@@ -1308,6 +1414,75 @@ def _autonomy_cleanup(command, decision, cwd, engine=None):
     merged = replace(decision, category='merged-delete', kind='local', branch=branch, remote=None)
     denied = _merged_delete_check(merged, cwd, engine, plane=True)
     return HookResult(denied) if denied else HookResult({})
+
+
+def _merged_run_worktree(cwd, path):
+    """True when `path` is a linked worktree under `<repository>/.claude/worktrees/` that is not the session's own,
+    has no change `git status --porcelain` reports, and whose HEAD is an ancestor of the HEAD at cwd."""
+    code, out = _git_out(cwd, 'worktree', 'list', '--porcelain')
+    if code != 0 or not out.startswith('worktree '):
+        return False
+    main = Path(out.split('\n', 1)[0][len('worktree '):]).resolve()
+    here, target = Path(cwd).resolve(), (Path(cwd) / path).resolve()
+    if target == here or target in here.parents or (main / '.claude' / 'worktrees') not in target.parents:
+        return False
+    if target not in _linked_worktrees(cwd):
+        return False
+    code, status = _git_out(target, 'status', '--porcelain')
+    code_head, head = _git_out(target, 'rev-parse', 'HEAD')
+    if code != 0 or status or code_head != 0 or not head:
+        return False
+    return _git_out(cwd, 'merge-base', '--is-ancestor', head, 'HEAD')[0] == 0
+
+
+_TEMP_PLAIN = re.compile(r'[A-Za-z0-9_./:+=*?\[\]~${}-]+( [A-Za-z0-9_./:+=*?\[\]~${}-]+)*')
+_TMPDIR_PREFIX = re.compile(r'\$(?:TMPDIR|\{TMPDIR\})(?=/|$)')
+
+
+def _rm_in_temp(command):
+    """`rm` with any flags as one plain command whose every operand lies below `/tmp`, `/private/tmp` or `$TMPDIR`.
+    The operand is resolved first, so a `..` or a link that leaves the directory refuses it; a glob may stand only in the
+    last component (one before it could cross a link), is judged by the directory before it and may not start with a
+    dot. The temp directory itself is never an operand."""
+    if not _TEMP_PLAIN.fullmatch(command.strip()):
+        return False
+    words = command.split()
+    if words[0] != 'rm':
+        return False
+    roots = [Path('/tmp').resolve(), Path('/private/tmp').resolve()]
+    tmpdir = os.environ.get('TMPDIR')
+    if tmpdir and os.path.isabs(tmpdir) and len(Path(tmpdir).resolve().parts) >= 3:
+        roots.append(Path(tmpdir).resolve())
+    operands, options = [], True
+    for word in words[1:]:
+        if options and word == '--':
+            options = False
+        elif options and word.startswith('-'):
+            if not _RM_FLAGS.fullmatch(word):
+                return False
+        else:
+            operands.append(word)
+    if not operands:
+        return False
+    for operand in operands:
+        if _TMPDIR_PREFIX.match(operand):
+            if not tmpdir or not os.path.isabs(tmpdir):
+                return False
+            operand = tmpdir.rstrip('/') + operand[_TMPDIR_PREFIX.match(operand).end():]
+        if '$' in operand or '{' in operand or '}' in operand or not operand.startswith('/') or '..' in operand.split('/'):
+            return False
+        parts = operand.split('/')
+        if any(re.search(r'[*?\[]', part) for part in parts[:-1]):
+            return False
+        for part in parts:
+            if re.search(r'[*?\[]', part) and (part.startswith('.') or ('[' in part and '.' in part)):
+                return False
+        glob = re.search(r'[*?\[]', operand)
+        base = operand[:glob.start()].rsplit('/', 1)[0] if glob else operand
+        target = Path(base or '/').resolve()
+        if not any(root in target.parents or (glob and target == root) for root in roots):
+            return False
+    return True
 
 
 _RM_PLAIN = re.compile(r'[A-Za-z0-9_./:+=*?\[\]~-]+( [A-Za-z0-9_./:+=*?\[\]~-]+)*')
@@ -1495,13 +1670,45 @@ def _lands_in_state(target, state_dir, cwd, inside, notes_ok=False, at_root=True
     return not _is_state_note(target, state_dir, base)
 
 
+def _quote_open_at(text, end):
+    """The quote character open at offset `end` of `text` ('', "'" or '"'), read the way bash reads quotes."""
+    quote, i = '', 0
+    while i < end:
+        c = text[i]
+        if quote == "'":
+            quote = '' if c == "'" else quote
+        elif c == '\\':
+            i += 1
+        elif quote == '"':
+            quote = '' if c == '"' else quote
+        elif c in '\'"':
+            quote = c
+        i += 1
+    return quote
+
+
+def _strip_descriptor_copies(command):
+    """Blank each descriptor copy (`>&1`, `2>&-`), which writes no file. A copy followed by a quote is a copy only when
+    that quote closes an open quoted string and a delimiter follows, as in `sh -c "echo x >&1"`. A quote that opens a
+    new string joins the word, so `>&1""/x` and `>&1" "/x` redirect to a file, and `>&1new` is a file too."""
+    def blank(match):
+        after = match.end()
+        if after < len(command) and command[after] in '\'"':
+            closes = _quote_open_at(command, match.start()) == command[after]
+            rest = command[after + 1:after + 2]
+            if not (closes and (rest == '' or rest in ' \t\n;&|<>()\'"')):
+                return match.group(0)
+        return ' '
+    return re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()\'"])', blank, command)
+
+
 def _writes_state(command, state_dir, cwd):
     """A shell command that writes into the state directory: an output redirect, tee, cp or install aimed at it, or rm, mv,
     ln, truncate, dd, chmod or `sed -i` there. Outside a lock the coordinator's notes at the state root are not state
     (redirects, tee, cp and install may write them). Reads and orchestra.py commands are not writes. Text only: best effort."""
     if _cli_only(command) or not _touches_state(command, state_dir, cwd):
         return False
-    text = re.sub(r'\d*>&\s*(?:\d+|-)(?![^\s;&|<>()])', ' ', command)  # a descriptor copy writes no file; `>&1new` is a file
+    text = _strip_descriptor_copies(command)
     text = text.replace('&>', '>')
     text = re.sub(r'>&(?=\s*[^\s&>])', '>', text)  # `>&FILE` sends stdout and stderr to a file
     inside = False  # an earlier `cd` into the state directory
@@ -1793,6 +2000,78 @@ def _deletes_only_ignored(command, cwd):
     return True
 
 
+DECIDE_OR_PARK = ('Autonomy is armed and the owner is away. Decide this yourself: take the option you would recommend, '
+                  'record the decision in your next message, and continue. If only the owner can answer (a secret, a code, '
+                  "an account action, or a matter of their taste), park the card with `orchestra.py park TASK --reason "
+                  "'needs-owner: <the question>'` and continue with other cards.")
+
+
+def _answer_question(payload, data, engine):
+    """AskUserQuestion while autonomy is armed: answer each question with its "(Recommended)" option, log the decisions to
+    progress.md, and deny a question with no such option. Unarmed, without an engine, from a worker or from a session the
+    run is not bound to: no decision, so the question reaches the person."""
+    if engine is None or payload.get('agent_id') or _other_session(engine, payload.get('session_id')) or not _armed_now(engine):
+        return HookResult({})
+    questions = data.get('questions')
+    answers = {}
+    if isinstance(questions, list) and questions:
+        for item in questions:
+            options = item.get('options') if isinstance(item, dict) else None
+            text = item.get('question') if isinstance(item, dict) else None
+            if not isinstance(text, str) or not isinstance(options, list):
+                answers = None
+                break
+            labels = [o['label'] for o in options if isinstance(o, dict) and isinstance(o.get('label'), str)
+                      and o['label'].rstrip().lower().endswith('(recommended)')]
+            if not labels:
+                answers = None
+                break
+            answers[text] = ', '.join(labels) if item.get('multiSelect') is True else labels[0]
+    else:
+        answers = None
+    if not answers:
+        return _deny(DECIDE_OR_PARK)
+    try:
+        from .engine import _append_progress  # Lazy, like the other engine imports
+        at = datetime.now(timezone.utc).isoformat(timespec='seconds')
+        _append_progress(engine.state_dir, '\n'.join('- decided for the owner: %s -> %s (at %s)' % (q, a, at)
+                                                    for q, a in answers.items()))
+    except Exception:
+        pass  # The log is a courtesy; the answer still stands
+    return HookResult({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'allow',
+                                              'updatedInput': {**data, 'answers': answers}}})
+
+
+def _ends_with_question(payload):
+    """True when the last assistant message ends with a question (a `?` in its last 600 characters): the message from the
+    Stop payload, else the last assistant text of the transcript (its last 256 KB). Any error means no question."""
+    try:
+        text = payload.get('last_assistant_message')
+        if not isinstance(text, str):
+            text = ''
+            with open(payload['transcript_path'], 'rb') as handle:
+                handle.seek(0, os.SEEK_END)
+                size = handle.tell()
+                handle.seek(max(0, size - 256 * 1024))
+                lines = handle.read().decode('utf-8', 'replace').splitlines()
+            for line in reversed(lines):
+                try:
+                    row = json.loads(line)
+                    message = row['message']
+                    if row.get('type') != 'assistant' or not isinstance(message.get('content'), list):
+                        continue
+                    parts = [c['text'] for c in message['content'] if isinstance(c, dict) and c.get('type') == 'text'
+                             and isinstance(c.get('text'), str)]
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    continue
+                if parts:
+                    text = '\n'.join(parts)
+                    break
+        return '?' in text[-600:]
+    except Exception:
+        return False
+
+
 def _armed_now(engine):
     """Strict: True only when the engine says autonomy is active; any error is False (used to see autonomy end)."""
     try:
@@ -1865,19 +2144,101 @@ def _board_stop(engine, payload):
         return {}
 
 
+EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')  # As engine.EFFORTS; hooks import the engine lazily
+
+
+def _transcript_model(path):
+    """The model of the last assistant entry in the last 256 KB of a transcript, or None for any error."""
+    try:
+        with open(path, 'rb') as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            handle.seek(max(0, size - 262144))
+            lines = handle.read().decode('utf-8', 'replace').splitlines()
+        for line in reversed(lines):
+            try:
+                entry = json.loads(line)
+            except ValueError:
+                continue
+            message = entry.get('message') if isinstance(entry, dict) and entry.get('type') == 'assistant' else None
+            model = message.get('model') if isinstance(message, dict) else None
+            if isinstance(model, str) and model.strip() and not model.startswith('<'):
+                return model
+    except Exception:
+        pass
+    return None
+
+
+def _record_model(engine, payload, effort=None):
+    """Record the main session's model (payload, else the transcript) and effort. Bookkeeping: every error is swallowed."""
+    try:
+        if engine is None or payload.get('agent_id'):
+            return
+        model = payload.get('model')
+        if not (isinstance(model, str) and model.strip()):
+            path = payload.get('transcript_path')
+            model = _transcript_model(path) if isinstance(path, str) and path else None
+        if model is None and effort is None:
+            return
+        session = engine.view().get('session') or {}  # a read: an unchanged record writes nothing
+        if (model is None or session.get('model') == model) and (effort is None or session.get('effort') == effort):
+            return
+        engine.record_model(model, effort)
+    except Exception:
+        pass
+
+
+def _model_line(engine, view):
+    """The Model fit line for a prompt, or None: the cards of the board that run on another model than the session's."""
+    session = view.get('session') or {}
+    if not session.get('active'):
+        return None
+    queued = [c for c in view.get('cards') or [] if c.get('state') == 'queued']
+    model, effort = engine.session_model({'session': session})
+    if not model:
+        if any(c['role'] == 'builder' for c in queued):
+            return 'Session model: unknown; the engine refuses no inline card on model grounds.'
+        return None
+    away = []
+    for card in queued:
+        need_model, need_effort = engine.card_model(card)
+        want, have = engine._family(need_model), engine._family(model)
+        higher = (want == have and need_effort in EFFORTS and effort in EFFORTS
+                  and EFFORTS.index(effort) < EFFORTS.index(need_effort))
+        if want and have and (want != have or higher):
+            away.append('%s (%s %s)' % (card['id'], need_model, need_effort))
+    if not away:
+        return None
+    extra = ' +%d' % (len(away) - 8) if len(away) > 8 else ''
+    return 'Session model: %s%s. Cards that must go to a worker (another model): %s%s.' % (
+        model, ' ' + effort if effort else '', ', '.join(away[:8]), extra)
+
+
 def prompt_board(payload, engine):
     """The UserPromptSubmit answer for the board: one `Orchestra board: ...` context line when the board signature
-    differs from `<state>/board-seen.json` (then stored); `{}` otherwise."""
+    differs from `<state>/board-seen.json` (then stored), plus the Model fit line when it changed; `{}` otherwise."""
     try:
         if engine is None or _other_session(engine, payload.get('session_id')):
             return {}
+        effort = os.environ.get('CLAUDE_EFFORT')
+        _record_model(engine, payload, effort if effort in EFFORTS else None)
         view, directory = _board(engine), Path(engine.state_dir)
+        parts = []
         text = delta.line(view, delta.read(directory, 'board-seen.json'))
-        if text is None:
+        if text is not None:
+            delta.store(directory, 'board-seen.json', view)
+            (directory / 'pending-delta').unlink(missing_ok=True)
+            parts.append(text)
+        fit = _model_line(engine, view) if view else None
+        seen = directory / 'model-seen'
+        if fit is not None and (not seen.is_file() or seen.read_text() != fit):
+            seen.write_text(fit)
+            parts.append(fit)
+        elif fit is None and seen.is_file():
+            seen.unlink()
+        if not parts:
             return {}
-        delta.store(directory, 'board-seen.json', view)
-        (directory / 'pending-delta').unlink(missing_ok=True)
-        return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': text}}
+        return {'hookSpecificOutput': {'hookEventName': 'UserPromptSubmit', 'additionalContext': ' '.join(parts)}}
     except Exception:
         return {}
 
@@ -2080,10 +2441,27 @@ def _prompt_submit(payload):
     return 0
 
 
+def _model_switch(payload):
+    """PostModelSwitch records the main session's new model. It never blocks and never adds context."""
+    try:
+        if isinstance(payload, dict) and isinstance(payload.get('cwd'), str) and payload['cwd'] \
+                and not payload.get('agent_id') and isinstance(payload.get('to_model'), str):
+            repo, state_dir = _run_location(payload['cwd'])
+            if (state_dir / 'state.json').is_file():
+                from .engine import Engine
+                from .paths import load_policy
+                _record_model(Engine(state_dir, repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT),
+                              {'model': payload['to_model']})
+    except Exception:
+        pass
+    print('{}')
+    return 0
+
+
 def _main(argv=None):
     started = time.monotonic()
     parser = argparse.ArgumentParser()
-    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit', 'PostToolUse'])
+    parser.add_argument('event', choices=['SessionStart', 'PreToolUse', 'SubagentStart', 'SubagentStop', 'Stop', 'Interrupt', 'SessionEnd', 'UserPromptSubmit', 'PostToolUse', 'PostModelSwitch'])
     parser.add_argument('--harness', choices=['claude'], default='claude')
     parser.add_argument('--from-mod', action='store_true')
     args = parser.parse_args(argv)
@@ -2095,6 +2473,8 @@ def _main(argv=None):
         _CRASH_TOOL['name'] = payload['tool_name']
     if args.event == 'UserPromptSubmit':
         return _prompt_submit(payload)
+    if args.event == 'PostModelSwitch':
+        return _model_switch(payload)
     if (args.event == 'PreToolUse' and args.harness == 'claude' and not args.from_mod
             and isinstance(payload, dict) and isinstance(payload.get('tool_name'), str)
             and payload.get('tool_name') in _MOD_TOOLS and not _reviewer_call(payload)

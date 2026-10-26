@@ -86,6 +86,39 @@ class WavesReadTests(WaveFixture):
         self.engine.start_inline('main', self.lease, 't1')
         self.assertNotIn('t1', self.engine.waves()['startable_now'])
 
+    def test_cards_sharing_a_resource_are_startable_but_not_in_the_same_wave(self):
+        self.task('A', files=['A'], resources=['db'])
+        self.task('B', files=['B'], resources=['db'])
+        self.task('C', files=['C'])
+        out = self.engine.waves()
+        self.assertEqual(out['startable_now'], ['A', 'B', 'C'])
+        self.assertEqual(out['wave_now'], ['A', 'C'])
+        self.assertEqual(len(out['serialized']), 1)
+        entry = out['serialized'][0]
+        self.assertEqual((entry['card'], entry['waits_for']), ('B', 'A'))
+        self.assertIn('db', entry['reason'])
+        view = self.engine.view()
+        self.assertEqual((view['wave_now'], view['serialized']), (out['wave_now'], out['serialized']))
+        with self.assertRaisesRegex(EngineError, r'resource db held by A \(running\)'):
+            self.engine.wave('main', self.lease, ['A', 'B'])
+
+    def test_overlapping_files_serialize_with_the_path_named(self):
+        self.task('A', files=['src'])
+        self.task('B', files=['src/inner'])
+        out = self.engine.waves()
+        self.assertEqual(out['wave_now'], ['A'])
+        self.assertEqual([(e['card'], e['waits_for']) for e in out['serialized']], [('B', 'A')])
+        self.assertIn('src', out['serialized'][0]['reason'])
+
+    def test_the_whole_wave_text_names_wave_now(self):
+        self.task('A', files=['A'], resources=['db'])
+        self.task('B', files=['B'], resources=['db'])
+        self.task('C', files=['C'])
+        with self.assertRaises(EngineError) as caught:
+            self.engine.dispatch('main', self.lease, 'A', 'w')
+        self.assertRegex(str(caught.exception), r'wave A C \(or pass')
+        self.assertNotIn('B', str(caught.exception).split('(or pass')[0])
+
 
 class CheckpointTests(WaveFixture):
     def test_a_lone_dispatch_is_refused_when_another_disjoint_card_could_start(self):
@@ -257,7 +290,7 @@ class BoardViewTests(unittest.TestCase):
         self.assertNotIn('"assignment"', text)
         self.assertNotIn('"lease"', text)
         self.assertNotIn('harness_session', text)
-        self.assertEqual(view['session'], {'active': True, 'size': 'medium'})
+        self.assertEqual(view['session'], {'active': True, 'size': 'medium', 'model': None, 'effort': None})
         self.assertIs(view['bound'], True)
         self.assertIs(self.cli('board', '--view', '--session', 'other')['bound'], False)
         self.assertIs(self.cli('board', '--view')['bound'], False)
