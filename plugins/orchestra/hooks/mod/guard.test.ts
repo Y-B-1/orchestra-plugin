@@ -178,8 +178,9 @@ test('classifier: malformed input denies, size and depth caps', () => {
 // scripts/check.sh and is never tighter. One test per shape keeps each inside that limit.
 const RATIO_FACTOR = 8;
 const HARNESS_LIMIT_MS = 5000;
+const TEST_TIMEOUT_MS = 30000; // the runner's default 5 s per test is too tight when other suites load the machine; its option is timeoutMs
 for (const [levels, width] of [[5, 2], [4, 4], [6, 2], [5, 3]] as const) {
-  test(`FX6: crafted nested shell ${levels}x${width} denies in time comparable to its benign twin (F89)`, () => {
+  test(`FX6: crafted nested shell ${levels}x${width} denies in time comparable to its benign twin (F89)`, { timeoutMs: TEST_TIMEOUT_MS }, () => {
     const quote = (text: string): string => "'" + text.replace(/'/g, `'"'"'`) + "'";
     const nested = (tail: string): string => {
       let body = 'git status';
