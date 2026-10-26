@@ -82,13 +82,15 @@ class TempRemovalTest(CleanupFixture):
             with self.subTest(command=command):
                 self.assertIsNone(self.hook(command))
 
-    def test_rm_under_tmpdir_is_allowed(self):
+    def test_rm_of_a_tmpdir_operand_is_denied_and_says_to_write_the_path(self):
+        # 2.15.2 RH: the shell may export another TMPDIR than the hook, so `$TMPDIR` is never relieved
         with tempfile.TemporaryDirectory() as tmp:
             old = os.environ.get('TMPDIR')
             os.environ['TMPDIR'] = tmp
             try:
-                self.assertIsNone(self.hook('rm -f $TMPDIR/a'))
-                self.assertIsNone(self.hook('rm -rf ${TMPDIR}/a'))
+                self.assertEqual(self.hook('rm -f $TMPDIR/a'), 'deny')
+                self.assertEqual(self.hook('rm -rf ${TMPDIR}/a'), 'deny')
+                self.assertIn('write the temp path in full', self.hook_reason('rm -f $TMPDIR/a'))
             finally:
                 if old is None:
                     os.environ.pop('TMPDIR')

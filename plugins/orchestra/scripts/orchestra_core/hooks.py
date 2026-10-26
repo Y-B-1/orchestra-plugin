@@ -584,7 +584,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
             return _deny('Autonomy is active: ' + (_push_shape_note(command, cwd, engine)
                                                    or 'merges and releases wait for the owner.') + ' ' + hint)
         if decision.boundary == 'delete':
-            return _deny('Approval boundary under autonomy: ' + hint)
+            full = ('write the temp path in full: a $TMPDIR operand is never relieved, since the shell may export '
+                    'another TMPDIR than this hook. ' if _TMPDIR_PREFIX.search(command) else '')
+            return _deny('Approval boundary under autonomy: ' + full + hint)
         if decision.boundary == 'config':
             return _deny('Autonomy is active: ' + decision.reason + '. ' + hint)
         if decision.category == 'boundary' and decision.boundary == 'merge' and _on_default_branch(cwd, engine):
@@ -1573,15 +1575,15 @@ def _rm_in_temp(command, session=None):
     roots = [Path('/tmp').resolve(), Path('/private/tmp').resolve()]
     tmpdir = os.environ.get('TMPDIR')
     if tmpdir and os.path.isabs(tmpdir) and len(Path(tmpdir).resolve().parts) >= 3:
-        roots.append(Path(tmpdir).resolve())
+        own = Path(tmpdir).resolve()
+        if not any(own == r or r in own.parents for r in roots):  # one under /tmp is judged from /tmp, `claude-<uid>` too
+            roots.append(own)
     operands = _rm_operands(words[1:])
     if not operands:
         return False
     for operand in operands:
         if _TMPDIR_PREFIX.match(operand):
-            if not tmpdir or not os.path.isabs(tmpdir):
-                return False
-            operand = tmpdir.rstrip('/') + operand[_TMPDIR_PREFIX.match(operand).end():]
+            return False  # the shell that runs `rm` may export another TMPDIR than the hook (sandboxed shells do)
         if '$' in operand or '{' in operand or '}' in operand or not operand.startswith('/') or '..' in operand.split('/'):
             return False
         parts = operand.split('/')
@@ -1595,8 +1597,8 @@ def _rm_in_temp(command, session=None):
         target = Path(base or '/').resolve()
         if glob and target in roots:
             prefix = operand[len(base) + 1:glob.start()].lower()  # APFS compares names without case
-            if not prefix or 'claude-'.startswith(prefix) or prefix.startswith('claude-'):
-                return False  # `/tmp/*` or `/tmp/cl*` could take every session's `claude-<uid>` scratchpad with it
+            if not prefix or any(name.startswith(prefix) or prefix.startswith(name) for name in ('claude-', 'cc-')):
+                return False  # `/tmp/cl*` takes every `claude-<uid>` scratchpad, `/tmp/cc*` Claude Code's `cc-` sockets
             continue
         root = next((r for r in roots if r in target.parents), None)
         if root is None:
