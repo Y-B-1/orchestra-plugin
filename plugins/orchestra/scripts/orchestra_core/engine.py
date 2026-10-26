@@ -21,7 +21,7 @@ import uuid
 from datetime import datetime, timezone
 
 from .guards import classify_command
-from .hooks import EFFORTS
+from .models import EFFORTS, FAMILY_RANK, MODEL_FAMILIES, MODEL_FIT
 from . import portable
 from .paths import push_url_digest
 
@@ -69,7 +69,6 @@ REVIEWER_BAND = (400, 'medium', 'orchestra:code-reviewer-medium')
 REVIEWER_FULL = ('full', 'orchestra:code-reviewer')
 ASKS_ERROR = '--asks must be an integer, 1 or more'
 SELF_REVIEW_ERROR = 'Builder report needs one SELF_REVIEW line'
-MODEL_FAMILIES = ('opus', 'sonnet', 'haiku', 'fable')
 PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop loop gives up as `stalled`
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
 GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which the Stop hook asks for a repair card
@@ -100,7 +99,7 @@ MAX_WORKTREES = 3  # Running builder cards that are not inline; policy.max_workt
 # setting off in silence.
 POLICY_KEYS = frozenset(DEFAULT) | frozenset(DEFAULT_2_3) | {
     'schema_version', 'max_worktrees', 'reserved_ports', 'denied_tools', 'worker_stale_seconds', 'file_budget_bytes', 'file_budget_waivers', 'check_commands',
-    'release_timeout_seconds', 'guard_mode', 'release_workflows', 'parallel_waves'}
+    'release_timeout_seconds', 'guard_mode', 'release_workflows', 'parallel_waves', 'model_fit'}
 GUARD_MODES = ('minimal', 'normal', 'protect')  # `guard_mode` is read live by the hook, so it is left out of the policy hash
 RUN_ID = re.compile(r'[0-9a-f]{16}')
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
@@ -1142,6 +1141,8 @@ class Engine:
         unknown = sorted(set(self.policy) - POLICY_KEYS)
         if unknown:
             raise EngineError('Unknown policy key: ' + ', '.join(unknown))
+        if self.policy.get('model_fit', MODEL_FIT[0]) not in MODEL_FIT:
+            raise EngineError('Policy model_fit must be one of: ' + ', '.join(MODEL_FIT))
 
     def _check_start(self, size, asks, owner_request):
         """Contract item 2: what a new run must state. The CLI runs it before archiving an ended run."""
@@ -2010,8 +2011,7 @@ class Engine:
     def start_inline(self, actor, lease, task_id, serial=None):
         return self._start_assignment(actor, lease, task_id, actor, inline=True, serial=serial)
 
-    @staticmethod
-    def _check_route(state, task, inline, helper):
+    def _check_route(self, state, task, inline, helper):
         """Contract item 3. A state with no `route` (made by 2.3) is not checked."""
         session = state['session']
         if 'size' in session:
@@ -2019,7 +2019,7 @@ class Engine:
             if task['role'] == 'builder' and size == 'tiny' and not inline and not (isinstance(helper, str) and helper.strip()):
                 raise EngineError('Tiny unit: the main session does this work; pass --helper REASON to dispatch a helper')
             if inline and size != 'tiny':
-                Engine._check_model_fit(state, task)
+                Engine._check_model_fit(state, task, self.policy.get('model_fit', MODEL_FIT[0]) == 'exact')
             return
         route = session.get('route')
         if route is None or task['role'] != 'builder':
@@ -2057,15 +2057,19 @@ class Engine:
         return session.get('model'), effort if effort in EFFORTS else None
 
     @staticmethod
-    def _check_model_fit(state, task):
-        """Inline work runs on the session's model and effort, which cannot change per card. A card whose models.json
-        model family differs, or whose effort is above the session's on the same model, goes to a worker. An unknown model refuses nothing."""
+    def _check_model_fit(state, task, exact=False):
+        """Inline work runs on the session's model and effort, which cannot change per card. The main session runs a card
+        inline when its model family ranks at or above the card's (opus > sonnet > haiku) and, on the same family, its
+        effort is at or above the card's; a weaker session sends the card to a worker. `exact` (policy `model_fit:
+        "exact"`) keeps the 2.15.1 rule: any other family goes to a worker. An unknown model refuses nothing."""
         need_model, need_effort = Engine.card_model(task)
         have_model, have_effort = Engine.session_model(state)
         want, have = Engine._family(need_model), Engine._family(have_model)
         low = (want and want == have and need_effort in EFFORTS and have_effort in EFFORTS
                and EFFORTS.index(have_effort) < EFFORTS.index(need_effort))  # effort compares only within one model
-        if (want and have and want != have) or low:
+        weaker = want and have and want != have and (exact or want not in FAMILY_RANK or have not in FAMILY_RANK
+                                                     or FAMILY_RANK[have] < FAMILY_RANK[want])
+        if weaker or low:
             raise EngineError('Model fit: %s needs %s %s and the main session runs %s %s; start it on a worker, '
                               'which runs on the card\'s own model (`wave` or `dispatch`)'
                               % (task['id'], need_model, need_effort, have_model or 'unknown', have_effort or 'unknown'))
@@ -2437,7 +2441,7 @@ class Engine:
         now, serialized = self._wave_now(state, actor, cheap=cheap)
         return dict(overlaps=overlaps, chains=chains, blocked=blocked, waves=waves,
                     startable_now=list(self._startable(state, actor, cheap)),
-                    wave_now=[i for i, _ in now], serialized=serialized, track=self._track(state),
+                    wave_now=[i for i, _ in now], serialized=serialized, track=self._track(state, self._startable(state, actor, cheap)),
                     idle_workers=self._idle(state), prep=self._prep(state))
 
     def _routes(self, state, task, inline):
@@ -2447,11 +2451,13 @@ class Engine:
             return False
         return True
 
-    def _track(self, state):
+    def _track(self, state, startable=None):
         """The order the main session works through the queued cards: one step per inline card, each with the `side`
         cards workers run beside it (disjoint, within the worker and worktree caps). A step takes a ready card (a
         dependency counts once it is accepted, held, running or reported) that fits the session model, the one that
-        unblocks the most other cards first, then the earliest; with none that fits the step is `coordinator` work."""
+        unblocks the most other cards first, then the earliest; with none that fits the step is `coordinator` work.
+        Step 1 takes only cards that can start now (`startable`: id to start modes, as `wave` and `inline` see them), so
+        `you run X` names a card `inline X` starts; with none, step 1 is `coordinator` work and `wait` is set."""
         tasks = state['tasks']
         queued, blocked = [], set()
         for task in self._by_seq(tasks.values()):
@@ -2465,23 +2471,29 @@ class Engine:
         done = {i for i, t in tasks.items() if t['state'] in ('accepted', 'held', 'running', 'reported')}
         steps, free = [], True
         while queued:
+            now = startable if startable is not None and not steps else None  # step 1: what starts now
             ready = [t for t in queued if all(d in done for d in t['dependencies'] + t.get('review_of', []))
-                     and not (t.get('finalize') and any(o is not t and not o.get('finalize') for o in queued))]
-            inline = [t for t in ready if t['role'] not in REVIEW_ROLES and self._routes(state, t, True)]
+                     and not (t.get('finalize') and any(o is not t and not o.get('finalize') for o in queued))
+                     and (now is None or t['id'] in now)]
+            fits = (lambda t, mode: mode in now[t['id']]) if now is not None else (lambda t, mode: self._routes(state, t, mode == 'inline'))
+            inline = [t for t in ready if t['role'] not in REVIEW_ROLES and fits(t, 'inline')]
             pick = min(inline, key=lambda t: (-sum(t['id'] in o['dependencies'] + o.get('review_of', [])
                                                    for o in queued if o is not t), t.get('seq', 0)), default=None)
             workers, worktrees = self._caps(state, free)
             free = False
             used, side = ([pick] if pick else []), []
             for task in ready:
-                if (task is pick or len(used) >= workers or not self._routes(state, task, False)
+                if (task is pick or len(used) >= workers or not fits(task, 'worker')
                         or (task['role'] == 'builder' and sum(tasks[i]['role'] == 'builder' for i in side) >= worktrees)
                         or any(self._overlap(state, task, other) for other in used)):
                     continue
                 side.append(task['id'])
                 used.append(task)
             if not used:
-                break
+                if now is None:
+                    break
+                steps.append(dict(step=1, card=None, side=[], coordinator=TRACK_COORDINATOR, wait=True))
+                continue
             step = dict(step=len(steps) + 1, card=pick['id'] if pick else None, side=side)
             if not pick:
                 step['coordinator'] = TRACK_COORDINATOR

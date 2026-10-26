@@ -72,6 +72,7 @@ def store(directory, name, view):
 
 
 NO_FIT = 'no card fits the session model; you coordinate, accept and review'
+WAIT = 'nothing can start now; accept and review the running work'
 
 
 def track_text(view):
@@ -82,7 +83,7 @@ def track_text(view):
         return None
     first = steps[0]
     side = first.get('side') or []
-    main = 'you run '+first['card'] if first.get('card') else NO_FIT
+    main = 'you run '+first['card'] if first.get('card') else (WAIT if first.get('wait') else NO_FIT)
     return 'Track: '+main+('; side: '+', '.join(side) if side else '')
 
 

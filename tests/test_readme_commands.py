@@ -83,7 +83,8 @@ class SharedCodeTests(unittest.TestCase):
         from orchestra_core import engine
         self.assertIs(engine.EFFORTS, hooks.EFFORTS)
         self.assertEqual(1, len(re.findall(r'^EFFORTS = ', text('plugins/orchestra/scripts/orchestra_core/hooks.py')
-                                           + text('plugins/orchestra/scripts/orchestra_core/engine.py'), re.M)))
+                                           + text('plugins/orchestra/scripts/orchestra_core/engine.py')
+                                           + text('plugins/orchestra/scripts/orchestra_core/models.py'), re.M)))
 
     def test_hooks_share_a_transcript_tail_reader_and_an_rm_operand_reader(self):
         self.assertTrue(callable(hooks._transcript_tail))

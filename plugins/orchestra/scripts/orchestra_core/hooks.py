@@ -39,7 +39,7 @@ _REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
 _LEASE_FLAG = re.compile(r'(?<![\w-])--lease(?![\w-])')  # not --force-with-lease
 LEASE_COORDINATOR_ONLY = 'The coordinator lease is coordinator-only: a worker never runs orchestra.py with --lease'
 AUTONOMY_STOPPED = 'Orchestra autonomy stopped: %s. The run brief is in %s.'
-EFFORTS = ('low', 'medium', 'high', 'xhigh', 'max')  # The one definition; engine imports it (hooks load engine lazily)
+from .models import EFFORTS  # The one definition lives in models.py, shared with the engine
 STATE_SHELL = ('a shell command may not touch the Orchestra state directory; run orchestra.py for engine commands, and the '
                'Write tool for review packages and progress notes')
 SUBAGENT_GUARD = ('Orchestra run active: this agent is not an orchestra:* agent; stop and report. '

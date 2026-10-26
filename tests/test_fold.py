@@ -36,19 +36,19 @@ class ModelFitTests(te.EngineFixture):
         self.task('B1', mode='mechanical')
         self.assertEqual({'inline', 'worker'}, self.modes('B1'))
 
-    def test_a_different_model_family_is_worker_only(self):
-        self.assertTrue(self.engine.record_model('claude-opus-5-5[1m]', 'high'))
+    def test_a_weaker_model_family_is_worker_only(self):
+        self.assertTrue(self.engine.record_model('claude-haiku-5-5', 'high'))
         self.task('B1')
         self.assertEqual({'worker'}, self.modes('B1'))
-        with self.assertRaisesRegex(EngineError, 'Model fit: B1 needs claude-sonnet-5-5 medium and the main session runs claude-opus-5-5'):
+        with self.assertRaisesRegex(EngineError, 'Model fit: B1 needs claude-sonnet-5-5 medium and the main session runs claude-haiku-5-5'):
             self.engine.start_inline('main', self.lease, 'B1')
         self.engine.dispatch('main', self.lease, 'B1', 'w-B1')
 
-    def test_a_haiku_card_in_a_sonnet_session_is_worker_only(self):
+    def test_a_haiku_card_in_a_sonnet_session_also_runs_inline(self):
         self.engine.record_model('claude-sonnet-5-5', 'medium')
         self.task('M1', mode='mechanical')
         self.task('I1')
-        self.assertEqual({'worker'}, self.modes('M1'))
+        self.assertEqual({'inline', 'worker'}, self.modes('M1'))
         self.assertEqual({'inline', 'worker'}, self.modes('I1'))
 
     def test_a_lower_session_effort_is_worker_only(self):
@@ -62,24 +62,24 @@ class ModelFitTests(te.EngineFixture):
         with mock.patch.dict(os.environ, {'CLAUDE_EFFORT': 'high'}):
             self.assertEqual({'inline', 'worker'}, self.modes('B1'))
 
-    def test_an_investigator_on_another_model_is_worker_only(self):
-        self.engine.record_model('claude-sonnet-5-5', 'medium')
-        self.task('I1', role='investigator', mode='code')  # code discovery runs on Haiku
+    def test_an_investigator_on_a_stronger_model_is_worker_only(self):
+        self.engine.record_model('claude-haiku-5-5', 'high')
+        self.task('I1', role='investigator', mode='docs')  # docs research runs on Sonnet
         self.assertEqual({'worker'}, self.modes('I1'))
-        with self.assertRaisesRegex(EngineError, 'Model fit: I1 needs claude-haiku-5-5 high'):
+        with self.assertRaisesRegex(EngineError, 'Model fit: I1 needs claude-sonnet-5-5'):
             self.engine.start_inline('main', self.lease, 'I1')
 
     def test_a_designer_planner_on_another_model_is_worker_only(self):
         self.engine = Engine(self.root / 'large', self.repo)
         self.lease = self.engine.open_session('main', size='medium', asks=2, owner_request=True)  # a plan card needs an owner request
-        self.engine.record_model('claude-opus-5-5', 'high')
+        self.engine.record_model('claude-haiku-5-5', 'high')
         self.task('P1', role='designer-planner', mode='plan')
         self.assertEqual({'worker'}, self.modes('P1'))
         with self.assertRaisesRegex(EngineError, 'Model fit: P1 needs claude-sonnet-5-5 high'):
             self.engine.start_inline('main', self.lease, 'P1')
 
-    def test_an_operator_on_another_model_is_worker_only(self):
-        self.engine.record_model('claude-sonnet-5-5', 'high')
+    def test_an_operator_above_the_session_effort_is_worker_only(self):
+        self.engine.record_model('claude-haiku-5-5', 'low')
         self.task('O1', role='operator', mode='gate')
         self.assertEqual({'worker'}, self.modes('O1'))
 
@@ -102,7 +102,7 @@ class ModelFitTests(te.EngineFixture):
         self.engine.wave('main', self.lease, ['B1', 'B2'], inline='B1')
 
     def test_a_mismatched_wave_runs_every_card_on_workers(self):
-        self.engine.record_model('claude-opus-5-5', 'high')
+        self.engine.record_model('claude-haiku-5-5', 'high')
         self.task('B1')
         self.task('B2')
         with self.assertRaisesRegex(EngineError, 'Model fit'):
