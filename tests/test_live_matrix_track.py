@@ -138,3 +138,15 @@ class Parse(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ScratchpadScenarioTest(unittest.TestCase):
+    """2.15.2 LV2: scenario a4 proves the scratchpad delete rule live on a decoy tree, never a real scratchpad."""
+
+    def test_a4_is_registered_and_uses_only_the_decoy_tree(self):
+        self.assertIn('a4', lm.SCENARIOS)
+        self.assertEqual(lm.DECOY, '/tmp/claude-99999')
+        source = PATH.read_text()
+        body = source[source.index('def a4_'):source.index('\n\n\ndef ', source.index('def a4_'))]
+        self.assertNotIn('getuid', body)
+        self.assertNotIn('claude-501', body)

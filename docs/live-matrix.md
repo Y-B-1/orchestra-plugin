@@ -4,10 +4,10 @@
 
 ## What it tests
 
-Twenty-one scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
+Twenty-two scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
 
 - Guard modes: `g0` (no run), `g1` minimal, `g2` normal, `g3` protect.
-- Autonomy: `a1` git limits while armed, `a2b` ledger, settings and cron locks, `a3b` the owner-only `approved` receipt.
+- Autonomy: `a1` git limits while armed, `a2b` ledger, settings and cron locks, `a3b` the owner-only `approved` receipt, `a4` scratchpad deletes on a decoy `/tmp/claude-99999` tree (a temp root, a project's sessions and another session's directory are denied; a plain temp file glob is allowed).
 - Capture: `d1` Agent tool, `d2` Workflow, `w1` worktree wave, `h2b` board line after a captured report.
 - Worker limits: `d3` missing Mode line, `d4` lease and delegation denies.
 - Run flow: `h1` the Stop block, `r1b` resume and `start --recover`.
