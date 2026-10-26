@@ -234,8 +234,11 @@ def accept_index(ev, cid):
 
 
 def main_wrote(ev, name, sub=False):
-    """True when a main-session (or, with sub, a subagent) Write, Edit or Bash call names the file NAME."""
-    return any(c['sub'] == sub and name in ((c['cmd'] or '') if c['tool'] == 'Bash' else c['input'] if c['tool'] in ('Write', 'Edit') else '')
+    """True when a main-session (or, with sub, a subagent) Write or Edit call names the file NAME, or a Bash call writes it
+    (a `>` or `>>` redirect into it, or `tee` of it); a Bash call that only names it does not count."""
+    f = r'''["']?(?:[^\s"']*/)?''' + re.escape(name) + r'''["']?(?![\w.-])'''
+    bash = re.compile(r'>>?\s*' + f + r'|\btee\s+(?:-\w+\s+)*' + f)
+    return any(c['sub'] == sub and (bool(bash.search(c['cmd'] or '')) if c['tool'] == 'Bash' else c['tool'] in ('Write', 'Edit') and name in c['input'])
                for c in ev['calls'])
 
 
