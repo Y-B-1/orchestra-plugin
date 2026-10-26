@@ -147,7 +147,28 @@ class NativeTests(unittest.TestCase):
         # Claude Code takes the version from plugin.json first; a second copy in the entry can only drift.
         self.assertNotIn('version', entry)
         self.assertEqual(len(set(versions.values())), 1, versions)
-        self.assertEqual(set(versions.values()), {'2.15.1'})
+        self.assertEqual(set(versions.values()), {'2.15.2'})
+
+    def test_2152_docs_describe_the_release(self):
+        changelog = (ROOT / 'CHANGELOG.md').read_text().split('## 2.15.2')[1].split('\n## ')[0]
+        notes = (ROOT / 'docs/release-notes/v2.15.2.md').read_text()
+        ledger = (ROOT / 'docs/BUILD-LEDGER.md').read_text().split('## 2.15.2')[1]
+        for label, text in (('changelog', changelog), ('notes', notes), ('ledger', ledger)):
+            for word in ('model_fit', 'replace', 'resume', 'full_check', 'deferred', 'F108'):
+                with self.subTest(label, word=word):
+                    self.assertIn(word, text)
+        self.assertIn('t1', ledger)
+        self.assertIn('22 scenarios', ledger)
+        self.assertIn('`cancelBoardTimer` is used', (ROOT / 'docs/BUILD-LEDGER.md').read_text())
+
+    def test_2151_doc_notes_are_corrected(self):
+        ledger = (ROOT / 'docs/BUILD-LEDGER.md').read_text()
+        self.assertNotIn('still allows `rm -rf /tmp/*`', ledger)
+        cli = (ROOT / 'docs/cli.md').read_text()
+        self.assertNotIn('open_session', cli)
+        self.assertIn('only when the card was parked without', cli)
+        for word in ('model_fit', '`replace OLD TASKFILE`', '`resume ID`', 'full_check', 'needs_triage', 'Changes in 2.15.2'):
+            self.assertIn(word, cli)
 
     def test_plugin_has_a_square_icon(self):
         icon = PLUGIN / '.claude-plugin/icon.png'

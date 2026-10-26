@@ -538,7 +538,7 @@ RAUQ2 (`5122b03`) closed the AUQ chain's held finding: a descriptor copy is drop
 
 ### Deferred to a follow-up (review notes at 4c6d34e and later; the ones 2.15.1 closed are removed, see the 2.15.1 section)
 
-- `_rm_in_temp` still allows `rm -rf /tmp/*` under autonomy. 2.15.1 refuses a glob that would empty a `claude-*` scratch directory; the rest of the temp directory stays deletable, and the code comment "hold no work of the run" is optimistic.
+- `_rm_in_temp` denied `rm -rf /tmp/*` under autonomy in 2.15.1 (a glob that would empty a `claude-*` scratch directory is refused); the rest of the temp directory stays deletable, and the code comment "hold no work of the run" is optimistic. The 2.15.1 text here said the command was allowed; that was wrong.
 - "A tiny task starts no run" still appears in both `SKILL.md` and `triage.md`: `tests/test_skill_routing.py` pins each. Dropping one needs that test changed.
 - `cancelBoardTimer` in `orchestra.ts` is still a one-line wrapper over `stopBoardTimer`, and `now.py` spaces its operators differently from `engine.py` and `hooks.py` (style only, accepted).
 - Accepted limit (note 15): a card commit that changes only sibling-owned files and lies inside that sibling's `base..report_sha` range counts as sibling work, because no commit records which card made it in a shared checkout; the sibling's review covers that range.
@@ -589,3 +589,28 @@ Source: a read-only triage of the 2.15 live run (friction F67 to F96) and the re
 - F101: The coordinator accepted E1 and E1F on targeted suites only, and the full suite later found a regression in each: one in finish leftovers and one in F84 freeing chain files. Proposed fix: after any card that edits engine.py, accept only on the full suite or a frozen-copy run of it.
 - Not done in 2.15.1 for lack of ownership: dropping the repeated "A tiny task starts no run" prose (pinned by `tests/test_skill_routing.py`) and the `cancelBoardTimer` wrapper in `orchestra.ts`.
 - Unchecked: the F89 reproduction was not rerun by the docs card; live `report` inside `do` is unchecked.
+
+## 2.15.2 (2026-10-27)
+
+Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's track model: the main session runs the main part of the work inline and spins off disjoint side work. Built card by card on branch `orchestra-2.15.2` from `c0e011e`. The changes are listed in `CHANGELOG.md`.
+
+| Item | Change | Evidence |
+| --- | --- | --- |
+| Model fit (`afd5548`) | Families rank opus > sonnet > haiku; a session at or above the card's family runs it inline, the same family compares effort. Policy `model_fit` is `stronger` (default) or `exact` (the 2.15.1 rule). Track step 1 names only a card `inline` accepts, else `wait: true`. New `orchestra_core/models.py`; the engine no longer imports the hooks | `tests/test_track_2152.py` |
+| Native tasks (`09755cb`) | Task subjects renumber `step N` and drop it when a card leaves the track | mod unit tests |
+| Guard and hooks (`13c7488`, `e9bacb9`) | Own-session scratchpad deletes, temp file globs, `cd DIR && git worktree remove` home check, cache cleanup, `PostModelSwitch` session id, engine model-fit line, resumed report replaces the first (F102), restart note gates (F103) and live worktrees (F106); F107 flaky test fixed | hook tests |
+| Engine friction (`e67c6da`, `0843e61`) | `replace` (F98), `accept --ruling` on a failing check (F99), `resume` (F102), `deferred` out-of-scope and `needs_triage` (F104), F70 subshell matcher, policy `full_check` (F101) | `tests/test_engine_2152.py` |
+| Acceptance check (`430c676`) | Reads each markdown code span on its own (F105) | engine tests |
+| Live matrix (`611c21f`, `98120bc`) | 22 scenarios. `t1`: in a real Opus session the board said `Track: you run A; side: C`, the main session ran A inline and wrote `a.txt` itself, a worker ran C before A was accepted, and the track then named B. `a4`: the scratchpad delete rule on a decoy Claude temp tree. `t2` and `t3` ran with them | `scripts/live-matrix.py` |
+
+### Corrections to the 2.15.1 ledger
+
+- `cancelBoardTimer` is used twice in `orchestra.ts`; the 2.15.1 note that it is unused was wrong.
+- `rm -rf /tmp/*` was denied in 2.15.1, as the section above now says.
+
+### Deferred to a follow-up
+
+- F108: an `accept --ruling` refusal should quote the failing command it wants named.
+- `t3` records a skip in headless runs because the board mod does not run under `claude -p`; native task renumbering is proven by mod unit tests only.
+- The first prompt after cards are added by CLI shows no board line (the CLI marks the board seen), and the session model reads unknown until the first `orchestra.py` call.
+- The `STATE_COMMANDS` hint in `engine.py` does not list `replace` or `resume`; no test pins it, but the file is outside this card.

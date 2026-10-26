@@ -17,7 +17,13 @@ class SkillRoutingTests(unittest.TestCase):
         text = coordinator_text()
         self.assertIn('Model fit', text)
         self.assertIn('the engine refuses it inline', text)
-        self.assertIn('another model or a higher effort', text)
+        self.assertIn('a stronger model, or a higher effort', text)
+        self.assertIn('A weaker card runs inline', text)
+
+    def test_cli_reference_documents_the_2152_commands(self):
+        text = (SKILL_DIR / 'references/cli.md').read_text()
+        for word in ('replace OLD TASKFILE', 'resume ID', 'full_check', 'model_fit', 'deferred', 'needs_triage'):
+            self.assertIn(word, text)
 
     def test_repair_by_failure_kind(self):
         text = coordinator_text()

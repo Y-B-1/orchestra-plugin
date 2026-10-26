@@ -2,6 +2,37 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.15.2 — 2026-10-27
+
+The main session runs the main track, and the friction left from 2.15.1 (F97 to F107).
+
+- **Model fit ranks families:** a session at or above a card's model family (opus, then sonnet, then haiku) runs the card inline; on the same family the effort decides. A weaker session sends the card to a worker. The policy key `model_fit` is `stronger` (the default) or `exact`, which keeps the 2.15.1 rule (any other family goes to a worker). Track step 1 names only a card that `inline` accepts now; with none it says `wait: true`. The shared model constants live in `orchestra_core/models.py`, so the engine no longer imports the hooks.
+- **Native tasks follow the track:** the mod renumbers a task subject's `step N` when the track changes and drops it when the card leaves the track.
+- **`replace OLD TASKFILE`:** adds a card in place of a queued, reported or parked one. Dependencies and review targets move to the new card and the old one is cancelled, in one write; a refused new card changes nothing. A running or accepted card, a card a review covers and a card in a repair chain are refused.
+- **`resume ID`:** sends a reported card back to its worker, running again under the same token. Its report stays as history and the worker's next report replaces it. A report a review covers is refused.
+- **Rulings on failing checks:** `accept ID --ruling TEXT` also covers a failing plain check when the ruling names its command or its test target. Every failing check must be named; a red-first check is never rulable; an inline card takes no ruling.
+- **Out-of-scope notes:** a review's out-of-scope item may be triaged `deferred` with a reason. A final review receipt lists the items nobody triaged yet as `needs_triage`, and refuses nothing.
+- **Policy `full_check`:** `{"paths": [globs], "command": text}`. A card whose diff touches one of the paths needs a passing run of the command in its self-review, or `accept` refuses it.
+- **Checks:** a red-first check's trailing note is dropped only after a word, so `cd d && (make test)` keeps its subshell (F70). The acceptance check reads each markdown code span on its own (F105).
+- **Guard (denies stay as they were except where noted):** under autonomy `rm` below `claude-<uid>` may remove only paths inside one session's directory (the current session's when its id is known); `rm -rf` of the `claude-<uid>` directory itself and a project-level glob below it are denied. A glob directly under the temp directory with a prefix that cannot start `claude-` (`foo*.log`) is allowed again; `/tmp/*` and `/tmp/cl*` stay denied. `cd DIR && git worktree remove` judges the own-worktree check against the session's directory. `__pycache__/` and `*.pyc` do not block cleanup; any other ignored file still does.
+- **Hooks:** `PostModelSwitch` passes the session id, so another bound session cannot rewrite the run's model. The prompt's Model fit line uses the engine rule. A resumed worker's second final message replaces the first report (F102). The restart note lists a gate log with no receipt and a recent write (F103) and worktrees with a live process (F106).
+- **Live matrix:** 22 scenarios. `t1` runs the main track in a real Opus session: the board said `Track: you run A; side: C`, the session wrote `a.txt` itself, a worker ran C before A was accepted, and the track then named B. `a4` proves the scratchpad delete rule on a decoy Claude temp tree.
+- **Tests:** `test_patch_equivalent_work_counts_as_landed` no longer depends on the clock second (F107).
+- **Docs:** `docs/cli.md` and the CLI reference describe the commands and keys above; the 2.15.1 notes are corrected (below).
+
+### Corrections to 2.15.1 wording
+
+- `rm -rf /tmp/*` under autonomy is denied (2.15.1 and later), not allowed as the 2.15.1 ledger said.
+- Escalation adds the original reason only when the card was already parked without the `needs-owner:` prefix. A queued, running or reported card is parked plain `needs-owner:escalated`, and a card already parked `needs-owner:` keeps its text.
+- `cancelBoardTimer` in `orchestra.ts` is used (twice), so the 2.15.1 note that it is unused was wrong.
+- The command is `start`, not the internal `open_session`.
+
+### Known gaps
+
+- `t3` records a skip in headless runs, because the board mod does not run under `claude -p`; native task renumbering is proven by the mod unit tests only.
+- The first prompt after cards are added by CLI shows no board line (the CLI marks the board seen), and the session model reads unknown until the first `orchestra.py` call.
+- F108 is open: an `accept --ruling` refusal should quote the failing command it wants named.
+
 ## 2.15.1 — 2026-10-26
 
 Friction from the 2.15 live run, and the review notes 2.15.0 deferred.

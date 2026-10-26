@@ -84,7 +84,7 @@ Outside a run, the guard allows a non-force push of one branch or tag, `gh pr me
 
 `gate [--again] [--timeout SECONDS] NAME -- COMMAND...` takes `--timeout` to override `gate_timeout_seconds` for one run (positive and finite). It refuses a repeat of a passed gate with the same argv on an unchanged artifact unless `--again` is given; a failed gate always reruns. `Engine.current_gate_ids()` lists the passed gate receipts on the current whole-repository artifact (`[]` when none); the guard uses it to deny reviewers test-suite commands ("Cite gate receipt <ids>; reviewers do not rerun suites"). It refuses boundary commands, which run only through the guarded hook.
 
-`finding add --review ID --kind finding|out_of_scope --index N --disposition D --reason TEXT [--card ID]` (lease) records what became of one review item. A `finding` takes `rejected`, `deferred`, `inline`, `card` or `brief`; an `out_of_scope` item takes `inline`, `card` or `brief`. A rejection never accepts a card. `finding list [--for-brief]` (no lease) prints the ledger, or a "Known findings" block for a reviewer brief. A reviewer does not raise a known finding unless the code at its location changed.
+`finding add --review ID --kind finding|out_of_scope --index N --disposition D --reason TEXT [--card ID]` (lease) records what became of one review item. A `finding` takes `rejected`, `deferred`, `inline`, `card` or `brief`; an `out_of_scope` item takes `inline`, `card`, `brief` or `deferred`. A rejection never accepts a card. `finding list [--for-brief]` (no lease) prints the ledger, or a "Known findings" block for a reviewer brief. A reviewer does not raise a known finding unless the code at its location changed.
 
 `brief` (no lease, read-only) prints the newest run brief. Every end of a run writes one to `<state>/progress.md`. Put its Needs you, Still failing, Held log, Final rounds and Notes sections in the PR body under "Held / next phase".
 
@@ -121,3 +121,11 @@ Every command that takes the lease rewrites `NOW.md` in the state directory: the
 Escalation parks a card as `needs-owner:escalated (ORIGINAL REASON)`. `start` refuses a run owned by another harness session and names `start --recover --take-over`.
 `review --token TOKEN` takes no report path: it reads the captured report. `add` refuses a final review brief without `Lens:` (and `Required categories:` for combined) and a unittest acceptance line that matches no test file.
 `do "report W T F" "accept ID"` reports and accepts a worker card in one call; `report --accept` stays inline-only.
+
+## 2.15.2 additions
+
+`replace OLD TASKFILE` (lease) adds the card in TASKFILE in place of a queued, reported or parked card: dependencies and review targets move to it and OLD is cancelled, in one write. A refused new card changes nothing; a running or accepted card, a card a review covers and a repair-chain card are refused. `resume ID` (lease) sends a reported card back to its worker under the same token; the next report replaces the first, and a review-covered report is refused. Both work as `do` steps.
+`inline` and `waves` use the rank opus, then sonnet, then haiku: a stronger session runs a weaker card, the same family compares effort, a weaker session sends the card to a worker. Policy `model_fit` is `stronger` (default) or `exact` (any other family goes to a worker). Track step 1 names only a card `inline` accepts now, else `wait: true`.
+`accept ID --ruling TEXT` also covers a failing plain check that the ruling names by its command or a test target; name every failing check. A red-first check is never covered.
+`finding add --kind out_of_scope --disposition deferred --reason TEXT` defers an out-of-scope item. A final `review` receipt lists items no finding triages yet as `needs_triage` and refuses nothing.
+Policy `full_check` is `{"paths": [globs], "command": text}`: a card whose diff touches a path needs a passing run of that command in its self-review, or `accept` refuses it.
