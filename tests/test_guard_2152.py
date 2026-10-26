@@ -54,6 +54,15 @@ class ScratchpadDeleteTest(ta.CleanupFixture):
         self.assertEqual(self.hook('rm -rf %s/proj' % root), 'deny')
 
 
+class ScratchpadCaseTest(ta.CleanupFixture):
+    def test_a_differently_cased_claude_directory_is_denied(self):
+        for command in ('rm -rf /tmp/CLAUDE-%d' % UID, 'rm -rf /private/tmp/Claude-%d/p' % UID,
+                        'rm -rf /private/tmp/Claude-%d/proj/%s' % (UID, OTHER), 'rm -rf /tmp/Claude-*', 'rm -rf /tmp/CLA*',
+                        'rm -f /tmp/Cl*.log', 'rm -rf /tmp/claude-%d/proj/*' % UID):
+            with self.subTest(command=command):
+                self.assertEqual(self.hook(command, session=OWN), 'deny')
+
+
 class TempFileGlobTest(ta.CleanupFixture):
     def test_a_file_glob_with_a_prefix_that_cannot_be_claude_is_allowed(self):
         for command in ('rm -f /tmp/foo*.log', 'rm -f /private/tmp/orchestra-check.*', 'rm -rf /tmp/x/*.log'):
@@ -89,6 +98,20 @@ class IgnoredCacheCleanupTest(ta.CleanupFixture):
         self.assertIsNone(self.hook('git worktree remove .claude/worktrees/pc'))
         (path / 'secret.local').write_text('x')
         self.assertEqual(self.hook('git worktree remove .claude/worktrees/pc'), 'deny')
+
+
+class IgnoredFolderFileTest(ta.CleanupFixture):
+    def test_a_non_cache_file_inside_an_ignored_cache_folder_blocks_removal(self):
+        path = self.run_worktree('pf')
+        (path / '.gitignore').write_text('__pycache__/\n*.pyc\n')
+        tg.subprocess.run(['git', '-C', str(path), 'add', '.gitignore'], check=True)
+        tg.subprocess.run(['git', '-C', str(path), 'commit', '-qm', 'ignore'], check=True)
+        self.merge('pf')
+        (path / 'pkg' / '__pycache__').mkdir(parents=True)
+        (path / 'pkg' / '__pycache__' / 'm.cpython-313.pyc').write_bytes(b'x')
+        self.assertIsNone(self.hook('git worktree remove .claude/worktrees/pf'))
+        (path / 'pkg' / '__pycache__' / 'notes.md').write_text('keep me')
+        self.assertEqual(self.hook('git worktree remove .claude/worktrees/pf'), 'deny')
 
 
 class ModelSwitchSessionTest(tmr.ModelCase):

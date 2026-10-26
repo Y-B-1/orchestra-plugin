@@ -88,6 +88,13 @@ class RefusalTests(CaptureCase):
         self.assertNotIn('hookSpecificOutput', out)
         self.assertTrue((self.reports / (self.token + '.md')).is_file())
 
+    def test_a_refused_second_report_leaves_the_saved_report_unchanged(self):
+        self.stop()
+        with mock.patch.object(type(self.engine), 'report', side_effect=EngineError('refused')):
+            out = self.stop(message='STATUS: ISSUES\nARTIFACT: def456 clean\nNew text.')
+        self.assertEqual(out['decision'], 'block')
+        self.assertEqual((self.reports / (self.token + '.md')).read_text(), GOOD)
+
     def test_it_never_blocks_twice(self):
         with mock.patch.object(type(self.engine), 'report', side_effect=EngineError('refused')):
             out = self.stop(active=True)
