@@ -347,6 +347,14 @@ class IntegrationRepairTests(EngineFixture):
             with self.subTest(timeout=timeout), self.assertRaisesRegex(EngineError, 'Gate timeout must be positive and finite'):
                 self.engine.run_gate('main', self.lease, 'bad', [sys.executable, '-c', 'pass'], timeout=timeout)
 
+    def test_a_timed_out_gate_keeps_the_output_a_python_child_printed_before_the_kill(self):
+        code = "print('step 1 ok'); import time; time.sleep(30)"
+        receipt = self.engine.run_gate('main', self.lease, 'slow', [sys.executable, '-c', code], timeout=1)
+        self.assertEqual(124, receipt['exit_code'])
+        log = pathlib.Path(receipt['path']).read_text()
+        self.assertIn('step 1 ok', log)
+        self.assertIn('Gate timed out', log)
+
     def test_bad_state_is_engine_error(self):
         for value in [[], {}, {'repo': str(self.repo)}, {'version': 1, 'repo': str(self.repo), 'policy': self.engine.policy_hash, 'tasks': []}]:
             self.engine.state_path.write_text(json.dumps(value))
@@ -2245,7 +2253,7 @@ class MaterialityTests(EngineFixture):
     def test_reviewer_brief_needs_no_keep_remove(self):
         self.task('B1')
         self.task('V1', role='code-reviewer', mode='final', files=[], review_of=['B1'],
-                  brief=self.brief('rev.md', 'Mode: final\nObjective.\n'))
+                  brief=self.brief('rev.md', 'Mode: final\nLens: correctness\nObjective.\n'))
         self.assertIn('V1', self.engine.status()['tasks'])
 
     def two_reviews(self, resources1=(), resources2=()):
@@ -5239,6 +5247,12 @@ args = sys.argv[1:]
 with open(os.environ['FAKE_GH_LOG'], 'a') as log:
     log.write(json.dumps(args) + '\\n')
 data = json.load(open(os.environ['FAKE_GH_DATA']))
+if args[:2] == ['pr', 'list']:
+    if '__list__' not in data:
+        sys.stderr.write('list failed\\n')
+        sys.exit(1)
+    print(json.dumps(data['__list__']))
+    sys.exit(0)
 if args[:2] != ['pr', 'view'] or len(args) < 3 or args[2] not in data:
     sys.stderr.write('no pull request found\\n')
     sys.exit(1)
@@ -5388,6 +5402,41 @@ class PullRequestTests(PullRequestFixture):
         self.add_view(url3, number=9, state='OPEN', baseRefName='run/z', headRefName='feat/y', isCrossRepository=False,
                       headRefOid=tip)
         self.assertEqual(len(self.engine.record_pr('main', self.lease, url3)), 3)
+
+    def test_pr_base_may_be_the_open_head_of_a_pull_request_recorded_in_the_previous_run(self):
+        self.git('switch', '-qc', 'feat/y')
+        self.commit('y.txt', 'y')
+        tip = self.git('rev-parse', 'HEAD')
+        url2 = 'https://github.example/o/r/pull/8'
+        self.add_view(url2, number=8, state='OPEN', baseRefName='feat/x', headRefName='feat/y', isCrossRepository=False,
+                      headRefOid=tip)
+        history = self.engine.state_dir / 'history'
+        history.mkdir()
+        refused = 'neither the default branch nor a run branch'
+
+        def listed(*heads, cross=False):
+            views = json.loads(self.gh.data.read_text())
+            views['__list__'] = [dict(headRefName=h, isCrossRepository=cross) for h in heads]
+            self.gh.set(views)
+
+        with self.assertRaisesRegex(EngineError, refused):  # gh lists the head but no run recorded it
+            listed('feat/x')
+            self.engine.record_pr('main', self.lease, url2)
+        (history / 'run-old.json').write_text(json.dumps(dict(state=dict(pull_requests=[
+            'https://github.example/o/r/pull/3', dict(url=self.URL, head_ref='feat/x')]))))
+        for shown, why in (((), 'closed'), (('feat/x',), 'cross-repo')):
+            with self.subTest(why=why), self.assertRaisesRegex(EngineError, refused):
+                listed(*shown, cross=why == 'cross-repo')
+                self.engine.record_pr('main', self.lease, url2)
+        views = json.loads(self.gh.data.read_text())
+        del views['__list__']  # gh failing refuses
+        self.gh.set(views)
+        with self.assertRaisesRegex(EngineError, refused):
+            self.engine.record_pr('main', self.lease, url2)
+        listed('feat/x')
+        self.assertEqual(self.engine.record_pr('main', self.lease, url2)[0]['base_ref'], 'feat/x')
+        self.assertIn(['pr', 'list', '--state', 'open', '--json', 'headRefName,isCrossRepository', '--limit', '200'],
+                      self.gh.calls())
 
     def test_pr_rerun_refreshes_head_and_reviewed(self):
         self.view()
@@ -6162,8 +6211,8 @@ class LandedWorkTests(HoldFixture):
         self.git('switch', '-q', '-')
         return sha
 
-    def accepted(self, name, artifact):
-        self.task(name)
+    def accepted(self, name, artifact, files=None):
+        self.task(name, files=files or [name])
         token = self.engine.dispatch('main', self.lease, name, 'w-' + name)
         self.engine.report('w-' + name, token, done('Built %s\nARTIFACT: %s' % (name, artifact)))
         self.engine.accept('main', self.lease, name)
@@ -6200,7 +6249,7 @@ class LandedWorkTests(HoldFixture):
         second = self.git('rev-parse', 'HEAD')
         self.git('switch', '-q', '-')
         self.accepted('B8', first + ' clean')
-        self.accepted('B9', second + ' clean')
+        self.accepted('B9', second + ' clean', files=['B8', 'B9'])
         self.git('switch', '-q', 'pr')
         self.reviewed('final-pr', ['B8', 'B9'], final=True, categories=self.ALL)
         self.git('switch', '-q', '-')

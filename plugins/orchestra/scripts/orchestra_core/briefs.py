@@ -35,12 +35,12 @@ def _lines(items, empty):
     return '\n'.join('- ' + i for i in items) if items else empty
 
 
-def render(task, repo, base, prep=()):
+def render(task, repo, base, prep=(), review=()):
     """The brief skeleton for a card: Mode line, objective, ownership, numbered acceptance lines repeated as the
     SELF_REVIEW criteria skeleton, Keep and Remove for a builder, the plugin root, the base commit and the report contract."""
     builder = task['role'] == 'builder'
     objective = task.get('outcome') or task.get('objective') or 'Complete card ' + task['id'] + '.'
-    parts = ['# Card %s: %s %s' % (task['id'], task['role'], task['mode']), '', 'Mode: ' + task['mode'], '',
+    parts = ['# Card %s: %s %s' % (task['id'], task['role'], task['mode']), '', 'Mode: ' + task['mode'], *review, '',
              '## Objective', objective, '', 'Inputs:', _lines(task['inputs'], '- none'), '',
              '## Ownership', 'Edit only these files:', _lines(task['files'], '- none: this card edits no file'), '',
              'Resources:', _lines(task['resources'], '- none'), '',
@@ -86,10 +86,28 @@ def prep_notes(engine, task):
             if t.get('prep_for') == task['id'] and t['state'] == 'accepted' and 'report' in t]
 
 
+LENSES = {'medium': 'combined', 'standards': 'standards'}  # a final reviewer's variant to its Lens: line
+
+
+def review_lines(engine, task):
+    """The `Lens:` line, and for a combined lens the `Required categories:` line, of a final review brief. A fix
+    re-review (it reviews a builder repair) carries neither."""
+    if (task['role'], task['mode']) != ('code-reviewer', 'final'):
+        return []
+    tasks = engine.status()['tasks']
+    if any(tasks.get(i, {}).get('mode') == 'repair' for i in task.get('review_of', [])):
+        return []
+    lens = LENSES.get(task.get('variant'), 'correctness')
+    lines = ['Lens: ' + lens]
+    if lens == 'combined':
+        lines.append('Required categories: ' + ', '.join(engine.status(lenses=True)['required_lenses']))
+    return lines
+
+
 def text_of(engine, task):
     """(brief text, path of the card's own brief or None). Refuses a brief without its Mode line."""
     own = _own_brief(engine, task)
-    text = own.read_text(errors='replace') if own is not None and own.is_file() else render(task, engine.repo, _head(engine), prep_notes(engine, task))
+    text = own.read_text(errors='replace') if own is not None and own.is_file() else render(task, engine.repo, _head(engine), prep_notes(engine, task), review_lines(engine, task))
     if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', text, re.M):
         raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
     return text, own
