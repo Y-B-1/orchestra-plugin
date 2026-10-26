@@ -1893,7 +1893,8 @@ class Engine:
         """What `other` holds against `task`. A reported repair holds its parents' files only against a non-repair card:
         a repair card meets just the files and resources the reported repair's own card lists, and the reported
         ancestors under that repair hold nothing against it."""
-        if other['state'] == 'queued' and other.get('repair_of'):  # F84: a queued repair holds only its own files
+        # F84: a queued repair holds only its own files against another repair; against any other card, its chain's.
+        if other['state'] == 'queued' and other.get('repair_of') and task.get('repair_of'):
             return dict(files=list(other['files']), resources=list(other['resources']))
         if task.get('repair_of') and other['state'] == 'reported' and other['role'] == 'builder':
             if other.get('repaired_by'):
