@@ -1499,16 +1499,16 @@ def _autonomy_cleanup(command, decision, cwd, engine=None, home=None):
 
 
 def _worktree_dirty(target):
-    """True when `git status --porcelain --ignored` at target lists anything but Python caches (`__pycache__/`
-    directories and `*.pyc` files), which every builder worktree gains when it runs the tests; failure is dirty."""
-    code, status = _git_out(target, 'status', '--porcelain', '--ignored=matching', '--untracked-files=all')
+    """True when target has a changed or untracked file, or an ignored file other than a Python cache (a `*.pyc` file,
+    which every builder worktree gains when it runs the tests); failure is dirty. Ignored files are listed one by one,
+    so a `pkg/__pycache__/notes.md` is dirty."""
+    code, status = _git_out(target, 'status', '--porcelain', '--untracked-files=all')
+    if code != 0 or status:
+        return True
+    code, ignored = _git_out(target, 'ls-files', '--others', '--ignored', '--exclude-standard', '-z')
     if code != 0:
-        return True  # `matching` names each ignored path itself, so an ignored folder never hides a non-cache file
-    for line in status.splitlines():
-        name = line[3:].strip('"').rstrip('/')
-        if not (line.startswith('!! ') and (name.endswith('.pyc') or name.split('/')[-1] == '__pycache__')):
-            return True
-    return False
+        return True
+    return any(name and not name.endswith('.pyc') for name in ignored.split('\0'))
 
 
 def _merged_run_worktree(cwd, path, engine=None, home=None):
@@ -1594,7 +1594,7 @@ def _rm_in_temp(command, session=None):
         base = operand[:glob.start()].rsplit('/', 1)[0] if glob else operand
         target = Path(base or '/').resolve()
         if glob and target in roots:
-            prefix = operand[len(base) + 1:glob.start()]
+            prefix = operand[len(base) + 1:glob.start()].lower()  # APFS compares names without case
             if not prefix or 'claude-'.startswith(prefix) or prefix.startswith('claude-'):
                 return False  # `/tmp/*` or `/tmp/cl*` could take every session's `claude-<uid>` scratchpad with it
             continue
@@ -1602,7 +1602,7 @@ def _rm_in_temp(command, session=None):
         if root is None:
             return False
         rel = target.relative_to(root).parts
-        if rel[0].startswith('claude-') and not _claude_temp_ok(rel, glob, session):
+        if rel[0].lower().startswith('claude-') and not _claude_temp_ok(rel, glob, session):
             return False
     return True
 
@@ -2306,6 +2306,8 @@ def _record_model(engine, payload, effort=None):
     try:
         if engine is None or payload.get('agent_id') or _other_session(engine, payload.get('session_id')):
             return  # a worker, or a session the run is not bound to, is not the coordinator's model
+        if not payload.get('session_id') and (engine.status().get('session') or {}).get('harness_session'):
+            return  # a bound run cannot tell whose model a payload without a session id carries
         model = payload.get('model')
         if not (isinstance(model, str) and model.strip()):
             path = payload.get('transcript_path')

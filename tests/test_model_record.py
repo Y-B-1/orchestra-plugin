@@ -90,6 +90,16 @@ class ModelSwitchTests(ModelCase):
         self.run_hook('_model_switch', {'to_model': SONNET, 'agent_id': 'a1'})
         self.assertIsNone(self.recorded())
 
+    def test_a_bound_run_ignores_a_payload_without_a_session_id(self):
+        from orchestra_core.engine import Engine
+        self.engine = Engine(self.root / 'bound-nosid', self.repo)
+        self.lease = self.engine.open_session('main', 'OWNER')
+        self.engine.record_model(SONNET, None)
+        self.run_hook('_model_switch', {'to_model': HAIKU})
+        self.assertEqual(self.recorded(), SONNET)
+        hooks_module._record_model(self.engine, {'model': HAIKU})
+        self.assertEqual(self.recorded(), SONNET)
+
     def test_the_event_is_registered(self):
         config = json.loads((pathlib.Path(hooks_module.__file__).resolve().parents[2] / 'hooks/claude.json').read_text())
         command = config['hooks']['PostModelSwitch'][0]['hooks'][0]['command']
