@@ -2415,7 +2415,7 @@ class FindingsLedgerTests(EngineFixture):
             self.engine.add_finding('main', self.lease, receipt['id'], 'finding', 0, 'rejected', '  ')
         self.reported('b')
         final = self.record('f', ['a', 'b'], final=True, out_of_scope=['Dead code in util'])
-        for disposition in ('rejected', 'deferred'):
+        for disposition in ('rejected', 'dropped'):  # 2.15.2 F104: an out-of-scope item may also be `deferred`
             with self.assertRaises(EngineError, msg=disposition):
                 self.engine.add_finding('main', self.lease, final['id'], 'out_of_scope', 0, disposition, 'why')
         self.assertEqual([], self.engine.list_findings())
