@@ -1377,6 +1377,19 @@ test('track: a waiting step says nothing can start now, not that no card fits', 
   expect(drawn.some((t) => t.includes('no card fits'))).toBe(false);
 });
 
+test('track: a busy main session names its running inline card, not a model misfit (2.15.2 RWC)', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  engine(r, { view: boardView([{ id: 'A', state: 'running', seq: 1, worker: 'main' }, { id: 'B', state: 'queued', seq: 2 }], { track: [{ step: 1, card: null, busy: 'A', side: ['B'] }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  const ui = await drawBoard($, 'terminal', 120);
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  expect(drawn).toContain('Step 1: you are running A; side: B');
+  expect(drawn.some((t) => t.includes('no card fits'))).toBe(false);
+});
+
 test('track: the native task list reads as the track, main owns the track cards and workers keep the side cards', async ($, on) => {
   const r = rig(on);
   const s = stage(on, r);

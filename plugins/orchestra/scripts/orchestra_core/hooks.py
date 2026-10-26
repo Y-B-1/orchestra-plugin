@@ -17,6 +17,7 @@ import subprocess
 import time
 
 from . import delta, portable
+from .models import EFFORTS  # The one definition lives in models.py, shared with the engine
 from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
 from .guards import (RULES, Decision, _WORD_START, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
                      guard_digest, runs_test_suite)
@@ -39,7 +40,6 @@ _REVIEWER_TYPES = ('orchestra:code-reviewer', 'orchestra:critic')
 _LEASE_FLAG = re.compile(r'(?<![\w-])--lease(?![\w-])')  # not --force-with-lease
 LEASE_COORDINATOR_ONLY = 'The coordinator lease is coordinator-only: a worker never runs orchestra.py with --lease'
 AUTONOMY_STOPPED = 'Orchestra autonomy stopped: %s. The run brief is in %s.'
-from .models import EFFORTS  # The one definition lives in models.py, shared with the engine
 STATE_SHELL = ('a shell command may not touch the Orchestra state directory; run orchestra.py for engine commands, and the '
                'Write tool for review packages and progress notes')
 SUBAGENT_GUARD = ('Orchestra run active: this agent is not an orchestra:* agent; stop and report. '
@@ -1562,11 +1562,13 @@ def _claude_temp_ok(rel, glob, session):
 
 
 def _rm_in_temp(command, session=None):
-    """`rm` with any flags as one plain command whose every operand lies below `/tmp`, `/private/tmp` or `$TMPDIR`.
-    The operand is resolved first, so a `..` or a link that leaves the directory refuses it; a glob may stand only in the
-    last component (one before it could cross a link), is judged by the directory before it and may not start with a
-    dot. The temp directory itself is never an operand. Directly under a temp root a glob needs a fixed prefix that
-    cannot start `claude-`; below a `claude-<uid>` directory only one session's own files may go (`_claude_temp_ok`)."""
+    """`rm` with any flags as one plain command whose every operand lies below `/tmp`, `/private/tmp` or the hook's
+    `$TMPDIR` written in full (one under `/tmp` or with a `claude-` part adds no root). A `$TMPDIR` operand is refused:
+    the shell may export another TMPDIR than the hook. The operand is resolved first, so a `..` or a link that leaves the
+    directory refuses it; a glob may stand only in the last component (one before it could cross a link), is judged by
+    the directory before it and may not start with a dot. The temp directory itself is never an operand. Directly under
+    a temp root a glob needs a fixed prefix that cannot start `claude-` or `cc-`, and no operand may name a `cc-` entry
+    there; below a `claude-<uid>` directory only one session's own files may go (`_claude_temp_ok`)."""
     if not _TEMP_PLAIN.fullmatch(command.strip()):
         return False
     words = command.split()
@@ -1576,7 +1578,8 @@ def _rm_in_temp(command, session=None):
     tmpdir = os.environ.get('TMPDIR')
     if tmpdir and os.path.isabs(tmpdir) and len(Path(tmpdir).resolve().parts) >= 3:
         own = Path(tmpdir).resolve()
-        if not any(own == r or r in own.parents for r in roots):  # one under /tmp is judged from /tmp, `claude-<uid>` too
+        if not any(own == r or r in own.parents for r in roots) and not any(
+                part.lower().startswith('claude-') for part in own.parts):  # a session's own TMPDIR is never a root  # one under /tmp is judged from /tmp, `claude-<uid>` too
             roots.append(own)
     operands = _rm_operands(words[1:])
     if not operands:
@@ -1604,6 +1607,8 @@ def _rm_in_temp(command, session=None):
         if root is None:
             return False
         rel = target.relative_to(root).parts
+        if rel[0].lower().startswith('cc-'):
+            return False  # Claude Code's `cc-` sockets under the temp root
         if rel[0].lower().startswith('claude-') and not _claude_temp_ok(rel, glob, session):
             return False
     return True
@@ -2325,7 +2330,8 @@ def _record_model(engine, payload, effort=None):
 
 
 def _model_line(engine, view):
-    """The Model fit line for a prompt, or None: the cards of the board that run on another model than the session's."""
+    """The Model fit line for a prompt, or None: the queued cards the engine's model-fit rule sends to a worker (a model
+    above the session's, or a higher effort on its model; under policy `exact`, any other model)."""
     session = view.get('session') or {}
     if not session.get('active'):
         return None
@@ -2335,19 +2341,20 @@ def _model_line(engine, view):
         if any(c['role'] == 'builder' for c in queued):
             return 'Session model: unknown; the engine refuses no inline card on model grounds.'
         return None
+    from .engine import EngineError  # loaded already: `engine` is an Engine
     away, exact = [], (getattr(engine, 'policy', None) or {}).get('model_fit') == 'exact'
     for card in queued:
         if card['role'] in ('code-reviewer', 'critic') or (card.get('size') or session.get('size')) == 'tiny':
             continue  # a review always runs on a worker and a tiny card folds whatever the model: neither is a model case
         try:
             engine._check_model_fit({'session': session}, card, exact=exact)  # the engine's rule, never a copy of it
-        except Exception:
+        except EngineError:
             need_model, need_effort = engine.card_model(card)
             away.append('%s (%s %s)' % (card['id'], need_model, need_effort))
     if not away:
         return None
     extra = ' +%d' % (len(away) - 8) if len(away) > 8 else ''
-    return 'Session model: %s%s. Cards that must go to a worker (another model): %s%s.' % (
+    return 'Session model: %s%s. Cards that must go to a worker (a stronger model or a higher effort): %s%s.' % (
         model, ' ' + effort if effort else '', ', '.join(away[:8]), extra)
 
 

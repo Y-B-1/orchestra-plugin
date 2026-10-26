@@ -1556,7 +1556,7 @@ class Engine:
     def replace_task(self, actor, lease, old_id, task):
         """F98: add card `task`, move the dependencies and review targets of queued, reported or parked card `old_id`
         to it, and drop `old_id` as cancelled ("replaced by NEW"), in one write. A refused new card changes nothing."""
-        self.add_task(actor, lease, task, replacing=old_id)
+        return self.add_task(actor, lease, task, replacing=old_id)
 
     def _check_owner_approval(self, state, task, original):
         """A repair of a held chain carries the owner's words; never while autonomy is armed (the owner is away). A held
@@ -2604,6 +2604,10 @@ class Engine:
             steps.append(step)
             done.update(t['id'] for t in used)
             queued = [t for t in queued if t not in used]
+        if steps and steps[0]['card'] is None:  # the main session is busy, not misfit, while its inline card runs
+            busy = next((t['id'] for t in self._by_seq(tasks.values()) if t['state'] == 'running' and t.get('inline')), None)
+            if busy:
+                steps[0]['busy'] = busy
         return steps
 
     def view(self, actor='main', session=None):
@@ -2707,7 +2711,8 @@ class Engine:
         targets = [w for i, w in enumerate(words) if len(w) >= 6 and not w.startswith('-') and re.search(r'[/.:_]', w)
                    and not re.fullmatch(r'python[\d.]*', w) and not (i and words[i - 1] == 'cd')]
         # a whole word, not the start of a longer one, and not followed by an option (`check.sh --quick` is another run)
-        return any(re.search(r'(?<![\w./:-])%s(?![\w./:-])(?!\s+-)' % re.escape(n), text) for n in [command] + targets)
+        return any(re.search(r'(?<![\w./:-])%s(?![\w/:]|[.-][\w/:])(?!\s+--?\w)' % re.escape(n), text)
+                   for n in [command] + targets)  # a sentence end or ` - ` after it is prose, ` --quick` is an option
 
     @classmethod
     def _ruled_checks(cls, review, ruling):
@@ -3514,7 +3519,7 @@ class Engine:
                 pass
         patterns = [self._glob_regex(g) for g in spec['paths']]
         hit = sorted(n for n in names if any(p.fullmatch(n) or p.fullmatch(n + '/') for p in patterns))  # a directory matches too
-        if not hit or any(c['command'].strip() == spec['command'] and c.get('expect', 'pass') == 'pass' and c['exit_code'] == 0
+        if not hit or any(self._bare(c['command']).strip() == spec['command'].strip() and c.get('expect', 'pass') == 'pass' and c['exit_code'] == 0
                           for c in review['checks']):
             return None
         return 'Full check needed: the card touches %s; its self-review needs a passing check "%s"' % (', '.join(hit[:3]), spec['command'])
@@ -3640,7 +3645,9 @@ class Engine:
             return self._add_finding(state, review_id, kind, index, disposition, reason, card)
 
     def _add_finding(self, state, review_id, kind, index, disposition, reason, card=None):
-        review = next((r for r in state['reviews'] if r['id'] == review_id), None)
+        found = [r for r in state['reviews'] if isinstance(review_id, str) and (r['id'] == review_id or (
+            len(review_id) >= 8 and r['id'].startswith(review_id)))]  # F113: the short id `review` prints
+        review = found[0] if len(found) == 1 else None
         if review is None:
             raise EngineError('Unknown review: ' + str(review_id))
         if kind not in DISPOSITIONS:
@@ -3655,7 +3662,7 @@ class Engine:
         if card is not None and (not isinstance(card, str) or not card.strip()):
             raise EngineError('Finding card must be a nonempty id')
         entry = dict(id=uuid.uuid4().hex, fingerprint=_fingerprint(items[index]), text=items[index],
-                     source=dict(review=review_id, kind=kind, index=index), disposition=disposition,
+                     source=dict(review=review['id'], kind=kind, index=index), disposition=disposition,
                      reason=reason, at=datetime.fromtimestamp(self._clock(), timezone.utc).isoformat(timespec='seconds'))
         if card is not None:
             entry['card'] = card

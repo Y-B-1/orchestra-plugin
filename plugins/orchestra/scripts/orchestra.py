@@ -386,8 +386,8 @@ def execute(args):
         return {'added':read_json(args.task)['id'],**warned},0
     if args.command=='replace':
         task = read_json(args.task)
-        engine.replace_task(args.actor,args.lease,args.old,task)
-        return {'replaced':args.old,'by':task['id']},0
+        warned=engine.replace_task(args.actor,args.lease,args.old,task) or {}
+        return {'replaced':args.old,'by':task['id'],**warned},0
     if args.command=='resume':
         engine.resume_card(args.actor,args.lease,args.task_id)
         return {'resumed':args.task_id},0

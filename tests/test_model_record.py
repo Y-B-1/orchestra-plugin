@@ -113,7 +113,7 @@ class PromptTests(ModelCase):
         with mock.patch.dict('os.environ', {'CLAUDE_EFFORT': 'high'}):  # m needs Haiku high; a lower effort sends it away
             text = context(self.prompt(transcript_path=self.transcript([self.assistant(HAIKU)])))
         self.assertIn('Session model: %s' % HAIKU, text)
-        self.assertIn('Cards that must go to a worker (another model): b (%s medium).' % SONNET, text)
+        self.assertIn('Cards that must go to a worker (a stronger model or a higher effort): b (%s medium).' % SONNET, text)
         self.assertNotIn('m (', text)  # 2.15.2: a session runs a card of a lower family inline
 
     def test_nothing_is_listed_when_every_card_fits(self):

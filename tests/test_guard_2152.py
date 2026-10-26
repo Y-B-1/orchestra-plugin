@@ -140,9 +140,10 @@ class NoUidLiteralTest(unittest.TestCase):
 
 
 class ResumedReportTest(tc.CaptureCase):
-    def test_a_second_final_message_after_a_report_replaces_the_report(self):
+    def test_after_resume_a_second_final_message_replaces_the_report(self):
         self.stop()
         self.assertEqual(self.task_state(), 'reported')
+        self.engine.resume_card('main', self.lease, 'c')  # 2.15.2 NN: only `resume` lets a newer report in
         newer = 'STATUS: PASS\nARTIFACT: def456 clean\nFixed the two lines.'
         self.assertEqual(self.stop(message=newer), {})
         self.assertEqual((self.reports / (self.token + '.md')).read_text(), newer)

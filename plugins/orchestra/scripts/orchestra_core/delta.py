@@ -88,7 +88,8 @@ def track_text(view):
         return None
     first = steps[0]
     side = first.get('side') or []
-    main = 'you run '+first['card'] if first.get('card') else (WAIT if first.get('wait') else NO_FIT)
+    main = ('you run '+first['card'] if first.get('card') else 'you are running '+first['busy'] if first.get('busy')
+            else WAIT if first.get('wait') else NO_FIT)
     return 'Track: '+main+('; side: '+', '.join(side) if side else '')
 
 

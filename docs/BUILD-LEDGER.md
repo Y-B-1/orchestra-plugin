@@ -602,6 +602,8 @@ Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's trac
 | Engine friction (`e67c6da`, `0843e61`) | `replace` (F98), `accept --ruling` on a failing check (F99), `resume` (F102), `deferred` out-of-scope and `needs_triage` (F104), F70 subshell matcher, policy `full_check` (F101) | `tests/test_engine_2152.py` |
 | Acceptance check (`430c676`) | Reads each markdown code span on its own (F105) | engine tests |
 | Review notes (`171c888`, `3422fdb`, `58d2670`, `d9705cc`, NE, ND) | Pre-PR review fixes: acceptance check also reads prose outside code spans (RVC blocking), whole-word rulings, `resume` restarts the silence clock, `replace` waits for a running review, case-blind temp check, files inside ignored cache folders block cleanup, the Track lane shows `wait`, the live `t1` write check reads only file writes; F108 to F111 | `tests/test_review_notes_2152.py`, hook and mod tests |
+| Second review repairs (`52fd325` tests, `28f6f7c` RH, `84aba1a` RN) | RWS on HK: a `$TMPDIR` under `/tmp` adds no temp root, a `$TMPDIR` operand is refused with a note to write the path in full, `/tmp/cc*` is denied. RWC on NE: the wave checkpoint and `resume` use the start's inline-slot rule. Each fix re-review (FXH, FXN) was CLEAN | `tests/test_repair_hk_2152.py`, `tests/test_repair_ne_2152.py` |
+| Second review notes (NN) | The track says `you are running X` while its inline card runs (engine, board line and mod lane); rulings followed by a sentence end or ` - `; `full_check` counts a check with a trailing note; `replace` passes on the running-review warning; capture takes a newer report only after `resume`; Model fit wording; `cc-` entries and a `claude-` TMPDIR under the temp rule; F113 | `tests/test_notes2_2152.py`, mod tests |
 | Live matrix (`611c21f`, `98120bc`) | 22 scenarios. `t1`: in a real Opus session the board said `Track: you run A; side: C`, the main session ran A inline and wrote `a.txt` itself, a worker ran C before A was accepted, and the track then named B. `a4`: the scratchpad delete rule on a decoy Claude temp tree. `t2` and `t3` ran with them | `scripts/live-matrix.py` |
 
 ### Corrections to the 2.15.1 ledger
@@ -615,6 +617,12 @@ Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's trac
 - F109: a reported code review card is no longer acceptable; `Next:` names `review --token` for it and the native task says `record the review receipt`.
 - F110: `add` returns a `warning` naming the running final review whose receipts will not cover the new card.
 - F111: a reported inline card kept the main session reserved, so `inline` of the next card was refused until acceptance. Seen live: `inline ND` was refused while NE waited for its full suite, and the same call started once the fix landed.
+- F113: `finding add --review` takes a unique receipt-id prefix of 8 or more characters, the short id `review` prints, and stores the full id.
+
+### Friction found during the 2.15.2 run, deferred
+
+- F112: a resumed inline card's diff range (`base..report_sha`) took in another accepted card's commit that landed while it was reported, so `accept` refused "files outside the card" until those files were added with `own add`. A fix needs a per-commit owner check, not a base move, since the card's own earlier commits stay in range.
+- F114: a repair reserves every file of its whole chain, so repair RN (engine.py only) waited for repair RH (hooks.py) through `docs/hooks.md` that NE had taken. A narrower reservation (the repair's own files plus the chain files its finding names) needs its own review.
 
 ### Known limits
 

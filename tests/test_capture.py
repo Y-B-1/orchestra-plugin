@@ -90,6 +90,7 @@ class RefusalTests(CaptureCase):
 
     def test_a_refused_second_report_leaves_the_saved_report_unchanged(self):
         self.stop()
+        self.engine.resume_card('main', self.lease, 'c')  # 2.15.2: after a report only `resume` lets a newer one in
         with mock.patch.object(type(self.engine), 'report', side_effect=EngineError('refused')):
             out = self.stop(message='STATUS: ISSUES\nARTIFACT: def456 clean\nNew text.')
         self.assertEqual(out['decision'], 'block')
