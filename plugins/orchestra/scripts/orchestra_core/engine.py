@@ -74,6 +74,7 @@ PR_CONTINUATIONS = 2  # push-and-pull-request nudges in a row before the Stop lo
 WORKER_STALE_SECONDS = 3600  # A background worker silent this long is probably gone; policy.worker_stale_seconds overrides
 GATE_FAILURE_LIMIT = 3  # Consecutive failures of one required gate after which the Stop hook asks for a repair card
 ESCALATION_LIMIT = 3  # Unchanged nudges for one reason after which every unfinished card is parked for the owner
+TRACK_COORDINATOR = 'prepare briefs and review reports'  # The track step when no ready card fits the session model
 OWNER_PARK = 'needs-owner:'  # A parked reason prefix: only the owner can unblock the card (a secret, a code, an account action)
 LARGE_FILE_BYTES = 64 * 1024 * 1024  # Files over this are bound by size, mtime and sampled content, not read whole
 SAMPLE_BYTES = 1024 * 1024
@@ -1185,6 +1186,10 @@ class Engine:
                                   '`start --recover --harness-session ID`')
             lease = uuid.uuid4().hex
             prior = state['session']
+            owner = (prior or {}).get('harness_session')
+            if prior and prior.get('outcome') != 'completed' and harness_session and owner and owner != harness_session:
+                raise EngineError('This run belongs to session %s; this session reads only. To move the run here, run '
+                                  '`start --recover --take-over` (logged; it arms no autonomy)' % owner)
             if prior is not None and items is not None:
                 raise EngineError('--items applies only to a new run; use route to change it')
             if prior is not None and (size is not None or asks is not None or owner_request):
@@ -2008,9 +2013,9 @@ class Engine:
     def _check_route(state, task, inline, helper):
         """Contract item 3. A state with no `route` (made by 2.3) is not checked."""
         session = state['session']
-        if task['role'] == 'builder' and 'size' in session:
+        if 'size' in session:
             size = task.get('size') or ('medium' if session['size'] == 'large' else session['size'])
-            if size == 'tiny' and not inline and not (isinstance(helper, str) and helper.strip()):
+            if task['role'] == 'builder' and size == 'tiny' and not inline and not (isinstance(helper, str) and helper.strip()):
                 raise EngineError('Tiny unit: the main session does this work; pass --helper REASON to dispatch a helper')
             if inline and size != 'tiny':
                 Engine._check_model_fit(state, task)
@@ -2326,24 +2331,28 @@ class Engine:
     def _fit(self, state, actor, chosen):
         """The card of `chosen` ((id, modes) pairs) to run inline, '' for none, or None when they cannot all start
         together: one inline slot, review roles never inline, the worker cap and the worktree cap."""
+        return self._fit_why(state, actor, chosen)[0]
+
+    def _fit_why(self, state, actor, chosen):
+        """(`_fit`, why): why is None for a fit, else 'one inline slot', 'worker cap' or 'worktree cap'."""
         tasks = state['tasks']
         inline_only = [i for i, m in chosen if m == {'inline'}]
         slot = self._slot_free(state, actor)
         if len(inline_only) > 1 or (inline_only and not slot):
-            return None
+            return None, 'one inline slot'
         inline_id = inline_only[0] if inline_only else ''
         workers, worktrees = self._caps(state, True)
         if len(chosen) > workers:
-            return None
+            return None, 'worker cap'
         if sum(tasks[i]['role'] == 'builder' and i != inline_id for i, _ in chosen) > worktrees and not inline_id and slot:
             inline_id = next((i for i, m in chosen if 'inline' in m and tasks[i]['role'] == 'builder'), '')  # saves a worktree
         if sum(tasks[i]['role'] == 'builder' and i != inline_id for i, _ in chosen) > worktrees:
-            return None
-        return inline_id
+            return None, 'worktree cap'
+        return inline_id, None
 
     def _wave_now(self, state, actor, chosen=(), cheap=False):
         """Greedy, in seq order, from `chosen` ((id, modes) pairs): the startable cards `wave` accepts together, and the
-        startable cards left out for a shared resource or file, each with the chosen card it waits for."""
+        startable cards left out for a shared resource or file or for a slot or cap, each with the chosen card it waits for."""
         chosen, serialized = list(chosen), []
         for other_id, modes in self._startable(state, actor, cheap).items():
             if any(i == other_id for i, _ in chosen):
@@ -2351,8 +2360,15 @@ class Engine:
             clash = next((i for i, _ in chosen if self._overlap(state, state['tasks'][other_id], state['tasks'][i])), None)
             if clash is not None:
                 serialized.append(dict(card=other_id, waits_for=clash, reason=self._clash_reason(state, other_id, clash)))
-            elif self._fit(state, actor, chosen + [(other_id, modes)]) is not None:
-                chosen.append((other_id, modes))
+            else:
+                fit, why = self._fit_why(state, actor, chosen + [(other_id, modes)])
+                if fit is not None:
+                    chosen.append((other_id, modes))
+                else:
+                    holder = chosen[0][0] if chosen else None
+                    if why == 'one inline slot':
+                        holder = next((i for i, m in chosen if m == {'inline'}), holder)
+                    serialized.append(dict(card=other_id, waits_for=holder, reason=why))
         return chosen, serialized
 
     def _clash_reason(self, state, card, holder):
@@ -2420,8 +2436,58 @@ class Engine:
         now, serialized = self._wave_now(state, actor, cheap=cheap)
         return dict(overlaps=overlaps, chains=chains, blocked=blocked, waves=waves,
                     startable_now=list(self._startable(state, actor, cheap)),
-                    wave_now=[i for i, _ in now], serialized=serialized,
+                    wave_now=[i for i, _ in now], serialized=serialized, track=self._track(state),
                     idle_workers=self._idle(state), prep=self._prep(state))
+
+    def _routes(self, state, task, inline):
+        try:
+            self._check_route(state, task, inline, None)
+        except EngineError:
+            return False
+        return True
+
+    def _track(self, state):
+        """The order the main session works through the queued cards: one step per inline card, each with the `side`
+        cards workers run beside it (disjoint, within the worker and worktree caps). A step takes a ready card (a
+        dependency counts once it is accepted, held, running or reported) that fits the session model, the one that
+        unblocks the most other cards first, then the earliest; with none that fits the step is `coordinator` work."""
+        tasks = state['tasks']
+        queued, blocked = [], set()
+        for task in self._by_seq(tasks.values()):
+            if task['state'] != 'queued':
+                continue
+            needs = task['dependencies'] + task.get('review_of', [])
+            if any(tasks[d]['state'] == 'parked' or d in blocked for d in needs):
+                blocked.add(task['id'])
+            else:
+                queued.append(task)
+        done = {i for i, t in tasks.items() if t['state'] in ('accepted', 'held', 'running', 'reported')}
+        steps, free = [], True
+        while queued:
+            ready = [t for t in queued if all(d in done for d in t['dependencies'] + t.get('review_of', []))
+                     and not (t.get('finalize') and any(o is not t and not o.get('finalize') for o in queued))]
+            inline = [t for t in ready if t['role'] not in REVIEW_ROLES and self._routes(state, t, True)]
+            pick = min(inline, key=lambda t: (-sum(t['id'] in o['dependencies'] + o.get('review_of', [])
+                                                   for o in queued if o is not t), t.get('seq', 0)), default=None)
+            workers, worktrees = self._caps(state, free)
+            free = False
+            used, side = ([pick] if pick else []), []
+            for task in ready:
+                if (task is pick or len(used) >= workers or not self._routes(state, task, False)
+                        or (task['role'] == 'builder' and sum(tasks[i]['role'] == 'builder' for i in side) >= worktrees)
+                        or any(self._overlap(state, task, other) for other in used)):
+                    continue
+                side.append(task['id'])
+                used.append(task)
+            if not used:
+                break
+            step = dict(step=len(steps) + 1, card=pick['id'] if pick else None, side=side)
+            if not pick:
+                step['coordinator'] = TRACK_COORDINATOR
+            steps.append(step)
+            done.update(t['id'] for t in used)
+            queued = [t for t in queued if t not in used]
+        return steps
 
     def view(self, actor='main', session=None):
         """The lease-free board the Kanban mod reads. Built field by field from an allowlist, never from `status()`: no
@@ -2459,6 +2525,7 @@ class Engine:
                 counts_note='running includes inline cards',
                 columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
                 cards=cards, startable_now=startable, wave_now=plan['wave_now'], serialized=plan['serialized'],
+                track=plan['track'][:3],
                 acceptable_now=acceptable,
                 next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],
                 latest_review=None if review is None else dict(
@@ -4181,7 +4248,8 @@ class Engine:
                 if task['state'] in PARKABLE:
                     self._set_aside(state, task, OWNER_PARK + 'escalated')
                 elif task['state'] == 'parked' and not task.get('parked_reason', '').startswith(OWNER_PARK):
-                    task['parked_reason'] = OWNER_PARK + 'escalated'
+                    was = task.get('parked_reason', '').strip()
+                    task['parked_reason'] = OWNER_PARK + 'escalated' + (' (%s)' % was if was else '')
             return 'needs-owner:escalated', None
         auto['stalls'] = 0 if count == 1 else auto['stalls'] + 1
         auto['signature'] = self._signature(state)

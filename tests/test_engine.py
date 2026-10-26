@@ -976,7 +976,7 @@ class HarnessSessionTests(EngineFixture):
         self.now[0] = 1000.0
         if self.engine.status()['session']['active']:
             self.engine.interrupt('main', self.raw_lease())
-        self.lease = self.engine.open_session('main', harness_session='S')
+        self.lease = self.engine.recover_lease('main', 'S', take_over=True)  # a plain start no longer rebinds another session's run
 
     def session(self):
         return self.engine.status()['session']

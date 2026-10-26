@@ -51,8 +51,15 @@ class NudgeInsteadOfStopTests(KeepGoingFixture):
         self.engine.park('main', self.lease, 'p', 'boundary')
         self.stop_three()
         tasks = self.engine.status()['tasks']
-        self.assertEqual((tasks['p']['state'], tasks['p']['parked_reason']), ('parked', 'needs-owner:escalated'))
+        self.assertEqual((tasks['p']['state'], tasks['p']['parked_reason']), ('parked', 'needs-owner:escalated (boundary)'))
         self.assertEqual(tasks['done']['state'], 'accepted')
+
+    def test_escalation_keeps_the_original_park_reason(self):
+        self.arm()
+        self.task('p')
+        self.engine.park('main', self.lease, 'p', 'lost-worker')
+        self.stop_three()
+        self.assertEqual(self.engine.status()['tasks']['p']['parked_reason'], 'needs-owner:escalated (lost-worker)')
 
     def test_a_changed_board_resets_the_count(self):
         self.arm()

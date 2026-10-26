@@ -175,7 +175,7 @@ class ReceiptTest(MergeFixture):
         self.lease = self.engine.open_session('main')  # start resumes the run
         self.assertEqual(self.decide(self.merge(3)), ('allow', ''))
         self.engine.interrupt('main', self.lease)
-        Engine(self.state, self.repo, clock=lambda: self.now[0] + 86400).open_session('main', harness_session='morning')
+        Engine(self.state, self.repo, clock=lambda: self.now[0] + 86400).recover_lease('main', 'morning', take_over=True)
         self.assertEqual(self.decide(self.merge(3)), ('allow', ''))
 
     def test_pull_request_not_in_the_receipt_denied(self):

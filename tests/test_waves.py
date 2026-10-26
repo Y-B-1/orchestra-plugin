@@ -162,6 +162,22 @@ class CheckpointTests(WaveFixture):
         self.task('b')
         self.engine.start_inline('main', self.lease, 'a')
 
+    def test_a_startable_card_left_out_for_the_inline_slot_is_serialized_with_the_reason(self):
+        self.engine_with(size='tiny')
+        self.task('a')
+        self.task('b')
+        out = self.engine.waves()
+        self.assertEqual(out['wave_now'], ['a'])
+        self.assertEqual(out['serialized'], [dict(card='b', waits_for='a', reason='one inline slot')])
+
+    def test_a_startable_card_left_out_for_the_worker_cap_is_serialized_with_the_reason(self):
+        self.engine_with(dict(schema_version=1, max_workers=1))
+        self.task('a')
+        self.task('b')
+        out = self.engine.waves()
+        self.assertEqual(out['wave_now'], ['a'])
+        self.assertEqual(out['serialized'], [dict(card='b', waits_for='a', reason='worker cap')])
+
     def test_serial_reason_overrides_and_is_logged_after_the_write(self):
         self.task('a')
         self.task('b')
