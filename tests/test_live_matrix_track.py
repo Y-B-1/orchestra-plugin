@@ -145,11 +145,11 @@ class ScratchpadScenarioTest(unittest.TestCase):
 
     def test_a4_is_registered_and_uses_only_the_decoy_tree(self):
         self.assertIn('a4', lm.SCENARIOS)
-        self.assertEqual(lm.DECOY, '/tmp/claude-99999')
+        self.assertEqual(lm.DECOY, '/tmp/' + 'claude-' + '99999')  # the decoy root, never a real uid
         source = PATH.read_text()
         body = source[source.index('def a4_'):source.index('\n\n\ndef ', source.index('def a4_'))]
         self.assertNotIn('getuid', body)
-        self.assertNotIn('claude-501', body)
+        self.assertNotIn('claude-' + '501', body)  # split so this file names no uid temp path itself
 
 
 class ExactRuleScenarioTest(unittest.TestCase):

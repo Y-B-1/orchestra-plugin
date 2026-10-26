@@ -144,8 +144,8 @@ AUTONOMY_FIXED = (
 AUTONOMY_KEEP_AWAKE = 'User step: enable keep-awake in Claude Desktop (or keep the machine awake) for an overnight run.'
 CLAUDE_PROMPT_FREE_MODES = ('bypassPermissions', 'dontAsk', 'auto')
 PARKABLE = ('queued', 'running', 'reported')
-STATE_COMMANDS = dict(queued='dispatch, inline, wave, park, cancel', running='report, park, own add',
-                      reported='accept, criterion, review, park, own add', parked='unpark, cancel',
+STATE_COMMANDS = dict(queued='dispatch, inline, wave, park, cancel, replace', running='report, park, own add',
+                      reported='accept, criterion, review, park, own add, resume, replace', parked='unpark, cancel, replace',
                       repairing='wait for its repair card', accepted='none', held='none')
 DISPOSITIONS = dict(finding=('rejected', 'deferred', 'inline', 'card', 'brief'),
                     out_of_scope=('inline', 'card', 'brief', 'deferred'))  # SPEC 5.12 item 1

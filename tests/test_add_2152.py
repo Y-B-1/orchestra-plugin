@@ -25,5 +25,14 @@ class BacktickAcceptanceTests(RefusalFixture):
             self.task, 'b', acceptance=["`python3 -m unittest discover -s tests -p 'test_gone.py'` exits 0."]))
 
 
+class StateHintTests(unittest.TestCase):
+    def test_the_hint_names_replace_and_resume(self):
+        from orchestra_core.engine import STATE_COMMANDS
+        for state in ('queued', 'reported', 'parked'):
+            self.assertIn('replace', STATE_COMMANDS[state])
+        self.assertIn('resume', STATE_COMMANDS['reported'])
+
+
+
 if __name__ == '__main__':
     unittest.main()
