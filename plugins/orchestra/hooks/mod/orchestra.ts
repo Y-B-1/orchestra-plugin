@@ -280,9 +280,10 @@ async function autonomyPoll($: Dollar, auto: AutonomyState, board: Board, seen: 
 }
 
 /** The main session's own work, from `board --view`: its track steps (the first three). */
-type Step = { step: number; card: string | null; side: string[] };
+type Step = { step: number; card: string | null; wait: boolean; side: string[] };
 type Track = { steps: Step[] };
 const NO_FIT = 'no card fits the session model; you coordinate, accept and review';
+const WAIT = 'nothing can start now; accept and review the running work';
 const MAIN = 'main';
 
 function textList(v: unknown): string[] {
@@ -297,7 +298,7 @@ function parseTrack(text: string): Track {
     for (const item of raw) {
       const s = asJson(JSON.stringify(item));
       if (s === null || typeof s['step'] !== 'number') continue;
-      steps.push({ step: s['step'], card: typeof s['card'] === 'string' ? s['card'] : null, side: textList(s['side']) });
+      steps.push({ step: s['step'], card: typeof s['card'] === 'string' ? s['card'] : null, wait: s['wait'] === true, side: textList(s['side']) });
     }
   }
   return { steps };
@@ -305,7 +306,7 @@ function parseTrack(text: string): Track {
 
 /** The Track lane: one line per step, `Step N: you run X; side: A, B`. */
 function trackLines(track: Track): string[] {
-  return track.steps.map((s) => `Step ${s.step}: ${s.card !== null ? `you run ${s.card}` : NO_FIT}${s.side.length > 0 ? `; side: ${s.side.join(', ')}` : ''}`);
+  return track.steps.map((s) => `Step ${s.step}: ${s.card !== null ? `you run ${s.card}` : s.wait ? WAIT : NO_FIT}${s.side.length > 0 ? `; side: ${s.side.join(', ')}` : ''}`);
 }
 
 /** Native task order: a track card gets `step N` after its id (the id stays first, so the task still matches) and owner main. */

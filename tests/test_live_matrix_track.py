@@ -84,6 +84,17 @@ class Writes(unittest.TestCase):
     def test_reading_is_not_writing(self):
         self.assertFalse(lm.main_wrote(ev(tool('Read', '{"file_path": "/r/a.txt"}')), 'a.txt'))
 
+    def test_bash_must_write_the_file(self):
+        for cmd in ['echo hi > a.txt', 'echo hi >> a.txt', 'echo hi | tee a.txt', 'echo hi | tee -a a.txt']:
+            with self.subTest(cmd=cmd):
+                self.assertTrue(lm.main_wrote(ev(bash(cmd)), 'a.txt'))
+        for cmd in ['git add a.txt', 'cat a.txt', 'git commit -m a.txt', 'echo hi > ba.txt', 'ls a.txt > out.txt']:
+            with self.subTest(cmd=cmd):
+                self.assertFalse(lm.main_wrote(ev(bash(cmd)), 'a.txt'))
+
+    def test_edit_counts(self):
+        self.assertTrue(lm.main_wrote(ev(tool('Edit', '{"file_path": "/r/a.txt"}')), 'a.txt'))
+
 
 class Hooks(unittest.TestCase):
     def test_track_line_found_in_prompt_hook(self):

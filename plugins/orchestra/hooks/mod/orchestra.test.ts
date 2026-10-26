@@ -1364,6 +1364,19 @@ test('track: with no card fitting the session model the pane says so plainly', a
   expect(drawn).toContain(`Step 1: ${NO_FIT}; side: A`);
 });
 
+test('track: a waiting step says nothing can start now, not that no card fits', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  engine(r, { view: boardView([{ id: 'A', state: 'running', seq: 1, worker: 'w1' }], { track: [{ step: 1, card: null, wait: true, side: [] }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  const ui = await drawBoard($, 'terminal', 120);
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  expect(drawn).toContain('Step 1: nothing can start now; accept and review the running work');
+  expect(drawn.some((t) => t.includes('no card fits'))).toBe(false);
+});
+
 test('track: the native task list reads as the track, main owns the track cards and workers keep the side cards', async ($, on) => {
   const r = rig(on);
   const s = stage(on, r);
