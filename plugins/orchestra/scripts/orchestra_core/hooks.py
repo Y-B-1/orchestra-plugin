@@ -2599,8 +2599,9 @@ def main(argv=None):
         if answered.acquire(blocking=False):
             code = 2
             try:
-                code = _cannot_check(event, 'the check did not finish within %g s' % HOOK_BUDGET, real_out, real_err,
-                                     'split it into shorter commands, or write long content to a file with the Write tool first')
+                advice = ('split it into shorter commands, or write long content to a file with the Write tool first'
+                          if _CRASH_TOOL['name'] in _SHELL_TOOLS else 'try it again; if it repeats, report it to the plugin owner')
+                code = _cannot_check(event, 'the check did not finish within %g s' % HOOK_BUDGET, real_out, real_err, advice)
                 real_out.flush()
                 real_err.flush()
             finally:

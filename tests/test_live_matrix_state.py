@@ -37,6 +37,15 @@ class StaleRunStateTest(unittest.TestCase):
             lm.Ctx(root, 'g1')
         self.assertTrue((stale / 'state.json').is_file())  # the harness never removes run state
 
+    def test_the_state_override_is_where_the_harness_looks(self):
+        """RZ8 note: the harness finds run state where the engine keeps it, ORCHESTRA_STATE_DIR included."""
+        override = self.tmp / 'override'
+        (override).mkdir()
+        (override / 'state.json').write_text('{}')
+        with mock.patch.dict(os.environ, ORCHESTRA_STATE_DIR=str(override)):
+            with self.assertRaisesRegex(RuntimeError, 'earlier run'):
+                lm.Ctx(self.tmp / 'out', 'g1')
+
     def test_a_fresh_scenario_starts(self):
         lm.Ctx(self.tmp / 'out', 'g1')
 

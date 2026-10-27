@@ -45,7 +45,7 @@ ID=$(python3 -c 'import hashlib, os, sys; print(hashlib.sha256(os.path.realpath(
 rm -rf ~/.local/state/orchestra/"$ID"
 ```
 
-Remove it before a rerun of the same scenario: `OUT_DIR/<id>/` is recreated at the same path, so the same identity comes back and the rerun can find the old run.
+Remove it before a rerun of the same scenario: `OUT_DIR/<id>/` is recreated at the same path, so the same identity comes back, and the scenario refuses to start (`crash`) until the old state is gone. The harness finds the state with the engine's own rule (`paths.state_location`), so `ORCHESTRA_STATE_DIR` counts too.
 
 ## Cost and time
 

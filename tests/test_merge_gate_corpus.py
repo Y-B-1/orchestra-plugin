@@ -109,11 +109,11 @@ class HookBudgetTest(tm.MergeFixture):
 
     SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'plugins' / 'orchestra' / 'scripts'
 
-    def run_hook(self, command, prelude=''):
+    def run_hook(self, command, prelude='', tool='Bash', tool_input=None):
         import subprocess
         import sys
         import time
-        payload = json.dumps({'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo),
+        payload = json.dumps({'tool_name': tool, 'tool_input': tool_input or {'command': command}, 'cwd': str(self.repo),
                               'session_id': 's'})
         code = ('import sys; sys.path.insert(0, %r); from orchestra_core import hooks; %s'
                 'sys.exit(hooks.main(["PreToolUse", "--harness", "claude"]))' % (str(self.SCRIPTS), prelude))
@@ -157,7 +157,18 @@ class HookBudgetTest(tm.MergeFixture):
         done, _ = self.run_hook('ls', prelude)
         self.assertEqual(done.returncode, 2)
         self.assertEqual(len(done.stdout.splitlines()), 1)
-        self.assertEqual(json.loads(done.stdout)['hookSpecificOutput']['permissionDecision'], 'deny')
+        answer = json.loads(done.stdout)['hookSpecificOutput']
+        self.assertEqual(answer['permissionDecision'], 'deny')
+        self.assertIn('report it to the plugin owner', answer['permissionDecisionReason'])  # RZ8 note: the crash advice
+
+    def test_a_slow_edit_gets_advice_that_fits_it(self):
+        """RZ8 note: the split-or-write-a-file advice is for shell commands only."""
+        prelude = ('import time; hooks.HOOK_BUDGET = 1.0; slow = hooks._decide; '
+                   'hooks._decide = lambda *a, **k: (time.sleep(60), slow(*a, **k))[1]; ')
+        done, _ = self.run_hook('', prelude, tool='Edit', tool_input={'file_path': str(self.repo / 'x'), 'old_string': 'a', 'new_string': 'b'})
+        reason = json.loads(done.stdout)['hookSpecificOutput']['permissionDecisionReason']
+        self.assertIn('did not finish', reason)
+        self.assertNotIn('shorter commands', reason)
 
     def test_a_quick_check_answers_once(self):
         done, _ = self.run_hook('ls')

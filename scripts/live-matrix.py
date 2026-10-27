@@ -7,7 +7,6 @@ sessions against the installed plugin, and a result.json. Checks read the stream
 the model's own claims. It costs tokens and needs a signed-in claude CLI; see docs/live-matrix.md."""
 import argparse
 import concurrent.futures as cf
-import hashlib
 import json
 import os
 import re
@@ -63,10 +62,13 @@ def is_orchestra_status(command):
 
 
 def run_state_dir(repo):
-    """The engine's state directory for a scenario repository (docs/live-matrix.md, Run state)."""
-    home = os.environ.get('XDG_STATE_HOME', '')
-    base = Path(home) if os.path.isabs(home) else Path.home() / '.local' / 'state'
-    return base / 'orchestra' / hashlib.sha256(os.path.realpath(repo).encode()).hexdigest()[:24]
+    """The engine's state directory for a scenario repository: the engine's own rule (paths.state_location), so
+    ORCHESTRA_STATE_DIR, XDG_STATE_HOME and the Windows branch count (docs/live-matrix.md, Run state)."""
+    scripts = str(Path(__file__).resolve().parent.parent / 'plugins' / 'orchestra' / 'scripts')
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from orchestra_core.paths import state_location
+    return state_location(Path(os.path.realpath(repo)))
 
 
 class Ctx:
