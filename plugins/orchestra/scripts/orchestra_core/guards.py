@@ -2211,6 +2211,8 @@ def _python_runs_suite(rest, depth):
             i += 2
         elif word.startswith('-') and word != '-c' and not word.startswith('-c'):
             i += 1
+        elif i and rest[i - 1].startswith('--') and '=' not in rest[i - 1] and not word.endswith('.py'):
+            i += 1  # fail closed: a plain word after a long option may be its value (`--source pkg`), not a script
         else:
             return False  # a script, `-c` or `-`: the rest are its arguments
     return False

@@ -33,3 +33,22 @@ class SuiteProbe2153(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class OptionValueTests(unittest.TestCase):
+    """RC/RS repair of C1: an option's separate value is not a script, so the suite after it is still read."""
+
+    def test_an_option_value_is_not_a_script(self):
+        from orchestra_core import guards
+        for command in ('coverage run --source pkg -m pytest', 'coverage run --rcfile x -m pytest',
+                        'coverage run --omit "a/*" --branch -m unittest discover', 'coverage run --source src/pkg -m pytest',
+                        'python3 --check-hash-based-pycs always -m pytest', 'python3 -X dev -m pytest'):
+            with self.subTest(command):
+                self.assertTrue(guards.runs_test_suite(command))
+
+    def test_a_script_still_ends_the_interpreter_options(self):
+        from orchestra_core import guards
+        for command in ('python3 x.py -m pytest', 'python3 -u tools/run.py -m pytest', 'coverage run --branch t.py -m pytest',
+                        'python3 -c "print(1)" -m pytest'):
+            with self.subTest(command):
+                self.assertFalse(guards.runs_test_suite(command))
