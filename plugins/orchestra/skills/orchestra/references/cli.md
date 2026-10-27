@@ -129,3 +129,7 @@ Escalation parks a card `needs-owner:escalated`, adding `(ORIGINAL REASON)` only
 `accept ID --ruling TEXT` also covers a failing plain check that the ruling names by its command or a test target; name every failing check. A red-first check is never covered.
 `finding add --kind out_of_scope --disposition deferred --reason TEXT` defers an out-of-scope item. A final `review` receipt lists items no finding triages yet as `needs_triage` and refuses nothing.
 Policy `full_check` is `{"paths": [globs], "command": text}`: a card whose diff touches a path needs a passing run of that command in its self-review, or `accept` refuses it.
+
+## 2.15.3 additions
+
+A result carries `track` when the track changed since the last result. A stale-report refusal names `resume ID`; a resumed card's outside-files check skips commits other cards made while it was reported. Two repairs collide only on their own files. A pull request counts as reviewed only from a clean final review or one covering every card it carries. `board --view` has `overlaps`. A read-only investigator's report survives later edits.
