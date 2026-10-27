@@ -15,14 +15,21 @@ GH_TIMEOUT = 6  # seconds; below the mod's 8 s delegate timeout and the hook's 1
 LIST_LIMIT = 1000
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
 MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b|'
-                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')  # one line; merge_capable also reads shell words
+                           r'\bgh\b[^;&|\n]*\bapi\b(?=[^;&|\n]*\bgraphql\b)[^;&|\n]*(?:(?i:merge)|=@|--input\b)|'
+                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')  # one line; merge_capable adds the shell-word view
 
 
 def merge_capable(command):
     """Whether the merge guard checks `command`: a line naming a gh merge, or a gh segment whose shell words can merge
     (guards.gh_merge_capable: continuations, multi-line quotes and graphql mutations, RZ2)."""
-    from .guards import gh_merge_capable
-    return isinstance(command, str) and bool(MERGE_SEGMENT.search(command) or gh_merge_capable(command))
+    from .guards import gh_merge_kinds
+    return isinstance(command, str) and bool(MERGE_SEGMENT.search(command) or gh_merge_kinds(command))
+
+
+def sets_default(command):
+    """`gh repo set-default` on one line or in the shell-word view (a continued line, a shell payload)."""
+    from .guards import gh_merge_kinds
+    return bool(SET_DEFAULT.search(command) or 'set-default' in gh_merge_kinds(command))
 
 
 SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
@@ -232,7 +239,7 @@ def _decide(command, cwd, state_dir, repo, gh=None):
     entries = _entries(state)
     runs = [e for e in entries if e.get('autonomous') is True]
     active, unattended = auto.get('active') is True, raw_unattended(state)
-    if SET_DEFAULT.search(command):  # N1: the cwd remotes would point a later gh pr merge at another repository
+    if sets_default(command):  # N1: the cwd remotes would point a later gh pr merge at another repository
         return ('deny', SET_DEFAULT_REASON) if active or unattended else None
     if not (runs or active or unattended):
         return None

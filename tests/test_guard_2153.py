@@ -275,11 +275,26 @@ class WordViewMergeGateTest(tm.MergeFixture):
             with self.subTest(command=command):
                 self.assertEqual(output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
 
-    def test_a_graphql_read_that_mentions_merge_is_not_gated(self):
-        for command in ("gh api graphql -f query='{ repository(owner: \"o\", name: \"r\") { pullRequest(number: 3) { mergeable mergeStateStatus } } }'",
-                        "gh api graphql -f query='{ viewer { pullRequests(states: MERGED, first: 1) { totalCount } } }'"):
+    WRAPPED = ("bash -c 'gh api graphql --input m.json'", 'eval "gh api graphql --input m.json"',
+               "echo 'gh api graphql --input m.json' | sh", 'gh api /graphql --input m.json',
+               'gh api https://api.github.com/graphql --input m.json', 'gh pr -R o/r merge 3 --merge',
+               'gh pr --repo o/r merge 3 --merge')
+
+    def test_wrapped_and_respelled_merges_are_denied_after_the_receipt(self):
+        """FX6: shell payloads, any graphql endpoint spelling and flags between pr and merge."""
+        for command in self.WRAPPED:
             with self.subTest(command=command):
-                self.assertIsNone(self.decide(command))
+                self.assertEqual((self.decide(command) or ('none',))[0], 'deny')
+
+    def test_a_merged_read_and_a_continued_set_default_are_not_gated(self):
+        self.assertIsNone(self.decide('gh api repos/o/r/pulls/3/merged'))
+        self.assertIsNone(self.decide('gh \\\n repo set-default o/r'))  # no run is active or unattended
+
+    def test_a_graphql_read_that_mentions_merge_fails_closed(self):
+        """RG2: the one-line arm stays as a fallback, so a read naming merge is denied (gh pr view --json mergeable
+        reads it instead); a read that does not name merge is not gated."""
+        self.assertEqual(self.decide("gh api graphql -f query='{ viewer { pullRequests(states: MERGED) { totalCount } } }'")[0], 'deny')
+        self.assertIsNone(self.decide("gh api graphql -f query='{ viewer { login } }'"))
 
     def test_the_printed_merge_still_runs(self):
         self.assertEqual(self.decide(self.merge(3)), ('allow', ''))

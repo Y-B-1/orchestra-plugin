@@ -736,13 +736,20 @@ def _opaque_graphql(word):
     return any(lower.startswith(x) if x.startswith('--') else x in lower for x in _RELEASE['gh_api_graphql_opaque'])
 
 
-def gh_merge_capable(command):
-    """RZ2: whether a gh segment of `command` can merge or retarget a merge, read from its shell words the way the
-    release classifier reads them (continuations joined, quote-aware segments): `pr merge`, a `gh api` path with
-    `/merge` (also `/merges`), `gh api graphql` with a mutation or a body the guard cannot read, or `repo set-default`.
-    A segment that does not parse counts when it names gh (fail closed)."""
-    if not isinstance(command, str) or 'gh' not in command:
-        return False
+_GH_MERGE_ENDPOINT = re.compile(r'/merges?(?:$|[/?#])')
+_SHELLS = frozenset(['sh', 'bash', 'zsh', 'dash', 'ksh'])
+
+
+def gh_merge_kinds(command, depth=0):
+    """RZ2, FX6: the kinds ('merge', 'set-default') of gh segments in `command` that can merge or retarget a merge,
+    read from shell words the way the release classifier reads them: continuations joined, quote-aware segments,
+    every gh word in a segment, and the payload of a quoted word that holds a gh command (`bash -c '...'`, `eval
+    "..."`, `echo '...' | sh`). A merge is `pr [flags] merge`, a `gh api` merge endpoint (`/merge`, `/merges`) or a
+    graphql endpoint in any spelling (`graphql`, `/graphql`, a URL) with a mutation or a body the guard cannot read.
+    A segment that does not parse counts as a merge when it names gh (fail closed)."""
+    kinds = set()
+    if not isinstance(command, str) or 'gh' not in command or depth > 3:
+        return kinds
     texts = {command}
     for literal in (True, False):
         joined = _join_continuations(command, literal)
@@ -754,22 +761,39 @@ def gh_merge_capable(command):
                 words = _words(segment)[1]
             except ValueError:
                 if re.search(r'\bgh\b', segment):
-                    return True
+                    kinds.add('merge')
                 continue
-            at = next((i for i, w in enumerate(words) if PurePosixPath(w).name == 'gh'), None)
-            if at is None:
-                continue
-            rest = words[at + 1:]
-            pairs = list(zip(rest, rest[1:]))
-            if ('pr', 'merge') in pairs or ('repo', 'set-default') in pairs:
-                return True
-            if 'api' in rest:
-                after = rest[rest.index('api') + 1:]
-                if 'graphql' in after and any(_opaque_graphql(w) for w in after):
-                    return True
-                if any('/merge' in w.lower() for w in after if not w.startswith('-')):
-                    return True
-    return False
+            for word in words:
+                if re.search(r'\bgh\b', word) and any(c.isspace() for c in word):
+                    kinds |= gh_merge_kinds(word, depth + 1)  # a quoted payload a shell or eval may run
+            for at in (i for i, w in enumerate(words) if PurePosixPath(w).name == 'gh'):
+                kinds |= _gh_kinds(words[at + 1:])
+    return kinds
+
+
+def _gh_kinds(rest):
+    kinds = set()
+    if ('repo', 'set-default') in zip(rest, rest[1:]):
+        kinds.add('set-default')
+    if 'pr' in rest:
+        after, i = rest[rest.index('pr') + 1:], 0
+        while i < len(after) and after[i].startswith('-'):
+            i += 1 if '=' in after[i] or after[i] in ('--help',) else 2  # skip a flag and its value (`-R o/r`)
+        if after[i:i + 1] == ['merge']:
+            kinds.add('merge')
+    if 'api' in rest:
+        after = rest[rest.index('api') + 1:]
+        operands = [w for w in after if not w.startswith('-')]
+        if any(_GH_MERGE_ENDPOINT.search(w.lower().split('?')[0]) for w in operands):
+            kinds.add('merge')
+        if any(w.lower().split('?')[0].rstrip('/').endswith('graphql') for w in operands) and any(_opaque_graphql(w) for w in after):
+            kinds.add('merge')
+    return kinds
+
+
+def gh_merge_capable(command):
+    """Whether gh_merge_kinds finds a merge."""
+    return 'merge' in gh_merge_kinds(command)
 
 
 def _is_release(name, words):
