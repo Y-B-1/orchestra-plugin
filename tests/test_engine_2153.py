@@ -9,6 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_engine as te
 import test_engine_2152 as t2
 import test_refusal_texts as tr
+from test_refusal_texts import report_for
 from orchestra_core.engine import Engine, EngineError
 
 
@@ -34,6 +35,38 @@ class ResumeGapTests(tr.RefusalFixture):
         self.engine.report('w-a', token, tr.report_for(self.commit(a='second', late='y')))
         self.assertIn('files outside the card: late, stray;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
 
+
+
+class MergedSiblingTests(tr.RefusalFixture):
+    """F121: a sibling's commit merged in from its own branch stays the sibling's work after this card takes over one
+    of its files; this card's own commit that touches a sibling's file still counts as its own."""
+
+    def merged_sibling(self):
+        main = self.git('rev-parse', '--abbrev-ref', 'HEAD')
+        self.git('checkout', '-qb', 'side')
+        sibling = self.running('b', files=['b_file', 'shared'])
+        self.engine.record_bases('main', self.lease, ['b'], self.git('rev-parse', 'HEAD'))
+        self.engine.report('w-b', sibling, report_for(self.commit(b_file='by b', shared='by b')))
+        self.git('checkout', '-q', main)
+        self.git('merge', '--no-ff', '-qm', 'merge b', 'side')
+        self.engine.accept('main', self.lease, 'b')
+
+    def test_a_merged_sibling_commit_stays_sibling_work(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        self.merged_sibling()
+        self.engine.own_add('main', self.lease, 'a', 'shared')
+        self.engine.report('w-a', token, report_for(self.commit(a='mine', shared='by a')))
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.card()['state'])
+
+    def test_a_first_parent_commit_touching_an_owned_file_is_still_this_cards(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        self.merged_sibling()
+        self.engine.own_add('main', self.lease, 'a', 'shared')
+        self.engine.report('w-a', token, report_for(self.commit(a='mine', shared='by a', b_file='a sneaks this in')))
+        self.assertIn('files outside the card: b_file;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
 
 @t2.own_tests_only
 class RepairReservationTests(te.FinalBlockerTests):

@@ -2899,6 +2899,10 @@ class Engine:
         if not base or not sha or not siblings:
             return list(files)
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
+        try:  # F121: a commit off base..sha's first-parent line came in through a merge, so it is not this card's own
+            line = set(self._git('rev-list', '--first-parent', base + '..' + sha).decode().split())
+        except EngineError:
+            line = None
         kept = []
         for name in files:
             owners = [other for other in siblings if self._in_scope(name, [Path(f).as_posix() for f in other.get('files', [])])]
@@ -2906,7 +2910,8 @@ class Engine:
                 commits = self._git('log', '--no-merges', '--format=%H', base + '..' + sha, '--', name).decode().split()
             except EngineError:
                 commits = []
-            if not owners or not commits or not all(self._sibling_commit(c, owners, owned) for c in commits):
+            if not owners or not commits or not all(self._sibling_commit(c, owners, owned if line is None or c in line else [])
+                                                    for c in commits):
                 kept.append(name)
         return kept
 
