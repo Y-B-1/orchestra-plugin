@@ -70,7 +70,7 @@ def _running(engine, worker, token):
     if not session or not session.get('active'):
         return False
     return any(t.get('assignment') == token and t.get('worker') == worker and t.get('state') == 'running'
-               for t in state.get('tasks', {}).values())
+               for t in state.get('tasks', {}).values())  # after a report, only `resume` (F102) lets a newer report in
 
 
 def capture(payload, engine):
@@ -110,7 +110,9 @@ def _capture(payload, engine):
         if unmatched:
             _save(reports, unmatched, message)
         return {}
-    _save(reports, token, message)
+    saved = (reports / (token + '.md')).exists()
+    if not saved:
+        _save(reports, token, message)  # a first report is kept even when refused; a saved one is replaced only on accept
     try:
         engine.report(worker, token, message)
     except Exception as exc:
@@ -118,4 +120,6 @@ def _capture(payload, engine):
             return {}
         return {'decision': 'block', 'reason': 'Orchestra refused your report: %s. Fix it and end again with the STATUS and '
                 'ARTIFACT lines first.' % ' '.join(str(exc).split())}
+    if saved:
+        _save(reports, token, message)
     return {}

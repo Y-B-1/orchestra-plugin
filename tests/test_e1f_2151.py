@@ -46,6 +46,26 @@ class CheckMatchTests(te.SelfReviewTests):
             with self.subTest(label), self.assertRaisesRegex(EngineError, 'Self-review has a failing check'):
                 self.engine.accept('main', self.lease, name)
 
+    def test_a_parenthetical_after_an_operator_is_a_subshell_not_a_note(self):
+        red = {'command': 'cd pkg && (make test)', 'exit_code': 1, 'expect': 'fail'}
+        for label, later in {
+                'a different subshell': 'cd pkg && (make lint)',
+                'the same subshell with a note': 'cd pkg && (make test)',
+                'a note holding an operator': 'cd pkg && make test (a && b)'}.items():
+            name = label.replace(' ', '-')
+            checks = [red, {'command': later, 'exit_code': 0}]
+            if label == 'the same subshell with a note':
+                self.assertEqual('accepted', self.accepted(name, checks))
+                continue
+            self.engine.report('w-' + name, self.running(name), te.done('Built.', checks=checks))
+            with self.subTest(label), self.assertRaisesRegex(EngineError, 'no later passing run'):
+                self.engine.accept('main', self.lease, name)
+
+    def test_a_note_after_a_word_inside_a_chained_command_is_still_stripped(self):
+        red = {'command': 'cd pkg && make test', 'exit_code': 1, 'expect': 'fail'}
+        green = {'command': 'cd pkg && make test (after the fix)', 'exit_code': 0}
+        self.assertEqual('accepted', self.accepted('chained', [red, green]))
+
 
 @own_tests_only
 class RepairReservationTests(te.FinalBlockerTests):

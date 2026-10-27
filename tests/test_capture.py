@@ -88,6 +88,14 @@ class RefusalTests(CaptureCase):
         self.assertNotIn('hookSpecificOutput', out)
         self.assertTrue((self.reports / (self.token + '.md')).is_file())
 
+    def test_a_refused_second_report_leaves_the_saved_report_unchanged(self):
+        self.stop()
+        self.engine.resume_card('main', self.lease, 'c')  # 2.15.2: after a report only `resume` lets a newer one in
+        with mock.patch.object(type(self.engine), 'report', side_effect=EngineError('refused')):
+            out = self.stop(message='STATUS: ISSUES\nARTIFACT: def456 clean\nNew text.')
+        self.assertEqual(out['decision'], 'block')
+        self.assertEqual((self.reports / (self.token + '.md')).read_text(), GOOD)
+
     def test_it_never_blocks_twice(self):
         with mock.patch.object(type(self.engine), 'report', side_effect=EngineError('refused')):
             out = self.stop(active=True)
@@ -131,12 +139,10 @@ class IgnoredTests(CaptureCase):
         self.transcript.unlink()
         self.assertIgnored(self.stop())
 
-    def test_a_card_that_is_no_longer_running_is_ignored(self):
-        self.stop()
-        (self.reports / (self.token + '.md')).unlink()
-        self.assertEqual(self.stop(message='STATUS: PASS\nARTIFACT: abc clean\nagain'), {})
-        self.assertEqual(self.files(), [])
+    def test_an_accepted_card_is_ignored(self):
+        self.stop()  # 2.15.2 (F102): a second message while the card is reported is a newer report, not ignored
         self.engine.accept('main', self.lease, 'c')
+        (self.reports / (self.token + '.md')).unlink()
         self.assertEqual(self.stop(), {})
         self.assertEqual(self.files(), [])
 

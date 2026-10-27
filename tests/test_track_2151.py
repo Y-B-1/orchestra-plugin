@@ -43,12 +43,13 @@ class TrackTests(TrackFixture):
         self.assertEqual(self.track(), [dict(card='q', side=[]), dict(card='p', side=['r'])])
 
     def test_a_card_that_fits_the_session_model_runs_inline_before_one_that_does_not(self):
-        self.task('m1', mode='mechanical')  # Haiku: not the session's model
+        self.engine_with(dict(schema_version=1, model_fit='exact'))  # exact: a Haiku card does not fit a Sonnet session
+        self.task('m1', mode='mechanical')
         self.task('i1')
         self.assertEqual(self.track(), [dict(card='i1', side=['m1'])])
 
     def test_no_card_fitting_the_session_model_names_the_coordinator_work(self):
-        self.engine.record_model('claude-opus-5-5', 'high')
+        self.engine.record_model('claude-haiku-5-5', 'high')  # weaker than the Sonnet builder cards
         self.task('a')
         self.task('b')
         out = self.engine.waves()['track']

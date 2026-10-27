@@ -645,9 +645,9 @@ class ReadingBudgetTest(unittest.TestCase):
         for levels, width in ((5, 2), (4, 4), (6, 2), (5, 3)):  # 14, 38, 78 and 97 KB
             command = _nested_shells(levels, width)
             with self.subTest(size=len(command)):
-                start = time.perf_counter()
+                start = time.process_time()  # CPU time of this process: other load on the machine cannot fail it
                 decision = classify_command(command)
-                self.assertLess(time.perf_counter() - start, 5)
+                self.assertLess(time.process_time() - start, 5)
                 self.assertEqual(decision.action, 'deny')
 
     def test_spent_budget_denies_as_malformed(self):

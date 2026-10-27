@@ -80,6 +80,8 @@ class Ctx:
         self.lease = None
         self.session = None
         self.runs = []
+        self.model = None  # a scenario sets this to run its sessions on another model than MODEL
+        self.env = None  # extra environment for the claude sessions
 
     def o(self, *args, lease=True, check=True):
         argv = ['python3', O] + (['--lease', self.lease] if lease and self.lease else []) + list(args)
@@ -92,16 +94,17 @@ class Ctx:
             raise RuntimeError(f'orchestra {args}: {out}')
         return out
 
-    def start(self, guard='minimal', size='medium'):
+    def start(self, guard='minimal', size='medium', **policy):
         pol = json.loads((PLUGIN / 'config/policy.default.json').read_text())
         pol['guard_mode'] = guard
+        pol.update(policy)
         p = self.dir / 'policy.json'
         p.write_text(json.dumps(pol))
         out = self.o('start', '--policy', str(p), '--size', size, lease=False)
         self.lease, self.state = out['lease'], Path(out['state'])
         return out
 
-    def card(self, cid, files, mode='implementation', role='builder', deps=(), body='Create the file.', accept=None):
+    def card(self, cid, files, mode='implementation', role='builder', deps=(), body='Create the file.', accept=None, defer=False):
         brief = self.dir / f'{cid}.md'
         brief.write_text(f'# {cid}\n\nMode: {mode}\n\n## Objective\n{body}\n\n## Acceptance\n'
                          + '\n'.join('- ' + a for a in (accept or ['the change is committed'])) + '\n')
@@ -109,7 +112,8 @@ class Ctx:
              'files': files, 'resources': [], 'dependencies': list(deps), 'outcome': cid}
         p = self.dir / f'{cid}.json'
         p.write_text(json.dumps(c))
-        self.o('add', str(p))
+        if not defer:  # the session adds a deferred card itself, so the board line with the track reaches it
+            self.o('add', str(p))
         return brief
 
     def arm(self):
@@ -124,7 +128,7 @@ class Ctx:
         return out
 
     def claude(self, prompt, turns=12, resume=True, extra=()):
-        argv = ['claude', '-p', prompt, '--model', MODEL, '--output-format', 'stream-json', '--verbose',
+        argv = ['claude', '-p', prompt, '--model', self.model or MODEL, '--output-format', 'stream-json', '--verbose',
                 '--include-hook-events', '--permission-mode', 'bypassPermissions', '--max-turns', str(turns)] + list(extra)
         if LOAD:
             argv += ['--plugin-dir', str(LOAD)]
@@ -134,7 +138,8 @@ class Ctx:
         log = self.dir / f'run{n}.jsonl'
         t0 = time.time()
         with open(log, 'w') as f, open(self.dir / f'run{n}.err', 'w') as e:
-            subprocess.run(argv, cwd=self.repo, stdout=f, stderr=e, stdin=subprocess.DEVNULL, timeout=1500)
+            subprocess.run(argv, cwd=self.repo, stdout=f, stderr=e, stdin=subprocess.DEVNULL, timeout=1500,
+                           env=dict(os.environ, **self.env) if self.env else None)
         ev = parse(log)
         ev['seconds'] = round(time.time() - t0)
         self.session = ev.get('session') or self.session
@@ -146,7 +151,7 @@ class Ctx:
 
 
 def parse(path):
-    calls, results, hooks, texts, session, subagents = {}, {}, [], [], None, []
+    calls, results, hooks, texts, session, subagents, tools = {}, {}, [], [], None, [], []
     for line in open(path):
         try:
             m = json.loads(line)
@@ -154,6 +159,8 @@ def parse(path):
             continue
         session = m.get('session_id') or session
         t, st = m.get('type'), m.get('subtype')
+        if t == 'system' and st == 'init' and isinstance(m.get('tools'), list):
+            tools = [str(n) for n in m['tools']]
         if t == 'system' and st == 'hook_response':
             hooks.append({'event': m.get('hook_event'), 'name': m.get('hook_name'), 'out': (m.get('stdout') or '') + (m.get('stderr') or ''),
                           'exit': m.get('exit_code'), 'outcome': m.get('outcome'), 'parent': m.get('parent_tool_use_id')})
@@ -176,12 +183,98 @@ def parse(path):
         cmd = c['input'].get('command') if isinstance(c['input'], dict) else None
         out.append({'tool': c['tool'], 'cmd': cmd, 'input': json.dumps(c['input'])[:400], 'sub': bool(c['parent']),
                     'error': r.get('error'), 'text': r.get('text', '')})
-    return {'calls': out, 'hooks': hooks, 'texts': texts, 'session': session}
+    return {'calls': out, 'hooks': hooks, 'texts': texts, 'session': session, 'tools': tools}
 
 
 def by_cmd(ev, needle):
     hits = [c for c in ev['calls'] if c['cmd'] and needle in c['cmd']]
     return hits[0] if hits else None
+
+
+def _words(cmd):
+    return [w for w in re.split(r'[\s"\';&|()]+', cmd) if w]
+
+
+def _orch_calls(ev):
+    """(index, words) of each main-session Bash call that runs orchestra.py."""
+    return [(i, _words(c['cmd'])) for i, c in enumerate(ev['calls'])
+            if c['tool'] == 'Bash' and not c['sub'] and c['cmd'] and 'orchestra.py' in c['cmd']]
+
+
+def ran_inline(ev, cid):
+    """True when the main session ran `inline CID` or `wave --inline CID ...`."""
+    return any(w in ('inline', '--inline') and words[j + 1:j + 2] == [cid]
+               for _, words in _orch_calls(ev) for j, w in enumerate(words))
+
+
+def side_start_index(ev, cid):
+    """Index of the first main-session call that starts CID on a worker (`wave` or `dispatch` naming it other than as the
+    inline card, or an Agent call carrying `orchestra-CID`), else None."""
+    for i, c in enumerate(ev['calls']):
+        if c['sub']:
+            continue
+        if c['tool'] in ('Agent', 'Task') and f'orchestra-{cid}' in c['input']:
+            return i
+        if c['tool'] == 'Bash' and c['cmd'] and 'orchestra.py' in c['cmd']:
+            words = _words(c['cmd'])
+            for j, w in enumerate(words):
+                if w in ('wave', 'dispatch') and any(x == cid and words[k - 1] != '--inline'
+                                                     for k, x in enumerate(words[j + 1:], j + 1)):
+                    return i
+    return None
+
+
+def accept_index(ev, cid):
+    """Index of the first main-session call that accepts CID (`accept CID`, or `inline CID ... --accept`), else None."""
+    for i, words in _orch_calls(ev):
+        for j, w in enumerate(words):
+            if (w == 'accept' and words[j + 1:j + 2] == [cid]) or (w == 'inline' and words[j + 1:j + 2] == [cid] and '--accept' in words):
+                return i
+    return None
+
+
+def main_wrote(ev, name, sub=False):
+    """True when a main-session (or, with sub, a subagent) Write or Edit call names the file NAME, or a Bash call writes it
+    (a `>` or `>>` redirect into it, or `tee` of it); a Bash call that only names it does not count."""
+    f = r'''["']?(?:[^\s"']*/)?''' + re.escape(name) + r'''["']?(?![\w.-])'''
+    bash = re.compile(r'>>?\s*' + f + r'|\btee\s+(?:-\w+\s+)*' + f)
+    return any(c['sub'] == sub and (bool(bash.search(c['cmd'] or '')) if c['tool'] == 'Bash' else c['tool'] in ('Write', 'Edit') and name in c['input'])
+               for c in ev['calls'])
+
+
+def hook_says(ev, text):
+    return any(text in h['out'] for h in ev['hooks'])
+
+
+def board_says(ev, text):
+    """True when a hook answer or a main-session tool result carries TEXT (the board line reaches the session either way)."""
+    return hook_says(ev, text) or any(text in c['text'] for c in ev['calls'] if not c['sub'])
+
+
+def task_subjects(ev, tool_name):
+    """The `subject` of each call of a native task tool, in order."""
+    found = []
+    for c in ev['calls']:
+        if c['tool'] == tool_name:
+            try:
+                found.append(json.loads(c['input']).get('subject', ''))
+            except (ValueError, AttributeError):
+                found.append('')
+    return found
+
+
+def step_of(ev, cid, step):
+    """True when a TaskCreate subject reads `<CID> step <N>`."""
+    return any(f'{cid} step {step} ' in s + ' ' for s in task_subjects(ev, 'TaskCreate'))
+
+
+def task_sync_ran(ev):
+    """True when the main session's record holds any native task call (the board mod syncs through them)."""
+    return any(c['tool'] in ('TaskCreate', 'TaskUpdate', 'TaskList') and not c['sub'] for c in ev['calls'])
+
+
+def task_tools_available(ev):
+    return all(n in (ev.get('tools') or []) for n in ('TaskCreate', 'TaskUpdate', 'TaskList'))
 
 
 def orch_denied(c):
@@ -270,6 +363,34 @@ def a1_autonomy_git(x, chk):
     expect_cmds(ev, chk, [('push origin work', False), ('push origin main', True), ('push origin v9', True),
                           ('git merge work', True)])
     chk('origin main unchanged', sh(['git', 'rev-parse', 'main'], x.origin).strip() == sh(['git', 'rev-parse', 'main'], x.repo).strip())
+
+
+DECOY = '/tmp/claude-99999'  # a fake Claude temp root: a4 never points rm at a real session scratchpad
+
+
+def a4_scratchpad_delete(x, chk):
+    """Proves: While autonomy is armed, rm cannot remove a Claude temp root, a project's sessions or another session's
+    directory, while a plain temp file glob still works. Uses only the decoy tree DECOY."""
+    files = [Path(DECOY) / 'projX' / s / 'scratchpad' / 'f' for s in ('sessY', 'sessZ')]
+    for f in files:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text('keep')
+    for n in (1, 2):
+        Path(f'/tmp/orchlive-a4-{n}.log').write_text('scratch')
+    try:
+        x.start('minimal')
+        x.arm()
+        ev = x.claude(cmd_prompt([f'rm -rf {DECOY}', f'rm -rf {DECOY}/projX/*', f'rm -rf {DECOY}/projX/sessY',
+                                  'rm -f /tmp/orchlive-a4-*.log']))
+        expect_cmds(ev, chk, [(f'{DECOY}/projX/*', True), (f'{DECOY}/projX/sessY', True), ('orchlive-a4-*.log', False)])
+        root = [c for c in ev['calls'] if c['cmd'] and c['cmd'].strip() == f'rm -rf {DECOY}']
+        chk(f'denied: rm -rf {DECOY}', bool(root) and orch_denied(root[0]), root[0]['text'][:250] if root else 'model never ran it')
+        chk('every decoy file still exists', all(f.is_file() for f in files), [str(f) for f in files if not f.is_file()])
+        chk('the temp file glob removed its files', not any(Path(f'/tmp/orchlive-a4-{n}.log').exists() for n in (1, 2)))
+    finally:
+        shutil.rmtree(DECOY, ignore_errors=True)
+        for n in (1, 2):
+            Path(f'/tmp/orchlive-a4-{n}.log').unlink(missing_ok=True)
 
 
 def d1_agent_capture(x, chk, workflow=False, worktree=False):
@@ -480,8 +601,8 @@ def r1b_resume(x, chk):
 
 
 def m1_model_fit(x, chk):
-    """Proves: SessionStart records the session model, and the engine refuses an inline card on another model while a worker start is allowed."""
-    x.start('minimal')
+    """Proves: SessionStart records the session model, and under policy `model_fit: exact` the engine refuses an inline card on another model while a worker start is allowed (t1 and t2 prove the default rank rule)."""
+    x.start('minimal', model_fit='exact')
     x.card('M1', ['m1.txt'], mode='mechanical')
     x.card('M2', ['m2.txt'])
     x.claude('Reply OK. No tools.', turns=2, resume=False)
@@ -506,10 +627,98 @@ def s1_role_skills(x, chk):
         chk(f'Skill {name} loaded without error', hit and not hit[0]['error'], hit[0]['text'][:200] if hit else 'not called')
 
 
+def _track_cards(x):
+    """Cards A (a.txt), B after A (b.txt) and C disjoint (c.txt): the board's first track step is `you run A; side: C`."""
+    x.start('minimal')
+    x.card('A', ['a.txt'], body='Create a.txt containing the word one and commit it with git.', defer=True)
+    x.card('B', ['b.txt'], deps=['A'], body='Create b.txt containing the word two and commit it with git.', defer=True)
+    x.card('C', ['c.txt'], body='Create c.txt containing the word three and commit it with git.', defer=True)
+
+
+def _join(*evs):
+    """One event record from several sessions' records, in order."""
+    return {'calls': sum((e['calls'] for e in evs), []), 'hooks': sum((e['hooks'] for e in evs), []),
+            'texts': sum((e['texts'] for e in evs), []), 'session': evs[-1]['session'], 'tools': evs[0].get('tools') or []}
+
+
+def _track_session(x):
+    """Two prompts in one session. The first adds the cards and stops, so the Stop hook hands the session the board line
+    with the track; the second tells it to follow that line. Returns the first prompt's record and both joined."""
+    pre = (f'A disposable scratch repository with an active Orchestra run; you are its coordinator and the main session. '
+           f'Commands start with `python3 {O} --lease {x.lease}`. Add the cards, one command each, in this order: '
+           f'`add {x.dir}/A.json`, `add {x.dir}/B.json`, `add {x.dir}/C.json`. Then stop; do nothing else.')
+    first = x.claude(pre, turns=8, resume=False)
+    follow = ('Follow the `Track:` part of the Orchestra board line you were given. The card it says you run, you do yourself in '
+              'this session with your own tools, not a subagent. Cards beside it ("side:") go to workers.\n'
+              '1. Start your card and the side cards: `wave --inline YOURS SIDE... --emit` (or `inline YOURS`, then `dispatch SIDE '
+              "--serial 'side work'`). Then launch each side worker with the Agent tool exactly as the emitted agent_call says, "
+              'without waiting for it.\n'
+              '2. Do your card: create its file with the Write tool, then `git add FILE` and `git commit -m msg` for that file only.\n'
+              '3. Write a report file (any path outside the repository) holding two lines: `ARTIFACT: <commit sha> clean` and '
+              '`SELF_REVIEW: {"checks": [{"command": "git status", "exit_code": 0}], "criteria": [{"criterion": "the change is '
+              'committed", "met": true, "evidence": "committed"}]}`. Run `report MAIN TOKEN FILE` (MAIN and TOKEN come from the '
+              'inline start) and then `accept YOURS`.\n'
+              '4. Run `waves` and say which card the track names next. Do not start, report or accept any other card. Then reply DONE.')
+    return first, _join(first, x.claude(follow, turns=40))
+
+
+def t1_track_inline(x, chk):
+    """Proves: The main session runs the track card inline, sends the disjoint side card to a worker before accepting, and the track then names the next card."""
+    x.model = 'claude-opus-5-5'
+    _track_cards(x)
+    first, ev = _track_session(x)
+    chk('board line names the track: Track: you run A; side: C', board_says(first, 'Track: you run A; side: C'),
+        [h['out'][:200] for h in first['hooks'] if 'Track:' in h['out']][:1])
+    chk('main session ran A inline', ran_inline(ev, 'A'), [c['cmd'][:120] for c in ev['calls'] if c['cmd'] and 'orchestra.py' in c['cmd']][:6])
+    side, acc = side_start_index(ev, 'C'), accept_index(ev, 'A')
+    chk('C went to a worker', side is not None, side)
+    chk('C was started before A was accepted', side is not None and acc is not None and side < acc, f'start {side}, accept {acc}')
+    chk('a.txt written by a main-session tool call', main_wrote(ev, 'a.txt'))
+    chk('no subagent wrote a.txt', not main_wrote(ev, 'a.txt', sub=True))
+    chk('A accepted', x.task('A').get('state') == 'accepted', x.task('A').get('state'))
+    track = (x.o('waves', check=False).get('track') or [{}])[0]
+    chk('after A is accepted the track names B', track.get('card') == 'B', json.dumps(track))
+
+
+def t2_weaker_session(x, chk):
+    """Proves: On a Haiku main session a Sonnet builder card is refused inline with Model fit, and the track shows coordinator work."""
+    x.model = 'claude-haiku-5-5'
+    x.start('minimal')
+    x.card('A', ['a.txt'])
+    ev = x.claude('Reply OK. No tools.', turns=2, resume=False)
+    model = (x.o('board', '--view', lease=False).get('session') or {}).get('model')
+    chk('SessionStart recorded the Haiku session model', isinstance(model, str) and 'haiku' in model.lower(), model)
+    refused = json.dumps(x.o('inline', 'A', '--serial', 'live test', check=False))
+    chk('inline refused with Model fit', 'Model fit' in refused, refused[:300])
+    chk('the board line shows the coordinator step', hook_says(ev, 'Track: no card fits the session model'),
+        [h['out'][:200] for h in ev['hooks'] if 'Track' in h['out']][:1])
+    step = (x.o('waves', lease=False, check=False).get('track') or [{}])[0]
+    chk('waves track step 1 is coordinator work with no card', step.get('card') is None and step.get('coordinator'), json.dumps(step))
+
+
+def t3_native_tasks(x, chk):
+    """Proves: With the native task tools on, TaskCreate carries `step 1` for the first track card and a later task call shows the step change after it is accepted."""
+    x.model, x.env = 'claude-opus-5-5', {'CLAUDE_CODE_ENABLE_TODO_TOOLS': '1'}
+    _track_cards(x)
+    ev = _track_session(x)[1]
+    if not task_tools_available(ev):
+        chk('skipped (TaskCreate, TaskUpdate and TaskList are not in the headless tool list)', True, ev.get('tools'))
+        return
+    if not task_sync_ran(ev):
+        chk('skipped (the task tools are listed but no TaskCreate, TaskUpdate or TaskList call reached the transcript: '
+            'the board mod did not sync in this headless session)', True, ev.get('tools'))
+        return
+    chk('TaskCreate for A carries step 1', step_of(ev, 'A', 1), task_subjects(ev, 'TaskCreate'))
+    chk('A accepted', x.task('A').get('state') == 'accepted', x.task('A').get('state'))
+    later = task_subjects(ev, 'TaskUpdate') + task_subjects(ev, 'TaskCreate') + [c['text'] for c in ev['calls'] if c['tool'] == 'TaskList']
+    chk('a later task call shows B at step 1 after A is accepted', any('B step 1 ' in t + ' ' for t in later), later[-3:])
+
+
 SCENARIOS = {f.__name__.split('_')[0]: f for f in (
-    g0_no_run, g1_minimal, g2_normal, g3_protect, a1_autonomy_git, a2b_autonomy_locks, a3b_approved,
+    g0_no_run, g1_minimal, g2_normal, g3_protect, a1_autonomy_git, a2b_autonomy_locks, a3b_approved, a4_scratchpad_delete,
     d1_agent_capture, d2_workflow_capture, w1_worktree_capture, d3_mode_line, d4_worker_limits, h1_stop_block,
-    h2b_board_on_prompt, r1b_resume, i1_install, m1_model_fit, s1_role_skills)}
+    h2b_board_on_prompt, r1b_resume, i1_install, m1_model_fit, s1_role_skills,
+    t1_track_inline, t2_weaker_session, t3_native_tasks)}
 
 
 def run(root, sid, name=None):

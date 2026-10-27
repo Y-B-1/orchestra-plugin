@@ -38,22 +38,34 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `scan` | Run the configured secret scan; an unavailable optional scanner is reported, not passed. | yes |
 | `permit REMOTE TARGET` | Create a release permit for an exact remote and target. It stays valid until the artifact changes or the session ends, and is not used up by a release. Refused while autonomy is active. | yes |
 | `release REMOTE TARGET` | Run the release command named in policy under a current permit. Refused while autonomy is active. | yes |
-| `finding add --review ID --kind finding\|out_of_scope --index N --disposition D --reason TEXT [--card ID]` | Record what happened to a review finding. | yes |
+| `finding add --review ID --kind finding\|out_of_scope --index N --disposition D --reason TEXT [--card ID]` | Record what happened to a review finding. `ID` may be a unique prefix of 8 or more characters. | yes |
 | `hold TASK --finding TEXT` | End the repair ladder: move a blocked repair chain to `held` and log the finding. | yes |
 | `pr URL [--task ID]` | Record a pull request the run opened (an http(s) URL). With `gh`, it must be open, from this repository, based on the default or a run branch and headed by the local branch tip; it stores the head, the cards it carries and whether the head has a clean review. A rerun refreshes the entry. The run brief lists it under Needs you. | yes |
 | `base TASK` | Print the branch the card's pull request targets: the default branch, or the head branch of its one open parent pull request. Two or more open parents exit 2 with `deferred: wait for pull request(s) N, M to merge`. Read-only. | no |
 | `park TASK --reason TEXT` | Set a card aside at an approval boundary. | yes |
 | `unpark TASK` | Return a parked card to the queue. | yes |
+| `replace OLD TASKFILE` | Add the card in TASKFILE in place of OLD, a queued, reported or parked card: dependencies and review targets move to the new card and OLD is cancelled ("replaced by NEW"), in one write. A refused new card changes nothing. A running or accepted card, a card a review covers and a card in a repair chain are refused. | yes |
+| `resume ID` | Send a reported card back to its worker: it runs again under the same token, its report stays as history and the next report replaces it. Refused when a review covers the report (route a repair card) or the worker cap is full. | yes |
 | `cancel TASK --reason TEXT` | Drop a queued or parked card that should never run. Refused while another card depends on it, a review covers it or it is in a repair chain; the drop is kept in the state's `cancelled` list. | yes |
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |
 | `finish [--accept-reported]` | Close the run after completion checks. A parked card blocks it. `--accept-reported` first accepts every reported card whose `accept` passes; the rest stay reported. A refusal for leftover worktrees points to `worktrees`. A run that changed files needs a current final review even with no cards. | yes |
+
+## Changes in 2.15.2
+
+- Model fit ranks families: opus, then sonnet, then haiku. A session at or above a card's family runs the card inline; on the same family the effort decides; a weaker session sends the card to a worker. Policy `model_fit` is `stronger` (the default) or `exact`, which keeps the 2.15.1 rule (any other family goes to a worker). An unknown session model refuses nothing. Track step 1 names only a card `inline` accepts now; while an inline card runs it carries `busy: ID` (shown as `you are running ID`); with none it is `coordinator` with `wait: true`.
+- `replace OLD TASKFILE` and `resume ID` are new (rows above). `do` accepts both as steps.
+- `accept ID --ruling TEXT` also covers a failing plain check when the ruling names its whole command or a test target of it (a word of six or more characters with `/`, `.`, `:` or `_`). Every failing check must be named; a red-first check is never covered; an inline card takes no ruling.
+- A review's out-of-scope item may be recorded `deferred` with a reason (`finding add --kind out_of_scope --disposition deferred --reason TEXT`). The receipt `review` prints lists the out-of-scope items no finding triages yet as `needs_triage`; it refuses nothing.
+- Policy `full_check` is `{"paths": [globs], "command": text}`, both nonempty (a malformed value is refused at `start`). When a card's diff (base to reported commit, else its owned files) touches a path, `accept` refuses it unless its self-review lists a passing run of the exact command.
+- A red-first check's trailing note is dropped only after a word, so `cd d && (make test)` keeps its subshell. The acceptance check reads each markdown code span on its own.
+- Hooks: a resumed worker's second final message replaces the report of a reported card. The restart note names a gate log with no receipt and a recent write, and worktrees with a live process. Under autonomy `rm` below `claude-<uid>` is limited to one session's directory ([hook policy](hooks.md#autonomy-boundaries)).
 
 ## Changes in 2.15.1
 
 - `do "report W T F" "accept ID"` reports a worker card and accepts it in one call. `report --accept` stays limited to inline cards.
 - `waves` adds `track`: the order the main session works the queue, as steps `{step, card, side}`. A step has `coordinator` and no card when no ready card fits the session model. `serialized` also names a slot or cap (`one inline slot`, `worker cap`, `worktree cap`) as the reason. `wave` prints neither `wave_now` nor `serialized`.
-- Model fit covers every role in a sized run, not only builders. Escalation parks a card as `needs-owner:escalated (ORIGINAL REASON)`.
-- `start` and `start --recover` rewrite `NOW.md`. `open_session` refuses a run owned by another harness session and names `start --recover --take-over`.
+- Model fit covers every role in a sized run, not only builders. Escalation appends the original reason, as `needs-owner:escalated (ORIGINAL REASON)`, only when the card was parked without the `needs-owner:` prefix; any other unfinished card is parked as plain `needs-owner:escalated`.
+- `start` and `start --recover` rewrite `NOW.md`. `start` refuses a run owned by another harness session and names `start --recover --take-over`.
 - `review --token TOKEN` takes no report path: it reads the report the Stop hook captured. A reported review card is re-taken at the review's artifact so the chain accept can follow.
 - `add` refuses a final review brief without a `Lens:` line (and without `Required categories:` for a combined lens), and an acceptance line with `unittest discover -s/-p` that matches no test file. An owned generator source also owns the file the script derives from it. `dispatch` records the card's base.
 - `finish` refuses leftover worktrees and points to `worktrees`. A final review stays current after a squash merge when the trees are equal. Untracked `.claude/worktrees/` entries are not evidence.
@@ -144,7 +156,7 @@ Accept a card before adding a repair that overlaps its evidence: dispatching a r
 
 ## Findings ledger and run brief
 
-`finding add` records a disposition for one item of a recorded review: `--kind finding` takes `rejected`, `deferred`, `inline`, `card` or `brief`; `--kind out_of_scope` takes `inline`, `card` or `brief`. `--index` points at the item in that receipt, and `--card` names the card for `card`. A rejection never accepts a card: acceptance still needs a fresh independent verdict, which the repair-diff check gives. `finding list` prints every entry; `finding list --for-brief` prints a "Known findings" block (id, disposition, text, reason) to paste into a reviewer brief.
+`finding add` records a disposition for one item of a recorded review: `--kind finding` takes `rejected`, `deferred`, `inline`, `card` or `brief`; `--kind out_of_scope` takes `inline`, `card`, `brief` or `deferred`. `--index` points at the item in that receipt, and `--card` names the card for `card`. A rejection never accepts a card: acceptance still needs a fresh independent verdict, which the repair-diff check gives. `finding list` prints every entry; `finding list --for-brief` prints a "Known findings" block (id, disposition, text, reason) to paste into a reviewer brief.
 
 Every end of a run, armed or not, appends a run brief to `<state>/progress.md` and stores it as `last_brief`. `brief` prints it without a lease and changes nothing. Sections, in order: reason, deadline, passes and stalls; Needs you; Still failing / next phase; Held log; Final rounds; Notes; Deferred findings; Parked, Accepted and Failures. SessionStart shows its first 2000 characters. Every write to `progress.md` is a single append.
 

@@ -7,7 +7,7 @@ Sentinel: orchestra/SKILL.md
 
 # Orchestra
 
-You are the main coordinator. You route work, reserve it, dispatch it, check the evidence and integrate. Workers do the assigned work and return evidence. You can also do bounded work inline beside disjoint worker cards.
+You are the main coordinator. You route, reserve, dispatch, check the evidence and integrate. Workers do the assigned work and return evidence. You can also do bounded work inline beside disjoint worker cards.
 
 ## Start
 
@@ -32,7 +32,7 @@ Size the work by its diff; for medium or large, run `start --size` with the tier
 | medium, up to 400 | Grill inline, then run `waves` and start each wave whole. |
 | large | Escalation only: `route --size large --reason TEXT`, or an owner request. Map it ([wayfinder](references/wayfinder.md)), then a `plan` card. Units go to workers by model fit. |
 
-Take the next track step from `waves` while workers run; wait only when no track step is startable. Split by context, not by role. The agent that holds a unit's context does all of it: code, test, change and fixes. A worker gets only work that needs little from the rest ([parallel](references/parallel.md)). Model fit covers every role in a sized run: your model and effort stay fixed for the session. A card on another model or a higher effort goes to a worker; the engine refuses it inline. Critic and reviewer cards always go to workers. During a run use `orchestra:` agents (protect denies others); `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it.
+Take the next track step from `waves` while workers run; wait only when no track step is startable. Split by context, not by role. The agent that holds a unit's context does all of it: code, test, change and fixes. A worker gets only work that needs little from the rest ([parallel](references/parallel.md)). Model fit covers every role in a sized run; your model and effort stay fixed. A card on a stronger model, or a higher effort on yours, goes to a worker; the engine refuses it inline. A weaker card runs inline. Critic and reviewer cards always go to workers. During a run use `orchestra:` agents (protect denies others); `investigator-code` for search and `builder` for edits. The main session never approves its own implementation, whichever executor built it.
 
 ## References
 

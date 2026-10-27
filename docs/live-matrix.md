@@ -4,16 +4,17 @@
 
 ## What it tests
 
-Eighteen scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
+Twenty-two scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
 
 - Guard modes: `g0` (no run), `g1` minimal, `g2` normal, `g3` protect.
-- Autonomy: `a1` git limits while armed, `a2b` ledger, settings and cron locks, `a3b` the owner-only `approved` receipt.
+- Autonomy: `a1` git limits while armed, `a2b` ledger, settings and cron locks, `a3b` the owner-only `approved` receipt, `a4` scratchpad deletes on a decoy `/tmp/claude-99999` tree (a temp root, a project's sessions and another session's directory are denied; a plain temp file glob is allowed).
 - Capture: `d1` Agent tool, `d2` Workflow, `w1` worktree wave, `h2b` board line after a captured report.
 - Worker limits: `d3` missing Mode line, `d4` lease and delegation denies.
 - Run flow: `h1` the Stop block, `r1b` resume and `start --recover`.
 - Install: `i1` install and uninstall in a clean profile.
 - Model fit: `m1` SessionStart records the session model, the engine refuses an inline card on another model and still allows its worker start.
 - Role skills: `s1` the main session loads `orchestra:orchestra-design` and `orchestra:orchestra-build` with the Skill tool.
+- Track: `t1` the main session runs the first track card inline, sends the disjoint side card to a worker before accepting, and the track then names the next card (Opus session). `t2` a Haiku session is refused an inline Sonnet card with "Model fit" and the track shows coordinator work. `t3` native tasks (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`): `TaskCreate` carries `step 1` for the first card and a later task call shows the step change; it records a `skipped (reason)` row, not a failure, when the task tools are missing or no task call reaches the transcript (the board mod does not run in every headless build).
 
 Every check reads the stream-json events (tool calls, results, hook responses) or the engine state. None trusts what the model says about itself.
 
@@ -48,7 +49,7 @@ Remove it before a rerun of the same scenario: `OUT_DIR/<id>/` is recreated at t
 
 ## Cost and time
 
-About 20 sessions in all. At `--parallel 4` the full matrix takes about 15 minutes. Run a few ids while debugging one.
+About 25 sessions in all. At `--parallel 4` the full matrix takes about 15 minutes. Run a few ids while debugging one.
 
 ## Reading results
 

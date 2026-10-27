@@ -22,16 +22,18 @@ from orchestra_core.engine import Engine
 from orchestra_core.hooks import _leftovers, handle_event
 from orchestra_core.prompt_approval import handle_prompt
 
+CLAUDE_TMP = 'claude-%d' % (os.getuid() if hasattr(os, 'getuid') else 0)
+
 
 class TempGlobTest(ta.CleanupFixture):
     def test_a_glob_that_empties_a_temp_root_or_a_session_root_is_denied(self):
-        for command in ('rm -rf /tmp/*', 'rm -rf /private/tmp/*', 'rm -rf /private/tmp/claude-501/*',
-                        'rm -rf /tmp/claude-501/*'):
+        for command in ('rm -rf /tmp/*', 'rm -rf /private/tmp/*', 'rm -rf /private/tmp/%s/*' % CLAUDE_TMP,
+                        'rm -rf /tmp/%s/*' % CLAUDE_TMP):
             with self.subTest(command=command):
                 self.assertEqual(self.hook(command), 'deny')
 
     def test_a_glob_in_the_last_component_inside_one_scratchpad_is_allowed(self):
-        for command in ('rm -rf /private/tmp/claude-501/proj/sess/scratchpad/*', 'rm -rf /tmp/x/*.log'):
+        for command in ('rm -rf /private/tmp/%s/proj/sess/scratchpad/*' % CLAUDE_TMP, 'rm -rf /tmp/x/*.log'):
             with self.subTest(command=command):
                 self.assertIsNone(self.hook(command))
 

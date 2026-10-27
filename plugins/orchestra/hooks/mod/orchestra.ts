@@ -280,9 +280,10 @@ async function autonomyPoll($: Dollar, auto: AutonomyState, board: Board, seen: 
 }
 
 /** The main session's own work, from `board --view`: its track steps (the first three). */
-type Step = { step: number; card: string | null; side: string[] };
+type Step = { step: number; card: string | null; busy: string | null; wait: boolean; side: string[] };
 type Track = { steps: Step[] };
 const NO_FIT = 'no card fits the session model; you coordinate, accept and review';
+const WAIT = 'nothing can start now; accept and review the running work';
 const MAIN = 'main';
 
 function textList(v: unknown): string[] {
@@ -297,15 +298,15 @@ function parseTrack(text: string): Track {
     for (const item of raw) {
       const s = asJson(JSON.stringify(item));
       if (s === null || typeof s['step'] !== 'number') continue;
-      steps.push({ step: s['step'], card: typeof s['card'] === 'string' ? s['card'] : null, side: textList(s['side']) });
+      steps.push({ step: s['step'], card: typeof s['card'] === 'string' ? s['card'] : null, busy: typeof s['busy'] === 'string' ? s['busy'] : null, wait: s['wait'] === true, side: textList(s['side']) });
     }
   }
   return { steps };
 }
 
-/** The Track lane: one line per step, `Step N: you run X; side: A, B`. */
+/** The Track lane: one line per step, `Step N: you run X; side: A, B` (`you are running X` while its inline card runs). */
 function trackLines(track: Track): string[] {
-  return track.steps.map((s) => `Step ${s.step}: ${s.card !== null ? `you run ${s.card}` : NO_FIT}${s.side.length > 0 ? `; side: ${s.side.join(', ')}` : ''}`);
+  return track.steps.map((s) => `Step ${s.step}: ${s.card !== null ? `you run ${s.card}` : s.busy !== null ? `you are running ${s.busy}` : s.wait ? WAIT : NO_FIT}${s.side.length > 0 ? `; side: ${s.side.join(', ')}` : ''}`);
 }
 
 /** Native task order: a track card gets `step N` after its id (the id stays first, so the task still matches) and owner main. */
@@ -324,12 +325,22 @@ function acceptCreates(view: View, matched: ReadonlyMap<string, NativeTask>, dro
   const short = runShort(view.runId);
   return view.cards
     .filter((c) => c.state === 'reported' && !matched.has(acceptId(c.id)) && !dropped.has(acceptId(c.id)))
-    .map((c) => ({ cardId: acceptId(c.id), subject: `[${short}] ${acceptId(c.id)} accept the report of ${c.id}`, description: `Orchestra: accept or repair the report of card ${c.id}, run ${view.runId}.` }));
+    .map((c) => c.role === 'code-reviewer'  // F109: a code review card is accepted by recording its receipt
+      ? { cardId: acceptId(c.id), subject: `[${short}] ${acceptId(c.id)} record the review receipt of ${c.id}`, description: `Orchestra: record the receipt of review card ${c.id} with \`review --token\`, run ${view.runId}.` }
+      : { cardId: acceptId(c.id), subject: `[${short}] ${acceptId(c.id)} accept the report of ${c.id}`, description: `Orchestra: accept or repair the report of card ${c.id}, run ${view.runId}.` });
+}
+
+/** The subject a card's task should carry: `step N` after the id while the card is on the track, none once it leaves. */
+function trackSubject(short: string, cardId: string, subject: string, step: number | undefined): string {
+  const head = `[${short}] ${cardId} `;
+  if (!subject.startsWith(head)) return subject;
+  const rest = subject.slice(head.length).replace(/^step \d+ /, '');
+  return `${head}${step === undefined ? '' : `step ${step} `}${rest}`;
 }
 
 function trackUpdates(view: View, track: Track, matched: ReadonlyMap<string, NativeTask>, dropped: ReadonlySet<string>, base: Update[]): Update[] {
-  const out = [...base];
-  const own = (cardId: string, fields: Update['fields']): void => {
+  const out: { cardId: string; taskId: string; fields: Update['fields'] & { subject?: string } }[] = [...base];
+  const own = (cardId: string, fields: Update['fields'] & { subject?: string }): void => {
     const t = matched.get(cardId);
     if (t === undefined || dropped.has(cardId)) return;
     const next = { ...fields };
@@ -338,6 +349,17 @@ function trackUpdates(view: View, track: Track, matched: ReadonlyMap<string, Nat
     if (at >= 0) out[at] = { ...out[at]!, fields: { ...out[at]!.fields, ...next } };
     else if (Object.keys(next).length > 0) out.push({ cardId, taskId: t.id, fields: next });
   };
+  const steps = new Map(track.steps.filter((s) => s.card !== null).map((s) => [s.card as string, s.step]));
+  const short = runShort(view.runId);
+  for (const c of view.cards) {
+    const t = matched.get(c.id);
+    if (t === undefined || dropped.has(c.id)) continue;
+    const subject = trackSubject(short, c.id, t.subject, steps.get(c.id));
+    if (subject === t.subject) continue;
+    const at = out.findIndex((u) => u.cardId === c.id);
+    if (at >= 0) out[at] = { ...out[at]!, fields: { ...out[at]!.fields, subject } };
+    else out.push({ cardId: c.id, taskId: t.id, fields: { subject } });
+  }
   for (const s of track.steps) if (s.card !== null) own(s.card, {});
   for (const c of view.cards) {
     if (c.state !== 'reported' && c.state !== 'accepted') continue;

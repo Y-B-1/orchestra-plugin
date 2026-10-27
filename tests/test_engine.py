@@ -2415,7 +2415,7 @@ class FindingsLedgerTests(EngineFixture):
             self.engine.add_finding('main', self.lease, receipt['id'], 'finding', 0, 'rejected', '  ')
         self.reported('b')
         final = self.record('f', ['a', 'b'], final=True, out_of_scope=['Dead code in util'])
-        for disposition in ('rejected', 'deferred'):
+        for disposition in ('rejected', 'dropped'):  # 2.15.2 F104: an out-of-scope item may also be `deferred`
             with self.assertRaises(EngineError, msg=disposition):
                 self.engine.add_finding('main', self.lease, final['id'], 'out_of_scope', 0, disposition, 'why')
         self.assertEqual([], self.engine.list_findings())
@@ -6235,8 +6235,10 @@ class LandedWorkTests(HoldFixture):
 
     def test_patch_equivalent_work_counts_as_landed(self):
         sha = self.side_commit('side', 'B4')
+        self.accepted('B4', sha[:7] + ' clean')  # dispatched on the base the side commit descends from
         self.git('cherry-pick', sha)
-        self.accepted('B4', sha[:7] + ' clean')
+        self.git('commit', '--amend', '-q', '--no-edit', '--date', '2000-01-01T00:00:00')  # never the same hash as sha
+        self.assertNotEqual(sha, self.git('rev-parse', 'HEAD'))
         self.assertEqual({'B4': True}, self.landed())
 
     def squash_setup(self, move_main=False):

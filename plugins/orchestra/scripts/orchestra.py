@@ -27,7 +27,7 @@ from orchestra_core.paths import atomic, load_policy, main_checkout, repository,
 
 ROOT = Path(__file__).resolve().parents[1]
 # Commands that add one `board` line to their JSON when a card changed state.
-BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','criterion','review','park','cancel','unpark','hold'}
+BOARD_COMMANDS = {'add','dispatch','inline','wave','report','accept','criterion','review','park','cancel','unpark','hold','replace','resume'}
 # No parser takes an abbreviated option: `--leas` must not parse as `--lease`, which the refusal log strips.
 STRICT_PARSER = functools.partial(argparse.ArgumentParser, allow_abbrev=False)
 
@@ -99,6 +99,10 @@ def parser():
     add = sub.add_parser('add', help='Add a card from a task JSON file. Inline route: no designer-planner plan card. '
                                      'Order cards with dependencies')
     add.add_argument('task', help='Task JSON path')
+    replace = sub.add_parser('replace', help='Add a card from a task JSON file in place of a queued, reported or parked card: '
+                             'dependencies and review targets move to the new card and the old one is cancelled, in one step')
+    replace.add_argument('old', metavar='OLD', help='Card to replace')
+    replace.add_argument('task', help='Task JSON path of the new card')
     dispatch = sub.add_parser('dispatch')
     dispatch.add_argument('task_id')
     dispatch.add_argument('worker', nargs='?', help='Worker name; default orchestra-TASK_ID')
@@ -136,7 +140,8 @@ def parser():
     criterion.add_argument('--evidence', required=True, metavar='TEXT', help='What you checked, at most 1000 characters')
     accept = sub.add_parser('accept')
     accept.add_argument('task_id')
-    accept.add_argument('--ruling', metavar='TEXT', help='Accept a worker card whose only gap is an unmet criterion, with the coordinator reason')
+    accept.add_argument('--ruling', metavar='TEXT', help='Accept a worker card whose only gaps are unmet criteria or failing checks the text '
+                        'names (its command or test), with the coordinator reason')
     review = sub.add_parser('review')
     review.add_argument('report', nargs='?', help='Structured review JSON path; with --token and no path, the report '
                         'captured for the token')
@@ -178,6 +183,8 @@ def parser():
     own.add_argument('path')
     unpark = sub.add_parser('unpark', help='Return a parked card to the queue')
     unpark.add_argument('task_id')
+    resume = sub.add_parser('resume', help='Send a reported card back to its worker: running again, same token; its report is kept as history')
+    resume.add_argument('task_id')
     hold = sub.add_parser('hold', help='End the repair ladder: move a blocked repair chain to held and log the finding')
     hold.add_argument('task_id')
     hold.add_argument('--finding', required=True)
@@ -375,8 +382,15 @@ def execute(args):
             engine.interrupt(args.actor,args.lease)
         return {'session':args.command,'state':str(state)},0
     if args.command=='add':
-        engine.add_task(args.actor,args.lease,read_json(args.task))
-        return {'added':read_json(args.task)['id']},0
+        warned=engine.add_task(args.actor,args.lease,read_json(args.task)) or {}
+        return {'added':read_json(args.task)['id'],**warned},0
+    if args.command=='replace':
+        task = read_json(args.task)
+        warned=engine.replace_task(args.actor,args.lease,args.old,task) or {}
+        return {'replaced':args.old,'by':task['id'],**warned},0
+    if args.command=='resume':
+        engine.resume_card(args.actor,args.lease,args.task_id)
+        return {'resumed':args.task_id},0
     if args.command=='dispatch':
         worker = args.worker if args.worker is not None else 'orchestra-'+args.task_id
         token = engine.dispatch(args.actor,args.lease,args.task_id,worker,helper=args.helper,serial=args.serial)

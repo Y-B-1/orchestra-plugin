@@ -738,7 +738,7 @@ test('isWindowsPath: drive letters and backslashes read as Windows, POSIX paths 
 // M1: the live board, worker links, the native task mirror and the guard `minimal` fast path.
 const RUN_ID = '0123456789abcdef';
 const COUNTS = { queued: 0, running: 0, reported: 0, repairing: 0, held: 0, parked: 0, accepted: 0 };
-type CardIn = { id: string; state: string; seq: number; worker?: string | null; dependencies?: string[]; started_at?: number | null };
+type CardIn = { id: string; state: string; seq: number; worker?: string | null; dependencies?: string[]; started_at?: number | null; role?: string; mode?: string };
 
 function boardView(cards: CardIn[], extra: Record<string, unknown> = {}) {
   const counts: Record<string, number> = { ...COUNTS };
@@ -807,6 +807,7 @@ function stage(on: On, r: Rig, opts: { tools?: string[]; decision?: string; deci
       taskCalls.push(e);
       const t = tasks.find((x) => x.id === e['taskId']);
       if (t === undefined || failUpdates.has(t.id)) return { result: { success: false, taskId: String(e['taskId']), updatedFields: [], error: 'Task not found' }, text: '' } as never;
+      if (typeof e['subject'] === 'string') t.subject = e['subject'];
       if (typeof e['status'] === 'string') t.status = e['status'];
       if (typeof e['owner'] === 'string') t.owner = e['owner'];
       if (Array.isArray(e['addBlockedBy'])) t.blockedBy.push(...(e['addBlockedBy'] as string[]));
@@ -1363,6 +1364,32 @@ test('track: with no card fitting the session model the pane says so plainly', a
   expect(drawn).toContain(`Step 1: ${NO_FIT}; side: A`);
 });
 
+test('track: a waiting step says nothing can start now, not that no card fits', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  engine(r, { view: boardView([{ id: 'A', state: 'running', seq: 1, worker: 'w1' }], { track: [{ step: 1, card: null, wait: true, side: [] }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  const ui = await drawBoard($, 'terminal', 120);
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  expect(drawn).toContain('Step 1: nothing can start now; accept and review the running work');
+  expect(drawn.some((t) => t.includes('no card fits'))).toBe(false);
+});
+
+test('track: a busy main session names its running inline card, not a model misfit (2.15.2 RWC)', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  engine(r, { view: boardView([{ id: 'A', state: 'running', seq: 1, worker: 'main' }, { id: 'B', state: 'queued', seq: 2 }], { track: [{ step: 1, card: null, busy: 'A', side: ['B'] }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  const ui = await drawBoard($, 'terminal', 120);
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  expect(drawn).toContain('Step 1: you are running A; side: B');
+  expect(drawn.some((t) => t.includes('no card fits'))).toBe(false);
+});
+
 test('track: the native task list reads as the track, main owns the track cards and workers keep the side cards', async ($, on) => {
   const r = rig(on);
   const s = stage(on, r);
@@ -1371,6 +1398,34 @@ test('track: the native task list reads as the track, main owns the track cards 
   await openBoard($);
   await flush();
   expect(s.tasks.map((t) => [t.subject, t.owner])).toEqual([[`[012345] A step 1 builder/implementation`, 'main'], [subj('B'), 'w2']]);
+});
+
+test('track: when the track changes the task subjects renumber and a card that leaves the track loses its step', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  const cards = [{ id: 'A', state: 'queued', seq: 1 }, { id: 'B', state: 'queued', seq: 2 }];
+  const e = engine(r, { view: boardView(cards, { track: [{ step: 1, card: 'A', side: [] }, { step: 2, card: 'B', side: [] }] }) });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  expect(s.tasks.map((t) => t.subject)).toEqual(['[012345] A step 1 builder/implementation', '[012345] B step 2 builder/implementation']);
+  e.view = boardView(cards, { track: [{ step: 1, card: 'B', side: [] }] });
+  await r.clock.advance(30000);
+  await flush();
+  expect(s.tasks.map((t) => t.subject)).toEqual([subj('A'), '[012345] B step 1 builder/implementation']);
+  expect(s.tasks.map((t) => t.owner)).toEqual(['main', 'main']);
+});
+
+test('track: a reported review card shows as a review entry, since its receipt accepts it (F109)', async ($, on) => {
+  const r = rig(on);
+  const s = stage(on, r);
+  engine(r, { view: boardView([{ id: 'R1', role: 'code-reviewer', mode: 'final', state: 'reported', seq: 1, worker: 'w1' }]) });
+  await $.session.start(start);
+  await openBoard($);
+  await flush();
+  const entry = s.tasks.find((t) => t.subject.startsWith('[012345] accept-R1 '));
+  expect(entry === undefined).toBe(false);
+  expect(entry!.subject).toBe('[012345] accept-R1 record the review receipt of R1');
 });
 
 test('track: a reported card shows as an accept entry for main and completes once accepted', async ($, on) => {
