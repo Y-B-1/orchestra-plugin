@@ -2,6 +2,7 @@
 merge-capable spelling found so far, plus deliberate fail-closed over-denies. Four review rounds found gate bypasses one spelling at a time and RG1 lost five that no test pinned; this
 table only grows, so no rewrite of the gate can quietly un-gate a known form."""
 import json
+import os
 import pathlib
 import sys
 import unittest
@@ -85,6 +86,60 @@ class OversizeCommandTest(tm.MergeFixture):
     def test_a_command_under_the_cap_is_not_affected(self):
         output = self.main("echo '" + 'a' * 1000 + "'")
         self.assertNotEqual(output.get('permissionDecision'), 'deny')
+
+
+class HookBudgetTest(tm.MergeFixture):
+    """RZ6: a command under the 128 KB cap can still take the check past the 30 s hook timeout (nested `| sh`
+    payloads are reparsed by each caller), and a timed-out hook does not block. hooks.main denies a guarded call
+    that has not answered after HOOK_BUDGET seconds."""
+
+    SCRIPTS = pathlib.Path(__file__).resolve().parents[1] / 'plugins' / 'orchestra' / 'scripts'
+
+    def run_hook(self, command, prelude=''):
+        import subprocess
+        import sys
+        import time
+        payload = json.dumps({'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo),
+                              'session_id': 's'})
+        code = ('import sys; sys.path.insert(0, %r); from orchestra_core import hooks; %s'
+                'sys.exit(hooks.main(["PreToolUse", "--harness", "claude"]))' % (str(self.SCRIPTS), prelude))
+        env = dict(os.environ, ORCHESTRA_STATE_DIR=str(self.state))
+        start = time.monotonic()
+        done = subprocess.run([sys.executable, '-c', code], input=payload, capture_output=True, text=True,
+                              cwd=str(self.repo), env=env, timeout=120)
+        return done, time.monotonic() - start
+
+    def test_a_padded_nested_sh_command_at_the_cap_is_denied_inside_the_hook_timeout(self):
+        import shlex
+        from orchestra_core.hooks import HOOK_BUDGET
+        self.arm()
+
+        def make(pad):
+            inner = 'echo ' + 'a' * pad
+            for _ in range(3):
+                inner = 'echo ' + shlex.quote(inner) + ' | sh'
+            return 'rm -f %s; %s' % (self.state / 'state.json', inner)
+        pad = 131000
+        while len(make(pad)) > 131000:
+            pad -= len(make(pad)) - 131000
+        done, took = self.run_hook(make(pad))
+        self.assertEqual(json.loads(done.stdout)['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertLess(took, HOOK_BUDGET + 5)
+
+    def test_a_check_that_runs_past_the_budget_is_denied(self):
+        prelude = ('import time; hooks.HOOK_BUDGET = 1.0; slow = hooks._decide; '
+                   'hooks._decide = lambda *a, **k: (time.sleep(60), slow(*a, **k))[1]; ')
+        done, took = self.run_hook('ls', prelude)
+        self.assertEqual(done.returncode, 2)
+        answer = json.loads(done.stdout)['hookSpecificOutput']
+        self.assertEqual(answer['permissionDecision'], 'deny')
+        self.assertIn('did not finish', answer['permissionDecisionReason'])
+        self.assertLess(took, 10)
+
+    def test_a_quick_check_answers_once(self):
+        done, _ = self.run_hook('ls')
+        self.assertEqual(done.returncode, 0)
+        json.loads(done.stdout)  # one JSON answer, nothing printed twice
 
 if __name__ == '__main__':
     unittest.main()

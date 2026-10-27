@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import fnmatch
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -14,6 +15,7 @@ import re
 import shlex
 import sys
 import subprocess
+import threading
 import time
 
 from . import delta, portable
@@ -32,6 +34,7 @@ _SHELL_TOOLS = set(RULES['tools']['shell'])
 _REBIND_SOURCES = ('clear', 'resume', 'fork')
 STOP_LOCK_BUDGET = 8.0  # SPEC 5.16 item 4: seconds from hook start that a busy-state Stop waits for the lock
 LOCK_WAIT = 2.0  # SPEC 5.16 item 3: seconds a hook read waits for the state lock
+HOOK_BUDGET = 20.0  # RZ6: seconds a PreToolUse check may run before hooks.main denies it; the hook timeout is 30 s
 MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry'
 BUSY = 'Orchestra state is busy; retry'
 AGENT_GUARD = ('Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits), because only '
@@ -2580,24 +2583,60 @@ _CRASH_TOOL = {'name': None}  # The tool named by the payload being handled, for
 
 def main(argv=None):
     """Run the hook. An unexpected crash must not let a guarded call through: a shell or edit tool call is denied (exit 2)
-    with the cause, and every other event or tool gets an empty answer so the session itself keeps working."""
+    with the cause, and every other event or tool gets an empty answer so the session itself keeps working. A PreToolUse
+    check still running after HOOK_BUDGET seconds is answered the same way (RZ6): Claude Code lets a call through when
+    its hook times out, so the answer must come first. The check's own output is held until it finishes, and the
+    first of the two answers is the only one printed."""
     _CRASH_TOOL['name'] = None
     event = next((a for a in (argv if argv is not None else sys.argv[1:]) if not a.startswith('-')), None)
+    if event != 'PreToolUse':
+        return _checked_main(argv, event, sys.stdout, sys.stderr)
+    real_out, real_err = sys.stdout, sys.stderr
+    held_out, held_err = io.StringIO(), io.StringIO()
+    answered = threading.Lock()
+
+    def expire():
+        if answered.acquire(blocking=False):
+            code = _cannot_check(event, 'the check did not finish within %g s' % HOOK_BUDGET, real_out, real_err)
+            real_out.flush()
+            real_err.flush()
+            os._exit(code)
+
+    timer = threading.Timer(HOOK_BUDGET, expire)
+    timer.daemon = True
+    sys.stdout, sys.stderr = held_out, held_err
+    timer.start()
+    try:
+        return _checked_main(argv, event, held_out, held_err)
+    finally:
+        answered.acquire()  # When expire won, this waits until its os._exit ends the process
+        timer.cancel()
+        sys.stdout, sys.stderr = real_out, real_err
+        real_out.write(held_out.getvalue())
+        real_err.write(held_err.getvalue())
+
+
+def _checked_main(argv, event, out, err):
     try:
         return _main(argv)
     except SystemExit:
         raise
     except Exception as exc:
-        name = _CRASH_TOOL['name']
-        if event == 'PreToolUse' and (name is None or isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
-                                                  or name in {'Agent', 'Task'} or name in _APPROVAL_TEXT_TOOLS)):
-            reason = 'Orchestra guard could not check this call (%s: %s); report it to the plugin owner' % (type(exc).__name__, exc)
-            print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
-                                                     'permissionDecisionReason': reason}}))
-            print(reason, file=sys.stderr)
-            return 2
-        print('{}')
-        return 0
+        return _cannot_check(event, '%s: %s' % (type(exc).__name__, exc), out, err)
+
+
+def _cannot_check(event, cause, out, err):
+    """Deny a guarded tool call the hook could not check (exit 2); any other event or tool gets an empty answer."""
+    name = _CRASH_TOOL['name']
+    if event == 'PreToolUse' and (name is None or isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
+                                              or name in {'Agent', 'Task'} or name in _APPROVAL_TEXT_TOOLS)):
+        reason = 'Orchestra guard could not check this call (%s); report it to the plugin owner' % cause
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                                 'permissionDecisionReason': reason}}), file=out)
+        print(reason, file=err)
+        return 2
+    print('{}', file=out)
+    return 0
 
 
 def _prompt_submit(payload):
