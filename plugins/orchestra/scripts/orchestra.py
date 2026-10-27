@@ -21,7 +21,7 @@ import sys
 import uuid
 
 from orchestra_core import briefs, cli_support, delta, ledger, now, portable
-from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, Engine, EngineError
+from orchestra_core.engine import ACTIVE_MISMATCH, ASKS_ERROR, SIZES, Engine, EngineError
 from orchestra_core.guards import classify_command
 from orchestra_core.paths import atomic, load_policy, main_checkout, repository, state_location
 
@@ -56,7 +56,7 @@ def parser():
     start = sub.add_parser('start')
     start.add_argument('--policy', help='Explicit JSON policy; copied outside the application')
     start.add_argument('--harness-session', help='Harness session id (from the SessionStart context); ending that session releases the run')
-    start.add_argument('--size', choices=['tiny', 'medium', 'large'], help='Size of the largest ask in the request (required when '
+    start.add_argument('--size', choices=list(SIZES), help='Size of the largest ask in the request (required when '
                        'this opens a new run): tiny up to 50 changed lines, medium up to 400; large only with --owner-request')
     start.add_argument('--asks', help='Number of separately stated asks (default 1); the size-check budget is the tier guide times it')
     start.add_argument('--owner-request', action='store_true', help='The owner asked for a map: allows a large start and plan cards')
@@ -92,7 +92,7 @@ def parser():
     sub.add_parser('prepr', help='Print the pre-PR size check and reviewer choice; no lease, read-only')
     route = sub.add_parser('route', help='Change the size tier (--size, optionally --asks), or on a 2.4 run the item count '
                                          '(--items; 1 to 5 inline, 6 or more workflow), and log the reason')
-    route.add_argument('--size', choices=['tiny', 'medium', 'large'])
+    route.add_argument('--size', choices=list(SIZES))
     route.add_argument('--asks', help='With --size: the new count of separately stated asks; default keeps the current count')
     route.add_argument('--items', type=int, help='2.4 runs only')
     route.add_argument('--reason', required=True)
@@ -403,8 +403,11 @@ def execute(args):
             result['emit'] = briefs.emit(engine,prepared,result)
         return result,0
     if args.command=='accept':
-        engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
-        return {'accepted':args.task_id},0
+        done = engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
+        result = {'accepted':args.task_id}
+        if done and done.get('uncommitted'):  # F126: accepted work that no commit holds yet cannot land
+            result['warning'] = 'uncommitted changes in the card files: %s; commit them with explicit paths' % ', '.join(done['uncommitted'])
+        return result,0
     if args.command=='criterion':
         engine.record_criterion(args.actor,args.lease,args.task_id,args.criterion,args.evidence)
         return {'criterion':args.task_id},0
@@ -524,6 +527,9 @@ def add_board_line(args,result):
     if line is None:
         return None
     result['board'] = line
+    track = delta.track_text(after)  # the CLI marks the board seen, so a changed track is shown here or not at all
+    if track and track != delta.track_text(args.board_before):
+        result['track'] = track
     return after
 
 

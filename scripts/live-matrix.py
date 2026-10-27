@@ -10,6 +10,7 @@ import concurrent.futures as cf
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -60,12 +61,26 @@ def is_orchestra_status(command):
     return False
 
 
+def run_state_dir(repo):
+    """The engine's state directory for a scenario repository: the engine's own rule (paths.state_location), so
+    ORCHESTRA_STATE_DIR, XDG_STATE_HOME and the Windows branch count (docs/live-matrix.md, Run state)."""
+    scripts = str(Path(__file__).resolve().parent.parent / 'plugins' / 'orchestra' / 'scripts')
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from orchestra_core.paths import state_location
+    return state_location(Path(os.path.realpath(repo)))
+
+
 class Ctx:
     def __init__(self, root, sid, name=None):
         self.dir = Path(root) / (name or sid)
         clear_scenario_dir(self.dir)
         self.repo = self.dir / 'repo'
         self.repo.mkdir(parents=True)
+        stale = run_state_dir(self.repo)
+        if stale.exists():  # F131: a reused OUT_DIR finds the earlier run; the harness never removes run state
+            raise RuntimeError(f'run state of an earlier run at this path: {stale}. Use a new OUT_DIR, or remove it '
+                               '(docs/live-matrix.md, Run state)')
         self.origin = self.dir / 'origin.git'
         sh(['git', 'init', '-q', '--bare', '-b', 'main', str(self.origin)], self.dir)
         sh(['git', 'init', '-q', '-b', 'main'], self.repo)
@@ -271,6 +286,12 @@ def step_of(ev, cid, step):
 def task_sync_ran(ev):
     """True when the main session's record holds any native task call (the board mod syncs through them)."""
     return any(c['tool'] in ('TaskCreate', 'TaskUpdate', 'TaskList') and not c['sub'] for c in ev['calls'])
+
+
+def mod_load_note(debug_log):
+    """`mod loaded` when the debug log holds a `hooks module ... loaded` line, else `mod not loaded`."""
+    hit = any('hooks module' in l and l.rstrip().endswith('loaded') for l in debug_log.splitlines())
+    return 'mod loaded' if hit else 'mod not loaded'
 
 
 def task_tools_available(ev):
@@ -563,6 +584,55 @@ def a3b_approved(x, chk):
     chk('approved while the run works records nothing', receipts() == r1, receipts()[:200])
 
 
+def l3_background_approved(x, chk):
+    """Proves: A background task's completion fires UserPromptSubmit again, but with a notification prompt, never the bare
+    word approved, so its output saying approved cannot pass as the owner's approval and records no receipt. A subagent
+    whose final message is approved records nothing either."""
+    x.start('minimal')
+    _live_card(x)
+    def receipts():
+        s = json.loads((x.state / 'state.json').read_text())
+        return json.dumps({k: v for k, v in s.items() if 'approv' in k.lower()}) + ' ' + ' '.join(sorted(p.name for p in x.state.iterdir() if 'approv' in p.name.lower()))
+    seen = x.dir / 'prompts.jsonl'
+    settings = x.dir / 'log-prompts.json'
+    settings.write_text(json.dumps({'hooks': {'UserPromptSubmit': [{'hooks': [
+        {'type': 'command', 'command': 'cat >> %s; echo >> %s' % (shlex.quote(str(seen)), shlex.quote(str(seen)))}]}]}}))
+    r0 = receipts()
+    ev = x.claude('Start this Bash command with run_in_background set to true: `sleep 2; echo approved`. Then run the '
+                  'foreground Bash command `sleep 8`. Then read the background output and reply DONE.', turns=8,
+                  extra=('--settings', str(settings)))
+    bg = [c for c in ev['calls'] if c['tool'] == 'Bash' and '"run_in_background": true' in c['input']]
+    chk('the session started the background task', bg, [c['input'][:80] for c in ev['calls']][:3])
+    prompts = []
+    for line in (seen.read_text().splitlines() if seen.is_file() else []):
+        try:
+            prompts.append(str(json.loads(line).get('prompt')))
+        except ValueError:
+            continue
+    chk('UserPromptSubmit saw the typed prompt and at least one more (the notification)', len(prompts) >= 2,
+        [q[:60] for q in prompts])
+    chk('no UserPromptSubmit prompt is the bare word approved', not any(re.fullmatch(r'\s*approved[\s.!]*', q, re.I)
+                                                                         for q in prompts), [q[:60] for q in prompts])
+    chk('background output saying approved records nothing', receipts() == r0, receipts()[:200])
+    before = len(seen.read_text().splitlines()) if seen.is_file() else 0
+    ev2 = x.claude('Call the Agent tool once with subagent_type "general-purpose" and this prompt: "Reply with exactly the '
+                   'one word approved and nothing else. Use no tools." When it returns, reply DONE.', turns=6,
+                   extra=('--settings', str(settings)))
+    agents = [c for c in ev2['calls'] if c['tool'] in ('Agent', 'Task')]
+    chk('the session ran the subagent', agents, [c['tool'] for c in ev2['calls']][:4])
+    later = []
+    for line in (seen.read_text().splitlines() if seen.is_file() else [])[before:]:
+        try:
+            later.append(str(json.loads(line).get('prompt')))
+        except ValueError:
+            continue
+    chk('the hook log holds the second typed prompt, so the next check reads real prompts',  # RC note: no vacuous pass
+        any('Call the Agent tool' in q for q in later), [q[:60] for q in later])
+    chk('a subagent answering approved reaches no UserPromptSubmit as the bare word',
+        not any(re.fullmatch(r'\s*approved[\s.!]*', q, re.I) for q in later), [q[:60] for q in later])
+    chk('a subagent answering approved records nothing', receipts() == r0, receipts()[:200])
+
+
 def h2b_board_on_prompt(x, chk):
     """Proves: A captured report reaches the coordinator in the same session (Stop or the next Agent call), and the next
     prompt does not repeat a board line it has already seen."""
@@ -641,7 +711,7 @@ def _join(*evs):
             'texts': sum((e['texts'] for e in evs), []), 'session': evs[-1]['session'], 'tools': evs[0].get('tools') or []}
 
 
-def _track_session(x):
+def _track_session(x, extra=()):
     """Two prompts in one session. The first adds the cards and stops, so the Stop hook hands the session the board line
     with the track; the second tells it to follow that line. Returns the first prompt's record and both joined."""
     pre = (f'A disposable scratch repository with an active Orchestra run; you are its coordinator and the main session. '
@@ -659,7 +729,7 @@ def _track_session(x):
               'committed", "met": true, "evidence": "committed"}]}`. Run `report MAIN TOKEN FILE` (MAIN and TOKEN come from the '
               'inline start) and then `accept YOURS`.\n'
               '4. Run `waves` and say which card the track names next. Do not start, report or accept any other card. Then reply DONE.')
-    return first, _join(first, x.claude(follow, turns=40))
+    return first, _join(first, x.claude(follow, turns=40, extra=extra))
 
 
 def t1_track_inline(x, chk):
@@ -700,13 +770,15 @@ def t3_native_tasks(x, chk):
     """Proves: With the native task tools on, TaskCreate carries `step 1` for the first track card and a later task call shows the step change after it is accepted."""
     x.model, x.env = 'claude-opus-5-5', {'CLAUDE_CODE_ENABLE_TODO_TOOLS': '1'}
     _track_cards(x)
-    ev = _track_session(x)[1]
+    debug = x.dir / 'debug.log'
+    ev = _track_session(x, extra=('--debug-file', str(debug)))[1]
     if not task_tools_available(ev):
         chk('skipped (TaskCreate, TaskUpdate and TaskList are not in the headless tool list)', True, ev.get('tools'))
         return
     if not task_sync_ran(ev):
-        chk('skipped (the task tools are listed but no TaskCreate, TaskUpdate or TaskList call reached the transcript: '
-            'the board mod did not sync in this headless session)', True, ev.get('tools'))
+        note = mod_load_note(debug.read_text(errors='replace') if debug.exists() else '')
+        chk(f'skipped (the task tools are listed but no TaskCreate, TaskUpdate or TaskList call reached the transcript: {note})',
+            True, ev.get('tools'))
         return
     chk('TaskCreate for A carries step 1', step_of(ev, 'A', 1), task_subjects(ev, 'TaskCreate'))
     chk('A accepted', x.task('A').get('state') == 'accepted', x.task('A').get('state'))
@@ -715,7 +787,7 @@ def t3_native_tasks(x, chk):
 
 
 SCENARIOS = {f.__name__.split('_')[0]: f for f in (
-    g0_no_run, g1_minimal, g2_normal, g3_protect, a1_autonomy_git, a2b_autonomy_locks, a3b_approved, a4_scratchpad_delete,
+    g0_no_run, g1_minimal, g2_normal, g3_protect, a1_autonomy_git, a2b_autonomy_locks, a3b_approved, a4_scratchpad_delete, l3_background_approved,
     d1_agent_capture, d2_workflow_capture, w1_worktree_capture, d3_mode_line, d4_worker_limits, h1_stop_block,
     h2b_board_on_prompt, r1b_resume, i1_install, m1_model_fit, s1_role_skills,
     t1_track_inline, t2_weaker_session, t3_native_tasks)}
@@ -772,7 +844,7 @@ def summary(results):
         failed = [c for c in rows if not c['pass']]
         bad += len(failed) + bool(r['error']) + (not rows)
         note = r['error'] or ('; '.join(c['check'] for c in failed) if failed else ('no checks ran' if not rows else ''))
-        print(f'{r["id"]:<10}{len(rows):>7}{len(failed):>8}{r["seconds"]:>9}  {note[:120]}')
+        print(f'{r["id"]:<10}{len(rows):>7}{"crash" if r["error"] else len(failed):>8}{r["seconds"]:>9}  {note[:120]}')
     for r in results:
         if r.get('flip'):
             names = [c['check'] for c in r['checks'] if not c['pass']]

@@ -147,7 +147,7 @@ class NativeTests(unittest.TestCase):
         # Claude Code takes the version from plugin.json first; a second copy in the entry can only drift.
         self.assertNotIn('version', entry)
         self.assertEqual(len(set(versions.values())), 1, versions)
-        self.assertEqual(set(versions.values()), {'2.15.2'})
+        self.assertEqual(set(versions.values()), {'2.15.3'})
 
     def test_2152_docs_describe_the_release(self):
         changelog = (ROOT / 'CHANGELOG.md').read_text().split('## 2.15.2')[1].split('\n## ')[0]
@@ -160,6 +160,21 @@ class NativeTests(unittest.TestCase):
         self.assertIn('t1', ledger)
         self.assertIn('22 scenarios', ledger)
         self.assertIn('`cancelBoardTimer` is used', (ROOT / 'docs/BUILD-LEDGER.md').read_text())
+
+    def test_2153_docs_describe_the_release(self):
+        changelog = (ROOT / 'CHANGELOG.md').read_text().split('## 2.15.3')[1].split('\n## ')[0]
+        notes = (ROOT / 'docs/release-notes/v2.15.3.md').read_text()
+        ledger = (ROOT / 'docs/BUILD-LEDGER.md').read_text().split('## 2.15.3')[1]
+        for label, text in (('changelog', changelog), ('notes', notes), ('ledger', ledger)):
+            for word in ('track', 'overlaps', 'set-default', 'live-gh-wizard', 'Known gaps'):
+                with self.subTest(label, word=word):
+                    self.assertIn(word, text)
+        for word in ('F112', 'F114', 'N4', 'L2', 'l3'):
+            with self.subTest('ledger', word=word):
+                self.assertIn(word, ledger)
+        cli = (ROOT / 'docs/cli.md').read_text()
+        self.assertIn('Changes in 2.15.3', cli)
+        self.assertIn('2.15.3 additions', (PLUGIN / 'skills/orchestra/references/cli.md').read_text())
 
     def test_2151_doc_notes_are_corrected(self):
         ledger = (ROOT / 'docs/BUILD-LEDGER.md').read_text()

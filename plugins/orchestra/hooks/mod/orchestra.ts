@@ -281,7 +281,7 @@ async function autonomyPoll($: Dollar, auto: AutonomyState, board: Board, seen: 
 
 /** The main session's own work, from `board --view`: its track steps (the first three). */
 type Step = { step: number; card: string | null; busy: string | null; wait: boolean; side: string[] };
-type Track = { steps: Step[] };
+type Track = { steps: Step[]; overlaps?: string[][] };
 const NO_FIT = 'no card fits the session model; you coordinate, accept and review';
 const WAIT = 'nothing can start now; accept and review the running work';
 const MAIN = 'main';
@@ -301,12 +301,15 @@ function parseTrack(text: string): Track {
       steps.push({ step: s['step'], card: typeof s['card'] === 'string' ? s['card'] : null, busy: typeof s['busy'] === 'string' ? s['busy'] : null, wait: s['wait'] === true, side: textList(s['side']) });
     }
   }
-  return { steps };
+  const pairs = body === null ? undefined : body['overlaps'];
+  const overlaps = Array.isArray(pairs) ? pairs.map(textList).filter((p) => p.length > 1) : [];
+  return { steps, overlaps };
 }
 
 /** The Track lane: one line per step, `Step N: you run X; side: A, B` (`you are running X` while its inline card runs). */
 function trackLines(track: Track): string[] {
-  return track.steps.map((s) => `Step ${s.step}: ${s.card !== null ? `you run ${s.card}` : s.busy !== null ? `you are running ${s.busy}` : s.wait ? WAIT : NO_FIT}${s.side.length > 0 ? `; side: ${s.side.join(', ')}` : ''}`);
+  const steps = track.steps.map((s) => `Step ${s.step}: ${s.card !== null ? `you run ${s.card}` : s.busy !== null ? `you are running ${s.busy}` : s.wait ? WAIT : NO_FIT}${s.side.length > 0 ? `; side: ${s.side.join(', ')}` : ''}`);
+  return steps.length > 0 ? [...steps, ...(track.overlaps ?? []).map((p) => `Shares files: ${p.join(' and ')}`)] : steps;  // F39
 }
 
 /** Native task order: a track card gets `step N` after its id (the id stays first, so the task still matches) and owner main. */
@@ -630,8 +633,6 @@ export const register: Register = (on: On) => {
     if (w !== null && w.standingOrders) where = w;
   };
 
-  const cancelBoardTimer = (): void => stopBoardTimer(board);
-
   on('session.start', async ($, e, next) => {
     // R5 finding 2: the generation is taken before any await, so of overlapping starts only the last runs on.
     cancelTick();
@@ -767,7 +768,7 @@ export const register: Register = (on: On) => {
 
   on('session.end', async ($, e, next) => {
     const reason: string = e.reason;
-    cancelBoardTimer();
+    stopBoardTimer(board);
     if (reason !== 'clear' && reason !== 'resume') cancelTick();
     try {
       if (reason !== 'clear' && reason !== 'resume') {
@@ -935,7 +936,7 @@ export const register: Register = (on: On) => {
 
   on('ui.close', { id: BOARD }, async (_$, e, next) => {
     const result = await next(e);
-    cancelBoardTimer();
+    stopBoardTimer(board);
     return result;
   });
 

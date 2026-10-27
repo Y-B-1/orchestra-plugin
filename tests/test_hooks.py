@@ -881,6 +881,10 @@ class MergedDeleteHookTest(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name).resolve()
+        patcher = mock.patch.dict(os.environ, {'XDG_STATE_HOME': str(root / 'xdg')})  # never the user's state folder
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop('ORCHESTRA_STATE_DIR', None)  # it outranks XDG_STATE_HOME; the patcher restores it
         self.origin = root / 'origin.git'
         git(root, 'init', '-q', '--bare', '-b', 'main', str(self.origin))
         self.repo = root / 'work'

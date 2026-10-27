@@ -1364,6 +1364,18 @@ test('track: with no card fitting the session model the pane says so plainly', a
   expect(drawn).toContain(`Step 1: ${NO_FIT}; side: A`);
 });
 
+test('track: cards that share a file show in the Track lane (F39)', async ($, on) => {
+  const r = rig(on);
+  stage(on, r);
+  engine(r, { view: boardView([{ id: 'A', state: 'queued', seq: 1 }, { id: 'C', state: 'queued', seq: 2 }], { track: [{ step: 1, card: 'A', side: [] }], overlaps: [['A', 'C']] }) });
+  await $.session.start(start);
+  await openBoard($);
+  const ui = await drawBoard($, 'terminal', 120);
+  const drawn = texts(await ui.drawn());
+  await ui.unmount();
+  expect(drawn).toContain('Shares files: A and C');
+});
+
 test('track: a waiting step says nothing can start now, not that no card fits', async ($, on) => {
   const r = rig(on);
   stage(on, r);

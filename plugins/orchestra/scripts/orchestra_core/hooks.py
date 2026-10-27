@@ -7,6 +7,7 @@ import argparse
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import fnmatch
+import io
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -14,11 +15,12 @@ import re
 import shlex
 import sys
 import subprocess
+import threading
 import time
 
 from . import delta, portable
 from .models import EFFORTS  # The one definition lives in models.py, shared with the engine
-from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
+from .approval import APPROVAL_PROMPT, COMMAND_MAX, merge_capable, merge_decision, raw_unattended
 from .guards import (RULES, Decision, _WORD_START, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
                      guard_digest, runs_test_suite)
 
@@ -32,6 +34,7 @@ _SHELL_TOOLS = set(RULES['tools']['shell'])
 _REBIND_SOURCES = ('clear', 'resume', 'fork')
 STOP_LOCK_BUDGET = 8.0  # SPEC 5.16 item 4: seconds from hook start that a busy-state Stop waits for the lock
 LOCK_WAIT = 2.0  # SPEC 5.16 item 3: seconds a hook read waits for the state lock
+HOOK_BUDGET = 20.0  # RZ6: seconds a PreToolUse check may run before hooks.main denies it; the hook timeout is 30 s
 MISSING_CWD = 'Session directory no longer exists: cd to an existing directory, then retry'
 BUSY = 'Orchestra state is busy; retry'
 AGENT_GUARD = ('Orchestra run active: use an orchestra:* agent (investigator-code for search, builder for edits), because only '
@@ -284,6 +287,20 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     return result
 
 
+OVERSIZE_REASON = ('a shell command over 131072 characters is denied: the guard cannot read it inside the hook timeout, and a timed-out '
+                   'hook does not block. Write the content to a file with the Write tool, then run a short command')
+
+
+def _oversize(event, payload):
+    """RZ5: the deny for a shell command over COMMAND_MAX, in every mode, before any parse (shlex grows quadratically on
+    one long word: a 700 KB command took the real hook 38 s, past its 30 s timeout), else None."""
+    if event != 'PreToolUse' or not isinstance(payload, dict) or payload.get('tool_name') not in _SHELL_TOOLS:
+        return None
+    tool_input = payload.get('tool_input')
+    command = tool_input.get('command') if isinstance(tool_input, dict) else None
+    return _deny(OVERSIZE_REASON) if isinstance(command, str) and len(command) > COMMAND_MAX else None
+
+
 def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, autonomy, busy, missing_cwd, started,
             unattended=False):
     """Decide output; optional engine adapter owns locked state operations.
@@ -301,6 +318,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         raise ValueError('Unsupported harness')
     if not isinstance(payload, dict):
         return _deny('Malformed hook payload', True) if event == 'PreToolUse' else HookResult({})
+    oversize = _oversize(event, payload)
+    if oversize is not None:
+        return oversize
     if event == 'SessionStart':
         # Native agent_type, where supplied, is a routing hint, never authentication.
         agent_type = payload.get('agent_type')
@@ -563,11 +583,11 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if cleanup is not None:
             return cleanup
         if _rm_in_temp(command, payload.get('session_id')):
-            return HookResult({})  # Files under the system temp directory hold no work of the run
+            return HookResult({})  # Every operand lies below a temp root and, below a claude-<uid> directory, in this session's own files
         if engine is not None and _rm_in_worktrees(command, cwd):
             return HookResult({})  # Section 3.4: the run may delete files inside a linked worktree
         if engine is not None and _deletes_only_ignored(command, cwd):
-            return HookResult({})  # Build output and caches Git ignores hold no work of the run
+            return HookResult({})  # Only files Git ignores (build output, caches): no committed or staged work, though an ignored file can still be local work
     if active:
         # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
         if klass == 'release-multi':
@@ -634,7 +654,7 @@ def _merge_gate(command, cwd, state_dir, engine):
     """The merge guard (approval.py) for a merge-looking command: None when it does not gate, else ('allow', '') or
     ('deny', reason). It reads raw state and asks gh; it writes nothing."""
     directory = state_dir if state_dir is not None else getattr(engine, 'state_dir', None)
-    if not isinstance(directory, (str, os.PathLike)) or cwd is None or not MERGE_SEGMENT.search(command):
+    if not isinstance(directory, (str, os.PathLike)) or cwd is None or not merge_capable(command):
         return None
     return merge_decision(command, cwd, directory, _toplevel(cwd))
 
@@ -2240,12 +2260,14 @@ def _note_pending(engine, before):
     """After a SubagentStop that moved a card, append the move to `<state>/pending-delta` for the coordinator's next
     PostToolUse, prompt or Stop. Writes nothing when no card moved; any error is ignored."""
     try:
-        moved = delta.delta(before, _board(engine))
+        after = _board(engine)
+        moved = delta.delta(before, after)
         if moved:
             path = Path(engine.state_dir) / 'pending-delta'
             old = path.read_text() if path.exists() else ''
             from .paths import atomic
             atomic(path, ((old + '\n' if old else '') + moved).encode())
+            atomic(path.with_name('pending-signature'), delta.signature(after).encode())  # F118: the board this note saw
     except Exception:
         pass
 
@@ -2262,8 +2284,16 @@ def _post_agent(payload, engine):
         if not path.is_file():
             return {}
         moved = ' | '.join(path.read_text().split('\n'))
+        signature = directory / 'pending-signature'
+        noted = signature.read_text() if signature.is_file() else None
         path.unlink()
+        signature.unlink(missing_ok=True)
         view = _board(engine)
+        if noted is not None and noted != delta.signature(view):  # F118: the board moved on; the note's counts are stale
+            text = delta.line(view, delta.read(directory, 'board-seen.json'))
+            if delta.live(view):
+                delta.store(directory, 'board-seen.json', view)
+            return {'hookSpecificOutput': {'hookEventName': 'PostToolUse', 'additionalContext': text}} if text else {}
         command = delta.next_command(view)
         if delta.live(view):
             delta.store(directory, 'board-seen.json', view)
@@ -2281,6 +2311,8 @@ def _board_stop(engine, payload):
             return {}
         view = _board(engine)
         if not delta.live(view) or not delta.next_command(view):
+            return {}
+        if _running_gates(engine, engine.status()):  # F115: a gate is running; its end wakes the coordinator
             return {}
         directory = Path(engine.state_dir)
         if delta.read(directory, 'stop-seen').get('signature') == delta.signature(view):
@@ -2375,6 +2407,7 @@ def prompt_board(payload, engine):
         if text is not None:
             delta.store(directory, 'board-seen.json', view)
             (directory / 'pending-delta').unlink(missing_ok=True)
+            (directory / 'pending-signature').unlink(missing_ok=True)
             parts.append(text)
         fit = _model_line(engine, view) if view else None
         seen = directory / 'model-seen'
@@ -2550,24 +2583,69 @@ _CRASH_TOOL = {'name': None}  # The tool named by the payload being handled, for
 
 def main(argv=None):
     """Run the hook. An unexpected crash must not let a guarded call through: a shell or edit tool call is denied (exit 2)
-    with the cause, and every other event or tool gets an empty answer so the session itself keeps working."""
+    with the cause, and every other event or tool gets an empty answer so the session itself keeps working. A PreToolUse
+    check still running after HOOK_BUDGET seconds is answered the same way (RZ6): Claude Code lets a call through when
+    its hook times out, so the answer must come first. The check's own output is held until it finishes, and the
+    first of the two answers is the only one printed."""
     _CRASH_TOOL['name'] = None
     event = next((a for a in (argv if argv is not None else sys.argv[1:]) if not a.startswith('-')), None)
+    if event != 'PreToolUse':
+        return _checked_main(argv, event, sys.stdout, sys.stderr)
+    real_out, real_err = sys.stdout, sys.stderr
+    held_out, held_err = io.StringIO(), io.StringIO()
+    answered = threading.Lock()
+
+    def expire():
+        if answered.acquire(blocking=False):
+            code = 2
+            try:
+                advice = ('split it into shorter commands, or write long content to a file with the Write tool first'
+                          if _CRASH_TOOL['name'] in _SHELL_TOOLS else 'try it again; if it repeats, report it to the plugin owner')
+                code = _cannot_check(event, 'the check did not finish within %g s' % HOOK_BUDGET, real_out, real_err, advice)
+                real_out.flush()
+                real_err.flush()
+            finally:
+                os._exit(code)  # FX10: even when the write fails, the process ends instead of holding the lock
+
+    timer = threading.Timer(HOOK_BUDGET, expire)
+    timer.daemon = True
+    sys.stdout, sys.stderr = held_out, held_err
+    timer.start()
+    try:
+        return _checked_main(argv, event, held_out, held_err)
+    finally:
+        answered.acquire()  # When expire won, this waits until its os._exit ends the process
+        timer.cancel()
+        sys.stdout, sys.stderr = real_out, real_err
+        real_out.write(held_out.getvalue())
+        real_err.write(held_err.getvalue())
+
+
+def _checked_main(argv, event, out, err):
     try:
         return _main(argv)
     except SystemExit:
         raise
     except Exception as exc:
-        name = _CRASH_TOOL['name']
-        if event == 'PreToolUse' and (name is None or isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
-                                                  or name in {'Agent', 'Task'} or name in _APPROVAL_TEXT_TOOLS)):
-            reason = 'Orchestra guard could not check this call (%s: %s); report it to the plugin owner' % (type(exc).__name__, exc)
-            print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
-                                                     'permissionDecisionReason': reason}}))
-            print(reason, file=sys.stderr)
-            return 2
-        print('{}')
-        return 0
+        for held in (out, err):
+            if isinstance(held, io.StringIO):
+                held.seek(0)
+                held.truncate()  # FX10: what the check printed before it crashed is not an answer
+        return _cannot_check(event, '%s: %s' % (type(exc).__name__, exc), out, err)
+
+
+def _cannot_check(event, cause, out, err, advice='report it to the plugin owner'):
+    """Deny a guarded tool call the hook could not check (exit 2); any other event or tool gets an empty answer."""
+    name = _CRASH_TOOL['name']
+    if event == 'PreToolUse' and (name is None or isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
+                                              or name in {'Agent', 'Task'} or name in _APPROVAL_TEXT_TOOLS)):
+        reason = 'Orchestra guard could not check this call (%s); %s' % (cause, advice)
+        print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
+                                                 'permissionDecisionReason': reason}}), file=out)
+        print(reason, file=err)
+        return 2
+    print('{}', file=out)
+    return 0
 
 
 def _prompt_submit(payload):
@@ -2618,6 +2696,10 @@ def _main(argv=None):
         payload = None
     if isinstance(payload, dict) and isinstance(payload.get('tool_name'), str):
         _CRASH_TOOL['name'] = payload['tool_name']
+    oversize = _oversize(args.event, payload)
+    if oversize is not None:  # before the mod skip and the ledger checks, which parse the command too
+        print(json.dumps(oversize.output))
+        return oversize.exit_code
     if args.event == 'UserPromptSubmit':
         return _prompt_submit(payload)
     if args.event == 'PostModelSwitch':

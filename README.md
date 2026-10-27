@@ -27,7 +27,7 @@ The value is in tokens (100000 to 1000000). Claude Code caps it at the model's w
 
 No installer changes application instructions, resumes old work, grants release rights or writes hook trust. Existing project rules still apply. If a project carries older Orchestra enforcement of its own, port it separately to avoid two competing coordinators.
 
-`scripts/check.sh` runs every check locally on Python 3.11 and 3.13. CI runs the same suite on Linux, `macos-latest` and `windows-latest` only when started by hand. No platform has been checked with a live Claude Code session except Linux and macOS.
+`scripts/check.sh` runs every check locally on Python 3.11 and 3.13. CI runs the same suite on Linux, `macos-latest` and `windows-latest` only when started by hand. `scripts/live-matrix.py` runs real headless sessions on macOS before each release. Linux and Windows are covered by unit tests only.
 
 ### Windows
 
@@ -41,7 +41,7 @@ Windows works with Git for Windows and Python 3.11 or later. Install Python from
 
 ### Function hooks (optional)
 
-On Claude Code the plugin also registers a function-hook module. It classifies commands in process, adds `/orchestra-board` and `/orchestra-autonomy on|off|status`, shows verdict and stop toasts and an autonomy status band (running workers, stalls, a silent worker, and the stop reason after a stop, until you re-arm), and appends the run's standing orders to `orchestra:` agent briefs. It needs `CLAUDE_CODE_ENABLE_FUNCTION_HOOKS=1` and the `$` APIs the module uses; it is tested on Claude Code 2.1.289 (CLI) and 2.1.286 (Desktop with that variable set). If the module is off or fails, the Python hooks do the same guarding and the CLI does everything else. See [hook policy](docs/hooks.md).
+On Claude Code the plugin also registers a function-hook module. It classifies commands in process, adds `/orchestra-board` and `/orchestra-autonomy on|off|status`, shows verdict and stop toasts and an autonomy status band (running workers, stalls, a silent worker, and the stop reason after a stop, until you re-arm), and appends the run's standing orders to `orchestra:` agent briefs. Claude Code runs mods by default from v2.1.287; `--bare`, `--safe-mode` and `disableAllHooks` turn them off. The module needs the `$` APIs it uses; it is tested on Claude Code 2.1.289 (CLI). If the module is off or fails, the Python hooks do the same guarding and the CLI does everything else. See [hook policy](docs/hooks.md).
 
 ## How Orchestra works
 
@@ -108,7 +108,7 @@ For unattended work, the same flow runs inside a ledger:
 4. At an approval boundary the coordinator parks the card with `park TASK --reason TEXT` and moves on to other cards.
 5. When every card is accepted, the coordinator commits, runs the final review and the completion gates on that commit, then pushes a feature branch and opens a pull request with `gh pr create` in the same turn, and records it with `pr URL`. A card that depends on an open pull request gets that pull request's branch from `orchestra.py base TASK`, so pull requests stack. Cleanup of the run's own branches and worktrees is allowed.
 6. The run ends at the deadline, at completion or at another stop, and writes the run brief. You read it at the next session start. Until you approve, the run stays locked: releases, merges, scheduler tools and `start --new-run` are denied.
-7. In the morning, type `approved` in your own session. The hook records a receipt for the pull requests that are open at their recorded head with a clean review, and prints one `gh pr merge N --merge --delete-branch --match-head-commit SHA` per pull request, in order. Run them one at a time; the merge guard refuses another order, another head or another form. `unpark TASK` returns parked cards to the queue, and you settle any held chain before `finish`.
+7. In the morning, type `approved` in your own session. The hook records a receipt for the pull requests that are open at their recorded head with a clean review, and prints one `gh pr merge N -R OWNER/REPO --merge --delete-branch --match-head-commit SHA` per pull request, in order. Run them one at a time; the merge guard refuses another order, another head or another form. `unpark TASK` returns parked cards to the queue, and you settle any held chain before `finish`.
 
 ## Roles and models
 

@@ -33,7 +33,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `criterion TASK "CRITERION" --evidence TEXT` | Record your evidence (at most 1000 characters) on an unmet criterion of a reported worker card, so `accept` can pass. `CRITERION` is the text as the report repeats it. | yes |
 | `own add TASK PATH` | Add one owned path to a running or reported builder card. `accept` refuses a report that changed files outside the card and names them. | yes |
 | `review REVIEW.json [--token TOKEN] [--defer-out-of-scope REASON]` | Record the independent pre-PR review (`final: true`) or the fix re-review (`repair_check: true`). `--token` reports the review card, records the receipt and accepts the card in one step; it covers sibling final lens cards that review the same cards, and takes critic and repair_check receipts. `--defer-out-of-scope REASON` (with `--token`) records each out-of-scope item as deferred to a brief. An empty `cleared` means none; a mismatch refusal names each key with both values; a one-task receipt gets `task_findings` filled; out-of-scope items on a non-final receipt are kept as notes. | yes |
-| `accept TASK [--ruling TEXT]` | Accept a card whose current evidence allows it. The refusal names the failing check. `--ruling TEXT` accepts a worker card whose only gap is an unmet criterion, with the coordinator's reason; it is never allowed for an inline card or a failing check. | yes |
+| `accept TASK [--ruling TEXT]` | Accept a card whose current evidence allows it. The refusal names the failing check. `--ruling TEXT` accepts a worker card whose only gap is an unmet criterion, with the coordinator's reason; it is never allowed for an inline card or a failing check. The result carries `warning` when card files have changes not yet committed. | yes |
 | `gate [--again] [--timeout SECONDS] NAME -- COMMAND...` | Run a configured check; record the actual exit and log hashes. A passed gate on an unchanged artifact refuses a repeat unless `--again`. `--timeout` overrides `gate_timeout_seconds` for this run. Processes the check leaves running in its own process group are stopped when it exits; one that starts a new session or group is not tracked. | yes |
 | `scan` | Run the configured secret scan; an unavailable optional scanner is reported, not passed. | yes |
 | `permit REMOTE TARGET` | Create a release permit for an exact remote and target. It stays valid until the artifact changes or the session ends, and is not used up by a release. Refused while autonomy is active. | yes |
@@ -49,6 +49,18 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `cancel TASK --reason TEXT` | Drop a queued or parked card that should never run. Refused while another card depends on it, a review covers it or it is in a repair chain; the drop is kept in the state's `cancelled` list. | yes |
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |
 | `finish [--accept-reported]` | Close the run after completion checks. A parked card blocks it. `--accept-reported` first accepts every reported card whose `accept` passes; the rest stay reported. A refusal for leftover worktrees points to `worktrees`. A run that changed files needs a current final review even with no cards. | yes |
+
+## Changes in 2.15.3
+
+- A result carries a `track` line when the track changed since the last result, so the next step shows right after `add`, `accept` or `wave`.
+- `resume ID` is the fix a stale-report refusal names. A resumed card's outside-files check skips commits other cards made while it was reported, so `own add` is no longer needed for them.
+- Two repairs collide only on their own files; a non-repair card still waits for a whole running chain.
+- A pull request is marked reviewed only from a clean final review, or one that covers every card the pull request carries.
+- The `board --view` output has `overlaps`, the card pairs that share files (the same pairs `waves` reports).
+- A read-only investigator's report stays acceptable after later edits to the checkout; a builder's report still goes stale.
+- `--size` choices are `tiny`, `medium` and `large`, read from the engine.
+- A newline before a parenthesis in an acceptance line is no trailing-note gap.
+- The engine runs `gh` through the approval module's runner (6 s timeout).
 
 ## Changes in 2.15.2
 
@@ -67,7 +79,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 - Model fit covers every role in a sized run, not only builders. Escalation appends the original reason, as `needs-owner:escalated (ORIGINAL REASON)`, only when the card was parked without the `needs-owner:` prefix; any other unfinished card is parked as plain `needs-owner:escalated`.
 - `start` and `start --recover` rewrite `NOW.md`. `start` refuses a run owned by another harness session and names `start --recover --take-over`.
 - `review --token TOKEN` takes no report path: it reads the report the Stop hook captured. A reported review card is re-taken at the review's artifact so the chain accept can follow.
-- `add` refuses a final review brief without a `Lens:` line (and without `Required categories:` for a combined lens), and an acceptance line with `unittest discover -s/-p` that matches no test file. An owned generator source also owns the file the script derives from it. `dispatch` records the card's base.
+- `add` refuses a final review brief without a `Lens:` line (and without `Required categories:` for a combined lens), a final review card whose input brief names a `Lens:` its `variant` does not give (the refusal names the variant to set, or says to pass the brief as the card's `brief`), and an acceptance line with `unittest discover -s/-p` that matches no test file. An owned generator source also owns the file the script derives from it. `dispatch` records the card's base.
 - `finish` refuses leftover worktrees and points to `worktrees`. A final review stays current after a squash merge when the trees are equal. Untracked `.claude/worktrees/` entries are not evidence.
 - A red-first check ignores one trailing parenthetical note. A queued repair holds only its own files against another repair, and its chain's files against any other card. A fix re-review may cover a cleanup card beside the repairs.
 - `gate` keeps the output of a killed command. `pr` accepts a stacked base: the head branch of an open pull request the previous run recorded.

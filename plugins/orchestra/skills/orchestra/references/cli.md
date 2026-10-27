@@ -7,7 +7,7 @@ Use Python 3.11+ with `plugins/orchestra/scripts/orchestra.py`. Common options p
 3. Add bounded cards with `--lease LEASE add task.json`; run `waves`, then start each wave whole with `wave [--inline ID] [--helper REASON] ID ...` (workers are `orchestra-<ID>`; `--helper` adds a helper card started beside the wave); `dispatch TASK [WORKER]` (worker `orchestra-TASK` by default) and `inline TASK` start one card and refuse while a disjoint card could start beside it, unless `--serial REASON`. Order cards with `dependencies` only.
 4. Start the actual native worker only after reserving the card. Give the full brief and selected native profile. Return a startup receipt naming actual cwd/root/HEAD. A reservation token alone does not prove a worker is running.
 5. Run `report WORKER TOKEN result.txt`. A builder report, dispatched or inline, carries exactly one `SELF_REVIEW: ` line (below) and a nonempty `ARTIFACT:` line ("Builder report needs a nonempty ARTIFACT line"). Until accept, the same worker and token may report again to replace the report; a review that lists the card, or a repair of it, ends that ("A review covers this report; route a change through a repair card"). Inspect results and group returned builders by hand.
-6. Accept builder cards with `accept TASK`. Before the PR, record the pre-PR review with `--lease LEASE review review.json`, or with `review review.json --token TOKEN` to report the review card, record the final receipt and accept the card in one step.
+6. Accept builder cards with `accept TASK`; a `warning` in the result names card files not yet committed: commit them. Before the PR, record the pre-PR review with `--lease LEASE review review.json`, or with `review review.json --token TOKEN` to report the review card, record the final receipt and accept the card in one step.
 7. Integrate changes, make tracked memory edits, freeze the candidate, run configured `gate NAME -- COMMAND...` checks and the pre-PR review. Dispatch one independent critic per needed axis (`spec`, `standards`, `ledger`, and `surface` by judgment).
 8. For a configured authorized release, run `permit REMOTE TARGET`, then `release REMOTE TARGET`. Inspect the remote and running system separately. Run `finish` only after completion checks. For another run, use `start --new-run` after the previous session closes.
 
@@ -50,7 +50,7 @@ A builder report carries one line that starts with `SELF_REVIEW: ` followed by o
 SELF_REVIEW: {"checks": [{"command": "<cmd>", "exit_code": 0}], "criteria": [{"criterion": "<text>", "met": true, "evidence": "<text>"}]}
 ```
 
-`report` refuses a builder report with no line, more than one, bad JSON or a wrong shape: "Builder report needs one SELF_REVIEW line". The engine stores the object as `self_review`. `accept` takes a builder card when every check has `exit_code` 0 (a check with `"expect": "fail"` must exit non-zero and be followed by the same command exiting 0), every criterion has `met: true`, the reported artifact is still current, no current final-review or fix re-review finding names the card, and any repair of it is accepted. Refusals: "Self-review has a failing check or unmet criterion", "Reported artifact is stale".
+`report` refuses a builder report with no line, more than one, bad JSON or a wrong shape: "Builder report needs one SELF_REVIEW line"; a wrong shape adds what is wrong, such as "checks[0] needs exit_code (int); unknown key exit". The engine stores the object as `self_review`. `accept` takes a builder card when every check has `exit_code` 0 (a check with `"expect": "fail"` must exit non-zero and be followed by the same command exiting 0), every criterion has `met: true`, the reported artifact is still current, no current final-review or fix re-review finding names the card, and any repair of it is accepted. Refusals: "Self-review has a failing check or unmet criterion", "Reported artifact is stale".
 
 ## Review schema
 
@@ -119,7 +119,7 @@ Every command that takes the lease rewrites `NOW.md` in the state directory: the
 
 `waves` also prints `track`: steps `{step, card, side}` for the main session's own work, with `coordinator` and no card when no ready card fits the session model. `serialized` reasons include `one inline slot`, `worker cap` and `worktree cap`.
 Escalation parks a card `needs-owner:escalated`, adding `(ORIGINAL REASON)` only to a card parked without the `needs-owner:` prefix. `start` refuses a run owned by another harness session and names `start --recover --take-over`.
-`review --token TOKEN` takes no report path: it reads the captured report. `add` refuses a final review brief without `Lens:` (and `Required categories:` for combined) and a unittest acceptance line that matches no test file.
+`review --token TOKEN` takes no report path: it reads the captured report. `add` refuses a final review brief without `Lens:` (and `Required categories:` for combined), an input brief whose `Lens:` the card's `variant` does not give, and a unittest acceptance line that matches no test file.
 `do "report W T F" "accept ID"` reports and accepts a worker card in one call; `report --accept` stays inline-only.
 
 ## 2.15.2 additions
@@ -129,3 +129,7 @@ Escalation parks a card `needs-owner:escalated`, adding `(ORIGINAL REASON)` only
 `accept ID --ruling TEXT` also covers a failing plain check that the ruling names by its command or a test target; name every failing check. A red-first check is never covered.
 `finding add --kind out_of_scope --disposition deferred --reason TEXT` defers an out-of-scope item. A final `review` receipt lists items no finding triages yet as `needs_triage` and refuses nothing.
 Policy `full_check` is `{"paths": [globs], "command": text}`: a card whose diff touches a path needs a passing run of that command in its self-review, or `accept` refuses it.
+
+## 2.15.3 additions
+
+A result carries `track` when the track changed since the last result. A stale-report refusal names `resume ID`; a resumed card's outside-files check skips commits other cards made while it was reported. Two repairs collide only on their own files. A pull request counts as reviewed only from a clean final review or one covering every card it carries. `board --view` has `overlaps`. A read-only investigator's report survives later edits.

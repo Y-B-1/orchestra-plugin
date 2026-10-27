@@ -686,7 +686,7 @@ class FinalBlockerTests(EngineFixture):
         self.record('resolved', ['a'], categories=['security'])
         self.engine.accept('main', self.lease, 'a')
         self.record('final', ['a'], final=True)
-        self.record('later-checkpoint', ['a'], categories=['tests'], findings=['failing'])
+        self.record('later-nonfinal', ['a'], categories=['tests'], findings=['failing'])
         with self.assertRaises(EngineError):
             self.engine.check_completion('main', self.lease)
 
@@ -750,8 +750,8 @@ class FinalBlockerTests(EngineFixture):
     def test_review_targets_reject_wrong_role_and_dependency_cycle(self):
         self.task('B1')
         for values in [dict(review_of=['missing']), dict(review_of=['B1']),
-                       dict(role='code-reviewer', mode='checkpoint', review_of=['B1'], dependencies=['B1']),
-                       dict(role='code-reviewer', mode='checkpoint', review_of=[{}])]:
+                       dict(role='code-reviewer', mode='final', review_of=['B1'], dependencies=['B1']),
+                       dict(role='code-reviewer', mode='final', review_of=[{}])]:
             with self.assertRaises(EngineError):
                 self.task('invalid', **values)
 
@@ -798,7 +798,7 @@ class FinalBlockerTests(EngineFixture):
         self.task('L1', role='operator', mode='release', files=[], dependencies=['B1'])
         token = self.engine.dispatch('main', self.lease, 'B1', 'builder')
         self.engine.report('builder', token, done('Built'))
-        self.record('checkpoint', ['B1'])
+        self.record('nonfinal', ['B1'])
         self.engine.accept('main', self.lease, 'B1')
         self.record('final', ['B1'], final=True)
         with self.assertRaises(EngineError):
@@ -1151,7 +1151,7 @@ class ScopedEvidenceTests(EngineFixture):
         self.task(name, **kw)
         self.engine.report('w' + name, self.engine.dispatch('main', self.lease, name, 'w' + name), done('checked'))
 
-    def checkpoint(self, name='a', findings=None):
+    def nonfinal_review(self, name='a', findings=None):
         report = self.root / (name + '-review.json')
         self.review(report, tasks=[name], findings=findings)
         return self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], [name], findings=findings)
@@ -1176,14 +1176,14 @@ class ScopedEvidenceTests(EngineFixture):
 
     def test_edit_outside_scope_keeps_scoped_verdict_current(self):
         self.reported('a')
-        self.checkpoint('a')
+        self.nonfinal_review('a')
         (self.repo / 'b').write_text('sibling uncommitted edit')
         self.engine.accept('main', self.lease, 'a')
         self.assertEqual('accepted', self.engine.status()['tasks']['a']['state'])
 
     def test_edit_inside_scope_stales_scoped_verdict(self):
         self.reported('a')
-        self.checkpoint('a')
+        self.nonfinal_review('a')
         (self.repo / 'a').write_text('edited after review')
         with self.assertRaisesRegex(EngineError, 'independent review'):
             self.engine.accept('main', self.lease, 'a')
@@ -1191,7 +1191,7 @@ class ScopedEvidenceTests(EngineFixture):
     def test_new_commit_outside_the_scope_keeps_scoped_verdict_current(self):
         # Q7: a scoped receipt binds its files, index, status and policy, not HEAD and tree.
         self.reported('a')
-        self.checkpoint('a')
+        self.nonfinal_review('a')
         (self.repo / 'b').write_text('committed elsewhere')
         self.git('commit', '-qam', 'elsewhere')
         self.engine.accept('main', self.lease, 'a')
@@ -1206,7 +1206,7 @@ class ScopedEvidenceTests(EngineFixture):
 
     def test_commit_of_a_scoped_file_stales_scoped_verdict(self):
         self.reported('a')
-        self.checkpoint('a')
+        self.nonfinal_review('a')
         (self.repo / 'a').write_text('committed inside the scope')
         self.git('commit', '-qam', 'inside')
         with self.assertRaisesRegex(EngineError, 'independent review'):
@@ -1214,7 +1214,7 @@ class ScopedEvidenceTests(EngineFixture):
 
     def test_staged_scoped_file_stales_scoped_verdict(self):
         self.reported('a')
-        self.checkpoint('a')
+        self.nonfinal_review('a')
         (self.repo / 'a').write_text('staged inside the scope')
         self.git('add', 'a')
         with self.assertRaisesRegex(EngineError, 'independent review'):
@@ -1279,14 +1279,14 @@ class ScopedEvidenceTests(EngineFixture):
 
     def test_repair_chain_files_join_the_scope(self):
         self.reported('a', role='builder', mode='implementation')
-        self.checkpoint('a', findings=['bug'])
+        self.nonfinal_review('a', findings=['bug'])
         self.task('fix', mode='repair', repair_of='a', files=['c'])
         self.assertEqual(['a', 'c'], self.engine.scope_for(['fix']))
 
     def test_stale_newer_blocked_receipt_does_not_restore_older_clean(self):
         self.reported('a')
         self.reported('b')
-        self.checkpoint('a')
+        self.nonfinal_review('a')
         report = self.root / 'wide.json'
         self.review(report, tasks=['a', 'b'], findings=['bug in a'])
         self.engine.record_review('main', self.lease, 'reviewer', report, ['correctness'], ['a', 'b'], findings=['bug in a'])
@@ -1299,7 +1299,7 @@ class ScopedEvidenceTests(EngineFixture):
 
     def test_stale_final_blocked_receipt_does_not_restore_scoped_clean(self):
         self.reported('a')
-        self.checkpoint('a')
+        self.nonfinal_review('a')
         report = self.root / 'final-blocked.json'
         ids = sorted(self.engine.status()['tasks'])
         self.review(report, reviewer='final-reviewer', tasks=ids, findings=['bug in a'], final=True,
@@ -1308,7 +1308,7 @@ class ScopedEvidenceTests(EngineFixture):
         self.assertIsNone(receipt['scope'])
         with self.assertRaisesRegex(EngineError, 'findings'):
             self.engine.accept('main', self.lease, 'a')
-        (self.repo / 'b').write_text('edit outside the checkpoint scope')
+        (self.repo / 'b').write_text('edit outside the review scope')
         with self.assertRaises(EngineError):
             self.engine.accept('main', self.lease, 'a')
         self.assertEqual('reported', self.engine.status()['tasks']['a']['state'])
@@ -1381,13 +1381,13 @@ class ScopedEvidenceTests(EngineFixture):
         task = self.engine.status()['tasks']['n']
         self.assertNotIn('scope', task['report_artifact'])
         self.assertEqual(self.engine.artifact(), task['report_artifact'])
-        (self.repo / 'b').write_text('any edit')
-        with self.assertRaisesRegex(EngineError, 'stale'):
-            self.engine.accept('main', self.lease, 'n')
+        (self.repo / 'b').write_text('any edit')  # F116 (2.15.3): a read-only report stays good after a later edit
+        self.engine.accept('main', self.lease, 'n')
+        self.assertEqual(self.engine.status()['tasks']['n']['state'], 'accepted')
 
     def test_final_review_still_binds_whole_repo(self):
         self.reported('a')
-        self.checkpoint('a')
+        self.nonfinal_review('a')
         self.engine.accept('main', self.lease, 'a')
         cats = ['requirements', 'correctness', 'security', 'tests', 'architecture', 'standards', 'cleanup']
         report = self.root / 'final.json'
@@ -2421,7 +2421,7 @@ class FindingsLedgerTests(EngineFixture):
         self.assertEqual([], self.engine.list_findings())
         self.engine.add_finding('main', self.lease, final['id'], 'out_of_scope', 0, 'card', 'later', card='X1')
 
-    def test_checkpoint_review_with_out_of_scope_folds_into_notes(self):
+    def test_nonfinal_review_with_out_of_scope_folds_into_notes(self):
         self.reported()
         receipt = self.record('r', ['a'], out_of_scope=['Dead code in util'])
         self.assertEqual([], receipt['out_of_scope'])

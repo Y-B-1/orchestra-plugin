@@ -736,6 +736,79 @@ def _opaque_graphql(word):
     return any(lower.startswith(x) if x.startswith('--') else x in lower for x in _RELEASE['gh_api_graphql_opaque'])
 
 
+_GH_MERGE_ENDPOINT = re.compile(r'/merges?(?:$|[/?#])')
+_SHELLS = frozenset(['sh', 'bash', 'zsh', 'dash', 'ksh'])
+
+
+def gh_merge_kinds(command, depth=0):
+    """RZ2, FX6: the kinds ('merge', 'set-default') of gh segments in `command` that can merge or retarget a merge,
+    read from shell words the way the release classifier reads them: continuations joined, quote-aware segments,
+    every gh word in a segment, and the payload of a quoted word that holds a gh command (`bash -c '...'`, `eval
+    "..."`, `echo '...' | sh`). A merge is `pr [flags] merge`, a `gh api` merge endpoint (`/merge`, `/merges`) or a
+    graphql endpoint in any spelling (`graphql`, `/graphql`, a URL) with a mutation or a body the guard cannot read.
+    A segment that does not parse counts as a merge when it names gh (fail closed)."""
+    kinds = set()
+    if not isinstance(command, str) or 'gh' not in command or depth > 3:
+        return kinds
+    texts = {command}
+    for literal in (True, False):
+        joined = _join_continuations(command, literal)
+        if joined is not None:
+            texts.add(joined)
+    for text in texts:
+        for segment in _segments(text):
+            try:
+                words = _words(segment)[1]
+            except ValueError:
+                if re.search(r'\bgh\b', segment):
+                    kinds.add('merge')
+                continue
+            for word in words:
+                if re.search(r'\bgh\b', word) and any(c.isspace() for c in word):
+                    kinds |= gh_merge_kinds(word, depth + 1)  # a quoted payload a shell or eval may run
+            at = next((i for i, w in enumerate(words) if PurePosixPath(w).name == 'gh'), None)
+            if at is not None:  # RZ4: the words after the first gh hold every later gh's words, so one pass is enough
+                kinds |= _gh_kinds(words[at + 1:])
+    return kinds
+
+
+def _gh_kinds(rest):
+    kinds = set()
+    if ('repo', 'set-default') in zip(rest, rest[1:]):
+        kinds.add('set-default')
+    follows = _verb_follows(rest, 'merge')
+    if any(w == 'pr' and follows[i + 1] for i, w in enumerate(rest)):
+        kinds.add('merge')
+    if 'api' in rest:
+        after = rest[rest.index('api') + 1:]
+        operands = [w for w in after if not w.startswith('-')]
+        if any(_GH_MERGE_ENDPOINT.search(w.lower().split('?')[0]) for w in operands):
+            kinds.add('merge')
+        if any(w.lower().split('?')[0].rstrip('/').endswith('graphql') for w in operands) and any(_opaque_graphql(w) for w in after):
+            kinds.add('merge')
+    return kinds
+
+
+def _verb_follows(words, verb):
+    """RZ3, FX8, RZ4: for each index i, whether `verb` stands at i or later with only flags before it, in one
+    right-to-left pass (linear). A plain word counts as a flag's value only right after a bare flag: two characters
+    (`-R o/r`) or a long flag without `=` (`--repo o/r`), as cobra reads them; an attached value (`-Ro/r`,
+    `--repo=o/r`) takes none, and an empty word is skipped, as cobra skips it (`gh pr '' merge`). Any other plain word
+    is another subcommand. Fail closed: `verb` counts wherever it stands, even where a value could be."""
+    follows = [False] * (len(words) + 1)
+    for k in range(len(words) - 1, -1, -1):
+        word = words[k]
+        if word == verb:
+            follows[k] = True
+        elif word == '' or word.startswith('-') or (k and _bare_flag(words[k - 1])):
+            follows[k] = follows[k + 1]
+    return follows
+
+
+def _bare_flag(word):
+    return (len(word) == 2 and word[0] == '-' and word != '--') or (word.startswith('--') and '=' not in word and len(word) > 2)
+
+
 def _is_release(name, words):
     return ((name == 'gh' and words[1:3] in _RELEASE['gh']) or
             (name == 'gh' and words[1:2] == ['api'] and any(_RELEASE['gh_api_merge'] in x.lower() for x in words[2:])) or
@@ -876,7 +949,7 @@ def _gh_reading_decision(words, argv):
     if (found := _gh(words)) is not None:
         return replace(found, argv=argv) if found.argv else found
     if words[1:3] in _BOUNDARY['gh']:
-        return _boundary('delete', 'Deletion is a boundary action')
+        return _boundary('delete', _BOUNDARY['gh_reasons'].get(' '.join(words[1:3]), 'Deletion is a boundary action'))
     return Decision()
 
 
@@ -2192,6 +2265,35 @@ def _is_test_probe(module, rest):
     return '::' in targets[0] and bool(targets[0].rsplit('::', 1)[1]) and not targets[0].startswith('::')
 
 
+_PY_FLAGS = re.compile(r'-([BEIOPRSVbdhiqsuvx]*)m(.*)')
+_VALUE_OPTIONS = {'--source', '--rcfile', '--omit', '--include', '--data-file', '--context', '--concurrency', '--debug',
+                  '--check-hash-based-pycs'}  # python and `coverage run` long options whose value is the next word
+
+
+def _python_runs_suite(rest, depth):
+    """Read the interpreter options of `python ARGS` up to the first script word, then a `-m` module (also a short
+    cluster ending in m, or `-mmodule` joined). Words after the script belong to the script."""
+    i = 0
+    while i < len(rest):
+        word = rest[i]
+        flags = _PY_FLAGS.fullmatch(word)
+        if flags:
+            module, after = (flags.group(2), rest[i + 1:]) if flags.group(2) else (rest[i + 1], rest[i + 2:])
+            if module == 'coverage' and after[:1] == ['run']:  # `coverage run [options] -m pytest` reads like python
+                return _python_runs_suite(after[1:], depth + 1) if depth < 4 else False
+            return module in ('pytest', 'unittest') and not _is_test_probe(module, after)
+        if word in ('-W', '-X'):
+            i += 2
+        elif word.startswith('-') and word != '-c' and not word.startswith('-c'):
+            i += 1
+        elif i and (rest[i - 1] in _VALUE_OPTIONS
+                    or rest[i - 1].startswith('--') and '=' not in rest[i - 1] and not word.endswith('.py')):
+            i += 1  # a named option's value (`--include "*.py"`) or, failing closed, a plain word after another long option
+        else:
+            return False  # a script, `-c` or `-`: the rest are its arguments
+    return False
+
+
 def _words_run_suite(words, depth):
     if not words or depth > 4:
         return False
@@ -2205,16 +2307,9 @@ def _words_run_suite(words, depth):
     if exe in ('pytest', 'py.test'):
         return not _is_test_probe('pytest', rest)
     if exe == 'coverage' and 'run' in rest:  # `coverage run [options] -m pytest` reads like python
-        return _words_run_suite(['python'] + rest[rest.index('run') + 1:], depth + 1)
+        return _python_runs_suite(rest[rest.index('run') + 1:], depth + 1)
     if _PYTHON.fullmatch(exe):
-        if '-m' in rest[:-1]:
-            module, after = rest[rest.index('-m') + 1], rest[rest.index('-m') + 2:]
-        else:  # the joined form `-munittest`
-            joined = [k for k, word in enumerate(rest) if word.startswith('-m') and len(word) > 2]
-            if not joined:
-                return False
-            module, after = rest[joined[0]][2:], rest[joined[0] + 1:]
-        return module in ('pytest', 'unittest') and not _is_test_probe(module, after)
+        return _python_runs_suite(rest, depth)
     if exe in ('npm', 'pnpm', 'yarn'):
         tests = ('test', 't') if exe != 'yarn' else ('test',)  # npm and pnpm alias `t` to `test`
         return bool(args) and (args[0] in tests or (_TEST_SCRIPT.fullmatch(args[0]) and len(args) > 1 and args[1].startswith('test')))

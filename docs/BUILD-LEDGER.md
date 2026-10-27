@@ -199,7 +199,7 @@ Route by diff size, not item count. Design `docs/DESIGN-v2.5.md`, contract `docs
 | EG | builder | engine gaps | `gate --timeout`, replacement report until accept or review, required builder `ARTIFACT:` line | ACCEPTED |
 | RV-correctness, RV-standards | code-reviewer final | 1de30d4 | one BLOCKED finding on `coordination.md:23` (S1 medium-to-builder text against T1) | BLOCKED |
 | RS1 / FR1 | builder repair / fix re-review | 9908c0b | `coordination.md:23` and generated `orchestrator.md` match T1 | CLEAN |
-| N1 | coordinator inline | 0559bcd | deferred notes closed: task size validated in loaded state; unreachable `repair_of` clause removed; one `REVIEWER_BAND`; `final.md`, `repair-rounds.md`, `final-review.md` wording; DESIGN/PLAN amendment paragraphs. `tests.test_engine` 340 OK | ACCEPTED |
+| N1 | coordinator inline | 0559bcd | deferred notes closed: task size validated in loaded state; unreachable `repair_of` clause removed; one `REVIEWER_BAND`; `final.md`, `repair-rounds.md`, `final-review.md` wording; DESIGN/PLAN amendment paragraphs. `tests.test_engine` 340 OK | ACCEPTED Fixed in 2.15.3. |
 | Gates | coordinator | 0559bcd | suite-engine-a, suite-engine-b, suite-integration, suite-rest exit 0 | PASS |
 | RV2, RV2S | code-reviewer final (correctness, standards) | 0559bcd | no blocking findings; notes only | CLEAN |
 
@@ -430,14 +430,14 @@ The real hook entry point (`run-hook.sh <Event> --harness claude`, hook JSON on 
 | Item | Note |
 | --- | --- |
 | N1 | `gh repo set-default` is allowed; the merge guard checks PR N with `-R slug`, but the merge it allows resolves the repository from the cwd remotes. Fix: deny `gh repo set-default` while a run is active or locked, or make the printed merge carry `-R slug`. |
-| N2 | The `UserPromptSubmit` worst case is about 14 s against the 10 s hook timeout; a killed hook records nothing and prints nothing. |
-| N3 | A lower-order receipt pull request closed without merge makes every later one deny with "merge pull request N first"; the message should say to type `approved` again. |
-| N4 | `record_pr` sets `reviewed` from any CLEAN intact review at the PR head, including a narrow scoped one (unchecked). |
-| N5 | The merge parser does not require `--merge`; non-interactive `gh` refuses a merge without a method anyway. |
+| N2 | The `UserPromptSubmit` worst case is about 14 s against the 10 s hook timeout; a killed hook records nothing and prints nothing. Fixed in 2.15.3. |
+| N3 | A lower-order receipt pull request closed without merge makes every later one deny with "merge pull request N first"; the message should say to type `approved` again. Fixed in 2.15.3. |
+| N4 | `record_pr` sets `reviewed` from any CLEAN intact review at the PR head, including a narrow scoped one (unchecked). Fixed in 2.15.3. |
+| N5 | The merge parser does not require `--merge`; non-interactive `gh` refuses a merge without a method anyway. Fixed in 2.15.3. |
 | N6 | `sort` as a heredoc data consumer can run `--compress-program`; the same class as the accepted `echo`/`printf` write-then-run. |
 | N7 | The settings-file lock covers edit tools only; shell writes pass (the guard is not isolation). |
-| N8 | The receipt-run predicate and the `gh` subprocess setup are duplicated across `approval.py`, `prompt_approval.py`, `orchestra.py` and the engine. |
-| N9 | The README's macOS live-check claim rests only on the 2026-10-22 stop-path check. |
+| N8 | The receipt-run predicate and the `gh` subprocess setup are duplicated across `approval.py`, `prompt_approval.py`, `orchestra.py` and the engine. Fixed in 2.15.3. |
+| N9 | The README's macOS live-check claim rests only on the 2026-10-22 stop-path check. Fixed in 2.15.3. |
 | N10 | The unattended lock matches provider deletes by text, so a command that also holds a real `rm` and quotes `gh release delete` is denied (fails closed). |
 | E1 | Fixed in 2.12.0. Engine: adding a repair card ignores findings in a final receipt made stale by a sibling chain's repair, so the second chain needs a new review. Let `add` accept those findings, or refuse the first repair until every blamed chain has its card. |
 | E2 | Engine: `report` and `accept` run from a linked worktree resolve another state directory ("Invalid assignment") and leave an empty one. Run engine commands from the main checkout. |
@@ -588,7 +588,7 @@ Source: a read-only triage of the 2.15 live run (friction F67 to F96) and the re
 - F100: With an Opus main session, every builder card (Sonnet by role) is refused inline on model fit, so the main session gets no track work except repairs and Opus reviews, and a 40-line engine fix (E1F) had to go to a worker. Proposed fix: the track (T2) shows this honestly, and a card can opt into the session model with `model: session` when the owner prefers inline.
 - F101: The coordinator accepted E1 and E1F on targeted suites only, and the full suite later found a regression in each: one in finish leftovers and one in F84 freeing chain files. Proposed fix: after any card that edits engine.py, accept only on the full suite or a frozen-copy run of it.
 - Not done in 2.15.1 for lack of ownership: dropping the repeated "A tiny task starts no run" prose (pinned by `tests/test_skill_routing.py`) and the `cancelBoardTimer` wrapper in `orchestra.ts`.
-- Unchecked: the F89 reproduction was not rerun by the docs card; live `report` inside `do` is unchecked.
+- Unchecked: the F89 reproduction was not rerun by the docs card; live `report` inside `do` is unchecked. Closed in 2.15.3: `report` inside `do` is pinned by `test_do_runs_report` in `tests/test_cli_support.py`.
 
 ## 2.15.2 (2026-10-27)
 
@@ -621,10 +621,107 @@ Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's trac
 
 ### Friction found during the 2.15.2 run, deferred
 
-- F112: a resumed inline card's diff range (`base..report_sha`) took in another accepted card's commit that landed while it was reported, so `accept` refused "files outside the card" until those files were added with `own add`. A fix needs a per-commit owner check, not a base move, since the card's own earlier commits stay in range.
-- F114: a repair reserves every file of its whole chain, so repair RN (engine.py only) waited for repair RH (hooks.py) through `docs/hooks.md` that NE had taken. A narrower reservation (the repair's own files plus the chain files its finding names) needs its own review.
+- Fixed in 2.15.3 (see that section). F112: a resumed inline card's diff range (`base..report_sha`) took in another accepted card's commit that landed while it was reported, so `accept` refused "files outside the card" until those files were added with `own add`. A fix needs a per-commit owner check, not a base move, since the card's own earlier commits stay in range.
+- Fixed in 2.15.3 (see that section). F114: a repair reserves every file of its whole chain, so repair RN (engine.py only) waited for repair RH (hooks.py) through `docs/hooks.md` that NE had taken. A narrower reservation (the repair's own files plus the chain files its finding names) needs its own review.
 
 ### Known limits
 
 - `t3` records a skip in headless runs because the board mod does not run under `claude -p`; native task renumbering is proven by mod unit tests only.
 - The first prompt after cards are added by CLI shows no board line (the CLI marks the board seen), and the session model reads unknown until the first `orchestra.py` call.
+
+## 2.15.3 (2026-10-27)
+
+Source: the open rows of the 2.15.2 ledger (F112, F114), the 2.15.2 review notes, the deferred rows N1 to N9, the 2.5 deferred notes and the friction the 2.15.2 live run left (F115 to F119). Built card by card on branch `orchestra-2.15.3` from `c4832a8`. The changes are listed in `CHANGELOG.md`.
+
+### Fixed
+
+| Item | Change | Test |
+| --- | --- | --- |
+| F112 | A resumed card's outside-files check skips commits other cards made while it was reported; the card's own commits on both sides of the gap still count | `tests/test_engine_2153.py` `ResumeGapTests` |
+| F114 | A repair reserves only its own files; a non-repair card still waits for the whole chain; two repairs that own one file still wait | `tests/test_engine_2153.py` `RepairReservationTests` |
+| N4 | `record_pr` marks a pull request reviewed only from a clean final review or one covering every card it carries | `tests/test_engine_2153.py` `PrReviewedScopeTests` |
+| Acceptance line | A newline before a parenthesis is no trailing-note gap | `tests/test_engine_2153.py` `BareNewlineTests` |
+| Track line | A CLI result carries `track` when the track changed since the last result; an unchanged track is not repeated. This replaces the 2.15.2 gap about the first prompt after a CLI `add` | `tests/test_cli_support.py` `test_add_shows_the_track_and_an_unchanged_track_is_not_repeated` |
+| F116 | A read-only investigator's report stays acceptable after later edits; a builder's report still goes stale | `tests/test_engine_2153.py` `ReadOnlyReportTests` |
+| F115 | The Stop hook stays quiet while a gate log has no receipt yet | `tests/test_engine_2153.py` `StopDuringGateTests` |
+| F117 | `own add` on a reported card widens only the stored scope when the checkout moved on (a merged worktree card), refuses to re-bind when the added file changed after the reported commit, and the stale-report refusal names `resume ID` | `tests/test_engine_2153.py` `StaleHintTests`, `OwnAddMovedCheckoutTests` |
+| F121 | A sibling commit off the card's first-parent line (merged in from its own branch) stays sibling work after the card owns one of its files; the card's own first-parent commit touching a sibling file is still outside | `tests/test_engine_2153.py` `MergedSiblingTests` |
+| F120 | A finalize card waits for every reported card; with the coordinator's own full-suite rule for engine cards the docs card waited about 27 minutes. By design; no change | none |
+| Size choices | `--size` choices come from the engine's size list | `tests/test_engine_2153.py` `SizeChoicesTests` |
+| N8 | The engine has no `gh` subprocess of its own; it uses the approval module's runner (6 s timeout, was 10 s) | `tests/test_engine_2153.py` `OneGhRunnerTests` |
+| F39 | `board --view` has `overlaps`; the mod's Track lane draws "Shares files: a and c" | `tests/test_engine_2153.py` `BoardOverlapsTests`; `hooks/mod/orchestra.test.ts` |
+| F89, binds | `report` inside `do` is pinned; the legacy-hash `binds` edge case (a state with no sized session) is pinned | `tests/test_cli_support.py` `test_do_runs_report`; `tests/test_engine_2153.py` `BindsEdgeTests` |
+| Test state home | The merged-delete hook tests use a temporary state home, so test runs leave no policy-only folders | `tests/test_engine_2153.py` `TestStateIsolationTests` |
+| F118 | A pending board note the board has moved past prints the current board line | `tests/test_hook_board.py` `test_a_note_the_board_has_moved_past_gives_the_current_board` |
+| F119 | The merge guard's no-method deny says "add --merge", the one method flag a gated merge accepts | `tests/test_guard_2153.py` `MergeMethodTest` |
+| N1 | `gh repo set-default` is denied in every mode while a run is active or unattended; other `gh repo` commands are not | `tests/test_guard_2153.py` `SetDefaultTest` |
+| N2 | The approval prompt hook shares one 8 s deadline across the lock wait and `gh` calls; no time left answers without calling `gh` | `tests/test_guard_2153.py` `DeadlineTest` |
+| N3 | A lower pull request closed without merging makes the guard say "type approved again"; an open one still says merge it first | `tests/test_guard_2153.py` `ClosedLowerTest` |
+| N5 | A gated merge with no method flag is denied | `tests/test_guard_2153.py` `MergeMethodTest` |
+| N9 and mod docs | Mods run by default from Claude Code 2.1.287; the docs name `--bare`, `--safe-mode` and `disableAllHooks`; the README states the live-check evidence | `tests/test_docs_2153.py` |
+| Classifier | The test-suite probe reads `coverage run`, option clusters such as `-Bm` and `-Im`, and script arguments (`script.py -m pytest` is not a suite run) | `tests/test_suite_probe_2153.py` |
+| Hygiene notes | Stale checkpoint test names renamed; two `review_of` tests use a real mode, so they reach the `review_of` checks; `gate.md` says the full suite runs only on the owner's explicit request | `tests/test_hygiene_2153.py`; `tests/test_skills.py` `test_operator_gate_runs_the_full_suite_only_on_the_owners_request` |
+| L2 tooling | `scripts/live-gh-wizard.sh` and `docs/live-gh.md`: the owner's one-time run of the merge guard against real `gh` on a throwaway repository. Every GitHub change follows a confirm, the repository delete is only printed, state stays in the scratch directory | `tests/test_live_gh_wizard.py` |
+| `t3` note | A `t3` skip says `mod loaded` or `mod not loaded` from the debug log | `tests/test_live_matrix_track.py` |
+| RC/RS on C1 (repairs RC1, RC2) | A value-taking option's value is not read as a script; the named list `_VALUE_OPTIONS` covers `.py` glob values of `--include` and `--omit`. RC1's first fix left the `.py` case open (FX1 BLOCKED); RC2, the owner-approved second repair, closed it (FX2 CLEAN) | `tests/test_suite_probe_2153.py` `OptionValueTests` |
+| RC on E1 (repair RE1), FX3 note | Another active repair's whole chain counts against a repair, so a file both chains hold, or a file under a directory one chain holds, is flagged for the repair that edits it (FX3 CLEAN) | `tests/test_engine_2153.py` `SharedChainFileTests`, `SharedChainDirectoryTests` |
+| RS on E2 (repair RE2) | A merged commit is sibling work only on its owner's first-parent line (FX4 CLEAN) | `tests/test_engine_2153.py` `SideBranchSneakTests` |
+| Review notes (NX) | Gated merges need `-R OWNER/REPO`; graphql merge mutations and file-read query forms are merge-gated; F112 gaps start at the report-time HEAD; prompt-hook lock waits stay inside the deadline; `MergedDeleteHookTest` clears `ORCHESTRA_STATE_DIR`; `l3` checks a later prompt arrived; `record_pr` and F116 compare repo and policy only | `tests/test_guard_2153.py`, `tests/test_merge_guard.py`, `tests/test_engine_2153.py` |
+| F122, F124, F126 (E4) | Lens/variant mismatch refused at `add`; the SELF_REVIEW shape refusal names the bad field; `accept` warns on uncommitted card files | `tests/test_engine_2153.py` `FrictionE4Tests`, `AcceptWarningCliTests` |
+| RZ on NX (repair RN1), FX5 note (G2) | `gh api graphql --input FILE` and `--input -` are merge-gated (FX5 CLEAN); the graphql arm matches on either side of the endpoint (`gh api --input m.json graphql`) | `tests/test_guard_2153.py` `GraphqlMergeTest` |
+| RZ2 on G2 (repairs RG1, RG2), FX6, FX7 notes (CL3) | The merge gate is the one-line regex or the shell-word view (`guards.gh_merge_kinds`). RG1's word view alone lost five forms the regex caught (FX6 BLOCKED); RG2 (owner-approved second repair) restored the regex arm and widened the word view (FX7 CLEAN, 159-command replay against cde013e and 80bdcab). CL3: one `gh_kinds` view; a set-default beside a merge no longer returns None after the receipt; past 500 `gh` words the gate denies at once | `tests/test_guard_2153.py` `WordViewMergeGateTest` |
+| RZ3 on RG2 (repair RG3), FX8 and RZ3 notes (CL4) | Between `pr` and `merge` only flags and bare-flag values may stand, so `gh pr -Ro/r merge 3` is gated (FX8 CLEAN, 44-command replay); CL4 reads an attached value as taking no next word and names `gh pr view --json` in the graphql deny | `tests/test_guard_2153.py` `WordViewMergeGateTest` |
+| Strategic track (T2) | Four review rounds found merge-gate bypasses one spelling at a time, and RG1 lost five forms no test pinned. `tests/data/merge_gate_must_deny.json` (110 after the receipt, 9 while armed, merge-capable commands and deliberate fail-closed over-denies) runs through the PreToolUse hook; it fails 23 times at RG1 and only grows | `tests/test_merge_gate_corpus.py` |
+| RZ4 on CL4 (repair RG4) | The one-line merge regexes grew quadratically: an 80 KB padded command took the gate 32 s, past the mod's 8 s delegate timeout (the command hook allows 30 s), so on the command-hook path a trailing merge could run ungated. They are now linear per-segment scans that find the same matches (FX9: 210,000 generated commands, 9 differ, none loses a merge). `gh pr '' merge` is gated, as cobra skips empty words. The graphql deny text no longer denies a printed merge for a slug like `acme/api-graphql`. FX9 CLEAN | `tests/test_merge_gate_corpus.py` `test_padded_commands_answer_fast`, `tests/test_guard_2153.py` `GraphqlSlugTest` |
+| FX9 notes (CL5) | A command over 131,072 characters with a `gh` word fails closed before `shlex` (one long quoted word took the hook 10 s at 700 KB); the graphql deny text is only for a `gh api` graphql call | `tests/test_merge_gate_corpus.py`, `tests/test_guard_2153.py` |
+| RZ5 note and out of scope (E6) | A shell command over 131,072 characters is denied at the hook entry (`_main` and `_decide`) in every mode, before the mod skip, the ledger check and every parse: `shlex` grows quadratically on one long word, and a 700 KB command took the real hook 38 s (no gh word: 14.6 s), past its 30 s timeout. Also: the T2 counts in the CHANGELOG and release notes, the timeout wording, and the unused `guards.gh_merge_capable` removed | `tests/test_merge_gate_corpus.py` `OversizeCommandTest` |
+| RZ6 on E6 (repair RG5), RZ6 notes (CL6) | The size cap did not bound the check: a padded triple `| sh` command at 131,000 characters took the real hook 80 to 90 s, because three callers each reparse every nested payload. `hooks.main` now denies a guarded PreToolUse call whose check is still running after 20 s (a watchdog; the first answer is the only one printed). Notes: the oversize test sees the run and pins the cap on both entries; the deny text and docs say 131,072 characters, not 128 KB; `AGENTS.md` names both denies under runtime protection. FX10 notes: the timer exits in a `finally`, and a crash drops what the check printed, so the deny is the only answer. FX10's memoize note stays open: the watchdog bounds the reparse, and a huge nested command is denied, which fails closed | `tests/test_merge_gate_corpus.py` `HookBudgetTest`, `OversizeCommandTest` |
+| RZ7 notes, F131 (CL7) | RZ7 was CLEAN with four notes. The watchdog's deny says to split the command or write long content to a file first; `docs/hooks.md` says 131,072 characters throughout and names the watchdog's limits (one long C call delays it; a check slowed by the filesystem past 20 s is denied). F131: the coordinator reused a live-matrix output folder, so 20 scenarios found the earlier run and crashed at start, and the summary showed 0 failed for them. The harness now refuses a scenario whose path already has run state, and a crashed row shows `crash` | `tests/test_live_matrix_state.py`, `tests/test_merge_gate_corpus.py` `HookBudgetTest` |
+| RZ8 notes (CL8) | RZ8 was CLEAN with four notes. The watchdog's split-or-write-a-file advice is for shell tools only; other tools get 'try it again'. The harness finds run state with the engine's `paths.state_location` (`ORCHESTRA_STATE_DIR` and the Windows branch included). The crash advice is pinned by a test, and `docs/live-matrix.md` says a rerun at the same path refuses to start | `tests/test_live_matrix_state.py`, `tests/test_merge_gate_corpus.py` |
+| RZ2 notes (CL2) | An unstaged rename keeps its source path in the `accept` warning; `record_pr` finds an existing entry by repository ignoring case | `tests/test_engine_2153.py` `CleanupRZTests`, `OneRepositoryTests` |
+| RZ out of scope (E5) | `record_pr` refuses a pull request of a second repository, since the approval reply lists one repository's pull requests | `tests/test_engine_2153.py` `OneRepositoryTests` |
+| RZ notes (CL) | `docs/hooks.md` prints the `-R` merge form; the lens hint points at the card's `brief`; `VARIANT_LENS` is pinned to `briefs.LENSES`; test classes sit above `__main__`; cli docs name the `accept` warning and the lens refusal; a staged rename keeps its source path | `tests/test_engine_2153.py` `CleanupRZTests` |
+| F123 | A repair reserved files its card took by `own add` only to pass the sibling check. With F121 fixed that `own add` is no longer needed, so the cause is gone | none |
+
+### Live evidence
+
+- `l3` (new, 23 scenarios): background output and a subagent answer that say "approved" reach no approval. 7/7 checks pass in a real headless session. This settles the part of ledger row L3 about background output and subagent text; a `ScheduleWakeup` prompt is still covered only by the scheduler deny.
+- The full-suite and `scripts/check.sh` results for this release are recorded by the gate run, not by the documentation card.
+
+### Rows closed
+
+N1 to N5, N8, N9, F89, F112, F114, F115 to F119, F121, F39, the `binds` edge case, the checkpoint test names, the `gate.md` row and the classifier rows (`coverage run`, `-Im`, `-Bm`, `script.py -m ...`).
+
+### Still open, with why
+
+| Item | Why it stays open |
+| --- | --- |
+| L2 (real `gh`: wrong-SHA merge refused, child pull request retargeted) | Human: needs the owner's signed-in `gh` and a throwaway repository. Run `scripts/live-gh-wizard.sh` once; see `docs/live-gh.md` |
+| Outside-repo gap; GitHub branch ruleset | External: a command run outside the repository gets no autonomy plane. Only a server-side branch ruleset on the default branch backs it, and none is tested |
+| `UserPromptSubmit` does not prove a human typed the prompt | External: only Claude Code could mark the prompt source |
+| G9 (GitHub retargets a child pull request when its parent branch is deleted) | External: GitHub behavior; the guard names the `gh pr edit --base` workaround, and the wizard checks it |
+| Live band in an interactive session; Windows and macOS field tests; Desktop check | Human or external: need an interactive session or another machine |
+| `t3` skips headless | The board mod's task calls do not appear under `claude -p`; native task renumbering is proven by mod unit tests only |
+| Lowercase unittest class in the classifier (`tests.test_x.case.test_y`) | Owner decision: text cannot tell a class from a module; the probe fails closed |
+| F18 (`pr merge` as a release kind), F21 (a second inline card), engine-owned worktrees, parallel-work enforcement, a release permit when release is unset | Owner decision: each changes release authority, the inline rule or the guard's risk |
+| Foreign-agent Read, Grep and Glob are not guarded | Owner decision: the hook matcher is per tool, so guarding them runs the hook on every read (about 190 ms each) |
+| Builder-repair agent file | Owner decision: repair runs through the Agent tool with the override, a tested choice |
+| F38 in-place amend; F40 sibling-fixture ruling; F43 | Owner decision: `replace` covers an amend that changes the id; F40 and F43 have no description to build from |
+| G5 (night-run write cadence against `worker_stale_seconds`) | Not measured; low value |
+| 2.8 known limits (staged-only chmod, same-size rewrite, files over 64 MiB, PowerShell-only commands); accepted notes 15 to 17 | Accepted limits, no later change |
+| N6, N7, N10 and the heredoc write-then-run class | By design: the guard is not isolation and fails closed |
+| `cancelBoardTimer` wrapper | Not dead code: it has two callers; the 2.15.1 note was wrong. The `_rm_in_temp` comment was reworded in 2.15.3 |
+| Sibling check by files only (FX4 note) | Design limit: a side-branch commit that edits only a sibling's file and is an ancestor of the sibling's reported commit counts as sibling work. Telling it apart needs commit identity, which Git does not carry |
+| F127 (the installed 2.15.2 Stop hook spoke during a running gate) | Fixed by F115 in 2.15.3; shows until the release is installed |
+| F128 (coordinator edited reserved files after a refused `inline`) | A coordinator mistake: patches applied in the same command as a refused `inline`. The engine sees working-tree edits only at report; the early edits were backed out and re-applied under the card. Chain edits on the inline token |
+| F129 (a fix re-review receipt was refused after a disjoint commit moved HEAD) | The coordinator re-bound the artifact after checking the chain's files were unchanged. The engine could accept a `repair_check` receipt whose artifact differs only outside the chain's files |
+| F130 (a final review left `gate_receipts` as a placeholder while the gate ran) | The engine refused the receipt until the coordinator dropped the field. A review recorded before its gate could carry no gate receipt and be bound later |
+| Merge gate limits | A graphql read that names merge fails closed after the receipt (`gh pr view --json mergeable` reads it); a word-view-only form nested in four or more shell layers is not seen; variable, alias and command-substitution indirection stay accepted limits |
+| F125 (repairs on one file run in series) | By design: a reported repair keeps its files until its fix re-review accepts it. A combined re-review of several repairs would cut the waits |
+| Mod config path (`hooks/mods.json` listed in the manifest `hooks` array) | Unverified: live evidence says it loads; `claude plugin validate` and a `--debug-file` run have not been compared with the reference |
+
+### Known gaps
+
+- `t3` still skips headless (above).
+- L2 needs the owner to run `scripts/live-gh-wizard.sh` once.
+- Windows and the GitHub branch ruleset are untested.

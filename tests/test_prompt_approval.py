@@ -164,7 +164,7 @@ class PromptHookTest(PromptFixture):
         self.assertEqual([(p['order'], p['number']) for p in prs], [(1, 3), (2, 4), (3, 5)])
         self.assertEqual([p['head_sha'] for p in prs], [self.sha[3], self.sha[4], self.sha[5]])
         text = context(reply)
-        commands = ['gh pr merge %d --merge --delete-branch --match-head-commit %s' % (n, self.sha[n]) for n in (3, 4, 5)]
+        commands = ['gh pr merge %d -R o/r --merge --delete-branch --match-head-commit %s' % (n, self.sha[n]) for n in (3, 4, 5)]
         self.assertEqual([text.index(c) for c in commands], sorted(text.index(c) for c in commands))
 
     def test_reply_carries_the_retarget_sentence(self):
@@ -250,7 +250,7 @@ class PromptHookTest(PromptFixture):
     def test_reply_lists_the_exact_merge_commands(self):
         self.stopped_run(3)
         text = context(self.prompt('approved'))
-        self.assertIn('gh pr merge 3 --merge --delete-branch --match-head-commit %s' % self.sha[3], text)
+        self.assertIn('gh pr merge 3 -R o/r --merge --delete-branch --match-head-commit %s' % self.sha[3], text)
 
     def test_the_hook_entry_prints_the_reply_and_exits_zero(self):
         self.stopped_run(3)

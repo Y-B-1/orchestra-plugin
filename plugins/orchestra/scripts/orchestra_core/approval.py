@@ -8,12 +8,66 @@ import shlex
 import shutil
 import subprocess
 from pathlib import Path
+from subprocess import TimeoutExpired
 
 APPROVAL_PROMPT = re.compile(r'\s*approved[\s.!]*', re.I)
 GH_TIMEOUT = 6  # seconds; below the mod's 8 s delegate timeout and the hook's 10 s
 LIST_LIMIT = 1000
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
-MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b')
+LINE_SPLIT = re.compile(r'[;&|\n]')
+GH_WORD = re.compile(r'\bgh\b')
+PR_MERGE = re.compile(r'\bpr\s+merge\b')
+API_WORD = re.compile(r'\bapi\b')
+GRAPHQL_WORD = re.compile(r'\bgraphql\b')
+SLASH_MERGE = re.compile(r'/merge\b')
+OPAQUE = re.compile(r'(?i:merge)|=@|--input\b')
+REPO_SET_DEFAULT = re.compile(r'\brepo\s+set-default\b')
+GH_WORDS_MAX = 500  # no real command holds this many standalone gh words
+COMMAND_MAX = 128 * 1024  # FX9: shlex grows quadratically on one long quoted word (10 s at 700 KB)
+
+
+def _line_kinds(command):
+    """The one-line view (RZ4: linear, it replaces the nested `gh [^;&|\\n]* api ...` regexes, which grew
+    quadratically): in each segment between `;`, `&`, `|` and newlines, after its first gh word, `pr merge`, an api
+    word followed by `/merge`, an api word followed by both `graphql` and a merge word, `=@` or `--input`, and
+    `repo set-default`. Reading from the first gh and the first api after it finds every match the regexes found."""
+    kinds = set()
+    for segment in LINE_SPLIT.split(command):
+        gh = GH_WORD.search(segment)
+        if gh is None:
+            continue
+        if PR_MERGE.search(segment, gh.end()):
+            kinds.add('merge')
+        api = API_WORD.search(segment, gh.end())
+        if api and (SLASH_MERGE.search(segment, api.end()) or
+                    (GRAPHQL_WORD.search(segment, api.end()) and OPAQUE.search(segment, api.end()))):
+            kinds.add('merge')
+        if REPO_SET_DEFAULT.search(segment, gh.end()):
+            kinds.add('set-default')
+    return kinds
+
+
+def gh_kinds(command):
+    """The kinds ('merge', 'set-default') of gh commands in `command`: the one-line view (_line_kinds) or the
+    shell-word view (guards.gh_merge_kinds: continuations, multi-line quotes, shell payloads, graphql mutations; RZ2,
+    FX6). Past GH_WORDS_MAX gh words, or past COMMAND_MAX characters with a gh word, it answers {'merge'} at once and
+    fails closed (FX7, FX9): a timed-out PreToolUse hook does not block."""
+    from .guards import gh_merge_kinds
+    if not isinstance(command, str) or 'gh' not in command:
+        return set()
+    if len(command) > COMMAND_MAX and GH_WORD.search(command) or len(GH_WORD.findall(command)) > GH_WORDS_MAX:
+        return {'merge'}
+    return gh_merge_kinds(command) | _line_kinds(command)
+
+
+def merge_capable(command):
+    """Whether the merge guard checks `command`."""
+    return bool(gh_kinds(command))
+
+
+SET_DEFAULT_REASON = 'gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead'
+METHOD_FLAGS = {'--merge', '-m'}  # F119: `_parse` refuses every other method flag on a gated merge
+METHOD_REASON = 'add --merge: the guard allows only a merge commit on a run pull request'
 COMPOUND = re.compile(r'[;&|\n`<>()]|\$\(')
 API_PULL = re.compile(r'pulls/([0-9]+)/merge\b')
 ENV_WORDS = {'env', 'export', 'command', 'sudo', 'exec', 'nohup', 'time'}
@@ -27,17 +81,24 @@ class GhError(Exception):
     """gh is missing, failed, timed out or answered something unreadable."""
 
 
-def run_gh(args, cwd):
-    """Run `gh ARGS` and return its stdout; GhError on any failure."""
+class GhTimeout(GhError):
+    """gh did not answer within the time it was given."""
+
+
+def run_gh(args, cwd, timeout=None):
+    """Run `gh ARGS` and return its stdout; GhError on any failure. `timeout` (seconds) is capped at GH_TIMEOUT."""
+    limit = GH_TIMEOUT if timeout is None else min(GH_TIMEOUT, timeout)
     gh = shutil.which('gh')
     if not gh:
         raise GhError('gh is not installed')
     try:
         done = subprocess.run([gh, *args], cwd=cwd if cwd and Path(cwd).is_dir() else None, capture_output=True,
-                              text=True, timeout=GH_TIMEOUT, stdin=subprocess.DEVNULL,
+                              text=True, timeout=limit, stdin=subprocess.DEVNULL,
                               env=dict(os.environ, GH_PROMPT_DISABLED='1'))
     except (OSError, subprocess.SubprocessError) as exc:
-        raise GhError('gh did not answer within %ss: %s' % (GH_TIMEOUT, type(exc).__name__)) from exc
+        if isinstance(exc, TimeoutExpired):
+            raise GhTimeout('gh did not answer within %ss' % limit) from exc
+        raise GhError('gh did not answer within %ss: %s' % (limit, type(exc).__name__)) from exc
     if done.returncode:
         raise GhError('gh exited %d' % done.returncode)
     return done.stdout
@@ -68,12 +129,36 @@ def _entries(state):
     return out
 
 
-def _correct(number, sha):
-    return 'gh pr merge %s --merge --delete-branch --match-head-commit %s' % (number, sha or 'SHA')
+def _correct(number, sha, slug='OWNER/REPO'):
+    return 'gh pr merge %s -R %s --merge --delete-branch --match-head-commit %s' % (number, slug, sha or 'SHA')
+
+
+GRAPHQL_REASON = ('a gh api graphql call that names merge, holds a mutation or hides its body is merge-gated; read pull '
+                  'request state with gh pr view N --json mergeable,state and merge with the printed gh pr merge command')
+
+
+def _names_graphql_call(command):
+    """Whether a segment is a `gh api` call (api is the first plain word after gh) with `graphql` in any case or
+    spelling after it (linear; RZ4, FX9: a pr merge naming an api-graphql slug keeps its own reason)."""
+    for segment in LINE_SPLIT.split(command):
+        words = segment.split()
+        at = next((i for i, w in enumerate(words) if w.rsplit('/', 1)[-1] == 'gh'), None)
+        if at is None:
+            continue
+        verb = next((i for i in range(at + 1, len(words)) if not words[i].startswith('-')), None)
+        if verb is not None and words[verb] == 'api' and 'graphql' in ' '.join(words[verb + 1:]).lower():
+            return True
+    return False
 
 
 def _parse(command):
-    """(number, url slug or None, head commit or None) of a plain `gh pr merge`, or a deny reason string."""
+    """(number, url slug or None, head commit or None, -R slug or None) of a plain `gh pr merge`, or a deny reason
+    string. The graphql reason only replaces a deny (RZ4: a plain merge of acme/api-graphql still parses)."""
+    parsed = _parse_plain(command)
+    return GRAPHQL_REASON if isinstance(parsed, str) and _names_graphql_call(command) else parsed
+
+
+def _parse_plain(command):
     if COMPOUND.search(command):
         return ALONE
     try:
@@ -82,34 +167,40 @@ def _parse(command):
         return ALONE
     if not words or words[0] in ENV_WORDS or ASSIGNMENT.match(words[0]) or os.path.basename(words[0]) != 'gh':
         return ALONE
-    if any(w in ('-R', '--repo') or w.startswith(('--repo=', '-R')) for w in words):
-        return 'the merge names no other repository: drop -R/--repo; the guard pins the recorded one'
     if words[1:2] == ['api']:
         found = API_PULL.search(command)
-        return 'a merge through gh api is not allowed: use gh pr merge %s --merge --delete-branch --match-head-commit SHA' % (
-            found.group(1) if found else 'N')
+        return 'a merge through gh api is not allowed: use ' + _correct(found.group(1) if found else 'N', None)
     if words[1:3] != ['pr', 'merge']:
         return ALONE
-    sha, positional, rest = None, [], iter(words[3:])
+    sha, named, positional, rest = None, None, [], iter(words[3:])
     for word in rest:
         if word in ('--merge', '-m', '--delete-branch', '-d'):
+            continue
+        if word in ('-R', '--repo'):
+            named = next(rest, None) or ''
+            continue
+        if word.startswith(('--repo=', '-R')):
+            named = word.split('=', 1)[1] if word.startswith('--repo=') else word[2:]
             continue
         if word == '--match-head-commit':
             sha = next(rest, None)
         elif word.startswith('--match-head-commit='):
             sha = word.split('=', 1)[1]
         elif word.startswith('-'):
-            return 'merge flag %s is not allowed: only --merge, --delete-branch and --match-head-commit SHA' % word.split('=')[0]
+            return ('merge flag %s is not allowed: only -R OWNER/REPO, --merge, --delete-branch and --match-head-commit SHA'
+                    % word.split('=')[0])
         else:
             positional.append(word)
     if len(positional) != 1:
-        return 'name the pull request by its number: gh pr merge NUMBER --merge --delete-branch --match-head-commit SHA'
+        return 'name the pull request by its number: ' + _correct('NUMBER', None)
+    if named is not None and not re.fullmatch(r'[^/\s]+/[^/\s]+', named):
+        return '-R takes OWNER/REPO: ' + _correct('NUMBER', None)
     if positional[0].isdigit():
-        return int(positional[0]), None, sha
+        return int(positional[0]), None, sha, named
     found = PR_URL.fullmatch(positional[0])
     if not found:
-        return 'name the pull request by its number, not a branch: gh pr merge NUMBER --merge --delete-branch --match-head-commit SHA'
-    return int(found.group(2)), found.group(1), sha
+        return 'name the pull request by its number, not a branch: ' + _correct('NUMBER', None)
+    return int(found.group(2)), found.group(1), sha, named
 
 
 def _default_branches(state):
@@ -142,7 +233,7 @@ def _step_five(state, number, sha, found, live):
     if row is None:
         return 'deny', 'pull request %d is not in the owner receipt; type approved again after the run records it' % number
     want = row.get('head_sha')
-    fix = _correct(number, want)
+    fix = _correct(number, want, row.get('repo') or 'OWNER/REPO')
     if found['headRefOid'] != want:
         return 'deny', 'pull request %d head moved since approval (%s, receipt %s): type approved again' % (
             number, str(found['headRefOid'])[:12], str(want)[:12])
@@ -151,15 +242,45 @@ def _step_five(state, number, sha, found, live):
     for lower in sorted((p for p in prs if isinstance(p, dict) and isinstance(p.get('order'), int)
                          and p['order'] < row.get('order', 0)), key=lambda p: p['order']):
         other = live.get(lower.get('number'))
+        if other is not None and other.get('state') == 'CLOSED':
+            return 'deny', ('pull request %s was closed without merging; type approved again so the receipt drops it'
+                            % lower.get('number'))
         if other is None or other.get('state') != 'MERGED':
             return 'deny', 'merge pull request %s first (receipt order %s); then run: %s' % (lower.get('number'), lower['order'], fix)
     return 'allow', ''
 
 
 def merge_decision(command, cwd, state_dir, repo, gh=None):
+    """`_decide`, except that a merge it would allow must name a method (N5) and the recorded repository (RS N1:
+    without -R or a URL, gh picks the repository from the checkout's remotes, which the guard does not check)."""
+    result = _decide(command, cwd, state_dir, repo, gh)
+    if result == ('allow', '') and 'set-default' not in _line_kinds(command):
+        try:
+            words = shlex.split(command)
+        except ValueError:
+            return result
+        if not METHOD_FLAGS.intersection(words):
+            return 'deny', METHOD_REASON
+        parsed = _parse(command)
+        if not isinstance(parsed, str) and parsed[1] is None and parsed[3] is None:
+            return 'deny', 'name the recorded repository, so the checkout remotes cannot pick another: ' + _correct(
+                parsed[0], parsed[2], _recorded_slug(state_dir, parsed[0]))
+    return result
+
+
+def _recorded_slug(state_dir, number):
+    try:
+        runs = [e for e in _entries(json.loads((Path(state_dir) / 'state.json').read_text())) if e.get('autonomous') is True]
+    except (OSError, ValueError, AttributeError):
+        return 'OWNER/REPO'
+    found = next((e for e in runs if e.get('number') == number), None) or (runs[0] if runs else {})
+    return found.get('repo') if isinstance(found.get('repo'), str) else 'OWNER/REPO'
+
+
+def _decide(command, cwd, state_dir, repo, gh=None):
     """None: not gated, the caller continues. ('allow', ''): the merge may run. ('deny', reason). `gh(args, cwd)`
     returns gh's stdout or raises GhError; it defaults to the real gh."""
-    if not isinstance(command, str) or not MERGE_SEGMENT.search(command):
+    if not merge_capable(command):
         return None
     try:
         state = json.loads((Path(state_dir) / 'state.json').read_text())
@@ -173,12 +294,18 @@ def merge_decision(command, cwd, state_dir, repo, gh=None):
     entries = _entries(state)
     runs = [e for e in entries if e.get('autonomous') is True]
     active, unattended = auto.get('active') is True, raw_unattended(state)
+    kinds = gh_kinds(command)
+    if 'set-default' in kinds:  # N1: the cwd remotes would point a later gh pr merge at another repository
+        if active or unattended:
+            return 'deny', SET_DEFAULT_REASON
+        if 'merge' not in kinds:  # CL3: a set-default alone is not gated; one beside a merge shields nothing
+            return None
     if not (runs or active or unattended):
         return None
     parsed = _parse(command)
     if isinstance(parsed, str):
         return 'deny', parsed
-    number, url_slug, sha = parsed
+    number, url_slug, sha, named = parsed
     slugs = sorted({e['repo'] for e in runs if isinstance(e.get('repo'), str)})
     recorded = next((e for e in runs if e.get('number') == number), None)
     slug = recorded['repo'] if recorded and isinstance(recorded.get('repo'), str) else slugs[0] if slugs else None
@@ -186,6 +313,8 @@ def merge_decision(command, cwd, state_dir, repo, gh=None):
         return 'deny', 'no recorded pull request names the repository, so pull request %d cannot be checked' % number
     if url_slug is not None and url_slug.lower() != slug.lower():
         return 'deny', 'the pull request URL names %s, not the recorded %s' % (url_slug, slug)
+    if named is not None and named.lower() != slug.lower():
+        return 'deny', 'the merge names %s, not the recorded %s: %s' % (named, slug, _correct(number, sha, slug))
     must = active or unattended or recorded is not None
     try:
         listing = json.loads((gh or run_gh)(['pr', 'list', '--state', 'all', '-R', slug, '--json', LIST_FIELDS,

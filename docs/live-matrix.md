@@ -4,7 +4,7 @@
 
 ## What it tests
 
-Twenty-two scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
+Twenty-three scenarios, each in its own scratch repository with a bare origin, so no real project is touched. The engine's run state is the exception: it lives in the real state home (see Run state below). `--list` prints each id with one line on what it proves.
 
 - Guard modes: `g0` (no run), `g1` minimal, `g2` normal, `g3` protect.
 - Autonomy: `a1` git limits while armed, `a2b` ledger, settings and cron locks, `a3b` the owner-only `approved` receipt, `a4` scratchpad deletes on a decoy `/tmp/claude-99999` tree (a temp root, a project's sessions and another session's directory are denied; a plain temp file glob is allowed).
@@ -14,7 +14,7 @@ Twenty-two scenarios, each in its own scratch repository with a bare origin, so 
 - Install: `i1` install and uninstall in a clean profile.
 - Model fit: `m1` SessionStart records the session model, the engine refuses an inline card on another model and still allows its worker start.
 - Role skills: `s1` the main session loads `orchestra:orchestra-design` and `orchestra:orchestra-build` with the Skill tool.
-- Track: `t1` the main session runs the first track card inline, sends the disjoint side card to a worker before accepting, and the track then names the next card (Opus session). `t2` a Haiku session is refused an inline Sonnet card with "Model fit" and the track shows coordinator work. `t3` native tasks (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`): `TaskCreate` carries `step 1` for the first card and a later task call shows the step change; it records a `skipped (reason)` row, not a failure, when the task tools are missing or no task call reaches the transcript (the board mod does not run in every headless build).
+- Track: `t1` the main session runs the first track card inline, sends the disjoint side card to a worker before accepting, and the track then names the next card (Opus session). `t2` a Haiku session is refused an inline Sonnet card with "Model fit" and the track shows coordinator work. `t3` native tasks (`CLAUDE_CODE_ENABLE_TODO_TOOLS=1`): `TaskCreate` carries `step 1` for the first card and a later task call shows the step change; it records a `skipped (reason)` row, not a failure, when the task tools are missing or no task call reaches the transcript (the session runs with `--debug-file`, and the skip note says `mod loaded` when the log has the `hooks module ... loaded` line, else `mod not loaded`; under `claude -p` hooks run but what a mod draws does not).
 
 Every check reads the stream-json events (tool calls, results, hook responses) or the engine state. None trusts what the model says about itself.
 
@@ -38,14 +38,14 @@ Python 3.11 or newer and Git are needed, and nothing else.
 
 ## Run state
 
-Each scenario that starts a run leaves its run state under `~/.local/state/orchestra/<identity>` (`$XDG_STATE_HOME/orchestra/<identity>` when `XDG_STATE_HOME` is an absolute path), not under `OUT_DIR`. The harness never removes it. `<identity>` is the first 24 hex digits of the SHA-256 of the scenario's repository path, `OUT_DIR/<id>/repo`, so a scenario's directory is found from that path. To remove one scenario's run state:
+Each scenario that starts a run leaves its run state under `~/.local/state/orchestra/<identity>` (`$XDG_STATE_HOME/orchestra/<identity>` when `XDG_STATE_HOME` is an absolute path), not under `OUT_DIR`. The harness never removes it, and a scenario whose path already has run state refuses to start, so a reused `OUT_DIR` cannot pick up an earlier run (F131). A crashed scenario shows `crash` in the failed column. `<identity>` is the first 24 hex digits of the SHA-256 of the scenario's repository path, `OUT_DIR/<id>/repo`, so a scenario's directory is found from that path. To remove one scenario's run state:
 
 ```
 ID=$(python3 -c 'import hashlib, os, sys; print(hashlib.sha256(os.path.realpath(sys.argv[1]).encode()).hexdigest()[:24])' OUT_DIR/g1/repo)
 rm -rf ~/.local/state/orchestra/"$ID"
 ```
 
-Remove it before a rerun of the same scenario: `OUT_DIR/<id>/` is recreated at the same path, so the same identity comes back and the rerun can find the old run.
+Remove it before a rerun of the same scenario: `OUT_DIR/<id>/` is recreated at the same path, so the same identity comes back, and the scenario refuses to start (`crash`) until the old state is gone. The harness finds the state with the engine's own rule (`paths.state_location`), so `ORCHESTRA_STATE_DIR` counts too.
 
 ## Cost and time
 

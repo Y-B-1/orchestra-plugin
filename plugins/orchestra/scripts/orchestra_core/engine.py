@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from .guards import classify_command
 from .models import EFFORTS, FAMILY_RANK, MODEL_FAMILIES, MODEL_FIT
-from . import portable
+from . import approval, portable
 from .paths import push_url_digest
 
 
@@ -83,7 +83,7 @@ FINDING_ROUTES = '; add a repair card (`repair_of`) or record the finding with `
 ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
                     'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
                     'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha', 'ruling', 'base',
-                    'outside_files', 'report_history')
+                    'outside_files', 'report_history', 'gaps')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -758,6 +758,9 @@ class Engine:
                 raise EngineError('Invalid task outside_files')
             if 'base' in task and (not isinstance(task['base'], str) or not task['base']):
                 raise EngineError('Invalid task base')
+            if 'gaps' in task and (not isinstance(task['gaps'], list) or any(
+                    not isinstance(g, list) or len(g) != 2 or not all(isinstance(s, str) and s for s in g) for g in task['gaps'])):
+                raise EngineError('Invalid task gaps')
             if 'size' in task and task['size'] not in CARD_SIZES:
                 raise EngineError(SIZE_ERROR)
             if 'finalize' in task and not isinstance(task['finalize'], bool):
@@ -833,6 +836,25 @@ class Engine:
                 raise EngineError('Task brief must be an existing nonempty file: ' + str(brief))
             if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', brief.read_text(errors='replace'), re.M):
                 raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
+
+    VARIANT_LENS = {'medium': 'combined', 'standards': 'standards'}  # briefs.LENSES: a reviewer variant to its Lens
+
+    def _check_input_lens(self, task):
+        """F122: a final review card whose input brief names a Lens its variant does not give runs the wrong reviewer
+        type, since `wave --emit` and `card` follow the variant. Refuse it at add, naming the variant to set."""
+        wanted = self.VARIANT_LENS.get(task.get('variant'), 'correctness')
+        for item in task['inputs']:
+            path = Path(item)
+            path = path if path.is_absolute() else self.repo / path
+            if path.suffix != '.md' or not path.is_file():
+                continue
+            found = re.search(r'^Lens:[ \t]+(\S+)', path.read_text(errors='replace'), re.M)
+            if found and found.group(1) != wanted:
+                variant = next((v for v, lens in self.VARIANT_LENS.items() if lens == found.group(1)), None)
+                fix = ("set variant '%s'" % variant) if variant else 'drop the variant' if found.group(1) == 'correctness' \
+                    else "no variant gives it, so pass it as the card's brief instead of an input"
+                raise EngineError("Input brief %s says Lens: %s but the card's variant gives Lens: %s; %s"
+                                  % (item, found.group(1), wanted, fix))
 
     def _check_final_brief(self, task):
         brief = Path(task['brief'])
@@ -1457,6 +1479,9 @@ class Engine:
             if (task['role'], task['mode']) == ('code-reviewer', 'final') and 'brief' in task and not any(
                     state['tasks'][i]['mode'] == 'repair' for i in review_of):  # a fix re-review needs neither line
                 self._check_final_brief(task)
+            if (task['role'], task['mode']) == ('code-reviewer', 'final') and 'brief' not in task and not any(
+                    state['tasks'][i]['mode'] == 'repair' for i in review_of):
+                self._check_input_lens(task)
             if review_of and task['role'] not in REVIEW_ROLES:
                 raise EngineError('Only independent review roles can use review_of')
             if set(review_of) & set(task['dependencies']):
@@ -1635,16 +1660,10 @@ class Engine:
 
     def _gh_view(self, url):
         """The fields `gh pr view` reports for a pull request, or None when gh is missing, fails or answers oddly."""
-        gh = shutil.which('gh')
-        if not gh:
-            return None
         try:
-            done = subprocess.run([gh, 'pr', 'view', url, '--json',
-                                   'number,state,baseRefName,headRefName,headRefOid,isCrossRepository'],
-                                  cwd=self.repo, capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
-                                  env=dict(os.environ, GH_PROMPT_DISABLED='1'))
-            data = json.loads(done.stdout) if done.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError, ValueError):
+            data = json.loads(approval.run_gh(['pr', 'view', url, '--json',
+                                               'number,state,baseRefName,headRefName,headRefOid,isCrossRepository'], self.repo))
+        except (approval.GhError, ValueError):
             return None
         ok = isinstance(data, dict) and type(data.get('number')) is int and all(
             isinstance(data.get(k), str) and data[k] for k in ('state', 'baseRefName', 'headRefName', 'headRefOid'))
@@ -1690,15 +1709,10 @@ class Engine:
             return False
         if not any(isinstance(e, dict) and e.get('head_ref') == base for e in recorded):
             return False
-        gh = shutil.which('gh')
-        if not gh:
-            return False
         try:
-            done = subprocess.run([gh, 'pr', 'list', '--state', 'open', '--json', 'headRefName,isCrossRepository',
-                                   '--limit', '200'], cwd=self.repo, capture_output=True, text=True, timeout=10,
-                                  stdin=subprocess.DEVNULL, env=dict(os.environ, GH_PROMPT_DISABLED='1'))
-            data = json.loads(done.stdout) if done.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError, ValueError):
+            data = json.loads(approval.run_gh(['pr', 'list', '--state', 'open', '--json', 'headRefName,isCrossRepository',
+                                               '--limit', '200'], self.repo))
+        except (approval.GhError, ValueError):
             return False
         return isinstance(data, list) and any(isinstance(e, dict) and e.get('headRefName') == base
                                               and e.get('isCrossRepository') is False for e in data)
@@ -1739,21 +1753,26 @@ class Engine:
         with self._state() as state:
             self._lease(state, actor, lease)
             prs = self._pull_requests(state)
+            known = next((e['repo'] for e in prs if isinstance(e.get('repo'), str)), None)
+            if repo is not None and known is not None and repo.lower() != known.lower():
+                # the approval reply lists one repository's pull requests (prompt_approval), so a run keeps to one
+                raise EngineError('A run records pull requests of one repository: %s, not %s' % (known, repo))
             now = self._stamp()
             entry = next((e for e in prs if e['url'] == url or (number is not None and e.get('number') == number
-                                                              and e.get('repo') == repo)), None)
+                                                              and str(e.get('repo')).lower() == str(repo).lower())), None)
             if entry is None:
                 entry = dict(url=url, number=number, repo=repo, head_ref=None, head_sha=None, base_ref=None,
                              autonomous=False, tasks=[], reviewed=False, verified_at=None, recorded_at=now)
                 prs.append(entry)
-            if view:
+            entry['tasks'] = list(dict.fromkeys([*entry.get('tasks', []), *tasks]))
+            if view:  # N4: reviewed needs a clean receipt at the head that is final or covers every card the PR carries
                 sha = view['headRefOid']
                 entry.update(number=number, head_ref=view['headRefName'], head_sha=sha, base_ref=view['baseRefName'],
                              verified_at=now, reviewed=any(
                                  not r['findings'] and r['artifact'].get('head') == sha and self._intact(r)
+                                 and (r.get('final') or (entry['tasks'] and set(entry['tasks']) <= set(r.get('tasks', []))))
                                  for r in state['reviews']))
             entry['autonomous'] = bool(entry.get('autonomous')) or self._autonomy_on(state)
-            entry['tasks'] = list(dict.fromkeys([*entry.get('tasks', []), *tasks]))
             state['pull_requests'] = prs
             return copy.deepcopy(prs)
 
@@ -1860,7 +1879,8 @@ class Engine:
     def _set_aside(self, state, task, reason):
         """Park a card: drop its assignment, reservation and report, and put its repair chain under repair again."""
         task.update(state='parked', parked_reason=reason)
-        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'report_sha', 'started_at', 'outside_files'):
+        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'report_sha', 'started_at', 'outside_files',
+                    'gaps'):
             task.pop(key, None)
         for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair's report is dropped: its chain is under repair again
             ancestor['state'] = 'repairing'
@@ -1975,6 +1995,14 @@ class Engine:
                                                      for t in state['tasks'].values()) >= cap:
                     raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report' % cap)
             task.setdefault('report_history', []).append(dict(report=task['report'], at=self._stamp()))
+            if task.get('report_sha'):  # F112: commits from here to HEAD are other work, landed while this card was reported
+                try:  # the gap starts at HEAD when it reported, so its own commits after the named ARTIFACT still count
+                    start, at = task['report_sha'], (task.get('report_artifact') or {}).get('head')
+                    if at and at != start and self._is_ancestor(start, at):
+                        start = at
+                    task.setdefault('gaps', []).append([start, self._git('rev-parse', 'HEAD').decode().strip()])
+                except EngineError:
+                    pass
             for key in ('report', 'report_artifact', 'report_sha', 'self_review', 'outside_files'):
                 task.pop(key, None)
             task['state'] = 'running'
@@ -1996,8 +2024,9 @@ class Engine:
         """What `other` holds against `task`. A reported repair holds its parents' files only against a non-repair card:
         a repair card meets just the files and resources the reported repair's own card lists, and the reported
         ancestors under that repair hold nothing against it."""
-        # F84: a queued repair holds only its own files against another repair; against any other card, its chain's.
-        if other['state'] == 'queued' and other.get('repair_of') and task.get('repair_of'):
+        # F84, F114: a repair holds only its own files against another repair, queued or running; against any other card,
+        # its chain's. `_outside_files` keeps each repair to its own files where another active repair's own files lie.
+        if other.get('repair_of') and task.get('repair_of') and other['state'] in ('queued', 'running'):
             return dict(files=list(other['files']), resources=list(other['resources']))
         if task.get('repair_of') and other['state'] == 'reported' and other['role'] == 'builder':
             if other.get('repaired_by'):
@@ -2300,9 +2329,11 @@ class Engine:
             self._check_owned_path(path)
             if path in task['files']:
                 raise EngineError('Card %s already owns %s' % (task_id, path))
-            scope, fresh = self._scope_of(state, [task_id]), False
+            scope, fresh, later = self._scope_of(state, [task_id]), False, ''
             if task['state'] == 'reported':
-                fresh = self._same(task['report_artifact'], self.artifact(scope))  # re-bind only evidence that is current
+                # F117: a file edited after the report keeps the report stale; otherwise re-bind only current evidence
+                later = self._changed_since(task.get('report_sha') or task['report_artifact'].get('head'), [path])
+                fresh = not later and self._same(task['report_artifact'], self.artifact(scope))
             task['files'].append(path)
             blockers = self._blockers(state, task)
             if blockers:
@@ -2315,6 +2346,11 @@ class Engine:
                 task['outside_files'] = left
             if fresh:
                 task['report_artifact'] = self.artifact(self._scope_of(state, [task_id]))
+            elif task['state'] == 'reported' and not later:
+                # The checkout moved on (a merged worktree card): keep the evidence and widen only its scope, so accept
+                # judges the landed commit over the new files (`_reported_work_in_head`)
+                widened = self.artifact(self._scope_of(state, [task_id]))['scope']
+                task['report_artifact'] = dict(task['report_artifact'], scope=widened)
         _append_progress(self.state_dir, '- own add %s %s (at %s)' % (task_id, path, self._stamp()))
 
     def wave(self, actor, lease, task_ids, inline=None, helper=None, serial=None):
@@ -2649,6 +2685,7 @@ class Engine:
                 counts_note='running includes inline cards',
                 columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
                 cards=cards, startable_now=startable, wave_now=plan['wave_now'], serialized=plan['serialized'],
+                overlaps=plan['overlaps'],  # F39: the board shows which cards share a file
                 track=plan['track'][:3],
                 acceptable_now=acceptable,
                 next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],
@@ -2698,7 +2735,7 @@ class Engine:
     def _bare(text):
         """F70: a command without one trailing ` (...)` note. The note must follow a word (not `&&`, `||`, `;`, `|`, `(`
         or the line start) and hold no shell operator, so `cd d && (make test)` keeps its subshell."""
-        found = re.search(r'(?<=[^\s&|;(])\s+\(([^()]*)\)$', text)  # any run of spaces before the note
+        found = re.search(r'(?<=[^\s&|;(])[ \t]+\(([^()]*)\)$', text)  # spaces or tabs, never a newline (two commands)
         return text[:found.start()] if found and not re.search(r'[&|;<>`$]', found.group(1)) else text
 
     @staticmethod
@@ -2757,8 +2794,32 @@ class Engine:
         except ValueError:
             raise EngineError(SELF_REVIEW_ERROR) from None
         if not cls._self_review_ok(review):
-            raise EngineError(SELF_REVIEW_ERROR)
+            raise EngineError(SELF_REVIEW_ERROR + ' of the right shape: ' + cls._self_review_shape(review))
         return review
+
+    @staticmethod
+    def _self_review_shape(review):
+        """F124: what is wrong with a parsed SELF_REVIEW object, in words."""
+        want = ('{"checks": [{"command": str, "exit_code": int, "expect"?: "pass"|"fail"}], '
+                '"criteria": [{"criterion": str, "met": bool, "evidence": str}]}')
+        if not isinstance(review, dict):
+            return 'it is not a JSON object; use ' + want
+        for key, fields in (('checks', {'command': str, 'exit_code': int}),
+                            ('criteria', {'criterion': str, 'met': bool, 'evidence': str})):
+            items = review.get(key)
+            if not isinstance(items, list) or not items:
+                return '%s must be a nonempty list; use %s' % (key, want)
+            for n, item in enumerate(items):
+                if not isinstance(item, dict):
+                    return '%s[%d] is not an object; use %s' % (key, n, want)
+                for field, kind in fields.items():
+                    if type(item.get(field)) is not kind or (kind is str and field != 'evidence' and not item[field].strip()):
+                        extra = sorted(set(item) - set(fields) - {'expect'})
+                        return '%s[%d] needs %s (%s)%s' % (key, n, field, kind.__name__,
+                                                           '; unknown key ' + ', '.join(extra) if extra else '')
+                if key == 'checks' and item.get('expect', 'pass') not in ('pass', 'fail'):
+                    return 'checks[%d] expect must be pass or fail' % n
+        return 'use ' + want
 
     def report(self, worker, token, report):
         if not isinstance(report, str) or not report.strip():
@@ -2850,16 +2911,50 @@ class Engine:
         if not base or not sha:
             return []
         try:
-            changed = [c for c in self._git('diff', '--name-only', '-z', base, sha).decode().split('\0') if c]
+            changed = self._own_changes(task, base, sha)
         except EngineError:
             return []
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
-        outside = sorted(c for c in changed if not self._in_scope(c, owned))
+        if task.get('repair_of'):  # F114: a chain file another active repair's chain also holds is no one's to change
+            theirs = [Path(f).as_posix() for other in state['tasks'].values() if other['id'] != task['id']
+                      and other.get('repair_of') and other['state'] in ('queued', 'running', 'reported')
+                      for f in self._reservation(other, state)['files']]
+            mine = [Path(f).as_posix() for f in task['files']]
+            owned = [f for f in owned if f in mine or not self._in_scope(f, theirs)]
+            # FX3: a file under my chain's directory entry that another active repair's chain names is theirs too
+            changed_theirs = {c for c in changed if self._in_scope(c, theirs) and not self._in_scope(c, mine)}
+        else:
+            changed_theirs = set()
+        outside = sorted(c for c in changed if not self._in_scope(c, owned) or c in changed_theirs)
         outside = self._not_sibling_owned(task, outside, state, sha)
         derived = [c for c in outside if c.startswith(self.GENERATED_DIR) and c.endswith('.md') and '/' not in c[len(self.GENERATED_DIR):]]
         if derived and self._generator_passes(sha):
             outside = [c for c in outside if c not in derived]
         return outside
+
+    def _gap_commits(self, task):
+        """F112: the commits made while a resumed card was reported (`gaps`: [report_sha, HEAD at resume] pairs)."""
+        found = set()
+        for start, end in task.get('gaps', []):
+            try:
+                found.update(self._git('rev-list', start + '..' + end).decode().split())
+            except EngineError:
+                pass
+        return found
+
+    def _own_changes(self, task, base, sha):
+        """The files changed in base..sha. With no gaps this is the range diff; a resumed card's range drops the gap
+        commits and takes each other commit's own changes (a merge commit counts only the files it resolved)."""
+        gap = self._gap_commits(task)
+        if not gap:
+            return [c for c in self._git('diff', '--name-only', '-z', base, sha).decode().split('\0') if c]
+        names = set()
+        for commit in self._git('rev-list', base + '..' + sha).decode().split():
+            if commit in gap:
+                continue
+            out = self._git('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--cc', commit).decode()
+            names.update(c for c in out.split('\0') if c)
+        return sorted(names)
 
     def _not_sibling_owned(self, task, files, state, sha=None):
         """The files that are not sibling work. In a shared checkout a report range holds sibling commits, so a file is
@@ -2870,6 +2965,8 @@ class Engine:
         if not base or not sha or not siblings:
             return list(files)
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
+        line = self._first_parent_line(base, sha)  # F121: a commit off this line came in through a merge
+        lines = {}
         kept = []
         for name in files:
             owners = [other for other in siblings if self._in_scope(name, [Path(f).as_posix() for f in other.get('files', [])])]
@@ -2877,9 +2974,30 @@ class Engine:
                 commits = self._git('log', '--no-merges', '--format=%H', base + '..' + sha, '--', name).decode().split()
             except EngineError:
                 commits = []
-            if not owners or not commits or not all(self._sibling_commit(c, owners, owned) for c in commits):
+            if not owners or not commits or not all(self._sibling_commit(c, owners, owned if line is None or c in line
+                                                                         or not self._on_owner_line(c, owners, lines) else [])
+                                                    for c in commits):
                 kept.append(name)
         return kept
+
+    def _first_parent_line(self, base, sha):
+        """The commits on base..sha's first-parent line, or None when git cannot say."""
+        try:
+            return set(self._git('rev-list', '--first-parent', base + '..' + sha).decode().split())
+        except EngineError:
+            return None
+
+    def _on_owner_line(self, commit, owners, lines):
+        """Whether `commit` lies on an owner's own first-parent line base..report_sha (a worktree sibling's branch work).
+        A side-branch commit merged into a shared checkout does not, so its overlap with this card's files still counts."""
+        for other in owners:
+            if not other.get('base'):
+                continue
+            if other['id'] not in lines:
+                lines[other['id']] = self._first_parent_line(other['base'], other['report_sha']) or set()
+            if commit in lines[other['id']]:
+                return True
+        return False
 
     def _sibling_commit(self, commit, owners, owned):
         """Whether `commit` is one of the owners' reported work: it changes no file this card owns, and it is an owner's
@@ -3493,6 +3611,11 @@ class Engine:
                 return 'files outside the card: %s; add them with own add or revert them' % ', '.join(outside)
         elif task.get('review_required', False):
             return None if verdicts else 'Task needs current independent review'
+        if task['role'] == 'investigator' and not task['files']:
+            reported = task['report_artifact']  # F116: a read-only report names the commit it read; later edits do not
+            if (reported.get('repo'), reported.get('policy')) == (str(self.repo), self.policy_hash):  # change what it
+                return None  # found, but another repository or policy does
+            return 'Reported artifact is stale: repo or policy differ since the report; resume %s and re-report' % task_id
         scope = self._scope_of(state, [task_id])
         reported, now = task['report_artifact'], self._artifact_cached(cache, scope)
         # A commit after the report moves HEAD but not the reported content, and the independent review above is current
@@ -3500,9 +3623,9 @@ class Engine:
         # modified or untracked any more (within its scope): then HEAD holds exactly the reported files.
         clean = now.get('status') == _hash(b'')
         if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'scope')) or not clean and reported != now:
-            return self._stale_report(reported, now, scope)
+            return self._stale_report(reported, now, scope, task_id)
         if reported.get('fingerprint') != now.get('fingerprint') and not self._reported_work_in_head(task, scope, state['tasks']):
-            return self._stale_report(reported, now, scope)
+            return self._stale_report(reported, now, scope, task_id)
         return None
 
     def _full_check_gap(self, task, review):
@@ -3524,12 +3647,12 @@ class Engine:
             return None
         return 'Full check needed: the card touches %s; its self-review needs a passing check "%s"' % (', '.join(hit[:3]), spec['command'])
 
-    def _stale_report(self, reported, now, scope):
+    def _stale_report(self, reported, now, scope, task_id):
         keys = [k for k in reported.keys() | now.keys() if reported.get(k) != now.get(k)]
         order = list(now) + [k for k in reported if k not in now]
         changed = self._changed_since(reported.get('head'), scope)
-        return 'Reported artifact is stale: %s differ since the report%s; re-report or send a repair card' % (
-            ', '.join(sorted(keys, key=order.index)), ' (changed: %s)' % changed if changed else '')
+        return 'Reported artifact is stale: %s differ since the report%s; resume %s and re-report, or send a repair card' % (
+            ', '.join(sorted(keys, key=order.index)), ' (changed: %s)' % changed if changed else '', task_id)
 
     def _changed_since(self, head, scope):
         """'PATH (short sha), ...' for the paths in `scope` that differ from the tree at `head`, each with the commit
@@ -3591,6 +3714,27 @@ class Engine:
                     task['ruling'] = dict(text=ruling.strip(), at=at)
                 _append_progress(self.state_dir, '- ruled %s: %s (at %s)' % (task_id, ruling.strip(), at) if unmet or named else
                                  '- ruling note on %s (no unmet criterion): %s (at %s)' % (task_id, ruling.strip(), at))
+            uncommitted = self._uncommitted(task) if task['role'] == 'builder' else []
+        return dict(uncommitted=uncommitted) if uncommitted else None
+
+    def _uncommitted(self, task):
+        """F126: the card's files with changes not yet committed, sorted. Accepted work must reach a commit before
+        `finish` can find it in HEAD, so the CLI warns while it can still be committed."""
+        files = [Path(f).as_posix() for f in task.get('files', [])]
+        if not files:
+            return []
+        try:
+            out = self._git('status', '--porcelain', '-z', '--untracked-files=all', '--', *files).decode()
+        except EngineError:
+            return []
+        entries, paths = out.split('\0'), set()
+        while entries:
+            entry = entries.pop(0)
+            if len(entry) > 3:
+                paths.add(entry[3:])
+                if set(entry[:2]) & set('RC') and entries:  # a rename or copy record (either column) carries its source next
+                    paths.add(entries.pop(0))
+        return sorted(paths)
 
     def record_criterion(self, actor, lease, task_id, criterion, evidence):
         """The coordinator's evidence for one unmet self-review criterion of a reported worker card. Only criteria take
