@@ -775,11 +775,8 @@ def _gh_kinds(rest):
     kinds = set()
     if ('repo', 'set-default') in zip(rest, rest[1:]):
         kinds.add('set-default')
-    if 'pr' in rest:
-        after, i = rest[rest.index('pr') + 1:], 0
-        while i < len(after) and after[i].startswith('-'):
-            i += 1 if '=' in after[i] or after[i] in ('--help',) else 2  # skip a flag and its value (`-R o/r`)
-        if after[i:i + 1] == ['merge']:
+    for at in (i for i, w in enumerate(rest) if w == 'pr'):
+        if _flags_then(rest[at + 1:], 'merge'):
             kinds.add('merge')
     if 'api' in rest:
         after = rest[rest.index('api') + 1:]
@@ -789,6 +786,18 @@ def _gh_kinds(rest):
         if any(w.lower().split('?')[0].rstrip('/').endswith('graphql') for w in operands) and any(_opaque_graphql(w) for w in after):
             kinds.add('merge')
     return kinds
+
+
+def _flags_then(words, verb):
+    """RZ3: whether `verb` follows with only flags before it. A plain word counts as a flag's value only right after a
+    flag without `=` (`-R o/r`, `--repo o/r`); an attached value (`-Ro/r`, `--repo=o/r`) takes none. Any other plain
+    word is another subcommand. Fail closed: a plain word after a bare flag is read as its value, so a later verb counts."""
+    for k, word in enumerate(words):
+        if word == verb:
+            return True
+        if not word.startswith('-') and not (k and words[k - 1].startswith('-') and '=' not in words[k - 1]):
+            return False
+    return False
 
 
 def gh_merge_capable(command):

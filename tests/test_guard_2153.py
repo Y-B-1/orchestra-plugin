@@ -278,13 +278,22 @@ class WordViewMergeGateTest(tm.MergeFixture):
     WRAPPED = ("bash -c 'gh api graphql --input m.json'", 'eval "gh api graphql --input m.json"',
                "echo 'gh api graphql --input m.json' | sh", 'gh api /graphql --input m.json',
                'gh api https://api.github.com/graphql --input m.json', 'gh pr -R o/r merge 3 --merge',
-               'gh pr --repo o/r merge 3 --merge')
+               'gh pr --repo o/r merge 3 --merge', 'gh pr -Ro/r merge 3 --squash',
+               'gh pr -Ro/r merge 3 --merge --match-head-commit abc', 'gh pr \\\n -Ro/r merge 3',
+               "bash -c 'gh pr -Ro/r merge 3'", 'gh repo set-default o/r && gh pr -Ro/r merge 3',
+               'gh pr -R pr merge 3 --merge')
 
     def test_wrapped_and_respelled_merges_are_denied_after_the_receipt(self):
         """FX6: shell payloads, any graphql endpoint spelling and flags between pr and merge."""
         for command in self.WRAPPED:
             with self.subTest(command=command):
                 self.assertEqual((self.decide(command) or ('none',))[0], 'deny')
+
+    def test_other_pr_subcommands_are_not_gated(self):
+        """RG3: a positional word between pr and merge means another subcommand."""
+        for command in ('gh pr view merge', 'gh pr -Ro/r view 3', 'gh pr list -R o/r --search merge'):
+            with self.subTest(command=command):
+                self.assertIsNone(self.decide(command))
 
     def test_a_merged_read_and_a_continued_set_default_are_not_gated(self):
         self.assertIsNone(self.decide('gh api repos/o/r/pulls/3/merged'))
