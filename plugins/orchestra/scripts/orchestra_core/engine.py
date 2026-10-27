@@ -2300,9 +2300,11 @@ class Engine:
             self._check_owned_path(path)
             if path in task['files']:
                 raise EngineError('Card %s already owns %s' % (task_id, path))
-            scope, fresh = self._scope_of(state, [task_id]), False
+            scope, fresh, later = self._scope_of(state, [task_id]), False, ''
             if task['state'] == 'reported':
-                fresh = self._same(task['report_artifact'], self.artifact(scope))  # re-bind only evidence that is current
+                # F117: a file edited after the report keeps the report stale; otherwise re-bind only current evidence
+                later = self._changed_since(task.get('report_sha') or task['report_artifact'].get('head'), [path])
+                fresh = not later and self._same(task['report_artifact'], self.artifact(scope))
             task['files'].append(path)
             blockers = self._blockers(state, task)
             if blockers:
@@ -2315,6 +2317,11 @@ class Engine:
                 task['outside_files'] = left
             if fresh:
                 task['report_artifact'] = self.artifact(self._scope_of(state, [task_id]))
+            elif task['state'] == 'reported' and not later:
+                # The checkout moved on (a merged worktree card): keep the evidence and widen only its scope, so accept
+                # judges the landed commit over the new files (`_reported_work_in_head`)
+                widened = self.artifact(self._scope_of(state, [task_id]))['scope']
+                task['report_artifact'] = dict(task['report_artifact'], scope=widened)
         _append_progress(self.state_dir, '- own add %s %s (at %s)' % (task_id, path, self._stamp()))
 
     def wave(self, actor, lease, task_ids, inline=None, helper=None, serial=None):

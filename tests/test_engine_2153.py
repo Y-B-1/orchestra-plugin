@@ -68,6 +68,41 @@ class MergedSiblingTests(tr.RefusalFixture):
         self.engine.report('w-a', token, report_for(self.commit(a='mine', shared='by a', b_file='a sneaks this in')))
         self.assertIn('files outside the card: b_file;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
 
+
+class OwnAddMovedCheckoutTests(tr.RefusalFixture):
+    """F117: `own add` on a reported card after HEAD moved on keeps the report current, so accept needs no resume."""
+
+    def test_own_add_after_a_later_commit_accepts(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        self.engine.report('w-a', token, report_for(self.commit(a='mine', extra='mine too')))
+        self.commit(z='a later unrelated commit')
+        self.engine.own_add('main', self.lease, 'a', 'extra')
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.card()['state'])
+
+    def test_own_add_on_a_branch_card_merged_into_this_checkout_accepts(self):
+        main = self.git('rev-parse', '--abbrev-ref', 'HEAD')
+        self.git('checkout', '-qb', 'side')
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        sha = self.commit(a='mine', extra='mine too')
+        self.git('checkout', '-q', main)
+        self.engine.report('w-a', token, report_for(sha))  # captured from this checkout, as SubagentStop does
+        self.commit(z='work on main meanwhile')
+        self.git('merge', '--no-ff', '-qm', 'merge a', 'side')
+        self.engine.own_add('main', self.lease, 'a', 'extra')
+        self.engine.accept('main', self.lease, 'a')
+        self.assertEqual('accepted', self.card()['state'])
+
+    def test_a_later_edit_of_the_added_file_still_stales_the_report(self):
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        self.engine.report('w-a', token, report_for(self.commit(a='mine', extra='mine too')))
+        self.commit(extra='changed after the report')
+        self.engine.own_add('main', self.lease, 'a', 'extra')
+        self.assertIn('Reported artifact is stale', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
+
 @t2.own_tests_only
 class RepairReservationTests(te.FinalBlockerTests):
     """F114: two repairs meet only on their own files, whatever their chains hold; any other card still meets the chain."""
