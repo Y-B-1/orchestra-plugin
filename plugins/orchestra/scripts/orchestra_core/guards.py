@@ -2193,6 +2193,8 @@ def _is_test_probe(module, rest):
 
 
 _PY_FLAGS = re.compile(r'-([BEIOPRSVbdhiqsuvx]*)m(.*)')
+_VALUE_OPTIONS = {'--source', '--rcfile', '--omit', '--include', '--data-file', '--context', '--concurrency', '--debug',
+                  '--check-hash-based-pycs'}  # python and `coverage run` long options whose value is the next word
 
 
 def _python_runs_suite(rest, depth):
@@ -2211,8 +2213,9 @@ def _python_runs_suite(rest, depth):
             i += 2
         elif word.startswith('-') and word != '-c' and not word.startswith('-c'):
             i += 1
-        elif i and rest[i - 1].startswith('--') and '=' not in rest[i - 1] and not word.endswith('.py'):
-            i += 1  # fail closed: a plain word after a long option may be its value (`--source pkg`), not a script
+        elif i and (rest[i - 1] in _VALUE_OPTIONS
+                    or rest[i - 1].startswith('--') and '=' not in rest[i - 1] and not word.endswith('.py')):
+            i += 1  # a named option's value (`--include "*.py"`) or, failing closed, a plain word after another long option
         else:
             return False  # a script, `-c` or `-`: the rest are its arguments
     return False
