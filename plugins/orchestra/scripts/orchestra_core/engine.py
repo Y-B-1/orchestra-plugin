@@ -83,7 +83,7 @@ FINDING_ROUTES = '; add a repair card (`repair_of`) or record the finding with `
 ENGINE_TASK_KEYS = ('state', 'rev', 'seq', 'repaired_by', 'review_since', 'report', 'report_artifact', 'self_review',
                     'assignment', 'worker', 'lease', 'inline', 'held_finding', 'parked_reason', 'final_round',
                     'final_findings', 'helper_reason', 'started_at', 'dispatch_policy', 'report_sha', 'ruling', 'base',
-                    'outside_files', 'report_history')
+                    'outside_files', 'report_history', 'gaps')
 DEFAULT = dict(max_workers=20, required_checks=[], gate_timeout_seconds=300,
                secret_scan=dict(required=False, argv=[]),
                release=dict(enabled=False, remote=None, target=None, argv=[]),
@@ -758,6 +758,9 @@ class Engine:
                 raise EngineError('Invalid task outside_files')
             if 'base' in task and (not isinstance(task['base'], str) or not task['base']):
                 raise EngineError('Invalid task base')
+            if 'gaps' in task and (not isinstance(task['gaps'], list) or any(
+                    not isinstance(g, list) or len(g) != 2 or not all(isinstance(s, str) and s for s in g) for g in task['gaps'])):
+                raise EngineError('Invalid task gaps')
             if 'size' in task and task['size'] not in CARD_SIZES:
                 raise EngineError(SIZE_ERROR)
             if 'finalize' in task and not isinstance(task['finalize'], bool):
@@ -1746,14 +1749,15 @@ class Engine:
                 entry = dict(url=url, number=number, repo=repo, head_ref=None, head_sha=None, base_ref=None,
                              autonomous=False, tasks=[], reviewed=False, verified_at=None, recorded_at=now)
                 prs.append(entry)
-            if view:
+            entry['tasks'] = list(dict.fromkeys([*entry.get('tasks', []), *tasks]))
+            if view:  # N4: reviewed needs a clean receipt at the head that is final or covers every card the PR carries
                 sha = view['headRefOid']
                 entry.update(number=number, head_ref=view['headRefName'], head_sha=sha, base_ref=view['baseRefName'],
                              verified_at=now, reviewed=any(
                                  not r['findings'] and r['artifact'].get('head') == sha and self._intact(r)
+                                 and (r.get('final') or set(entry['tasks']) <= set(r.get('tasks', [])))
                                  for r in state['reviews']))
             entry['autonomous'] = bool(entry.get('autonomous')) or self._autonomy_on(state)
-            entry['tasks'] = list(dict.fromkeys([*entry.get('tasks', []), *tasks]))
             state['pull_requests'] = prs
             return copy.deepcopy(prs)
 
@@ -1860,7 +1864,8 @@ class Engine:
     def _set_aside(self, state, task, reason):
         """Park a card: drop its assignment, reservation and report, and put its repair chain under repair again."""
         task.update(state='parked', parked_reason=reason)
-        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'report_sha', 'started_at', 'outside_files'):
+        for key in ('assignment', 'worker', 'lease', 'inline', 'report', 'report_artifact', 'report_sha', 'started_at', 'outside_files',
+                    'gaps'):
             task.pop(key, None)
         for ancestor in self._walk(state['tasks'], task, 'repair_of'):  # the repair's report is dropped: its chain is under repair again
             ancestor['state'] = 'repairing'
@@ -1975,6 +1980,11 @@ class Engine:
                                                      for t in state['tasks'].values()) >= cap:
                     raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report' % cap)
             task.setdefault('report_history', []).append(dict(report=task['report'], at=self._stamp()))
+            if task.get('report_sha'):  # F112: commits from here to HEAD are other work, landed while this card was reported
+                try:
+                    task.setdefault('gaps', []).append([task['report_sha'], self._git('rev-parse', 'HEAD').decode().strip()])
+                except EngineError:
+                    pass
             for key in ('report', 'report_artifact', 'report_sha', 'self_review', 'outside_files'):
                 task.pop(key, None)
             task['state'] = 'running'
@@ -1996,8 +2006,9 @@ class Engine:
         """What `other` holds against `task`. A reported repair holds its parents' files only against a non-repair card:
         a repair card meets just the files and resources the reported repair's own card lists, and the reported
         ancestors under that repair hold nothing against it."""
-        # F84: a queued repair holds only its own files against another repair; against any other card, its chain's.
-        if other['state'] == 'queued' and other.get('repair_of') and task.get('repair_of'):
+        # F84, F114: a repair holds only its own files against another repair, queued or running; against any other card,
+        # its chain's. `_outside_files` keeps each repair to its own files where another active repair's own files lie.
+        if other.get('repair_of') and task.get('repair_of') and other['state'] in ('queued', 'running'):
             return dict(files=list(other['files']), resources=list(other['resources']))
         if task.get('repair_of') and other['state'] == 'reported' and other['role'] == 'builder':
             if other.get('repaired_by'):
@@ -2698,7 +2709,7 @@ class Engine:
     def _bare(text):
         """F70: a command without one trailing ` (...)` note. The note must follow a word (not `&&`, `||`, `;`, `|`, `(`
         or the line start) and hold no shell operator, so `cd d && (make test)` keeps its subshell."""
-        found = re.search(r'(?<=[^\s&|;(])\s+\(([^()]*)\)$', text)  # any run of spaces before the note
+        found = re.search(r'(?<=[^\s&|;(])[ \t]+\(([^()]*)\)$', text)  # spaces or tabs, never a newline (two commands)
         return text[:found.start()] if found and not re.search(r'[&|;<>`$]', found.group(1)) else text
 
     @staticmethod
@@ -2850,16 +2861,44 @@ class Engine:
         if not base or not sha:
             return []
         try:
-            changed = [c for c in self._git('diff', '--name-only', '-z', base, sha).decode().split('\0') if c]
+            changed = self._own_changes(task, base, sha)
         except EngineError:
             return []
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
+        if task.get('repair_of'):  # F114: a chain file another active repair owns is that repair's to change
+            theirs = [Path(f).as_posix() for other in state['tasks'].values() if other['id'] != task['id']
+                      and other.get('repair_of') and other['state'] in ('queued', 'running', 'reported') for f in other['files']]
+            owned = [f for f in owned if f in map(str, task['files']) or not self._in_scope(f, theirs)]
         outside = sorted(c for c in changed if not self._in_scope(c, owned))
         outside = self._not_sibling_owned(task, outside, state, sha)
         derived = [c for c in outside if c.startswith(self.GENERATED_DIR) and c.endswith('.md') and '/' not in c[len(self.GENERATED_DIR):]]
         if derived and self._generator_passes(sha):
             outside = [c for c in outside if c not in derived]
         return outside
+
+    def _gap_commits(self, task):
+        """F112: the commits made while a resumed card was reported (`gaps`: [report_sha, HEAD at resume] pairs)."""
+        found = set()
+        for start, end in task.get('gaps', []):
+            try:
+                found.update(self._git('rev-list', start + '..' + end).decode().split())
+            except EngineError:
+                pass
+        return found
+
+    def _own_changes(self, task, base, sha):
+        """The files changed in base..sha. With no gaps this is the range diff; a resumed card's range drops the gap
+        commits and takes each other commit's own changes (a merge commit counts only the files it resolved)."""
+        gap = self._gap_commits(task)
+        if not gap:
+            return [c for c in self._git('diff', '--name-only', '-z', base, sha).decode().split('\0') if c]
+        names = set()
+        for commit in self._git('rev-list', base + '..' + sha).decode().split():
+            if commit in gap:
+                continue
+            out = self._git('diff-tree', '--no-commit-id', '--name-only', '-r', '-z', '--cc', commit).decode()
+            names.update(c for c in out.split('\0') if c)
+        return sorted(names)
 
     def _not_sibling_owned(self, task, files, state, sha=None):
         """The files that are not sibling work. In a shared checkout a report range holds sibling commits, so a file is

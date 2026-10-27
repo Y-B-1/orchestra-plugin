@@ -524,6 +524,9 @@ def add_board_line(args,result):
     if line is None:
         return None
     result['board'] = line
+    track = delta.track_text(after)  # the CLI marks the board seen, so a changed track is shown here or not at all
+    if track and track != delta.track_text(args.board_before):
+        result['track'] = track
     return after
 
 

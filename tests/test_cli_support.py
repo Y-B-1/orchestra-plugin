@@ -211,3 +211,27 @@ class CliRefusals(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+
+class TrackInCliResultTests(CliRefusals):
+    """2.15.3: a CLI result carries the Track text when the track changed, so the coordinator sees the track at once
+    instead of on a later prompt (the CLI marks the board seen)."""
+
+    def test_add_shows_the_track_and_an_unchanged_track_is_not_repeated(self):
+        lease = self.start()
+        _, first = self.run_cli('add', str(self.card('B1', 'one.txt')), lease=lease)
+        self.assertEqual(first.get('track'), 'Track: you run B1')
+        _, second = self.run_cli('add', str(self.card('B2', 'two.txt')), lease=lease)
+        self.assertEqual(second.get('track'), 'Track: you run B1; side: B2')
+        path = self.card('B3', 'three.txt')
+        path.write_text(path.read_text().replace('"dependencies": []', '"dependencies": ["B1"]'))
+        _, waiting = self.run_cli('add', str(path), lease=lease)  # B3 cannot start, so the track is unchanged
+        self.assertIn('B3 ->queued', waiting['board'])
+        self.assertNotIn('track', waiting)
+        _, parked = self.run_cli('park', 'B2', '--reason', 'later', lease=lease)
+        self.assertEqual(parked.get('track'), 'Track: you run B1')
+
+
+for _name in [n for n in dir(CliRefusals) if n.startswith('test_')]:
+    setattr(TrackInCliResultTests, _name, None)
