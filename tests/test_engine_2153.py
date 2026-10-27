@@ -469,3 +469,23 @@ class AcceptWarningCliTests(tr.RefusalFixture):
         self.engine.report('w-a', token, tr.report_for(self.git('rev-parse', 'HEAD')))
         out = self.cli('accept', 'a')
         self.assertIn('uncommitted changes in the card files: a', json.dumps(out))
+
+
+class OneRepositoryTests(te.PullRequestFixture):
+    """RZ out-of-scope note: the approval reply lists one repository's pull requests, so a run records pull requests
+    of one repository only."""
+
+    def test_a_pull_request_of_a_second_repository_is_refused(self):
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        other = 'https://github.example/o/other/pull/8'
+        with self.assertRaisesRegex(EngineError, r'records pull requests of one repository: o/r, not o/other'):
+            self.engine.record_pr('main', self.lease, other)
+        self.assertEqual(len(self.prs()), 1)
+
+    def test_a_rerun_and_another_pull_request_of_the_same_repository_still_record(self):
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.engine.record_pr('main', self.lease, 'https://github.example/O/R/pull/9')
+        self.assertEqual(len(self.prs()), 2)

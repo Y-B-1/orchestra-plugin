@@ -1753,6 +1753,10 @@ class Engine:
         with self._state() as state:
             self._lease(state, actor, lease)
             prs = self._pull_requests(state)
+            known = next((e['repo'] for e in prs if isinstance(e.get('repo'), str)), None)
+            if repo is not None and known is not None and repo.lower() != known.lower():
+                # the approval reply lists one repository's pull requests (prompt_approval), so a run keeps to one
+                raise EngineError('A run records pull requests of one repository: %s, not %s' % (known, repo))
             now = self._stamp()
             entry = next((e for e in prs if e['url'] == url or (number is not None and e.get('number') == number
                                                               and e.get('repo') == repo)), None)
