@@ -103,6 +103,26 @@ class OwnAddMovedCheckoutTests(tr.RefusalFixture):
         self.engine.own_add('main', self.lease, 'a', 'extra')
         self.assertIn('Reported artifact is stale', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
 
+
+class SideBranchSneakTests(tr.RefusalFixture):
+    """RS repair of F121: this card's own side-branch commit, merged into a shared checkout, is not sibling work just
+    because a sibling's later range holds it."""
+
+    def test_a_merged_side_commit_touching_a_sibling_file_is_outside(self):
+        ta = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        tb = self.running('b', files=['b_file'])
+        self.engine.record_bases('main', self.lease, ['b'], self.git('rev-parse', 'HEAD'))
+        main = self.git('rev-parse', '--abbrev-ref', 'HEAD')
+        self.git('checkout', '-qb', 'side')
+        self.commit(a='mine', b_file='a sneaks this in')
+        self.git('checkout', '-q', main)
+        self.git('merge', '--no-ff', '-qm', 'merge side', 'side')
+        sha_a = self.git('rev-parse', 'HEAD')
+        self.engine.report('w-b', tb, report_for(self.commit(b_file2='x')))
+        self.engine.report('w-a', ta, report_for(sha_a))
+        self.assertIn('files outside the card: b_file;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
+
 @t2.own_tests_only
 class RepairReservationTests(te.FinalBlockerTests):
     """F114: two repairs meet only on their own files, whatever their chains hold; any other card still meets the chain."""

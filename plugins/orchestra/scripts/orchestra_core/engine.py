@@ -2907,10 +2907,8 @@ class Engine:
         if not base or not sha or not siblings:
             return list(files)
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
-        try:  # F121: a commit off base..sha's first-parent line came in through a merge, so it is not this card's own
-            line = set(self._git('rev-list', '--first-parent', base + '..' + sha).decode().split())
-        except EngineError:
-            line = None
+        line = self._first_parent_line(base, sha)  # F121: a commit off this line came in through a merge
+        lines = {}
         kept = []
         for name in files:
             owners = [other for other in siblings if self._in_scope(name, [Path(f).as_posix() for f in other.get('files', [])])]
@@ -2918,10 +2916,30 @@ class Engine:
                 commits = self._git('log', '--no-merges', '--format=%H', base + '..' + sha, '--', name).decode().split()
             except EngineError:
                 commits = []
-            if not owners or not commits or not all(self._sibling_commit(c, owners, owned if line is None or c in line else [])
+            if not owners or not commits or not all(self._sibling_commit(c, owners, owned if line is None or c in line
+                                                                         or not self._on_owner_line(c, owners, lines) else [])
                                                     for c in commits):
                 kept.append(name)
         return kept
+
+    def _first_parent_line(self, base, sha):
+        """The commits on base..sha's first-parent line, or None when git cannot say."""
+        try:
+            return set(self._git('rev-list', '--first-parent', base + '..' + sha).decode().split())
+        except EngineError:
+            return None
+
+    def _on_owner_line(self, commit, owners, lines):
+        """Whether `commit` lies on an owner's own first-parent line base..report_sha (a worktree sibling's branch work).
+        A side-branch commit merged into a shared checkout does not, so its overlap with this card's files still counts."""
+        for other in owners:
+            if not other.get('base'):
+                continue
+            if other['id'] not in lines:
+                lines[other['id']] = self._first_parent_line(other['base'], other['report_sha']) or set()
+            if commit in lines[other['id']]:
+                return True
+        return False
 
     def _sibling_commit(self, commit, owners, owned):
         """Whether `commit` is one of the owners' reported work: it changes no file this card owns, and it is an owner's
