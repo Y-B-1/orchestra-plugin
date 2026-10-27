@@ -9,7 +9,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 import test_engine as te
 import test_engine_2152 as t2
 import test_refusal_texts as tr
-from orchestra_core.engine import Engine
+from orchestra_core.engine import Engine, EngineError
 
 
 class ResumeGapTests(tr.RefusalFixture):
@@ -106,3 +106,24 @@ class PrReviewedScopeTests(te.PullRequestTests):
         self.built('d', files=['d.txt'])
         self.reviewed('both', ['c', 'd'])
         self.assertTrue(self.engine.record_pr('main', self.lease, self.URL, tasks=['c', 'd'])[0]['reviewed'])
+
+
+class ReadOnlyReportTests(te.EngineFixture):
+    """F116: an investigator card that owns no files is accepted on its report after the checkout moves on; its evidence
+    names the commit it read. A builder report still goes stale."""
+
+    def test_an_investigator_report_survives_later_edits(self):
+        self.task('I', role='investigator', mode='code', files=[])
+        token = self.engine.dispatch('main', self.lease, 'I', 'w-I')
+        self.engine.report('w-I', token, 'Read the code.\nARTIFACT: fixture')
+        (self.repo / 'a').write_text('edited after the report')
+        self.engine.accept('main', self.lease, 'I')
+        self.assertEqual('accepted', self.engine.status()['tasks']['I']['state'])
+
+    def test_a_builder_report_still_goes_stale(self):
+        self.task('B', files=['a'])
+        token = self.engine.dispatch('main', self.lease, 'B', 'w-B')
+        self.engine.report('w-B', token, te.done('Built.'))
+        (self.repo / 'a').write_text('edited after the report')
+        with self.assertRaisesRegex(EngineError, 'Reported artifact is stale'):
+            self.engine.accept('main', self.lease, 'B')

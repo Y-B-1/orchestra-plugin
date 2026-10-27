@@ -3532,6 +3532,8 @@ class Engine:
                 return 'files outside the card: %s; add them with own add or revert them' % ', '.join(outside)
         elif task.get('review_required', False):
             return None if verdicts else 'Task needs current independent review'
+        if task['role'] == 'investigator' and not task['files']:
+            return None  # F116: a read-only report names the commit it read; later edits do not change what it found
         scope = self._scope_of(state, [task_id])
         reported, now = task['report_artifact'], self._artifact_cached(cache, scope)
         # A commit after the report moves HEAD but not the reported content, and the independent review above is current
