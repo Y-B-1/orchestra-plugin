@@ -489,3 +489,26 @@ class OneRepositoryTests(te.PullRequestFixture):
         self.engine.record_pr('main', self.lease, self.URL)
         self.engine.record_pr('main', self.lease, 'https://github.example/O/R/pull/9')
         self.assertEqual(len(self.prs()), 2)
+
+
+class CleanupRZTests(tr.RefusalFixture):
+    """RZ notes: a staged rename, the lens hint for lenses no variant gives, and the variant map pin."""
+
+    def test_a_staged_rename_names_both_paths_whole(self):
+        self.commit(old_name_file='x')
+        self.git('mv', 'old_name_file', 'new_name_file')
+        self.assertEqual(['new_name_file', 'old_name_file'],
+                         self.engine._uncommitted(dict(files=['old_name_file', 'new_name_file'])))
+
+    def test_a_lens_no_variant_gives_points_at_the_brief_field(self):
+        brief = self.repo / 'sec.md'
+        brief.write_text('# S\n\nMode: final\nLens: security\n')
+        self.task('a')
+        card = dict(id='S', role='code-reviewer', mode='final', inputs=[str(brief)], acceptance=['review'], files=[],
+                    resources=[], dependencies=[], review_of=['a'])
+        self.assertIn("pass it as the card's brief", self.refusal(self.engine.add_task, 'main', self.lease, card))
+
+    def test_the_engine_and_brief_variant_maps_agree(self):
+        from orchestra_core import briefs
+        from orchestra_core.engine import Engine
+        self.assertEqual(Engine.VARIANT_LENS, briefs.LENSES)

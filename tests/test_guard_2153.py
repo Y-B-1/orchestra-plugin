@@ -149,9 +149,6 @@ class DeadlineTest(tpa.PromptFixture):
         self.assertIn('"timeout": 10', json.dumps(hooks))
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class MergeNamesItsRepositoryTest(tm.MergeFixture):
     """RS note (N1): a gated merge names the recorded repository with -R, so the checkout's remotes (a remote add, a
@@ -245,3 +242,7 @@ class GraphqlMergeTest(tm.MergeFixture):
         self.arm()
         self.open_pr(3)
         self.assertIsNone(self.decide("gh api graphql -f query='{ viewer { login } }'"))
+
+
+if __name__ == '__main__':
+    unittest.main()

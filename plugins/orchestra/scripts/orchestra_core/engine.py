@@ -852,7 +852,7 @@ class Engine:
             if found and found.group(1) != wanted:
                 variant = next((v for v, lens in self.VARIANT_LENS.items() if lens == found.group(1)), None)
                 fix = ("set variant '%s'" % variant) if variant else 'drop the variant' if found.group(1) == 'correctness' \
-                    else 'set a variant that gives it'
+                    else "no variant gives it, so pass it as the card's brief instead of an input"
                 raise EngineError("Input brief %s says Lens: %s but the card's variant gives Lens: %s; %s"
                                   % (item, found.group(1), wanted, fix))
 
@@ -3727,7 +3727,14 @@ class Engine:
             out = self._git('status', '--porcelain', '-z', '--untracked-files=all', '--', *files).decode()
         except EngineError:
             return []
-        return sorted({entry[3:] for entry in out.split('\0') if len(entry) > 3})
+        entries, paths = out.split('\0'), set()
+        while entries:
+            entry = entries.pop(0)
+            if len(entry) > 3:
+                paths.add(entry[3:])
+                if entry[0] in 'RC' and entries:  # a rename or copy record carries its source path as the next entry
+                    paths.add(entries.pop(0))
+        return sorted(paths)
 
     def record_criterion(self, actor, lease, task_id, criterion, evidence):
         """The coordinator's evidence for one unmet self-review criterion of a reported worker card. Only criteria take

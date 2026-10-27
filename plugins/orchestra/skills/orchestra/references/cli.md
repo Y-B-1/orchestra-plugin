@@ -7,7 +7,7 @@ Use Python 3.11+ with `plugins/orchestra/scripts/orchestra.py`. Common options p
 3. Add bounded cards with `--lease LEASE add task.json`; run `waves`, then start each wave whole with `wave [--inline ID] [--helper REASON] ID ...` (workers are `orchestra-<ID>`; `--helper` adds a helper card started beside the wave); `dispatch TASK [WORKER]` (worker `orchestra-TASK` by default) and `inline TASK` start one card and refuse while a disjoint card could start beside it, unless `--serial REASON`. Order cards with `dependencies` only.
 4. Start the actual native worker only after reserving the card. Give the full brief and selected native profile. Return a startup receipt naming actual cwd/root/HEAD. A reservation token alone does not prove a worker is running.
 5. Run `report WORKER TOKEN result.txt`. A builder report, dispatched or inline, carries exactly one `SELF_REVIEW: ` line (below) and a nonempty `ARTIFACT:` line ("Builder report needs a nonempty ARTIFACT line"). Until accept, the same worker and token may report again to replace the report; a review that lists the card, or a repair of it, ends that ("A review covers this report; route a change through a repair card"). Inspect results and group returned builders by hand.
-6. Accept builder cards with `accept TASK`. Before the PR, record the pre-PR review with `--lease LEASE review review.json`, or with `review review.json --token TOKEN` to report the review card, record the final receipt and accept the card in one step.
+6. Accept builder cards with `accept TASK`; a `warning` in the result names card files not yet committed: commit them. Before the PR, record the pre-PR review with `--lease LEASE review review.json`, or with `review review.json --token TOKEN` to report the review card, record the final receipt and accept the card in one step.
 7. Integrate changes, make tracked memory edits, freeze the candidate, run configured `gate NAME -- COMMAND...` checks and the pre-PR review. Dispatch one independent critic per needed axis (`spec`, `standards`, `ledger`, and `surface` by judgment).
 8. For a configured authorized release, run `permit REMOTE TARGET`, then `release REMOTE TARGET`. Inspect the remote and running system separately. Run `finish` only after completion checks. For another run, use `start --new-run` after the previous session closes.
 
@@ -119,7 +119,7 @@ Every command that takes the lease rewrites `NOW.md` in the state directory: the
 
 `waves` also prints `track`: steps `{step, card, side}` for the main session's own work, with `coordinator` and no card when no ready card fits the session model. `serialized` reasons include `one inline slot`, `worker cap` and `worktree cap`.
 Escalation parks a card `needs-owner:escalated`, adding `(ORIGINAL REASON)` only to a card parked without the `needs-owner:` prefix. `start` refuses a run owned by another harness session and names `start --recover --take-over`.
-`review --token TOKEN` takes no report path: it reads the captured report. `add` refuses a final review brief without `Lens:` (and `Required categories:` for combined) and a unittest acceptance line that matches no test file.
+`review --token TOKEN` takes no report path: it reads the captured report. `add` refuses a final review brief without `Lens:` (and `Required categories:` for combined), an input brief whose `Lens:` the card's `variant` does not give, and a unittest acceptance line that matches no test file.
 `do "report W T F" "accept ID"` reports and accepts a worker card in one call; `report --accept` stays inline-only.
 
 ## 2.15.2 additions

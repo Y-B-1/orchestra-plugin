@@ -31,9 +31,6 @@ class SuiteProbe2153(unittest.TestCase):
                 self.assertFalse(guards.runs_test_suite(command))
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class OptionValueTests(unittest.TestCase):
     """RC/RS repair of C1: an option's separate value is not a script, so the suite after it is still read."""
@@ -55,3 +52,7 @@ class OptionValueTests(unittest.TestCase):
                         'python3 -c "print(1)" -m pytest'):
             with self.subTest(command):
                 self.assertFalse(guards.runs_test_suite(command))
+
+
+if __name__ == '__main__':
+    unittest.main()
