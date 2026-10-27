@@ -668,6 +668,9 @@ Source: the open rows of the 2.15.2 ledger (F112, F114), the 2.15.2 review notes
 | RS on E2 (repair RE2) | A merged commit is sibling work only on its owner's first-parent line (FX4 CLEAN) | `tests/test_engine_2153.py` `SideBranchSneakTests` |
 | Review notes (NX) | Gated merges need `-R OWNER/REPO`; graphql merge mutations and file-read query forms are merge-gated; F112 gaps start at the report-time HEAD; prompt-hook lock waits stay inside the deadline; `MergedDeleteHookTest` clears `ORCHESTRA_STATE_DIR`; `l3` checks a later prompt arrived; `record_pr` and F116 compare repo and policy only | `tests/test_guard_2153.py`, `tests/test_merge_guard.py`, `tests/test_engine_2153.py` |
 | F122, F124, F126 (E4) | Lens/variant mismatch refused at `add`; the SELF_REVIEW shape refusal names the bad field; `accept` warns on uncommitted card files | `tests/test_engine_2153.py` `FrictionE4Tests`, `AcceptWarningCliTests` |
+| RZ on NX (repair RN1), FX5 note (G2) | `gh api graphql --input FILE` and `--input -` are merge-gated (FX5 CLEAN); the graphql arm matches on either side of the endpoint (`gh api --input m.json graphql`) | `tests/test_guard_2153.py` `GraphqlMergeTest` |
+| RZ out of scope (E5) | `record_pr` refuses a pull request of a second repository, since the approval reply lists one repository's pull requests | `tests/test_engine_2153.py` `OneRepositoryTests` |
+| RZ notes (CL) | `docs/hooks.md` prints the `-R` merge form; the lens hint points at the card's `brief`; `VARIANT_LENS` is pinned to `briefs.LENSES`; test classes sit above `__main__`; cli docs name the `accept` warning and the lens refusal; a staged rename keeps its source path | `tests/test_engine_2153.py` `CleanupRZTests` |
 | F123 | A repair reserved files its card took by `own add` only to pass the sibling check. With F121 fixed that `own add` is no longer needed, so the cause is gone | none |
 
 ### Live evidence
@@ -699,6 +702,8 @@ N1 to N5, N8, N9, F89, F112, F114, F115 to F119, F121, F39, the `binds` edge cas
 | N6, N7, N10 and the heredoc write-then-run class | By design: the guard is not isolation and fails closed |
 | `cancelBoardTimer` wrapper | Not dead code: it has two callers; the 2.15.1 note was wrong. The `_rm_in_temp` comment was reworded in 2.15.3 |
 | Sibling check by files only (FX4 note) | Design limit: a side-branch commit that edits only a sibling's file and is an ancestor of the sibling's reported commit counts as sibling work. Telling it apart needs commit identity, which Git does not carry |
+| F127 (the installed 2.15.2 Stop hook spoke during a running gate) | Fixed by F115 in 2.15.3; shows until the release is installed |
+| F128 (coordinator edited reserved files after a refused `inline`) | A coordinator mistake: patches applied in the same command as a refused `inline`. The engine sees working-tree edits only at report; the early edits were backed out and re-applied under the card. Chain edits on the inline token |
 | F125 (repairs on one file run in series) | By design: a reported repair keeps its files until its fix re-review accepts it. A combined re-review of several repairs would cut the waits |
 | Mod config path (`hooks/mods.json` listed in the manifest `hooks` array) | Unverified: live evidence says it loads; `claude plugin validate` and a `--debug-file` run have not been compared with the reference |
 
