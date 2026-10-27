@@ -291,7 +291,8 @@ class WordViewMergeGateTest(tm.MergeFixture):
 
     def test_other_pr_subcommands_are_not_gated(self):
         """RG3: a positional word between pr and merge means another subcommand."""
-        for command in ('gh pr view merge', 'gh pr -Ro/r view 3', 'gh pr list -R o/r --search merge'):
+        for command in ('gh pr view merge', 'gh pr -Ro/r view 3', 'gh pr list -R o/r --search merge',
+                        'gh pr -Ro/r view merge', 'gh pr -Ro/r checkout merge', 'gh pr -R o/r view merge'):
             with self.subTest(command=command):
                 self.assertIsNone(self.decide(command))
 
@@ -304,6 +305,7 @@ class WordViewMergeGateTest(tm.MergeFixture):
         reads it instead); a read that does not name merge is not gated."""
         self.assertEqual(self.decide("gh api graphql -f query='{ viewer { pullRequests(states: MERGED) { totalCount } } }'")[0], 'deny')
         self.assertIsNone(self.decide("gh api graphql -f query='{ viewer { login } }'"))
+        self.assertIn('gh pr view N --json', self.decide("gh api graphql -f query='{ viewer { pullRequests(states: MERGED) { totalCount } } }'")[1])
 
     def test_a_command_with_very_many_gh_words_fails_closed_fast(self):
         """FX7: a timed-out PreToolUse hook does not block, so the gate must answer quickly on any input."""

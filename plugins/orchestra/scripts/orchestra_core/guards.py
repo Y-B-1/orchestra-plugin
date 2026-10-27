@@ -789,15 +789,20 @@ def _gh_kinds(rest):
 
 
 def _flags_then(words, verb):
-    """RZ3: whether `verb` follows with only flags before it. A plain word counts as a flag's value only right after a
-    flag without `=` (`-R o/r`, `--repo o/r`); an attached value (`-Ro/r`, `--repo=o/r`) takes none. Any other plain
-    word is another subcommand. Fail closed: a plain word after a bare flag is read as its value, so a later verb counts."""
+    """RZ3, FX8: whether `verb` follows with only flags before it. A plain word counts as a flag's value only right
+    after a bare flag: two characters (`-R o/r`) or a long flag without `=` (`--repo o/r`), as cobra reads them; an
+    attached value (`-Ro/r`, `--repo=o/r`) takes none. Any other plain word is another subcommand. Fail closed: `verb`
+    counts wherever it stands, even where a value could be."""
     for k, word in enumerate(words):
         if word == verb:
             return True
-        if not word.startswith('-') and not (k and words[k - 1].startswith('-') and '=' not in words[k - 1]):
+        if not word.startswith('-') and not (k and _bare_flag(words[k - 1])):
             return False
     return False
+
+
+def _bare_flag(word):
+    return (len(word) == 2 and word[0] == '-' and word != '--') or (word.startswith('--') and '=' not in word and len(word) > 2)
 
 
 def gh_merge_capable(command):

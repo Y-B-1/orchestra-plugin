@@ -112,9 +112,16 @@ def _correct(number, sha, slug='OWNER/REPO'):
     return 'gh pr merge %s -R %s --merge --delete-branch --match-head-commit %s' % (number, slug, sha or 'SHA')
 
 
+GRAPHQL = re.compile(r'\bgh\b[^;&|]*\bapi\b[^;&|]*graphql', re.I)
+GRAPHQL_REASON = ('a gh api graphql call that names merge, holds a mutation or hides its body is merge-gated; read pull '
+                  'request state with gh pr view N --json mergeable,state and merge with the printed gh pr merge command')
+
+
 def _parse(command):
     """(number, url slug or None, head commit or None, -R slug or None) of a plain `gh pr merge`, or a deny reason
     string."""
+    if 'graphql' in command.lower() and len(GH_WORD.findall(command)) <= GH_WORDS_MAX and GRAPHQL.search(command):
+        return GRAPHQL_REASON  # the cap keeps this quadratic scan cheap (FX7)
     if COMPOUND.search(command):
         return ALONE
     try:
