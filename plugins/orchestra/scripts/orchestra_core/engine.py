@@ -2649,6 +2649,7 @@ class Engine:
                 counts_note='running includes inline cards',
                 columns={s: [t['id'] for t in ordered if t['state'] == s] for s in states},
                 cards=cards, startable_now=startable, wave_now=plan['wave_now'], serialized=plan['serialized'],
+                overlaps=plan['overlaps'],  # F39: the board shows which cards share a file
                 track=plan['track'][:3],
                 acceptable_now=acceptable,
                 next_wave=[i for i in plan['waves'][0] if i in startable] if plan['waves'] else [],

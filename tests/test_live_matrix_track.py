@@ -188,3 +188,16 @@ class ModLoadedNoteTest(unittest.TestCase):
         body = source[source.index('def t3_'):source.index('\n\n\nSCENARIOS')]
         self.assertIn('--debug-file', body)
         self.assertIn('mod_load_note', body)
+
+
+class BackgroundApprovalScenarioTest(unittest.TestCase):
+    """2.15.3 L3: scenario l3 proves that a background task's output saying approved reaches no UserPromptSubmit hook and
+    records no approval receipt."""
+
+    def test_l3_is_registered_and_checks_prompts_and_receipts(self):
+        self.assertIn('l3', lm.SCENARIOS)
+        source = PATH.read_text()
+        body = source[source.index('def l3_'):source.index('\n\n\ndef ', source.index('def l3_'))]
+        self.assertIn('run_in_background', body)
+        self.assertIn("'UserPromptSubmit'", body)
+        self.assertIn('receipts', body)

@@ -176,3 +176,42 @@ class OneGhRunnerTests(unittest.TestCase):
     def test_engine_has_no_own_gh_subprocess(self):
         source = (pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts/orchestra_core/engine.py').read_text()
         self.assertFalse("shutil.which('gh')" in source, 'engine.py still finds gh itself')
+
+
+class TestStateIsolationTests(unittest.TestCase):
+    """2.15.3: MergedDeleteHookTest writes policy.json into the state location, so it must not be the user's own."""
+
+    def test_merged_delete_tests_use_a_temp_state_home(self):
+        import test_hooks
+        from orchestra_core.paths import state_location
+        case = test_hooks.MergedDeleteHookTest('test_the_merged_proof_runs_no_merge_driver')
+        case.setUp()
+        try:
+            temp = pathlib.Path(case.temp.name).resolve()
+            self.assertIn(temp, state_location(case.repo).parents)
+        finally:
+            case.doCleanups()
+
+
+class BindsEdgeTests(te.EngineFixture):
+    """X1 item 1 (old 2.5 note): a state with the 2.3 policy hash binds only while its session carries no 2.4 field."""
+
+    def test_the_legacy_hash_binds_without_a_sized_session(self):
+        legacy, now = self.engine._policy_hash_2_3, self.engine.policy_hash
+        self.assertTrue(self.engine.binds({'policy': now, 'session': {'size': 'medium'}}))
+        self.assertTrue(self.engine.binds({'policy': legacy, 'session': None}))
+        self.assertTrue(self.engine.binds({'policy': legacy, 'session': {'active': True}}))
+        self.assertFalse(self.engine.binds({'policy': legacy, 'session': {'size': 'medium'}}))
+        self.assertFalse(self.engine.binds({'policy': legacy, 'session': {'items': 2}}))
+        self.assertFalse(self.engine.binds({'policy': 'other', 'session': None}))
+
+
+class BoardOverlapsTests(t2.Fixture):
+    """F39: the board view carries the same file overlaps as `waves`."""
+
+    def test_view_overlaps_match_waves(self):
+        self.task('a', files=['a'])
+        self.task('c', files=['a'])
+        self.task('b', files=['b'])
+        self.assertEqual(self.engine.view()['overlaps'], self.engine.waves()['overlaps'])
+        self.assertEqual(self.engine.view()['overlaps'], [['a', 'c']])

@@ -567,7 +567,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if engine is not None and _rm_in_worktrees(command, cwd):
             return HookResult({})  # Section 3.4: the run may delete files inside a linked worktree
         if engine is not None and _deletes_only_ignored(command, cwd):
-            return HookResult({})  # Build output and caches Git ignores hold no work of the run
+            return HookResult({})  # Only files Git ignores (build output, caches): no committed or staged work, though an ignored file can still be local work
     if active:
         # Checked before any permit: a permit never opens a boundary while autonomy is active (12.4).
         if klass == 'release-multi':

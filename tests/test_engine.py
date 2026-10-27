@@ -1381,9 +1381,9 @@ class ScopedEvidenceTests(EngineFixture):
         task = self.engine.status()['tasks']['n']
         self.assertNotIn('scope', task['report_artifact'])
         self.assertEqual(self.engine.artifact(), task['report_artifact'])
-        (self.repo / 'b').write_text('any edit')
-        with self.assertRaisesRegex(EngineError, 'stale'):
-            self.engine.accept('main', self.lease, 'n')
+        (self.repo / 'b').write_text('any edit')  # F116 (2.15.3): a read-only report stays good after a later edit
+        self.engine.accept('main', self.lease, 'n')
+        self.assertEqual(self.engine.status()['tasks']['n']['state'], 'accepted')
 
     def test_final_review_still_binds_whole_repo(self):
         self.reported('a')

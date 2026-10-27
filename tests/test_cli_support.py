@@ -1,5 +1,6 @@
 """The refusal log, the `refusals` command and the one-line board delta of the CLI (2.14)."""
 import json
+import shlex
 from pathlib import Path
 import subprocess
 import sys
@@ -235,3 +236,25 @@ class TrackInCliResultTests(CliRefusals):
 
 for _name in [n for n in dir(CliRefusals) if n.startswith('test_')]:
     setattr(TrackInCliResultTests, _name, None)
+
+
+class ReportInsideDoTests(unittest.TestCase):
+    """F89 (2.15.1 note): `report` runs inside `do` like any other step and records the card as reported."""
+    setUp, run_cli, start, card = CliRefusals.setUp, CliRefusals.run_cli, CliRefusals.start, CliRefusals.card
+
+    def test_do_runs_report(self):
+        lease = self.start()
+        self.run_cli('add', str(self.card('R1', 'r.txt')), lease=lease)
+        token = self.run_cli('dispatch', 'R1', '--serial', 'one card', lease=lease)[1]['assignment']
+        (self.repo / 'r.txt').write_text('built\n')
+        subprocess.run(['git', 'add', 'r.txt'], cwd=self.repo, check=True)
+        subprocess.run(['git', '-c', 'user.name=T', '-c', 'user.email=t@example.invalid', 'commit', '-qm', 'r'],
+                       cwd=self.repo, check=True)
+        sha = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=self.repo, capture_output=True, text=True).stdout.strip()
+        review = {'checks': [{'command': 'fixture check', 'exit_code': 0}],
+                  'criteria': [{'criterion': 'fixture check', 'met': True, 'evidence': 'ran'}]}
+        report = self.root / 'r.md'
+        report.write_text('Built.\nARTIFACT: %s clean\nSELF_REVIEW: %s\n' % (sha, json.dumps(review)))
+        _, out = self.run_cli('do', 'report orchestra-R1 %s %s' % (token, shlex.quote(str(report))), lease=lease)
+        self.assertIsNone(out.get('refused'), out)
+        self.assertEqual(self.run_cli('status')[1]['tasks']['R1']['state'], 'reported')
