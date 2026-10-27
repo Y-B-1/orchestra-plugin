@@ -206,9 +206,29 @@ class GraphqlMergeTest(tm.MergeFixture):
         self.open_pr(3)
         for command in ("gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"X\"}) { clientMutationId } }'",
                         "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }'",
-                        'gh api graphql -F query=@q.graphql'):
+                        'gh api graphql -F query=@q.graphql', 'gh api graphql --input m.json',
+                        'gh api graphql --input=m.json', 'gh api graphql --input -'):
             with self.subTest(command=command):
                 self.assertEqual(self.decide(command)[0], 'deny')
+
+    def test_a_body_from_a_file_or_stdin_stays_gated_after_the_receipt(self):
+        """RZ: `--input` hides the body, so even with a receipt the guard cannot see which pull request it merges."""
+        self.arm()
+        self.open_pr(3)
+        self.approve([3])
+        for command in ('gh api graphql --input m.json', 'gh api graphql --input -', 'gh api graphql -F query=@q.graphql'):
+            with self.subTest(command=command):
+                self.assertEqual(self.decide(command)[0], 'deny')
+
+    def test_the_minimal_hook_denies_a_graphql_body_from_a_file_after_the_receipt(self):
+        """RZ scenario: default guard mode, owner typed approved, a merge mutation read from m.json."""
+        from orchestra_core.hooks import handle_event
+        self.arm()
+        self.open_pr(3)
+        self.approve([3])
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': 'gh api graphql --input m.json'}, 'cwd': str(self.repo)}
+        output = handle_event('PreToolUse', payload, mode='minimal', state_dir=str(self.state)).output
+        self.assertEqual(output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
 
     def test_a_graphql_read_is_not_gated(self):
         self.arm()
