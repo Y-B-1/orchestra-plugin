@@ -2240,12 +2240,14 @@ def _note_pending(engine, before):
     """After a SubagentStop that moved a card, append the move to `<state>/pending-delta` for the coordinator's next
     PostToolUse, prompt or Stop. Writes nothing when no card moved; any error is ignored."""
     try:
-        moved = delta.delta(before, _board(engine))
+        after = _board(engine)
+        moved = delta.delta(before, after)
         if moved:
             path = Path(engine.state_dir) / 'pending-delta'
             old = path.read_text() if path.exists() else ''
             from .paths import atomic
             atomic(path, ((old + '\n' if old else '') + moved).encode())
+            atomic(path.with_name('pending-signature'), delta.signature(after).encode())  # F118: the board this note saw
     except Exception:
         pass
 
@@ -2262,8 +2264,16 @@ def _post_agent(payload, engine):
         if not path.is_file():
             return {}
         moved = ' | '.join(path.read_text().split('\n'))
+        signature = directory / 'pending-signature'
+        noted = signature.read_text() if signature.is_file() else None
         path.unlink()
+        signature.unlink(missing_ok=True)
         view = _board(engine)
+        if noted is not None and noted != delta.signature(view):  # F118: the board moved on; the note's counts are stale
+            text = delta.line(view, delta.read(directory, 'board-seen.json'))
+            if delta.live(view):
+                delta.store(directory, 'board-seen.json', view)
+            return {'hookSpecificOutput': {'hookEventName': 'PostToolUse', 'additionalContext': text}} if text else {}
         command = delta.next_command(view)
         if delta.live(view):
             delta.store(directory, 'board-seen.json', view)
@@ -2377,6 +2387,7 @@ def prompt_board(payload, engine):
         if text is not None:
             delta.store(directory, 'board-seen.json', view)
             (directory / 'pending-delta').unlink(missing_ok=True)
+            (directory / 'pending-signature').unlink(missing_ok=True)
             parts.append(text)
         fit = _model_line(engine, view) if view else None
         seen = directory / 'model-seen'

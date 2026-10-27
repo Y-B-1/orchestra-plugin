@@ -135,6 +135,17 @@ class PendingTests(BoardCase):
         self.assertEqual(self.post(agent_id='a9'), {})
         self.assertTrue((self.engine.state_dir / 'pending-delta').exists())
 
+    def test_a_note_the_board_has_moved_past_gives_the_current_board(self):
+        """F118 (2.15.3): a note waits for the next coordinator Agent call; when the board moved since, the note's
+        counts are stale, so the hook prints the current board line instead."""
+        self.subagent_stop()
+        self.task('z', files=['z'])
+        text = context(self.post())
+        self.assertTrue(text.startswith('Orchestra board: '), text)
+        self.assertIn('startable z', text)
+        self.assertNotIn('running>reported', text)
+        self.assertFalse((self.engine.state_dir / 'pending-delta').exists())
+
     def test_two_stops_before_one_delivery_are_both_named(self):
         self.subagent_stop()
         self.task('d', role='critic', mode='judge', files=[])
@@ -142,6 +153,7 @@ class PendingTests(BoardCase):
         self.engine.report('w2', token, GOOD)
         pending = (self.engine.state_dir / 'pending-delta')
         pending.write_text(pending.read_text() + '\n' + 'd running>reported')
+        (self.engine.state_dir / 'pending-signature').write_text(hooks_module.delta.signature(self.engine.view()))  # as _note_pending writes
         text = context(self.post())
         self.assertIn('c running>reported', text)
         self.assertIn('d running>reported', text)
