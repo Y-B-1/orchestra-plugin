@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from .guards import classify_command
 from .models import EFFORTS, FAMILY_RANK, MODEL_FAMILIES, MODEL_FIT
-from . import portable
+from . import approval, portable
 from .paths import push_url_digest
 
 
@@ -1638,16 +1638,10 @@ class Engine:
 
     def _gh_view(self, url):
         """The fields `gh pr view` reports for a pull request, or None when gh is missing, fails or answers oddly."""
-        gh = shutil.which('gh')
-        if not gh:
-            return None
         try:
-            done = subprocess.run([gh, 'pr', 'view', url, '--json',
-                                   'number,state,baseRefName,headRefName,headRefOid,isCrossRepository'],
-                                  cwd=self.repo, capture_output=True, text=True, timeout=10, stdin=subprocess.DEVNULL,
-                                  env=dict(os.environ, GH_PROMPT_DISABLED='1'))
-            data = json.loads(done.stdout) if done.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError, ValueError):
+            data = json.loads(approval.run_gh(['pr', 'view', url, '--json',
+                                               'number,state,baseRefName,headRefName,headRefOid,isCrossRepository'], self.repo))
+        except (approval.GhError, ValueError):
             return None
         ok = isinstance(data, dict) and type(data.get('number')) is int and all(
             isinstance(data.get(k), str) and data[k] for k in ('state', 'baseRefName', 'headRefName', 'headRefOid'))
@@ -1693,15 +1687,10 @@ class Engine:
             return False
         if not any(isinstance(e, dict) and e.get('head_ref') == base for e in recorded):
             return False
-        gh = shutil.which('gh')
-        if not gh:
-            return False
         try:
-            done = subprocess.run([gh, 'pr', 'list', '--state', 'open', '--json', 'headRefName,isCrossRepository',
-                                   '--limit', '200'], cwd=self.repo, capture_output=True, text=True, timeout=10,
-                                  stdin=subprocess.DEVNULL, env=dict(os.environ, GH_PROMPT_DISABLED='1'))
-            data = json.loads(done.stdout) if done.returncode == 0 else None
-        except (OSError, subprocess.SubprocessError, ValueError):
+            data = json.loads(approval.run_gh(['pr', 'list', '--state', 'open', '--json', 'headRefName,isCrossRepository',
+                                               '--limit', '200'], self.repo))
+        except (approval.GhError, ValueError):
             return False
         return isinstance(data, list) and any(isinstance(e, dict) and e.get('headRefName') == base
                                               and e.get('isCrossRepository') is False for e in data)
@@ -3541,9 +3530,9 @@ class Engine:
         # modified or untracked any more (within its scope): then HEAD holds exactly the reported files.
         clean = now.get('status') == _hash(b'')
         if any(reported.get(k) != now.get(k) for k in ('repo', 'identity', 'policy', 'scope')) or not clean and reported != now:
-            return self._stale_report(reported, now, scope)
+            return self._stale_report(reported, now, scope, task_id)
         if reported.get('fingerprint') != now.get('fingerprint') and not self._reported_work_in_head(task, scope, state['tasks']):
-            return self._stale_report(reported, now, scope)
+            return self._stale_report(reported, now, scope, task_id)
         return None
 
     def _full_check_gap(self, task, review):
@@ -3565,12 +3554,12 @@ class Engine:
             return None
         return 'Full check needed: the card touches %s; its self-review needs a passing check "%s"' % (', '.join(hit[:3]), spec['command'])
 
-    def _stale_report(self, reported, now, scope):
+    def _stale_report(self, reported, now, scope, task_id):
         keys = [k for k in reported.keys() | now.keys() if reported.get(k) != now.get(k)]
         order = list(now) + [k for k in reported if k not in now]
         changed = self._changed_since(reported.get('head'), scope)
-        return 'Reported artifact is stale: %s differ since the report%s; re-report or send a repair card' % (
-            ', '.join(sorted(keys, key=order.index)), ' (changed: %s)' % changed if changed else '')
+        return 'Reported artifact is stale: %s differ since the report%s; resume %s and re-report, or send a repair card' % (
+            ', '.join(sorted(keys, key=order.index)), ' (changed: %s)' % changed if changed else '', task_id)
 
     def _changed_since(self, head, scope):
         """'PATH (short sha), ...' for the paths in `scope` that differ from the tree at `head`, each with the commit

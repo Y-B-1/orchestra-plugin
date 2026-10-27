@@ -2282,6 +2282,8 @@ def _board_stop(engine, payload):
         view = _board(engine)
         if not delta.live(view) or not delta.next_command(view):
             return {}
+        if _running_gates(engine, engine.status()):  # F115: a gate is running; its end wakes the coordinator
+            return {}
         directory = Path(engine.state_dir)
         if delta.read(directory, 'stop-seen').get('signature') == delta.signature(view):
             return {}

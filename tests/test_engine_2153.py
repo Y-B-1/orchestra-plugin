@@ -127,3 +127,52 @@ class ReadOnlyReportTests(te.EngineFixture):
         (self.repo / 'a').write_text('edited after the report')
         with self.assertRaisesRegex(EngineError, 'Reported artifact is stale'):
             self.engine.accept('main', self.lease, 'B')
+
+
+class StopDuringGateTests(te.EngineFixture):
+    """F115: the Stop hook does not ask to accept a card while a gate log has no receipt yet; the gate's end wakes the
+    coordinator, and accepting before it would skip the evidence it is waiting for."""
+
+    def setUp(self):
+        super().setUp()
+        self.task('B', files=['a'])
+        token = self.engine.dispatch('main', self.lease, 'B', 'w-B')
+        self.engine.report('w-B', token, te.done('Built.'))
+
+    def test_a_running_gate_keeps_the_stop_quiet(self):
+        from orchestra_core import hooks
+        (self.engine.state_dir / 'gate-0123456789abcdef.log').write_text('PASS     generate\n')
+        self.assertEqual({}, hooks._board_stop(self.engine, {}))
+
+    def test_without_a_running_gate_the_stop_still_names_accept(self):
+        from orchestra_core import hooks
+        out = hooks._board_stop(self.engine, {})
+        self.assertEqual('block', out.get('decision'))
+        self.assertIn('accept B', out['reason'])
+
+
+class StaleHintTests(tr.RefusalFixture):
+    """F117: a stale report's refusal names resume, since a reported card is re-reported only after `resume` (F102)."""
+
+    def test_the_stale_refusal_names_resume(self):
+        token = self.running('a', files=['a'])
+        self.engine.report('w-a', token, tr.report_for(self.commit(a='new')))
+        (self.repo / 'a').write_text('edited after the report')
+        text = self.refusal(self.engine.accept, 'main', self.lease, 'a')
+        self.assertIn('resume a and re-report, or send a repair card', text)
+
+
+class SizeChoicesTests(unittest.TestCase):
+    """X1 item 2: the CLI size choices are the engine's SIZES, not a second literal."""
+
+    def test_cli_size_choices_come_from_the_engine(self):
+        source = (pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts/orchestra.py').read_text()
+        self.assertFalse("choices=['tiny', 'medium', 'large']" in source, 'the size choices repeat SIZES')
+
+
+class OneGhRunnerTests(unittest.TestCase):
+    """N8: the engine runs gh through approval.run_gh, not its own subprocess copies."""
+
+    def test_engine_has_no_own_gh_subprocess(self):
+        source = (pathlib.Path(__file__).resolve().parents[1] / 'plugins/orchestra/scripts/orchestra_core/engine.py').read_text()
+        self.assertFalse("shutil.which('gh')" in source, 'engine.py still finds gh itself')
