@@ -630,8 +630,6 @@ export const register: Register = (on: On) => {
     if (w !== null && w.standingOrders) where = w;
   };
 
-  const cancelBoardTimer = (): void => stopBoardTimer(board);
-
   on('session.start', async ($, e, next) => {
     // R5 finding 2: the generation is taken before any await, so of overlapping starts only the last runs on.
     cancelTick();
@@ -767,7 +765,7 @@ export const register: Register = (on: On) => {
 
   on('session.end', async ($, e, next) => {
     const reason: string = e.reason;
-    cancelBoardTimer();
+    stopBoardTimer(board);
     if (reason !== 'clear' && reason !== 'resume') cancelTick();
     try {
       if (reason !== 'clear' && reason !== 'resume') {
@@ -935,7 +933,7 @@ export const register: Register = (on: On) => {
 
   on('ui.close', { id: BOARD }, async (_$, e, next) => {
     const result = await next(e);
-    cancelBoardTimer();
+    stopBoardTimer(board);
     return result;
   });
 

@@ -273,6 +273,12 @@ def task_sync_ran(ev):
     return any(c['tool'] in ('TaskCreate', 'TaskUpdate', 'TaskList') and not c['sub'] for c in ev['calls'])
 
 
+def mod_load_note(debug_log):
+    """`mod loaded` when the debug log holds a `hooks module ... loaded` line, else `mod not loaded`."""
+    hit = any('hooks module' in l and l.rstrip().endswith('loaded') for l in debug_log.splitlines())
+    return 'mod loaded' if hit else 'mod not loaded'
+
+
 def task_tools_available(ev):
     return all(n in (ev.get('tools') or []) for n in ('TaskCreate', 'TaskUpdate', 'TaskList'))
 
@@ -641,7 +647,7 @@ def _join(*evs):
             'texts': sum((e['texts'] for e in evs), []), 'session': evs[-1]['session'], 'tools': evs[0].get('tools') or []}
 
 
-def _track_session(x):
+def _track_session(x, extra=()):
     """Two prompts in one session. The first adds the cards and stops, so the Stop hook hands the session the board line
     with the track; the second tells it to follow that line. Returns the first prompt's record and both joined."""
     pre = (f'A disposable scratch repository with an active Orchestra run; you are its coordinator and the main session. '
@@ -659,7 +665,7 @@ def _track_session(x):
               'committed", "met": true, "evidence": "committed"}]}`. Run `report MAIN TOKEN FILE` (MAIN and TOKEN come from the '
               'inline start) and then `accept YOURS`.\n'
               '4. Run `waves` and say which card the track names next. Do not start, report or accept any other card. Then reply DONE.')
-    return first, _join(first, x.claude(follow, turns=40))
+    return first, _join(first, x.claude(follow, turns=40, extra=extra))
 
 
 def t1_track_inline(x, chk):
@@ -700,13 +706,15 @@ def t3_native_tasks(x, chk):
     """Proves: With the native task tools on, TaskCreate carries `step 1` for the first track card and a later task call shows the step change after it is accepted."""
     x.model, x.env = 'claude-opus-5-5', {'CLAUDE_CODE_ENABLE_TODO_TOOLS': '1'}
     _track_cards(x)
-    ev = _track_session(x)[1]
+    debug = x.dir / 'debug.log'
+    ev = _track_session(x, extra=('--debug-file', str(debug)))[1]
     if not task_tools_available(ev):
         chk('skipped (TaskCreate, TaskUpdate and TaskList are not in the headless tool list)', True, ev.get('tools'))
         return
     if not task_sync_ran(ev):
-        chk('skipped (the task tools are listed but no TaskCreate, TaskUpdate or TaskList call reached the transcript: '
-            'the board mod did not sync in this headless session)', True, ev.get('tools'))
+        note = mod_load_note(debug.read_text(errors='replace') if debug.exists() else '')
+        chk(f'skipped (the task tools are listed but no TaskCreate, TaskUpdate or TaskList call reached the transcript: {note})',
+            True, ev.get('tools'))
         return
     chk('TaskCreate for A carries step 1', step_of(ev, 'A', 1), task_subjects(ev, 'TaskCreate'))
     chk('A accepted', x.task('A').get('state') == 'accepted', x.task('A').get('state'))
