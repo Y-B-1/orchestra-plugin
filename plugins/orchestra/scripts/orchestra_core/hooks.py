@@ -18,7 +18,7 @@ import time
 
 from . import delta, portable
 from .models import EFFORTS  # The one definition lives in models.py, shared with the engine
-from .approval import APPROVAL_PROMPT, MERGE_SEGMENT, merge_decision, raw_unattended
+from .approval import APPROVAL_PROMPT, merge_capable, merge_decision, raw_unattended
 from .guards import (RULES, Decision, _WORD_START, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
                      guard_digest, runs_test_suite)
 
@@ -634,7 +634,7 @@ def _merge_gate(command, cwd, state_dir, engine):
     """The merge guard (approval.py) for a merge-looking command: None when it does not gate, else ('allow', '') or
     ('deny', reason). It reads raw state and asks gh; it writes nothing."""
     directory = state_dir if state_dir is not None else getattr(engine, 'state_dir', None)
-    if not isinstance(directory, (str, os.PathLike)) or cwd is None or not MERGE_SEGMENT.search(command):
+    if not isinstance(directory, (str, os.PathLike)) or cwd is None or not merge_capable(command):
         return None
     return merge_decision(command, cwd, directory, _toplevel(cwd))
 

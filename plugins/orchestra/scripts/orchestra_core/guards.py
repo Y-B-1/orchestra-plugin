@@ -736,6 +736,42 @@ def _opaque_graphql(word):
     return any(lower.startswith(x) if x.startswith('--') else x in lower for x in _RELEASE['gh_api_graphql_opaque'])
 
 
+def gh_merge_capable(command):
+    """RZ2: whether a gh segment of `command` can merge or retarget a merge, read from its shell words the way the
+    release classifier reads them (continuations joined, quote-aware segments): `pr merge`, a `gh api` path with
+    `/merge` (also `/merges`), `gh api graphql` with a mutation or a body the guard cannot read, or `repo set-default`.
+    A segment that does not parse counts when it names gh (fail closed)."""
+    if not isinstance(command, str) or 'gh' not in command:
+        return False
+    texts = {command}
+    for literal in (True, False):
+        joined = _join_continuations(command, literal)
+        if joined is not None:
+            texts.add(joined)
+    for text in texts:
+        for segment in _segments(text):
+            try:
+                words = _words(segment)[1]
+            except ValueError:
+                if re.search(r'\bgh\b', segment):
+                    return True
+                continue
+            at = next((i for i, w in enumerate(words) if PurePosixPath(w).name == 'gh'), None)
+            if at is None:
+                continue
+            rest = words[at + 1:]
+            pairs = list(zip(rest, rest[1:]))
+            if ('pr', 'merge') in pairs or ('repo', 'set-default') in pairs:
+                return True
+            if 'api' in rest:
+                after = rest[rest.index('api') + 1:]
+                if 'graphql' in after and any(_opaque_graphql(w) for w in after):
+                    return True
+                if any('/merge' in w.lower() for w in after if not w.startswith('-')):
+                    return True
+    return False
+
+
 def _is_release(name, words):
     return ((name == 'gh' and words[1:3] in _RELEASE['gh']) or
             (name == 'gh' and words[1:2] == ['api'] and any(_RELEASE['gh_api_merge'] in x.lower() for x in words[2:])) or

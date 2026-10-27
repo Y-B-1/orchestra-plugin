@@ -244,5 +244,46 @@ class GraphqlMergeTest(tm.MergeFixture):
         self.assertIsNone(self.decide("gh api graphql -f query='{ viewer { login } }'"))
 
 
+
+class WordViewMergeGateTest(tm.MergeFixture):
+    """RZ2: the merge gate reads shell words (continuations joined, quote-aware), so no line break or mutation name
+    hides a merge after the owner's receipt."""
+
+    HIDDEN = ("gh api graphql -f query='mutation {\n  mergePullRequest(input: {pullRequestId: \"X\"}) { clientMutationId }\n}'",
+              'gh api graphql \\\n  --input m.json',
+              "gh api graphql -f query='mutation { enqueuePullRequest(input: {pullRequestId: \"X\"}) { clientMutationId } }'",
+              'gh \\\n pr merge 3 --merge',
+              'gh api \\\n repos/o/r/pulls/3/merge -X PUT',
+              'gh api repos/o/r/merges -f base=main -f head=feat/3')
+
+    def setUp(self):
+        super().setUp()
+        self.arm()
+        self.open_pr(3)
+        self.approve([3])
+
+    def test_hidden_merge_forms_are_denied_after_the_receipt(self):
+        for command in self.HIDDEN:
+            with self.subTest(command=command):
+                self.assertEqual((self.decide(command) or ('none',))[0], 'deny')
+
+    def test_the_minimal_hook_denies_them(self):
+        from orchestra_core.hooks import handle_event
+        for command in self.HIDDEN[:3]:
+            payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo)}
+            output = handle_event('PreToolUse', payload, mode='minimal', state_dir=str(self.state)).output
+            with self.subTest(command=command):
+                self.assertEqual(output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
+
+    def test_a_graphql_read_that_mentions_merge_is_not_gated(self):
+        for command in ("gh api graphql -f query='{ repository(owner: \"o\", name: \"r\") { pullRequest(number: 3) { mergeable mergeStateStatus } } }'",
+                        "gh api graphql -f query='{ viewer { pullRequests(states: MERGED, first: 1) { totalCount } } }'"):
+            with self.subTest(command=command):
+                self.assertIsNone(self.decide(command))
+
+    def test_the_printed_merge_still_runs(self):
+        self.assertEqual(self.decide(self.merge(3)), ('allow', ''))
+
+
 if __name__ == '__main__':
     unittest.main()

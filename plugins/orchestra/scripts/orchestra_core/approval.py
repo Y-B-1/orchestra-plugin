@@ -15,8 +15,16 @@ GH_TIMEOUT = 6  # seconds; below the mod's 8 s delegate timeout and the hook's 1
 LIST_LIMIT = 1000
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
 MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b|'
-                           r'\bgh\b[^;&|\n]*\bapi\b(?=[^;&|\n]*\bgraphql\b)[^;&|\n]*(?:(?i:merge)|=@|--input\b)|'  # a merge mutation, or a
-                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')  # query or body the guard cannot read (`=@`, `--input`), on either side of `graphql`
+                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')  # one line; merge_capable also reads shell words
+
+
+def merge_capable(command):
+    """Whether the merge guard checks `command`: a line naming a gh merge, or a gh segment whose shell words can merge
+    (guards.gh_merge_capable: continuations, multi-line quotes and graphql mutations, RZ2)."""
+    from .guards import gh_merge_capable
+    return isinstance(command, str) and bool(MERGE_SEGMENT.search(command) or gh_merge_capable(command))
+
+
 SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
 SET_DEFAULT_REASON = 'gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead'
 METHOD_FLAGS = {'--merge', '-m'}  # F119: `_parse` refuses every other method flag on a gated merge
@@ -210,7 +218,7 @@ def _recorded_slug(state_dir, number):
 def _decide(command, cwd, state_dir, repo, gh=None):
     """None: not gated, the caller continues. ('allow', ''): the merge may run. ('deny', reason). `gh(args, cwd)`
     returns gh's stdout or raises GhError; it defaults to the real gh."""
-    if not isinstance(command, str) or not MERGE_SEGMENT.search(command):
+    if not merge_capable(command):
         return None
     try:
         state = json.loads((Path(state_dir) / 'state.json').read_text())
