@@ -663,6 +663,12 @@ Source: the open rows of the 2.15.2 ledger (F112, F114), the 2.15.2 review notes
 | Hygiene notes | Stale checkpoint test names renamed; two `review_of` tests use a real mode, so they reach the `review_of` checks; `gate.md` says the full suite runs only on the owner's explicit request | `tests/test_hygiene_2153.py`; `tests/test_skills.py` `test_operator_gate_runs_the_full_suite_only_on_the_owners_request` |
 | L2 tooling | `scripts/live-gh-wizard.sh` and `docs/live-gh.md`: the owner's one-time run of the merge guard against real `gh` on a throwaway repository. Every GitHub change follows a confirm, the repository delete is only printed, state stays in the scratch directory | `tests/test_live_gh_wizard.py` |
 | `t3` note | A `t3` skip says `mod loaded` or `mod not loaded` from the debug log | `tests/test_live_matrix_track.py` |
+| RC/RS on C1 (repairs RC1, RC2) | A value-taking option's value is not read as a script; the named list `_VALUE_OPTIONS` covers `.py` glob values of `--include` and `--omit`. RC1's first fix left the `.py` case open (FX1 BLOCKED); RC2, the owner-approved second repair, closed it (FX2 CLEAN) | `tests/test_suite_probe_2153.py` `OptionValueTests` |
+| RC on E1 (repair RE1), FX3 note | Another active repair's whole chain counts against a repair, so a file both chains hold, or a file under a directory one chain holds, is flagged for the repair that edits it (FX3 CLEAN) | `tests/test_engine_2153.py` `SharedChainFileTests`, `SharedChainDirectoryTests` |
+| RS on E2 (repair RE2) | A merged commit is sibling work only on its owner's first-parent line (FX4 CLEAN) | `tests/test_engine_2153.py` `SideBranchSneakTests` |
+| Review notes (NX) | Gated merges need `-R OWNER/REPO`; graphql merge mutations and file-read query forms are merge-gated; F112 gaps start at the report-time HEAD; prompt-hook lock waits stay inside the deadline; `MergedDeleteHookTest` clears `ORCHESTRA_STATE_DIR`; `l3` checks a later prompt arrived; `record_pr` and F116 compare repo and policy only | `tests/test_guard_2153.py`, `tests/test_merge_guard.py`, `tests/test_engine_2153.py` |
+| F122, F124, F126 (E4) | Lens/variant mismatch refused at `add`; the SELF_REVIEW shape refusal names the bad field; `accept` warns on uncommitted card files | `tests/test_engine_2153.py` `FrictionE4Tests`, `AcceptWarningCliTests` |
+| F123 | A repair reserved files its card took by `own add` only to pass the sibling check. With F121 fixed that `own add` is no longer needed, so the cause is gone | none |
 
 ### Live evidence
 
@@ -691,7 +697,9 @@ N1 to N5, N8, N9, F89, F112, F114, F115 to F119, F121, F39, the `binds` edge cas
 | G5 (night-run write cadence against `worker_stale_seconds`) | Not measured; low value |
 | 2.8 known limits (staged-only chmod, same-size rewrite, files over 64 MiB, PowerShell-only commands); accepted notes 15 to 17 | Accepted limits, no later change |
 | N6, N7, N10 and the heredoc write-then-run class | By design: the guard is not isolation and fails closed |
-| `cancelBoardTimer` wrapper; `_rm_in_temp` comment | Style and comment only |
+| `cancelBoardTimer` wrapper | Not dead code: it has two callers; the 2.15.1 note was wrong. The `_rm_in_temp` comment was reworded in 2.15.3 |
+| Sibling check by files only (FX4 note) | Design limit: a side-branch commit that edits only a sibling's file and is an ancestor of the sibling's reported commit counts as sibling work. Telling it apart needs commit identity, which Git does not carry |
+| F125 (repairs on one file run in series) | By design: a reported repair keeps its files until its fix re-review accepts it. A combined re-review of several repairs would cut the waits |
 | Mod config path (`hooks/mods.json` listed in the manifest `hooks` array) | Unverified: live evidence says it loads; `claude plugin validate` and a `--debug-file` run have not been compared with the reference |
 
 ### Known gaps
