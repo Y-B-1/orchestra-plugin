@@ -644,7 +644,9 @@ Source: the open rows of the 2.15.2 ledger (F112, F114), the 2.15.2 review notes
 | Track line | A CLI result carries `track` when the track changed since the last result; an unchanged track is not repeated. This replaces the 2.15.2 gap about the first prompt after a CLI `add` | `tests/test_cli_support.py` `test_add_shows_the_track_and_an_unchanged_track_is_not_repeated` |
 | F116 | A read-only investigator's report stays acceptable after later edits; a builder's report still goes stale | `tests/test_engine_2153.py` `ReadOnlyReportTests` |
 | F115 | The Stop hook stays quiet while a gate log has no receipt yet | `tests/test_engine_2153.py` `StopDuringGateTests` |
-| F117 | The stale-report refusal names `resume ID` | `tests/test_engine_2153.py` `StaleHintTests` |
+| F117 | `own add` on a reported card widens only the stored scope when the checkout moved on (a merged worktree card), refuses to re-bind when the added file changed after the reported commit, and the stale-report refusal names `resume ID` | `tests/test_engine_2153.py` `StaleHintTests`, `OwnAddMovedCheckoutTests` |
+| F121 | A sibling commit off the card's first-parent line (merged in from its own branch) stays sibling work after the card owns one of its files; the card's own first-parent commit touching a sibling file is still outside | `tests/test_engine_2153.py` `MergedSiblingTests` |
+| F120 | A finalize card waits for every reported card; with the coordinator's own full-suite rule for engine cards the docs card waited about 27 minutes. By design; no change | none |
 | Size choices | `--size` choices come from the engine's size list | `tests/test_engine_2153.py` `SizeChoicesTests` |
 | N8 | The engine has no `gh` subprocess of its own; it uses the approval module's runner (6 s timeout, was 10 s) | `tests/test_engine_2153.py` `OneGhRunnerTests` |
 | F39 | `board --view` has `overlaps`; the mod's Track lane draws "Shares files: a and c" | `tests/test_engine_2153.py` `BoardOverlapsTests`; `hooks/mod/orchestra.test.ts` |
@@ -669,7 +671,7 @@ Source: the open rows of the 2.15.2 ledger (F112, F114), the 2.15.2 review notes
 
 ### Rows closed
 
-N1 to N5, N8, N9, F89, F112, F114, F115 to F119, F39, the `binds` edge case, the checkpoint test names, the `gate.md` row and the classifier rows (`coverage run`, `-Im`, `-Bm`, `script.py -m ...`).
+N1 to N5, N8, N9, F89, F112, F114, F115 to F119, F121, F39, the `binds` edge case, the checkpoint test names, the `gate.md` row and the classifier rows (`coverage run`, `-Im`, `-Bm`, `script.py -m ...`).
 
 ### Still open, with why
 
