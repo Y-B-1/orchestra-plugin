@@ -2862,9 +2862,10 @@ class Engine:
         except EngineError:
             return []
         owned = [Path(f).as_posix() for f in self._reservation(task, state)['files']]
-        if task.get('repair_of'):  # F114: a chain file another active repair owns is that repair's to change
+        if task.get('repair_of'):  # F114: a chain file another active repair's chain also holds is no one's to change
             theirs = [Path(f).as_posix() for other in state['tasks'].values() if other['id'] != task['id']
-                      and other.get('repair_of') and other['state'] in ('queued', 'running', 'reported') for f in other['files']]
+                      and other.get('repair_of') and other['state'] in ('queued', 'running', 'reported')
+                      for f in self._reservation(other, state)['files']]
             owned = [f for f in owned if f in map(str, task['files']) or not self._in_scope(f, theirs)]
         outside = sorted(c for c in changed if not self._in_scope(c, owned))
         outside = self._not_sibling_owned(task, outside, state, sha)

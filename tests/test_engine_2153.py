@@ -147,6 +147,47 @@ class RepairReservationTests(te.FinalBlockerTests):
         self.assertNotIn('RC', self.engine.ready('main', self.lease))
 
 
+
+@t2.own_tests_only
+class SharedChainFileTests(te.FinalBlockerTests):
+    """RC repair of F114: a file both chains hold and neither repair owns is outside for each repair that edits it."""
+
+    def setUp(self):
+        super().setUp()
+        self.release_setup()
+        for card, files in (('B1', ['a', 'shared']), ('B2', ['b', 'shared'])):  # B1 is accepted before B2 starts
+            self.task(card, files=files)
+            token = self.engine.dispatch('main', self.lease, card, 'builder-' + card, serial='test')
+            self.engine.report('builder-' + card, token, te.done('Result ' + card))
+            if card == 'B1':
+                self.engine.accept('main', self.lease, 'B1')
+        self.record('blocked', ['B1', 'B2'], findings=['Wrong output'])
+        self.task('RA', mode='repair', repair_of='B1', files=['a'])
+        self.task('RB', mode='repair', repair_of='B2', files=['b'])
+        self.engine.policy['max_workers'] = 3
+
+    def edit_shared(self, card, worker, token, base):
+        self.engine.record_bases('main', self.lease, [card], base)
+        (self.repo / 'shared').write_text('by ' + card)
+        self.git('add', 'shared')
+        self.git('commit', '-qm', card + ' edits shared')
+        self.engine.report(worker, token, tr.report_for(self.git('rev-parse', 'HEAD')))
+        return self.engine.status()['tasks'][card].get('outside_files')
+
+    def test_each_repair_that_edits_the_shared_file_is_flagged(self):
+        base = self.git('rev-parse', 'HEAD')
+        ra = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
+        rb = self.engine.dispatch('main', self.lease, 'RB', 'repair-b')
+        self.assertEqual(['shared'], self.edit_shared('RA', 'repair-a', ra, base))
+        self.assertEqual(['shared'], self.edit_shared('RB', 'repair-b', rb, base))
+
+    def test_a_repair_that_owns_the_shared_file_may_edit_it_and_the_other_waits(self):
+        base = self.git('rev-parse', 'HEAD')
+        ra = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
+        self.engine.own_add('main', self.lease, 'RA', 'shared')
+        self.assertNotIn('RB', self.engine.ready('main', self.lease))
+        self.assertIsNone(self.edit_shared('RA', 'repair-a', ra, base))
+
 class BareNewlineTests(unittest.TestCase):
     def test_a_newline_before_a_note_keeps_the_text(self):
         self.assertEqual('make a\n(make b)', Engine._bare('make a\n(make b)'))
