@@ -809,11 +809,6 @@ def _bare_flag(word):
     return (len(word) == 2 and word[0] == '-' and word != '--') or (word.startswith('--') and '=' not in word and len(word) > 2)
 
 
-def gh_merge_capable(command):
-    """Whether gh_merge_kinds finds a merge."""
-    return 'merge' in gh_merge_kinds(command)
-
-
 def _is_release(name, words):
     return ((name == 'gh' and words[1:3] in _RELEASE['gh']) or
             (name == 'gh' and words[1:2] == ['api'] and any(_RELEASE['gh_api_merge'] in x.lower() for x in words[2:])) or

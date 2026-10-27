@@ -36,7 +36,7 @@ class MustDenyTableTest(tm.MergeFixture):
 
     def test_padded_commands_answer_fast(self):
         """RZ4: a timed-out PreToolUse hook does not block, so the hook must answer every padded shape (each keyword
-        the gate looks for, repeated, before a real merge) well inside its 10 s timeout, and still deny."""
+        the gate looks for, repeated, before a real merge) well inside its timeout (30 s, 8 s on the mod path), and still deny."""
         import time
         n = 20000
         merge = '; gh pr merge 3 --squash'
@@ -54,6 +54,37 @@ class MustDenyTableTest(tm.MergeFixture):
                 self.assertEqual(self.hook(command), 'deny')
                 self.assertLess(time.monotonic() - start, 2.0)
 
+
+class OversizeCommandTest(tm.MergeFixture):
+    """RZ5: shlex grows quadratically on one long word, so the real hook entry denies a shell command over 128 KB
+    before any parse, in every mode, with or without a run: a timed-out hook does not block."""
+
+    def main(self, command):
+        import io
+        from unittest import mock
+        from orchestra_core.hooks import _main
+        payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo)}
+        with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch('sys.stdout', new_callable=io.StringIO) as out, mock.patch('sys.stderr', new_callable=io.StringIO):
+            _main(['PreToolUse'])
+        return json.loads(out.getvalue()).get('hookSpecificOutput', {})
+
+    def test_a_huge_command_is_denied_fast_through_the_real_entry(self):
+        import time
+        self.arm()
+        self.open_pr(3)
+        for label, command in {'merge with a huge body': "gh pr merge 3 --merge --body '" + 'a' * 700000 + "'",
+                               'huge echo, no gh': "echo '" + 'a' * 700000 + "'"}.items():
+            with self.subTest(label):
+                start = time.monotonic()
+                output = self.main(command)
+                self.assertLess(time.monotonic() - start, 2.0)
+                self.assertEqual(output.get('permissionDecision'), 'deny')
+                self.assertIn('128 KB', output.get('permissionDecisionReason', ''))
+
+    def test_a_command_under_the_cap_is_not_affected(self):
+        output = self.main("echo '" + 'a' * 1000 + "'")
+        self.assertNotEqual(output.get('permissionDecision'), 'deny')
 
 if __name__ == '__main__':
     unittest.main()

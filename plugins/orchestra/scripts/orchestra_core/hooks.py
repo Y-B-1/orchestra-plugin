@@ -18,7 +18,7 @@ import time
 
 from . import delta, portable
 from .models import EFFORTS  # The one definition lives in models.py, shared with the engine
-from .approval import APPROVAL_PROMPT, merge_capable, merge_decision, raw_unattended
+from .approval import APPROVAL_PROMPT, COMMAND_MAX, merge_capable, merge_decision, raw_unattended
 from .guards import (RULES, Decision, _WORD_START, _command_words, _gh_readings, _pipelines, _segments, _shell_payload, classify_command,
                      guard_digest, runs_test_suite)
 
@@ -284,6 +284,20 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     return result
 
 
+OVERSIZE_REASON = ('a shell command over 128 KB is denied: the guard cannot read it inside the hook timeout, and a timed-out '
+                   'hook does not block. Write the content to a file with the Write tool, then run a short command')
+
+
+def _oversize(event, payload):
+    """RZ5: the deny for a shell command over COMMAND_MAX, in every mode, before any parse (shlex grows quadratically on
+    one long word: a 700 KB command took the real hook 38 s, past its 30 s timeout), else None."""
+    if event != 'PreToolUse' or not isinstance(payload, dict) or payload.get('tool_name') not in _SHELL_TOOLS:
+        return None
+    tool_input = payload.get('tool_input')
+    command = tool_input.get('command') if isinstance(tool_input, dict) else None
+    return _deny(OVERSIZE_REASON) if isinstance(command, str) and len(command) > COMMAND_MAX else None
+
+
 def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, autonomy, busy, missing_cwd, started,
             unattended=False):
     """Decide output; optional engine adapter owns locked state operations.
@@ -301,6 +315,9 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         raise ValueError('Unsupported harness')
     if not isinstance(payload, dict):
         return _deny('Malformed hook payload', True) if event == 'PreToolUse' else HookResult({})
+    oversize = _oversize(event, payload)
+    if oversize is not None:
+        return oversize
     if event == 'SessionStart':
         # Native agent_type, where supplied, is a routing hint, never authentication.
         agent_type = payload.get('agent_type')
@@ -2631,6 +2648,10 @@ def _main(argv=None):
         payload = None
     if isinstance(payload, dict) and isinstance(payload.get('tool_name'), str):
         _CRASH_TOOL['name'] = payload['tool_name']
+    oversize = _oversize(args.event, payload)
+    if oversize is not None:  # before the mod skip and the ledger checks, which parse the command too
+        print(json.dumps(oversize.output))
+        return oversize.exit_code
     if args.event == 'UserPromptSubmit':
         return _prompt_submit(payload)
     if args.event == 'PostModelSwitch':
