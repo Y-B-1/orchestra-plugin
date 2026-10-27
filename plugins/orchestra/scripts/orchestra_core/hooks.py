@@ -2599,7 +2599,8 @@ def main(argv=None):
         if answered.acquire(blocking=False):
             code = 2
             try:
-                code = _cannot_check(event, 'the check did not finish within %g s' % HOOK_BUDGET, real_out, real_err)
+                code = _cannot_check(event, 'the check did not finish within %g s' % HOOK_BUDGET, real_out, real_err,
+                                     'split it into shorter commands, or write long content to a file with the Write tool first')
                 real_out.flush()
                 real_err.flush()
             finally:
@@ -2632,12 +2633,12 @@ def _checked_main(argv, event, out, err):
         return _cannot_check(event, '%s: %s' % (type(exc).__name__, exc), out, err)
 
 
-def _cannot_check(event, cause, out, err):
+def _cannot_check(event, cause, out, err, advice='report it to the plugin owner'):
     """Deny a guarded tool call the hook could not check (exit 2); any other event or tool gets an empty answer."""
     name = _CRASH_TOOL['name']
     if event == 'PreToolUse' and (name is None or isinstance(name, str) and (name in _MOD_TOOLS or name in _EDIT_TOOLS or name in _SHELL_TOOLS
                                               or name in {'Agent', 'Task'} or name in _APPROVAL_TEXT_TOOLS)):
-        reason = 'Orchestra guard could not check this call (%s); report it to the plugin owner' % cause
+        reason = 'Orchestra guard could not check this call (%s); %s' % (cause, advice)
         print(json.dumps({'hookSpecificOutput': {'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
                                                  'permissionDecisionReason': reason}}), file=out)
         print(reason, file=err)

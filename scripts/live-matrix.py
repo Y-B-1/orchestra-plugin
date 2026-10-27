@@ -7,6 +7,7 @@ sessions against the installed plugin, and a result.json. Checks read the stream
 the model's own claims. It costs tokens and needs a signed-in claude CLI; see docs/live-matrix.md."""
 import argparse
 import concurrent.futures as cf
+import hashlib
 import json
 import os
 import re
@@ -61,12 +62,23 @@ def is_orchestra_status(command):
     return False
 
 
+def run_state_dir(repo):
+    """The engine's state directory for a scenario repository (docs/live-matrix.md, Run state)."""
+    home = os.environ.get('XDG_STATE_HOME', '')
+    base = Path(home) if os.path.isabs(home) else Path.home() / '.local' / 'state'
+    return base / 'orchestra' / hashlib.sha256(os.path.realpath(repo).encode()).hexdigest()[:24]
+
+
 class Ctx:
     def __init__(self, root, sid, name=None):
         self.dir = Path(root) / (name or sid)
         clear_scenario_dir(self.dir)
         self.repo = self.dir / 'repo'
         self.repo.mkdir(parents=True)
+        stale = run_state_dir(self.repo)
+        if stale.exists():  # F131: a reused OUT_DIR finds the earlier run; the harness never removes run state
+            raise RuntimeError(f'run state of an earlier run at this path: {stale}. Use a new OUT_DIR, or remove it '
+                               '(docs/live-matrix.md, Run state)')
         self.origin = self.dir / 'origin.git'
         sh(['git', 'init', '-q', '--bare', '-b', 'main', str(self.origin)], self.dir)
         sh(['git', 'init', '-q', '-b', 'main'], self.repo)
@@ -830,7 +842,7 @@ def summary(results):
         failed = [c for c in rows if not c['pass']]
         bad += len(failed) + bool(r['error']) + (not rows)
         note = r['error'] or ('; '.join(c['check'] for c in failed) if failed else ('no checks ran' if not rows else ''))
-        print(f'{r["id"]:<10}{len(rows):>7}{len(failed):>8}{r["seconds"]:>9}  {note[:120]}')
+        print(f'{r["id"]:<10}{len(rows):>7}{"crash" if r["error"] else len(failed):>8}{r["seconds"]:>9}  {note[:120]}')
     for r in results:
         if r.get('flip'):
             names = [c['check'] for c in r['checks'] if not c['pass']]

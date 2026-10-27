@@ -38,7 +38,7 @@ Python 3.11 or newer and Git are needed, and nothing else.
 
 ## Run state
 
-Each scenario that starts a run leaves its run state under `~/.local/state/orchestra/<identity>` (`$XDG_STATE_HOME/orchestra/<identity>` when `XDG_STATE_HOME` is an absolute path), not under `OUT_DIR`. The harness never removes it. `<identity>` is the first 24 hex digits of the SHA-256 of the scenario's repository path, `OUT_DIR/<id>/repo`, so a scenario's directory is found from that path. To remove one scenario's run state:
+Each scenario that starts a run leaves its run state under `~/.local/state/orchestra/<identity>` (`$XDG_STATE_HOME/orchestra/<identity>` when `XDG_STATE_HOME` is an absolute path), not under `OUT_DIR`. The harness never removes it, and a scenario whose path already has run state refuses to start, so a reused `OUT_DIR` cannot pick up an earlier run (F131). A crashed scenario shows `crash` in the failed column. `<identity>` is the first 24 hex digits of the SHA-256 of the scenario's repository path, `OUT_DIR/<id>/repo`, so a scenario's directory is found from that path. To remove one scenario's run state:
 
 ```
 ID=$(python3 -c 'import hashlib, os, sys; print(hashlib.sha256(os.path.realpath(sys.argv[1]).encode()).hexdigest()[:24])' OUT_DIR/g1/repo)

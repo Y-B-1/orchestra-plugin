@@ -148,6 +148,7 @@ class HookBudgetTest(tm.MergeFixture):
         answer = json.loads(done.stdout)['hookSpecificOutput']
         self.assertEqual(answer['permissionDecision'], 'deny')
         self.assertIn('did not finish', answer['permissionDecisionReason'])
+        self.assertIn('shorter commands', answer['permissionDecisionReason'])  # RZ7 note: say how to go on
         self.assertLess(took, 10)
 
     def test_a_crash_answers_once_with_the_deny(self):
