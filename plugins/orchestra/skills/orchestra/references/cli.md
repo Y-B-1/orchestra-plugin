@@ -50,7 +50,7 @@ A builder report carries one line that starts with `SELF_REVIEW: ` followed by o
 SELF_REVIEW: {"checks": [{"command": "<cmd>", "exit_code": 0}], "criteria": [{"criterion": "<text>", "met": true, "evidence": "<text>"}]}
 ```
 
-`report` refuses a builder report with no line, more than one, bad JSON or a wrong shape: "Builder report needs one SELF_REVIEW line". The engine stores the object as `self_review`. `accept` takes a builder card when every check has `exit_code` 0 (a check with `"expect": "fail"` must exit non-zero and be followed by the same command exiting 0), every criterion has `met: true`, the reported artifact is still current, no current final-review or fix re-review finding names the card, and any repair of it is accepted. Refusals: "Self-review has a failing check or unmet criterion", "Reported artifact is stale".
+`report` refuses a builder report with no line, more than one, bad JSON or a wrong shape: "Builder report needs one SELF_REVIEW line"; a wrong shape adds what is wrong, such as "checks[0] needs exit_code (int); unknown key exit". The engine stores the object as `self_review`. `accept` takes a builder card when every check has `exit_code` 0 (a check with `"expect": "fail"` must exit non-zero and be followed by the same command exiting 0), every criterion has `met: true`, the reported artifact is still current, no current final-review or fix re-review finding names the card, and any repair of it is accepted. Refusals: "Self-review has a failing check or unmet criterion", "Reported artifact is stale".
 
 ## Review schema
 

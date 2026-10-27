@@ -837,6 +837,25 @@ class Engine:
             if not re.search(r'^Mode:[ \t]+' + re.escape(task['mode']) + r'[ \t]*$', brief.read_text(errors='replace'), re.M):
                 raise EngineError('Task brief must carry the line Mode: ' + task['mode'])
 
+    VARIANT_LENS = {'medium': 'combined', 'standards': 'standards'}  # briefs.LENSES: a reviewer variant to its Lens
+
+    def _check_input_lens(self, task):
+        """F122: a final review card whose input brief names a Lens its variant does not give runs the wrong reviewer
+        type, since `wave --emit` and `card` follow the variant. Refuse it at add, naming the variant to set."""
+        wanted = self.VARIANT_LENS.get(task.get('variant'), 'correctness')
+        for item in task['inputs']:
+            path = Path(item)
+            path = path if path.is_absolute() else self.repo / path
+            if path.suffix != '.md' or not path.is_file():
+                continue
+            found = re.search(r'^Lens:[ \t]+(\S+)', path.read_text(errors='replace'), re.M)
+            if found and found.group(1) != wanted:
+                variant = next((v for v, lens in self.VARIANT_LENS.items() if lens == found.group(1)), None)
+                fix = ("set variant '%s'" % variant) if variant else 'drop the variant' if found.group(1) == 'correctness' \
+                    else 'set a variant that gives it'
+                raise EngineError("Input brief %s says Lens: %s but the card's variant gives Lens: %s; %s"
+                                  % (item, found.group(1), wanted, fix))
+
     def _check_final_brief(self, task):
         brief = Path(task['brief'])
         text = (brief if brief.is_absolute() else self.repo / brief).read_text(errors='replace')
@@ -1460,6 +1479,9 @@ class Engine:
             if (task['role'], task['mode']) == ('code-reviewer', 'final') and 'brief' in task and not any(
                     state['tasks'][i]['mode'] == 'repair' for i in review_of):  # a fix re-review needs neither line
                 self._check_final_brief(task)
+            if (task['role'], task['mode']) == ('code-reviewer', 'final') and 'brief' not in task and not any(
+                    state['tasks'][i]['mode'] == 'repair' for i in review_of):
+                self._check_input_lens(task)
             if review_of and task['role'] not in REVIEW_ROLES:
                 raise EngineError('Only independent review roles can use review_of')
             if set(review_of) & set(task['dependencies']):
@@ -2768,8 +2790,32 @@ class Engine:
         except ValueError:
             raise EngineError(SELF_REVIEW_ERROR) from None
         if not cls._self_review_ok(review):
-            raise EngineError(SELF_REVIEW_ERROR)
+            raise EngineError(SELF_REVIEW_ERROR + ' of the right shape: ' + cls._self_review_shape(review))
         return review
+
+    @staticmethod
+    def _self_review_shape(review):
+        """F124: what is wrong with a parsed SELF_REVIEW object, in words."""
+        want = ('{"checks": [{"command": str, "exit_code": int, "expect"?: "pass"|"fail"}], '
+                '"criteria": [{"criterion": str, "met": bool, "evidence": str}]}')
+        if not isinstance(review, dict):
+            return 'it is not a JSON object; use ' + want
+        for key, fields in (('checks', {'command': str, 'exit_code': int}),
+                            ('criteria', {'criterion': str, 'met': bool, 'evidence': str})):
+            items = review.get(key)
+            if not isinstance(items, list) or not items:
+                return '%s must be a nonempty list; use %s' % (key, want)
+            for n, item in enumerate(items):
+                if not isinstance(item, dict):
+                    return '%s[%d] is not an object; use %s' % (key, n, want)
+                for field, kind in fields.items():
+                    if type(item.get(field)) is not kind or (kind is str and field != 'evidence' and not item[field].strip()):
+                        extra = sorted(set(item) - set(fields) - {'expect'})
+                        return '%s[%d] needs %s (%s)%s' % (key, n, field, kind.__name__,
+                                                           '; unknown key ' + ', '.join(extra) if extra else '')
+                if key == 'checks' and item.get('expect', 'pass') not in ('pass', 'fail'):
+                    return 'checks[%d] expect must be pass or fail' % n
+        return 'use ' + want
 
     def report(self, worker, token, report):
         if not isinstance(report, str) or not report.strip():
@@ -3664,6 +3710,20 @@ class Engine:
                     task['ruling'] = dict(text=ruling.strip(), at=at)
                 _append_progress(self.state_dir, '- ruled %s: %s (at %s)' % (task_id, ruling.strip(), at) if unmet or named else
                                  '- ruling note on %s (no unmet criterion): %s (at %s)' % (task_id, ruling.strip(), at))
+            uncommitted = self._uncommitted(task) if task['role'] == 'builder' else []
+        return dict(uncommitted=uncommitted) if uncommitted else None
+
+    def _uncommitted(self, task):
+        """F126: the card's files with changes not yet committed, sorted. Accepted work must reach a commit before
+        `finish` can find it in HEAD, so the CLI warns while it can still be committed."""
+        files = [Path(f).as_posix() for f in task.get('files', [])]
+        if not files:
+            return []
+        try:
+            out = self._git('status', '--porcelain', '-z', '--untracked-files=all', '--', *files).decode()
+        except EngineError:
+            return []
+        return sorted({entry[3:] for entry in out.split('\0') if len(entry) > 3})
 
     def record_criterion(self, actor, lease, task_id, criterion, evidence):
         """The coordinator's evidence for one unmet self-review criterion of a reported worker card. Only criteria take

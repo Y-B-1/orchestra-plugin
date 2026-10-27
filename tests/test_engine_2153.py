@@ -1,5 +1,6 @@
 """2.15.3 engine: a resumed card's range skips the commits made while it was reported (F112), a repair reserves only
 its own files and the files its finding names (F114), and a newline is never the gap before a trailing note (RY)."""
+import json
 import os
 import pathlib
 import sys
@@ -416,3 +417,55 @@ class BoardOverlapsTests(t2.Fixture):
         self.task('b', files=['b'])
         self.assertEqual(self.engine.view()['overlaps'], self.engine.waves()['overlaps'])
         self.assertEqual(self.engine.view()['overlaps'], [['a', 'c']])
+
+
+class FrictionE4Tests(tr.RefusalFixture):
+    """F122, F124, F126 (2.15.3 run)."""
+
+    def test_a_bad_self_review_key_is_named(self):
+        token = self.running('a')
+        sha = self.commit(a='x')
+        line = json.dumps({'checks': [{'command': 'make test', 'exit': 0}],
+                           'criteria': [{'criterion': 'check behavior', 'met': True, 'evidence': 'ok'}]})
+        text = self.refusal(self.engine.report, 'w-a', token, 'Built.\nARTIFACT: %s clean\nSELF_REVIEW: %s' % (sha, line))
+        self.assertIn('exit_code', text)
+
+    def test_a_missing_self_review_line_still_says_so(self):
+        token = self.running('a')
+        self.assertIn('needs one SELF_REVIEW line', self.refusal(self.engine.report, 'w-a', token, 'Built.'))
+
+    def test_a_review_brief_lens_must_match_the_variant(self):
+        brief = self.repo / 'rt.md'
+        brief.write_text('# RT\n\nMode: final\nLens: standards\n')
+        self.task('a')
+        card = dict(id='RT', role='code-reviewer', mode='final', inputs=[str(brief)], acceptance=['review'], files=[],
+                    resources=[], dependencies=[], review_of=['a'])
+        self.assertIn("variant 'standards'", self.refusal(self.engine.add_task, 'main', self.lease, dict(card)))
+        self.engine.add_task('main', self.lease, dict(card, variant='standards'))
+        self.assertEqual('standards', self.card('RT').get('variant'))
+
+    def test_accept_names_uncommitted_card_files(self):
+        token = self.running('a')
+        self.engine.report('w-a', token, tr.report_for(self.commit(a='first')))
+        (self.repo / 'a').write_text('edited, not committed')
+        self.engine.resume_card('main', self.lease, 'a')
+        self.engine.report('w-a', token, tr.report_for(self.git('rev-parse', 'HEAD')))
+        self.assertEqual(['a'], (self.engine.accept('main', self.lease, 'a') or {}).get('uncommitted'))
+
+    def test_accept_of_committed_work_names_nothing(self):
+        token = self.running('a')
+        self.engine.report('w-a', token, tr.report_for(self.commit(a='first')))
+        self.assertFalse((self.engine.accept('main', self.lease, 'a') or {}).get('uncommitted'))
+
+
+class AcceptWarningCliTests(tr.RefusalFixture):
+    """F126: the CLI result of accept carries the warning."""
+
+    def test_the_cli_warns_on_uncommitted_card_files(self):
+        token = self.running('a')
+        self.engine.report('w-a', token, tr.report_for(self.commit(a='first')))
+        (self.repo / 'a').write_text('edited')
+        self.engine.resume_card('main', self.lease, 'a')
+        self.engine.report('w-a', token, tr.report_for(self.git('rev-parse', 'HEAD')))
+        out = self.cli('accept', 'a')
+        self.assertIn('uncommitted changes in the card files: a', json.dumps(out))

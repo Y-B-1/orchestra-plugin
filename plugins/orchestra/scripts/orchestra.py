@@ -403,8 +403,11 @@ def execute(args):
             result['emit'] = briefs.emit(engine,prepared,result)
         return result,0
     if args.command=='accept':
-        engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
-        return {'accepted':args.task_id},0
+        done = engine.accept(args.actor,args.lease,args.task_id,ruling=args.ruling)
+        result = {'accepted':args.task_id}
+        if done and done.get('uncommitted'):  # F126: accepted work that no commit holds yet cannot land
+            result['warning'] = 'uncommitted changes in the card files: %s; commit them with explicit paths' % ', '.join(done['uncommitted'])
+        return result,0
     if args.command=='criterion':
         engine.record_criterion(args.actor,args.lease,args.task_id,args.criterion,args.evidence)
         return {'criterion':args.task_id},0
