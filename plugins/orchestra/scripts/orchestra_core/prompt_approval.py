@@ -8,9 +8,11 @@ from datetime import datetime
 from pathlib import Path
 
 from . import portable
-from .approval import (APPROVAL_PROMPT, LIST_FIELDS, LIST_LIMIT, GhError, _default_branches, _default_name, _entries,
+from .approval import (APPROVAL_PROMPT, LIST_FIELDS, LIST_LIMIT, GhError, GhTimeout, _default_branches, _default_name, _entries,
                        run_gh)
 
+DEADLINE = 8  # seconds for the lock wait and every gh call together; the hook timeout is 10
+LATE = 'Approval not recorded: gh did not answer in time; type approved again.'
 RETARGET = ('If a later pull request still shows a run branch as its base after its parent merged, run '
             'gh pr edit N --base %s first, then the printed command.')
 
@@ -117,11 +119,13 @@ def handle_prompt(payload, state_dir, repo, gh=None, engine=None):
     from .engine import Engine, EngineError, StateBusy
     from .hooks import LOCK_WAIT
     busy = _reply('Approval not recorded: state busy, type approved again.')
+    end = time.monotonic() + DEADLINE
     try:
         if engine is None:
             from .paths import load_policy
             engine = Engine(Path(state_dir), repo, policy=load_policy(state_dir), lock_wait=LOCK_WAIT)
-        if not _lock_free(state_dir, engine.lock_wait if engine.lock_wait is not None else LOCK_WAIT):
+        wait = engine.lock_wait if engine.lock_wait is not None else LOCK_WAIT
+        if not _lock_free(state_dir, max(0.0, min(wait, end - time.monotonic()))):
             return busy
         stopped_here = engine.stop_stale_autonomy(session if isinstance(session, str) else '')
         state = json.loads(state_file.read_text())
@@ -139,10 +143,15 @@ def handle_prompt(payload, state_dir, repo, gh=None, engine=None):
         live = {}
         if entries:
             slug = sorted({e['repo'] for e in entries})[0]
+            left = end - time.monotonic()
+            if left <= 0:
+                return _reply(LATE)
+            args = ['pr', 'list', '--state', 'all', '-R', slug, '--json', LIST_FIELDS, '--limit', str(LIST_LIMIT)]
             try:
-                listing = json.loads((gh or run_gh)(['pr', 'list', '--state', 'all', '-R', slug, '--json', LIST_FIELDS,
-                                                     '--limit', str(LIST_LIMIT)], str(repo)))
+                listing = json.loads(gh(args, str(repo)) if gh else run_gh(args, str(repo), timeout=left))
                 live = {p['number']: p for p in listing if isinstance(p, dict) and type(p.get('number')) is int}
+            except GhTimeout:
+                return _reply(LATE)
             except (GhError, ValueError, TypeError, KeyError) as exc:
                 return _reply('Approval not recorded: gh could not list the pull requests (%s); fix that, then type '
                               'approved again.' % exc)

@@ -87,7 +87,8 @@
   "boundary": {
     "delete_commands": ["rm", "rmdir", "unlink"],
     "find_delete_flag": "-delete",
-    "gh": [["repo", "delete"], ["release", "delete"]]
+    "gh": [["repo", "delete"], ["release", "delete"], ["repo", "set-default"]],
+    "gh_reasons": {"repo set-default": "gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead"}
   },
   "protected": {
     "harness_dirs": [".claude"],

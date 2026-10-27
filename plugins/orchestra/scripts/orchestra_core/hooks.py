@@ -563,7 +563,7 @@ def _decide(event, payload, notes, mode, *, harness, state_dir, engine, armed, a
         if cleanup is not None:
             return cleanup
         if _rm_in_temp(command, payload.get('session_id')):
-            return HookResult({})  # Files under the system temp directory hold no work of the run
+            return HookResult({})  # Every operand lies below a temp root and, below a claude-<uid> directory, in this session's own files
         if engine is not None and _rm_in_worktrees(command, cwd):
             return HookResult({})  # Section 3.4: the run may delete files inside a linked worktree
         if engine is not None and _deletes_only_ignored(command, cwd):
