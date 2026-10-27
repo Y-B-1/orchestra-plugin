@@ -18,8 +18,8 @@ MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\
                            r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
 SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
 SET_DEFAULT_REASON = 'gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead'
-METHOD_FLAGS = {'--squash', '--merge', '--rebase', '-s', '-m', '-r'}
-METHOD_REASON = 'add --squash, --merge or --rebase'
+METHOD_FLAGS = {'--merge', '-m'}  # F119: `_parse` refuses every other method flag on a gated merge
+METHOD_REASON = 'add --merge: the guard allows only a merge commit on a run pull request'
 COMPOUND = re.compile(r'[;&|\n`<>()]|\$\(')
 API_PULL = re.compile(r'pulls/([0-9]+)/merge\b')
 ENV_WORDS = {'env', 'export', 'command', 'sudo', 'exec', 'nohup', 'time'}

@@ -18,7 +18,7 @@ import test_prompt_approval as tpa
 from orchestra_core import approval, prompt_approval
 
 SET_DEFAULT_REASON = 'gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead'
-METHOD_REASON = 'add --squash, --merge or --rebase'
+METHOD_REASON = approval.METHOD_REASON
 
 
 class SetDefaultTest(tg.PlaneFixture):
@@ -58,6 +58,17 @@ class MergeMethodTest(tm.MergeFixture):
         self.assertEqual(self.decide('gh pr merge 4'), ('deny', METHOD_REASON))
         self.assertEqual(self.decide('gh pr merge 4 --delete-branch'), ('deny', METHOD_REASON))
         self.assertEqual(self.decide('gh pr merge 4 --merge'), ('allow', ''))
+
+    def test_the_method_deny_names_only_a_flag_the_guard_then_allows(self):
+        """F119 (2.15.3): the guard lets only --merge through on a run pull request, so its method deny names only it."""
+        self.assertIn('--merge', METHOD_REASON)
+        for flag in ('--squash', '--rebase'):
+            self.assertNotIn(flag, METHOD_REASON)
+        self.arm()
+        self.open_pr(3)
+        self.open_pr(4, base='feat/3')
+        self.assertEqual(self.decide('gh pr merge 4 --squash')[0], 'deny')
+        self.assertIn('not allowed', self.decide('gh pr merge 4 --squash')[1])
 
     def test_a_receipt_merge_with_no_method_flag_is_denied(self):
         self.arm()
