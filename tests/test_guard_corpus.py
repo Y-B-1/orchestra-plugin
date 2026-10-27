@@ -831,6 +831,7 @@ def inline_commands(source):
 
 
 SUITE_COMMANDS = [
+    'python3 -m coverage run -m pytest', 'python3 -Im unittest', 'python3 -Bm pytest', 'python3 -Bmpytest',
     'pytest', 'pytest -q tests', 'python -m pytest', 'python3 -m pytest -x', 'python -m unittest',
     'python3 -m unittest discover -s tests', 'python3 -m unittest tests.test_hooks tests.test_guard_corpus',
     'npm test', 'npm run test', 'npm run test:e2e', 'pnpm test', 'yarn test', 'npx vitest', 'npx vitest run',
@@ -841,6 +842,7 @@ SUITE_COMMANDS = [
     'coverage run --branch -m unittest discover', 'python3 -m unittest src.app.tests', 'python -m unittest tests.test_x',
 ]
 NOT_SUITE_COMMANDS = [
+    'python3 script.py -m unittest', 'python3 script.py -munittest',
     'npm run build', 'npm install', 'echo pytest', 'grep unittest tests/test_hooks.py', 'cat package.json',
     'git log --oneline', 'python3 script.py', 'python3 -m json.tool x.json', 'ls tests', 'go build ./...',
     'cargo build', 'make build', 'yarn install', 'npx tsc', 'npx playwright install',
