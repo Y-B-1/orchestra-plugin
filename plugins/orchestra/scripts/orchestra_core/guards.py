@@ -766,7 +766,8 @@ def gh_merge_kinds(command, depth=0):
             for word in words:
                 if re.search(r'\bgh\b', word) and any(c.isspace() for c in word):
                     kinds |= gh_merge_kinds(word, depth + 1)  # a quoted payload a shell or eval may run
-            for at in (i for i, w in enumerate(words) if PurePosixPath(w).name == 'gh'):
+            at = next((i for i, w in enumerate(words) if PurePosixPath(w).name == 'gh'), None)
+            if at is not None:  # RZ4: the words after the first gh hold every later gh's words, so one pass is enough
                 kinds |= _gh_kinds(words[at + 1:])
     return kinds
 
@@ -775,9 +776,9 @@ def _gh_kinds(rest):
     kinds = set()
     if ('repo', 'set-default') in zip(rest, rest[1:]):
         kinds.add('set-default')
-    for at in (i for i, w in enumerate(rest) if w == 'pr'):
-        if _flags_then(rest[at + 1:], 'merge'):
-            kinds.add('merge')
+    follows = _verb_follows(rest, 'merge')
+    if any(w == 'pr' and follows[i + 1] for i, w in enumerate(rest)):
+        kinds.add('merge')
     if 'api' in rest:
         after = rest[rest.index('api') + 1:]
         operands = [w for w in after if not w.startswith('-')]
@@ -788,17 +789,20 @@ def _gh_kinds(rest):
     return kinds
 
 
-def _flags_then(words, verb):
-    """RZ3, FX8: whether `verb` follows with only flags before it. A plain word counts as a flag's value only right
-    after a bare flag: two characters (`-R o/r`) or a long flag without `=` (`--repo o/r`), as cobra reads them; an
-    attached value (`-Ro/r`, `--repo=o/r`) takes none. Any other plain word is another subcommand. Fail closed: `verb`
-    counts wherever it stands, even where a value could be."""
-    for k, word in enumerate(words):
+def _verb_follows(words, verb):
+    """RZ3, FX8, RZ4: for each index i, whether `verb` stands at i or later with only flags before it, in one
+    right-to-left pass (linear). A plain word counts as a flag's value only right after a bare flag: two characters
+    (`-R o/r`) or a long flag without `=` (`--repo o/r`), as cobra reads them; an attached value (`-Ro/r`,
+    `--repo=o/r`) takes none, and an empty word is skipped, as cobra skips it (`gh pr '' merge`). Any other plain word
+    is another subcommand. Fail closed: `verb` counts wherever it stands, even where a value could be."""
+    follows = [False] * (len(words) + 1)
+    for k in range(len(words) - 1, -1, -1):
+        word = words[k]
         if word == verb:
-            return True
-        if not word.startswith('-') and not (k and _bare_flag(words[k - 1])):
-            return False
-    return False
+            follows[k] = True
+        elif word == '' or word.startswith('-') or (k and _bare_flag(words[k - 1])):
+            follows[k] = follows[k + 1]
+    return follows
 
 
 def _bare_flag(word):

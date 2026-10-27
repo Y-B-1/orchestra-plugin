@@ -326,5 +326,23 @@ class WordViewMergeGateTest(tm.MergeFixture):
         self.assertEqual(self.decide(self.merge(3)), ('allow', ''))
 
 
+class GraphqlSlugTest(tm.MergeFixture):
+    """RZ4: the graphql deny text replaces only a deny, so a recorded repository named like acme/api-graphql still gets
+    its printed merge."""
+
+    def printed_merge_for(self, slug):
+        with mock.patch.object(tm, 'PR_URL', 'https://github.example/%s/pull/%%d' % slug):
+            self.arm()
+            self.open_pr(3)
+            self.approve([3])
+            command = 'gh pr merge 3 -R %s --merge --delete-branch --match-head-commit %s' % (slug, self.sha[3])
+            return self.decide(command)
+
+    def test_the_printed_merge_runs_for_a_slug_that_names_api_and_graphql(self):
+        self.assertEqual(self.printed_merge_for('acme/api-graphql'), ('allow', ''))
+
+    def test_the_printed_merge_runs_for_a_slug_that_names_api_and_graphql_in_capitals(self):
+        self.assertEqual(self.printed_merge_for('my-API/graphql-gw'), ('allow', ''))
+
 if __name__ == '__main__':
     unittest.main()

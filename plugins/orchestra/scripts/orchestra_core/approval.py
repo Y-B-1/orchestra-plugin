@@ -14,11 +14,36 @@ APPROVAL_PROMPT = re.compile(r'\s*approved[\s.!]*', re.I)
 GH_TIMEOUT = 6  # seconds; below the mod's 8 s delegate timeout and the hook's 10 s
 LIST_LIMIT = 1000
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
-MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b|'
-                           r'\bgh\b[^;&|\n]*\bapi\b(?=[^;&|\n]*\bgraphql\b)[^;&|\n]*(?:(?i:merge)|=@|--input\b)')  # one line
-SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
+LINE_SPLIT = re.compile(r'[;&|\n]')
 GH_WORD = re.compile(r'\bgh\b')
+PR_MERGE = re.compile(r'\bpr\s+merge\b')
+API_WORD = re.compile(r'\bapi\b')
+GRAPHQL_WORD = re.compile(r'\bgraphql\b')
+SLASH_MERGE = re.compile(r'/merge\b')
+OPAQUE = re.compile(r'(?i:merge)|=@|--input\b')
+REPO_SET_DEFAULT = re.compile(r'\brepo\s+set-default\b')
 GH_WORDS_MAX = 500  # no real command holds this many standalone gh words
+
+
+def _line_kinds(command):
+    """The one-line view (RZ4: linear, it replaces the nested `gh [^;&|\\n]* api ...` regexes, which grew
+    quadratically): in each segment between `;`, `&`, `|` and newlines, after its first gh word, `pr merge`, an api
+    word followed by `/merge`, an api word followed by both `graphql` and a merge word, `=@` or `--input`, and
+    `repo set-default`. Reading from the first gh and the first api after it finds every match the regexes found."""
+    kinds = set()
+    for segment in LINE_SPLIT.split(command):
+        gh = GH_WORD.search(segment)
+        if gh is None:
+            continue
+        if PR_MERGE.search(segment, gh.end()):
+            kinds.add('merge')
+        api = API_WORD.search(segment, gh.end())
+        if api and (SLASH_MERGE.search(segment, api.end()) or
+                    (GRAPHQL_WORD.search(segment, api.end()) and OPAQUE.search(segment, api.end()))):
+            kinds.add('merge')
+        if REPO_SET_DEFAULT.search(segment, gh.end()):
+            kinds.add('set-default')
+    return kinds
 
 
 def gh_kinds(command):
@@ -31,12 +56,7 @@ def gh_kinds(command):
         return set()
     if len(GH_WORD.findall(command)) > GH_WORDS_MAX:
         return {'merge'}
-    kinds = gh_merge_kinds(command)
-    if MERGE_SEGMENT.search(command):
-        kinds.add('merge')
-    if SET_DEFAULT.search(command):
-        kinds.add('set-default')
-    return kinds
+    return gh_merge_kinds(command) | _line_kinds(command)
 
 
 def merge_capable(command):
@@ -112,16 +132,28 @@ def _correct(number, sha, slug='OWNER/REPO'):
     return 'gh pr merge %s -R %s --merge --delete-branch --match-head-commit %s' % (number, slug, sha or 'SHA')
 
 
-GRAPHQL = re.compile(r'\bgh\b[^;&|]*\bapi\b[^;&|]*graphql', re.I)
 GRAPHQL_REASON = ('a gh api graphql call that names merge, holds a mutation or hides its body is merge-gated; read pull '
                   'request state with gh pr view N --json mergeable,state and merge with the printed gh pr merge command')
 
 
+def _names_graphql_call(command):
+    """Whether a segment holds a gh word, then an api word, then `graphql` in any case or spelling (linear, RZ4)."""
+    for segment in LINE_SPLIT.split(command):
+        gh = GH_WORD.search(segment)
+        api = gh and API_WORD.search(segment, gh.end())
+        if api and 'graphql' in segment[api.end():].lower():
+            return True
+    return False
+
+
 def _parse(command):
     """(number, url slug or None, head commit or None, -R slug or None) of a plain `gh pr merge`, or a deny reason
-    string."""
-    if 'graphql' in command.lower() and len(GH_WORD.findall(command)) <= GH_WORDS_MAX and GRAPHQL.search(command):
-        return GRAPHQL_REASON  # the cap keeps this quadratic scan cheap (FX7)
+    string. The graphql reason only replaces a deny (RZ4: a plain merge of acme/api-graphql still parses)."""
+    parsed = _parse_plain(command)
+    return GRAPHQL_REASON if isinstance(parsed, str) and _names_graphql_call(command) else parsed
+
+
+def _parse_plain(command):
     if COMPOUND.search(command):
         return ALONE
     try:
@@ -217,7 +249,7 @@ def merge_decision(command, cwd, state_dir, repo, gh=None):
     """`_decide`, except that a merge it would allow must name a method (N5) and the recorded repository (RS N1:
     without -R or a URL, gh picks the repository from the checkout's remotes, which the guard does not check)."""
     result = _decide(command, cwd, state_dir, repo, gh)
-    if result == ('allow', '') and not SET_DEFAULT.search(command):
+    if result == ('allow', '') and 'set-default' not in _line_kinds(command):
         try:
             words = shlex.split(command)
         except ValueError:

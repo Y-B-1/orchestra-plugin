@@ -1,5 +1,5 @@
 {
- "note": "Merge-capable gh commands the merge gate must deny: `deny` after the owner receipt (run stopped), `deny_while_armed` while autonomy is armed. Built from the FX7 replay and later review findings; add every new bypass here, never remove one.",
+ "note": "Commands the merge gate must deny: every merge-capable spelling found so far, plus deliberate fail-closed over-denies (a merge word in an echo, a comment or a read). `deny` holds after the owner receipt (run stopped), `deny_while_armed` while autonomy is armed. Built from the FX7 replay and later review findings; add every new bypass here, never remove one.",
  "deny": [
   "gh pr merge 3 -R o/r --merge",
   "gh pr merge 3",
@@ -106,13 +106,21 @@
   "bash -c 'gh pr -Ro/r merge 3'",
   "gh repo set-default o/r && gh pr -Ro/r merge 3",
   "gh repo set-default o/r; gh api graphql --input m.json",
-  "gh repo set-default o/r && gh pr merge 3 --merge"
+  "gh repo set-default o/r && gh pr merge 3 --merge",
+  "gh pr '' merge",
+  "gh pr \"\" merge --squash",
+  "gh pr -Ro/r '' merge 3",
+  "gh pr -R o/r '' merge 3 --merge"
  ],
  "deny_while_armed": [
   "gh repo set-default o/r",
   "gh \\\n repo set-default o/r",
   "bash -c 'gh repo set-default o/r'",
   "echo 'gh repo set-default'",
-  "gh repo set-default"
+  "gh repo set-default",
+  "gh pr '' merge",
+  "gh pr \"\" merge --squash",
+  "gh pr -Ro/r '' merge 3",
+  "gh pr -R o/r '' merge 3 --merge"
  ]
 }
