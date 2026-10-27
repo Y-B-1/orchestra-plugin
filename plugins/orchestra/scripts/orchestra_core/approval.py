@@ -15,24 +15,35 @@ GH_TIMEOUT = 6  # seconds; below the mod's 8 s delegate timeout and the hook's 1
 LIST_LIMIT = 1000
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
 MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b|'
-                           r'\bgh\b[^;&|\n]*\bapi\b(?=[^;&|\n]*\bgraphql\b)[^;&|\n]*(?:(?i:merge)|=@|--input\b)|'
-                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')  # one line; merge_capable adds the shell-word view
+                           r'\bgh\b[^;&|\n]*\bapi\b(?=[^;&|\n]*\bgraphql\b)[^;&|\n]*(?:(?i:merge)|=@|--input\b)')  # one line
+SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
+GH_WORD = re.compile(r'\bgh\b')
+GH_WORDS_MAX = 500  # no real command holds this many standalone gh words
+
+
+def gh_kinds(command):
+    """The kinds ('merge', 'set-default') of gh commands in `command`: the one-line regexes or the shell-word view
+    (guards.gh_merge_kinds: continuations, multi-line quotes, shell payloads, graphql mutations; RZ2, FX6). Past
+    GH_WORDS_MAX gh words it answers {'merge'} at once (FX7): both views grow quadratically in gh words, and a
+    timed-out PreToolUse hook does not block."""
+    from .guards import gh_merge_kinds
+    if not isinstance(command, str) or 'gh' not in command:
+        return set()
+    if len(GH_WORD.findall(command)) > GH_WORDS_MAX:
+        return {'merge'}
+    kinds = gh_merge_kinds(command)
+    if MERGE_SEGMENT.search(command):
+        kinds.add('merge')
+    if SET_DEFAULT.search(command):
+        kinds.add('set-default')
+    return kinds
 
 
 def merge_capable(command):
-    """Whether the merge guard checks `command`: a line naming a gh merge, or a gh segment whose shell words can merge
-    (guards.gh_merge_capable: continuations, multi-line quotes and graphql mutations, RZ2)."""
-    from .guards import gh_merge_kinds
-    return isinstance(command, str) and bool(MERGE_SEGMENT.search(command) or gh_merge_kinds(command))
+    """Whether the merge guard checks `command`."""
+    return bool(gh_kinds(command))
 
 
-def sets_default(command):
-    """`gh repo set-default` on one line or in the shell-word view (a continued line, a shell payload)."""
-    from .guards import gh_merge_kinds
-    return bool(SET_DEFAULT.search(command) or 'set-default' in gh_merge_kinds(command))
-
-
-SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
 SET_DEFAULT_REASON = 'gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead'
 METHOD_FLAGS = {'--merge', '-m'}  # F119: `_parse` refuses every other method flag on a gated merge
 METHOD_REASON = 'add --merge: the guard allows only a merge commit on a run pull request'
@@ -239,8 +250,12 @@ def _decide(command, cwd, state_dir, repo, gh=None):
     entries = _entries(state)
     runs = [e for e in entries if e.get('autonomous') is True]
     active, unattended = auto.get('active') is True, raw_unattended(state)
-    if sets_default(command):  # N1: the cwd remotes would point a later gh pr merge at another repository
-        return ('deny', SET_DEFAULT_REASON) if active or unattended else None
+    kinds = gh_kinds(command)
+    if 'set-default' in kinds:  # N1: the cwd remotes would point a later gh pr merge at another repository
+        if active or unattended:
+            return 'deny', SET_DEFAULT_REASON
+        if 'merge' not in kinds:  # CL3: a set-default alone is not gated; one beside a merge shields nothing
+            return None
     if not (runs or active or unattended):
         return None
     parsed = _parse(command)

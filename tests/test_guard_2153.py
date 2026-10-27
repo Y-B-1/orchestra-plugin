@@ -296,6 +296,21 @@ class WordViewMergeGateTest(tm.MergeFixture):
         self.assertEqual(self.decide("gh api graphql -f query='{ viewer { pullRequests(states: MERGED) { totalCount } } }'")[0], 'deny')
         self.assertIsNone(self.decide("gh api graphql -f query='{ viewer { login } }'"))
 
+    def test_a_command_with_very_many_gh_words_fails_closed_fast(self):
+        """FX7: a timed-out PreToolUse hook does not block, so the gate must answer quickly on any input."""
+        import time
+        command = 'echo ' + 'gh ' * 20000
+        start = time.monotonic()
+        self.assertEqual(self.decide(command)[0], 'deny')
+        self.assertLess(time.monotonic() - start, 2.0)
+
+    def test_a_set_default_does_not_shield_a_merge_in_the_same_command(self):
+        """CL3: after the receipt (run stopped) a set-default alone is not gated, but a merge beside it still is."""
+        self.assertIsNone(self.decide('gh repo set-default o/r'))
+        for command in ('gh repo set-default o/r; gh api graphql --input m.json', 'gh repo set-default o/r && gh pr merge 3 --merge'):
+            with self.subTest(command=command):
+                self.assertEqual((self.decide(command) or ('none',))[0], 'deny')
+
     def test_the_printed_merge_still_runs(self):
         self.assertEqual(self.decide(self.merge(3)), ('allow', ''))
 
