@@ -23,6 +23,7 @@ SLASH_MERGE = re.compile(r'/merge\b')
 OPAQUE = re.compile(r'(?i:merge)|=@|--input\b')
 REPO_SET_DEFAULT = re.compile(r'\brepo\s+set-default\b')
 GH_WORDS_MAX = 500  # no real command holds this many standalone gh words
+COMMAND_MAX = 128 * 1024  # FX9: shlex grows quadratically on one long quoted word (10 s at 700 KB)
 
 
 def _line_kinds(command):
@@ -47,14 +48,14 @@ def _line_kinds(command):
 
 
 def gh_kinds(command):
-    """The kinds ('merge', 'set-default') of gh commands in `command`: the one-line regexes or the shell-word view
-    (guards.gh_merge_kinds: continuations, multi-line quotes, shell payloads, graphql mutations; RZ2, FX6). Past
-    GH_WORDS_MAX gh words it answers {'merge'} at once (FX7): both views grow quadratically in gh words, and a
-    timed-out PreToolUse hook does not block."""
+    """The kinds ('merge', 'set-default') of gh commands in `command`: the one-line view (_line_kinds) or the
+    shell-word view (guards.gh_merge_kinds: continuations, multi-line quotes, shell payloads, graphql mutations; RZ2,
+    FX6). Past GH_WORDS_MAX gh words, or past COMMAND_MAX characters with a gh word, it answers {'merge'} at once and
+    fails closed (FX7, FX9): a timed-out PreToolUse hook does not block."""
     from .guards import gh_merge_kinds
     if not isinstance(command, str) or 'gh' not in command:
         return set()
-    if len(GH_WORD.findall(command)) > GH_WORDS_MAX:
+    if len(command) > COMMAND_MAX and GH_WORD.search(command) or len(GH_WORD.findall(command)) > GH_WORDS_MAX:
         return {'merge'}
     return gh_merge_kinds(command) | _line_kinds(command)
 
@@ -137,11 +138,15 @@ GRAPHQL_REASON = ('a gh api graphql call that names merge, holds a mutation or h
 
 
 def _names_graphql_call(command):
-    """Whether a segment holds a gh word, then an api word, then `graphql` in any case or spelling (linear, RZ4)."""
+    """Whether a segment is a `gh api` call (api is the first plain word after gh) with `graphql` in any case or
+    spelling after it (linear; RZ4, FX9: a pr merge naming an api-graphql slug keeps its own reason)."""
     for segment in LINE_SPLIT.split(command):
-        gh = GH_WORD.search(segment)
-        api = gh and API_WORD.search(segment, gh.end())
-        if api and 'graphql' in segment[api.end():].lower():
+        words = segment.split()
+        at = next((i for i, w in enumerate(words) if w.rsplit('/', 1)[-1] == 'gh'), None)
+        if at is None:
+            continue
+        verb = next((i for i in range(at + 1, len(words)) if not words[i].startswith('-')), None)
+        if verb is not None and words[verb] == 'api' and 'graphql' in ' '.join(words[verb + 1:]).lower():
             return True
     return False
 

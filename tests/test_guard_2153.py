@@ -338,6 +338,16 @@ class GraphqlSlugTest(tm.MergeFixture):
             command = 'gh pr merge 3 -R %s --merge --delete-branch --match-head-commit %s' % (slug, self.sha[3])
             return self.decide(command)
 
+    def test_a_wrong_flag_on_an_api_graphql_slug_gets_its_own_reason(self):
+        """FX9: the graphql text is for a gh api graphql call; a pr merge naming such a slug keeps the real reason."""
+        with mock.patch.object(tm, 'PR_URL', 'https://github.example/acme/api-graphql/pull/%d'):
+            self.arm()
+            self.open_pr(3)
+            self.approve([3])
+            decision = self.decide('gh pr merge 3 -R acme/api-graphql --squash --match-head-commit %s' % self.sha[3])
+        self.assertEqual(decision[0], 'deny')
+        self.assertNotIn('graphql call', decision[1])
+
     def test_the_printed_merge_runs_for_a_slug_that_names_api_and_graphql(self):
         self.assertEqual(self.printed_merge_for('acme/api-graphql'), ('allow', ''))
 

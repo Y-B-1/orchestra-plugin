@@ -44,7 +44,8 @@ class MustDenyTableTest(tm.MergeFixture):
                   'pr flags': 'echo gh ' + 'pr -x ' * n + merge, 'graphql': 'echo gh api ' + 'graphql ' * n + merge,
                   'empty words': "echo gh pr " + "'' " * n + merge, 'continuations': 'echo gh ' + 'x \\\n' * n + merge,
                   'merge words': 'echo gh api ' + '/merge ' * n + merge, 'pr words': 'echo gh ' + 'pr ' * n + merge,
-                  'gh words': 'echo ' + 'gh ' * 600 + merge}
+                  'gh words': 'echo ' + 'gh ' * 600 + merge,
+                  'one long quoted word': "echo '" + 'a' * 700000 + "'" + merge}
         self.arm()
         self.open_pr(3)
         for label, command in shapes.items():
