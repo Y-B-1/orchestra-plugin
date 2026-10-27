@@ -2351,11 +2351,14 @@ def _model_line(engine, view):
         except EngineError:
             need_model, need_effort = engine.card_model(card)
             away.append('%s (%s %s)' % (card['id'], need_model, need_effort))
+        except Exception:
+            continue  # a malformed card is left out; the board line and the other cards still show
     if not away:
         return None
     extra = ' +%d' % (len(away) - 8) if len(away) > 8 else ''
-    return 'Session model: %s%s. Cards that must go to a worker (a stronger model or a higher effort): %s%s.' % (
-        model, ' ' + effort if effort else '', ', '.join(away[:8]), extra)
+    why = 'another model' if exact else 'a stronger model or a higher effort'
+    return 'Session model: %s%s. Cards that must go to a worker (%s): %s%s.' % (
+        model, ' ' + effort if effort else '', why, ', '.join(away[:8]), extra)
 
 
 def prompt_board(payload, engine):

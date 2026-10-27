@@ -617,7 +617,7 @@ Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's trac
 - F109: a reported code review card is no longer acceptable; `Next:` names `review --token` for it and the native task says `record the review receipt`.
 - F110: `add` returns a `warning` naming the running final review whose receipts will not cover the new card.
 - F111: a reported inline card kept the main session reserved, so `inline` of the next card was refused until acceptance. Seen live: `inline ND` was refused while NE waited for its full suite, and the same call started once the fix landed.
-- F113: `finding add --review` takes a unique receipt-id prefix of 8 or more characters, the short id `review` prints, and stores the full id.
+- F113: `finding add --review` takes a unique receipt-id prefix of 8 or more characters and stores the full id.
 
 ### Friction found during the 2.15.2 run, deferred
 

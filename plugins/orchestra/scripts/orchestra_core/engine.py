@@ -2698,7 +2698,7 @@ class Engine:
     def _bare(text):
         """F70: a command without one trailing ` (...)` note. The note must follow a word (not `&&`, `||`, `;`, `|`, `(`
         or the line start) and hold no shell operator, so `cd d && (make test)` keeps its subshell."""
-        found = re.search(r'(?<=[^\s&|;(]) \(([^()]*)\)$', text)
+        found = re.search(r'(?<=[^\s&|;(])\s+\(([^()]*)\)$', text)  # any run of spaces before the note
         return text[:found.start()] if found and not re.search(r'[&|;<>`$]', found.group(1)) else text
 
     @staticmethod
@@ -3646,7 +3646,7 @@ class Engine:
 
     def _add_finding(self, state, review_id, kind, index, disposition, reason, card=None):
         found = [r for r in state['reviews'] if isinstance(review_id, str) and (r['id'] == review_id or (
-            len(review_id) >= 8 and r['id'].startswith(review_id)))]  # F113: the short id `review` prints
+            len(review_id) >= 8 and r['id'].startswith(review_id)))]  # F113: a unique prefix of the id
         review = found[0] if len(found) == 1 else None
         if review is None:
             raise EngineError('Unknown review: ' + str(review_id))

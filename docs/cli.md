@@ -38,7 +38,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `scan` | Run the configured secret scan; an unavailable optional scanner is reported, not passed. | yes |
 | `permit REMOTE TARGET` | Create a release permit for an exact remote and target. It stays valid until the artifact changes or the session ends, and is not used up by a release. Refused while autonomy is active. | yes |
 | `release REMOTE TARGET` | Run the release command named in policy under a current permit. Refused while autonomy is active. | yes |
-| `finding add --review ID --kind finding\|out_of_scope --index N --disposition D --reason TEXT [--card ID]` | Record what happened to a review finding. | yes |
+| `finding add --review ID --kind finding\|out_of_scope --index N --disposition D --reason TEXT [--card ID]` | Record what happened to a review finding. `ID` may be a unique prefix of 8 or more characters. | yes |
 | `hold TASK --finding TEXT` | End the repair ladder: move a blocked repair chain to `held` and log the finding. | yes |
 | `pr URL [--task ID]` | Record a pull request the run opened (an http(s) URL). With `gh`, it must be open, from this repository, based on the default or a run branch and headed by the local branch tip; it stores the head, the cards it carries and whether the head has a clean review. A rerun refreshes the entry. The run brief lists it under Needs you. | yes |
 | `base TASK` | Print the branch the card's pull request targets: the default branch, or the head branch of its one open parent pull request. Two or more open parents exit 2 with `deferred: wait for pull request(s) N, M to merge`. Read-only. | no |
@@ -52,7 +52,7 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 
 ## Changes in 2.15.2
 
-- Model fit ranks families: opus, then sonnet, then haiku. A session at or above a card's family runs the card inline; on the same family the effort decides; a weaker session sends the card to a worker. Policy `model_fit` is `stronger` (the default) or `exact`, which keeps the 2.15.1 rule (any other family goes to a worker). An unknown session model refuses nothing. Track step 1 names only a card `inline` accepts now; with none it is `coordinator` with `wait: true`.
+- Model fit ranks families: opus, then sonnet, then haiku. A session at or above a card's family runs the card inline; on the same family the effort decides; a weaker session sends the card to a worker. Policy `model_fit` is `stronger` (the default) or `exact`, which keeps the 2.15.1 rule (any other family goes to a worker). An unknown session model refuses nothing. Track step 1 names only a card `inline` accepts now; while an inline card runs it carries `busy: ID` (shown as `you are running ID`); with none it is `coordinator` with `wait: true`.
 - `replace OLD TASKFILE` and `resume ID` are new (rows above). `do` accepts both as steps.
 - `accept ID --ruling TEXT` also covers a failing plain check when the ruling names its whole command or a test target of it (a word of six or more characters with `/`, `.`, `:` or `_`). Every failing check must be named; a red-first check is never covered; an inline card takes no ruling.
 - A review's out-of-scope item may be recorded `deferred` with a reason (`finding add --kind out_of_scope --disposition deferred --reason TEXT`). The receipt `review` prints lists the out-of-scope items no finding triages yet as `needs_triage`; it refuses nothing.
