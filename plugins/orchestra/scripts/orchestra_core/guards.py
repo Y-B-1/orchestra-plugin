@@ -2192,6 +2192,30 @@ def _is_test_probe(module, rest):
     return '::' in targets[0] and bool(targets[0].rsplit('::', 1)[1]) and not targets[0].startswith('::')
 
 
+_PY_FLAGS = re.compile(r'-([BEIOPRSVbdhiqsuvx]*)m(.*)')
+
+
+def _python_runs_suite(rest, depth):
+    """Read the interpreter options of `python ARGS` up to the first script word, then a `-m` module (also a short
+    cluster ending in m, or `-mmodule` joined). Words after the script belong to the script."""
+    i = 0
+    while i < len(rest):
+        word = rest[i]
+        flags = _PY_FLAGS.fullmatch(word)
+        if flags:
+            module, after = (flags.group(2), rest[i + 1:]) if flags.group(2) else (rest[i + 1], rest[i + 2:])
+            if module == 'coverage' and after[:1] == ['run']:  # `coverage run [options] -m pytest` reads like python
+                return _python_runs_suite(after[1:], depth + 1) if depth < 4 else False
+            return module in ('pytest', 'unittest') and not _is_test_probe(module, after)
+        if word in ('-W', '-X'):
+            i += 2
+        elif word.startswith('-') and word != '-c' and not word.startswith('-c'):
+            i += 1
+        else:
+            return False  # a script, `-c` or `-`: the rest are its arguments
+    return False
+
+
 def _words_run_suite(words, depth):
     if not words or depth > 4:
         return False
@@ -2205,16 +2229,9 @@ def _words_run_suite(words, depth):
     if exe in ('pytest', 'py.test'):
         return not _is_test_probe('pytest', rest)
     if exe == 'coverage' and 'run' in rest:  # `coverage run [options] -m pytest` reads like python
-        return _words_run_suite(['python'] + rest[rest.index('run') + 1:], depth + 1)
+        return _python_runs_suite(rest[rest.index('run') + 1:], depth + 1)
     if _PYTHON.fullmatch(exe):
-        if '-m' in rest[:-1]:
-            module, after = rest[rest.index('-m') + 1], rest[rest.index('-m') + 2:]
-        else:  # the joined form `-munittest`
-            joined = [k for k, word in enumerate(rest) if word.startswith('-m') and len(word) > 2]
-            if not joined:
-                return False
-            module, after = rest[joined[0]][2:], rest[joined[0] + 1:]
-        return module in ('pytest', 'unittest') and not _is_test_probe(module, after)
+        return _python_runs_suite(rest, depth)
     if exe in ('npm', 'pnpm', 'yarn'):
         tests = ('test', 't') if exe != 'yarn' else ('test',)  # npm and pnpm alias `t` to `test`
         return bool(args) and (args[0] in tests or (_TEST_SCRIPT.fullmatch(args[0]) and len(args) > 1 and args[1].startswith('test')))
