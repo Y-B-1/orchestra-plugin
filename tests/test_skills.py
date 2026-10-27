@@ -483,5 +483,10 @@ class FrictionTextTests(unittest.TestCase):
     def test_handoff_checks_the_process_before_the_transcript(self):
         self.assertIn('the process first, then the transcript', self.text('plugins/orchestra/skills/orchestra/references/handoff.md'))
 
+    def test_operator_gate_runs_the_full_suite_only_on_the_owners_request(self):
+        gate = read('orchestra-operate/references/gate.md')
+        self.assertIn("the full suite only on the owner's explicit request", gate)
+        self.assertNotIn('when the brief asks', gate)
+
 if __name__ == '__main__':
     unittest.main()
