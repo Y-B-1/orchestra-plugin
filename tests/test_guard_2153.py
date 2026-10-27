@@ -230,6 +230,17 @@ class GraphqlMergeTest(tm.MergeFixture):
         output = handle_event('PreToolUse', payload, mode='minimal', state_dir=str(self.state)).output
         self.assertEqual(output.get('hookSpecificOutput', {}).get('permissionDecision'), 'deny')
 
+    def test_flags_before_the_graphql_endpoint_are_gated_too(self):
+        """FX5 note: gh takes flags on either side of the endpoint."""
+        self.arm()
+        self.open_pr(3)
+        self.approve([3])
+        for command in ('gh api --input m.json graphql', 'gh api -F query=@q.graphql graphql',
+                        "gh api -f query='mutation { mergePullRequest(input: {}) { clientMutationId } }' graphql"):
+            with self.subTest(command=command):
+                self.assertEqual(self.decide(command)[0], 'deny')
+        self.assertIsNone(self.decide("gh api -f query='{ viewer { login } }' graphql"))
+
     def test_a_graphql_read_is_not_gated(self):
         self.arm()
         self.open_pr(3)

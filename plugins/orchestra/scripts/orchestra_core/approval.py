@@ -15,8 +15,8 @@ GH_TIMEOUT = 6  # seconds; below the mod's 8 s delegate timeout and the hook's 1
 LIST_LIMIT = 1000
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
 MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b|'
-                           r'\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*\bgraphql\b[^;&|\n]*(?:(?i:merge)|=@|--input\b)|'  # a merge mutation, or a
-                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')  # query or body the guard cannot read (`=@`, `--input`)
+                           r'\bgh\b[^;&|\n]*\bapi\b(?=[^;&|\n]*\bgraphql\b)[^;&|\n]*(?:(?i:merge)|=@|--input\b)|'  # a merge mutation, or a
+                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')  # query or body the guard cannot read (`=@`, `--input`), on either side of `graphql`
 SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
 SET_DEFAULT_REASON = 'gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead'
 METHOD_FLAGS = {'--merge', '-m'}  # F119: `_parse` refuses every other method flag on a gated merge
