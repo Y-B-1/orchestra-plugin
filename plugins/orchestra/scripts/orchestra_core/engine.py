@@ -1759,7 +1759,7 @@ class Engine:
                 raise EngineError('A run records pull requests of one repository: %s, not %s' % (known, repo))
             now = self._stamp()
             entry = next((e for e in prs if e['url'] == url or (number is not None and e.get('number') == number
-                                                              and e.get('repo') == repo)), None)
+                                                              and str(e.get('repo')).lower() == str(repo).lower())), None)
             if entry is None:
                 entry = dict(url=url, number=number, repo=repo, head_ref=None, head_sha=None, base_ref=None,
                              autonomous=False, tasks=[], reviewed=False, verified_at=None, recorded_at=now)
@@ -3732,7 +3732,7 @@ class Engine:
             entry = entries.pop(0)
             if len(entry) > 3:
                 paths.add(entry[3:])
-                if entry[0] in 'RC' and entries:  # a rename or copy record carries its source path as the next entry
+                if set(entry[:2]) & set('RC') and entries:  # a rename or copy record (either column) carries its source next
                     paths.add(entries.pop(0))
         return sorted(paths)
 

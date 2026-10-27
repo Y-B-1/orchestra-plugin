@@ -483,6 +483,13 @@ class OneRepositoryTests(te.PullRequestFixture):
             self.engine.record_pr('main', self.lease, other)
         self.assertEqual(len(self.prs()), 1)
 
+    def test_the_same_pull_request_in_another_case_is_one_entry(self):
+        """RZ2: the existing-entry lookup ignores case like the one-repository check."""
+        self.view()
+        self.engine.record_pr('main', self.lease, self.URL)
+        self.engine.record_pr('main', self.lease, self.URL.replace('/o/r/', '/O/R/'))
+        self.assertEqual(len(self.prs()), 1)
+
     def test_a_rerun_and_another_pull_request_of_the_same_repository_still_record(self):
         self.view()
         self.engine.record_pr('main', self.lease, self.URL)
@@ -497,6 +504,14 @@ class CleanupRZTests(tr.RefusalFixture):
     def test_a_staged_rename_names_both_paths_whole(self):
         self.commit(old_name_file='x')
         self.git('mv', 'old_name_file', 'new_name_file')
+        self.assertEqual(['new_name_file', 'old_name_file'],
+                         self.engine._uncommitted(dict(files=['old_name_file', 'new_name_file'])))
+
+    def test_an_unstaged_rename_names_both_paths_whole(self):
+        """RZ2: after `git add -N` the rename record sits in the worktree column (` R new`)."""
+        self.commit(old_name_file='x')
+        (self.repo / 'old_name_file').rename(self.repo / 'new_name_file')
+        self.git('add', '-N', 'new_name_file')
         self.assertEqual(['new_name_file', 'old_name_file'],
                          self.engine._uncommitted(dict(files=['old_name_file', 'new_name_file'])))
 
