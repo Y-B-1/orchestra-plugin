@@ -2,6 +2,27 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 2.15.3 — 2026-10-27
+
+Closes the friction and review notes left from 2.15.2 and 2.15.1 (F112 to F119, N1 to N5, N8, N9, F39).
+
+- **Resume and repair:** a resumed card's outside-files check skips commits other cards made while it was reported, so `accept` no longer asks for `own add` (F112). Two repairs collide only on their own files, not on the files of their whole chains, so repairs with disjoint files run side by side (F114).
+- **Pull requests:** a pull request counts as reviewed only from a clean final review, or from one that covers every card the pull request carries (N4). A narrow scoped review no longer marks it reviewed.
+- **Clearer results:** a CLI result carries a `track` line when the track changed since the last result, so the coordinator sees the next step right after `add`, `accept` or `wave`. This replaces the 2.15.2 gap about the first prompt after a CLI `add`. A stale-report refusal names `resume ID` as the fix (F117). `--size` choices come from the engine's size list. A newline before a parenthesis in an acceptance line is no trailing-note gap.
+- **Board:** the board view has `overlaps`, and the mod's Track lane draws "Shares files: a and c" (F39). A pending board note that the board has moved past prints the current board line instead (F118).
+- **Hooks:** a read-only investigator's report stays acceptable after later edits to the checkout (F116). The Stop hook stays quiet while a gate log has no receipt yet, instead of asking to accept a card that waits on it (F115). The approval prompt hook shares one deadline across its lock wait and `gh` calls, under the 10 s hook timeout (N2).
+- **Merge guard:** under an active run, `gh repo set-default` is denied, because it changes which repository a later merge targets (N1). A lower pull request closed without merging makes the guard say "type approved again" (N3). A gated merge with no method flag is denied (N5), and the no-method deny says "add --merge", the one method flag a gated merge accepts (F119). The engine runs `gh` through the approval module's runner with its 6 s timeout (was 10 s) (N8).
+- **Test-suite classifier:** it reads `coverage run`, short option clusters such as `-Bm` and script arguments (`script.py -m pytest` is the script's option, not a suite run).
+- **Live checks:** new `scripts/live-gh-wizard.sh` and `docs/live-gh.md`: the owner's one-time check of the merge guard against real `gh` on a throwaway repository (L2). New live scenario `l3` (23 scenarios): background output and a subagent answer that say "approved" reach no approval (7/7 live pass). `t3` says whether the mod loaded when it skips.
+- **Docs:** mods run by default from Claude Code 2.1.287, and the docs name `--bare`, `--safe-mode` and `disableAllHooks` as the off switches (N9: the README states the live-check evidence). `gate.md` says the full suite runs only on the owner's explicit request.
+- **Tests:** `report` inside `do` (F89) and the `binds` edge case are pinned. Stale checkpoint test names are renamed and two `review_of` tests use a real mode. The merged-delete hook tests use a temporary state home, so a test run no longer leaves policy-only folders in the state directory.
+
+### Known gaps
+
+- `t3` still skips headless: the board mod's task calls do not appear under `claude -p`, so native task renumbering is proven by mod unit tests only. The skip note now says `mod loaded` or `mod not loaded`.
+- L2 needs the owner to run `scripts/live-gh-wizard.sh` once.
+- Windows and the GitHub branch ruleset are untested.
+
 ## 2.15.2 — 2026-10-27
 
 The main session runs the main track, and the friction left from 2.15.1 (F97 to F107).

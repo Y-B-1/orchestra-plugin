@@ -50,6 +50,18 @@ Run `python3 plugins/orchestra/scripts/orchestra.py [--repo REPO] [--state STATE
 | `interrupt` | Stop dispatch and continuation; late reports then fail. | yes |
 | `finish [--accept-reported]` | Close the run after completion checks. A parked card blocks it. `--accept-reported` first accepts every reported card whose `accept` passes; the rest stay reported. A refusal for leftover worktrees points to `worktrees`. A run that changed files needs a current final review even with no cards. | yes |
 
+## Changes in 2.15.3
+
+- A result carries a `track` line when the track changed since the last result, so the next step shows right after `add`, `accept` or `wave`.
+- `resume ID` is the fix a stale-report refusal names. A resumed card's outside-files check skips commits other cards made while it was reported, so `own add` is no longer needed for them.
+- Two repairs collide only on their own files; a non-repair card still waits for a whole running chain.
+- A pull request is marked reviewed only from a clean final review, or one that covers every card the pull request carries.
+- The `board --view` output has `overlaps`, the card pairs that share files (the same pairs `waves` reports).
+- A read-only investigator's report stays acceptable after later edits to the checkout; a builder's report still goes stale.
+- `--size` choices are `tiny`, `medium` and `large`, read from the engine.
+- A newline before a parenthesis in an acceptance line is no trailing-note gap.
+- The engine runs `gh` through the approval module's runner (6 s timeout).
+
 ## Changes in 2.15.2
 
 - Model fit ranks families: opus, then sonnet, then haiku. A session at or above a card's family runs the card inline; on the same family the effort decides; a weaker session sends the card to a worker. Policy `model_fit` is `stronger` (the default) or `exact`, which keeps the 2.15.1 rule (any other family goes to a worker). An unknown session model refuses nothing. Track step 1 names only a card `inline` accepts now; while an inline card runs it carries `busy: ID` (shown as `you are running ID`); with none it is `coordinator` with `wait: true`.

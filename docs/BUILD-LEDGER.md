@@ -199,7 +199,7 @@ Route by diff size, not item count. Design `docs/DESIGN-v2.5.md`, contract `docs
 | EG | builder | engine gaps | `gate --timeout`, replacement report until accept or review, required builder `ARTIFACT:` line | ACCEPTED |
 | RV-correctness, RV-standards | code-reviewer final | 1de30d4 | one BLOCKED finding on `coordination.md:23` (S1 medium-to-builder text against T1) | BLOCKED |
 | RS1 / FR1 | builder repair / fix re-review | 9908c0b | `coordination.md:23` and generated `orchestrator.md` match T1 | CLEAN |
-| N1 | coordinator inline | 0559bcd | deferred notes closed: task size validated in loaded state; unreachable `repair_of` clause removed; one `REVIEWER_BAND`; `final.md`, `repair-rounds.md`, `final-review.md` wording; DESIGN/PLAN amendment paragraphs. `tests.test_engine` 340 OK | ACCEPTED |
+| N1 | coordinator inline | 0559bcd | deferred notes closed: task size validated in loaded state; unreachable `repair_of` clause removed; one `REVIEWER_BAND`; `final.md`, `repair-rounds.md`, `final-review.md` wording; DESIGN/PLAN amendment paragraphs. `tests.test_engine` 340 OK | ACCEPTED Fixed in 2.15.3. |
 | Gates | coordinator | 0559bcd | suite-engine-a, suite-engine-b, suite-integration, suite-rest exit 0 | PASS |
 | RV2, RV2S | code-reviewer final (correctness, standards) | 0559bcd | no blocking findings; notes only | CLEAN |
 
@@ -430,14 +430,14 @@ The real hook entry point (`run-hook.sh <Event> --harness claude`, hook JSON on 
 | Item | Note |
 | --- | --- |
 | N1 | `gh repo set-default` is allowed; the merge guard checks PR N with `-R slug`, but the merge it allows resolves the repository from the cwd remotes. Fix: deny `gh repo set-default` while a run is active or locked, or make the printed merge carry `-R slug`. |
-| N2 | The `UserPromptSubmit` worst case is about 14 s against the 10 s hook timeout; a killed hook records nothing and prints nothing. |
-| N3 | A lower-order receipt pull request closed without merge makes every later one deny with "merge pull request N first"; the message should say to type `approved` again. |
-| N4 | `record_pr` sets `reviewed` from any CLEAN intact review at the PR head, including a narrow scoped one (unchecked). |
-| N5 | The merge parser does not require `--merge`; non-interactive `gh` refuses a merge without a method anyway. |
+| N2 | The `UserPromptSubmit` worst case is about 14 s against the 10 s hook timeout; a killed hook records nothing and prints nothing. Fixed in 2.15.3. |
+| N3 | A lower-order receipt pull request closed without merge makes every later one deny with "merge pull request N first"; the message should say to type `approved` again. Fixed in 2.15.3. |
+| N4 | `record_pr` sets `reviewed` from any CLEAN intact review at the PR head, including a narrow scoped one (unchecked). Fixed in 2.15.3. |
+| N5 | The merge parser does not require `--merge`; non-interactive `gh` refuses a merge without a method anyway. Fixed in 2.15.3. |
 | N6 | `sort` as a heredoc data consumer can run `--compress-program`; the same class as the accepted `echo`/`printf` write-then-run. |
 | N7 | The settings-file lock covers edit tools only; shell writes pass (the guard is not isolation). |
-| N8 | The receipt-run predicate and the `gh` subprocess setup are duplicated across `approval.py`, `prompt_approval.py`, `orchestra.py` and the engine. |
-| N9 | The README's macOS live-check claim rests only on the 2026-10-22 stop-path check. |
+| N8 | The receipt-run predicate and the `gh` subprocess setup are duplicated across `approval.py`, `prompt_approval.py`, `orchestra.py` and the engine. Fixed in 2.15.3. |
+| N9 | The README's macOS live-check claim rests only on the 2026-10-22 stop-path check. Fixed in 2.15.3. |
 | N10 | The unattended lock matches provider deletes by text, so a command that also holds a real `rm` and quotes `gh release delete` is denied (fails closed). |
 | E1 | Fixed in 2.12.0. Engine: adding a repair card ignores findings in a final receipt made stale by a sibling chain's repair, so the second chain needs a new review. Let `add` accept those findings, or refuse the first repair until every blamed chain has its card. |
 | E2 | Engine: `report` and `accept` run from a linked worktree resolve another state directory ("Invalid assignment") and leave an empty one. Run engine commands from the main checkout. |
@@ -588,7 +588,7 @@ Source: a read-only triage of the 2.15 live run (friction F67 to F96) and the re
 - F100: With an Opus main session, every builder card (Sonnet by role) is refused inline on model fit, so the main session gets no track work except repairs and Opus reviews, and a 40-line engine fix (E1F) had to go to a worker. Proposed fix: the track (T2) shows this honestly, and a card can opt into the session model with `model: session` when the owner prefers inline.
 - F101: The coordinator accepted E1 and E1F on targeted suites only, and the full suite later found a regression in each: one in finish leftovers and one in F84 freeing chain files. Proposed fix: after any card that edits engine.py, accept only on the full suite or a frozen-copy run of it.
 - Not done in 2.15.1 for lack of ownership: dropping the repeated "A tiny task starts no run" prose (pinned by `tests/test_skill_routing.py`) and the `cancelBoardTimer` wrapper in `orchestra.ts`.
-- Unchecked: the F89 reproduction was not rerun by the docs card; live `report` inside `do` is unchecked.
+- Unchecked: the F89 reproduction was not rerun by the docs card; live `report` inside `do` is unchecked. Closed in 2.15.3: `report` inside `do` is pinned by `test_do_runs_report` in `tests/test_cli_support.py`.
 
 ## 2.15.2 (2026-10-27)
 
@@ -621,10 +621,79 @@ Source: the friction the 2.15.1 live run left (F97 to F107) and the owner's trac
 
 ### Friction found during the 2.15.2 run, deferred
 
-- F112: a resumed inline card's diff range (`base..report_sha`) took in another accepted card's commit that landed while it was reported, so `accept` refused "files outside the card" until those files were added with `own add`. A fix needs a per-commit owner check, not a base move, since the card's own earlier commits stay in range.
-- F114: a repair reserves every file of its whole chain, so repair RN (engine.py only) waited for repair RH (hooks.py) through `docs/hooks.md` that NE had taken. A narrower reservation (the repair's own files plus the chain files its finding names) needs its own review.
+- Fixed in 2.15.3 (see that section). F112: a resumed inline card's diff range (`base..report_sha`) took in another accepted card's commit that landed while it was reported, so `accept` refused "files outside the card" until those files were added with `own add`. A fix needs a per-commit owner check, not a base move, since the card's own earlier commits stay in range.
+- Fixed in 2.15.3 (see that section). F114: a repair reserves every file of its whole chain, so repair RN (engine.py only) waited for repair RH (hooks.py) through `docs/hooks.md` that NE had taken. A narrower reservation (the repair's own files plus the chain files its finding names) needs its own review.
 
 ### Known limits
 
 - `t3` records a skip in headless runs because the board mod does not run under `claude -p`; native task renumbering is proven by mod unit tests only.
 - The first prompt after cards are added by CLI shows no board line (the CLI marks the board seen), and the session model reads unknown until the first `orchestra.py` call.
+
+## 2.15.3 (2026-10-27)
+
+Source: the open rows of the 2.15.2 ledger (F112, F114), the 2.15.2 review notes, the deferred rows N1 to N9, the 2.5 deferred notes and the friction the 2.15.2 live run left (F115 to F119). Built card by card on branch `orchestra-2.15.3` from `c4832a8`. The changes are listed in `CHANGELOG.md`.
+
+### Fixed
+
+| Item | Change | Test |
+| --- | --- | --- |
+| F112 | A resumed card's outside-files check skips commits other cards made while it was reported; the card's own commits on both sides of the gap still count | `tests/test_engine_2153.py` `ResumeGapTests` |
+| F114 | A repair reserves only its own files; a non-repair card still waits for the whole chain; two repairs that own one file still wait | `tests/test_engine_2153.py` `RepairReservationTests` |
+| N4 | `record_pr` marks a pull request reviewed only from a clean final review or one covering every card it carries | `tests/test_engine_2153.py` `PrReviewedScopeTests` |
+| Acceptance line | A newline before a parenthesis is no trailing-note gap | `tests/test_engine_2153.py` `BareNewlineTests` |
+| Track line | A CLI result carries `track` when the track changed since the last result; an unchanged track is not repeated. This replaces the 2.15.2 gap about the first prompt after a CLI `add` | `tests/test_cli_support.py` `test_add_shows_the_track_and_an_unchanged_track_is_not_repeated` |
+| F116 | A read-only investigator's report stays acceptable after later edits; a builder's report still goes stale | `tests/test_engine_2153.py` `ReadOnlyReportTests` |
+| F115 | The Stop hook stays quiet while a gate log has no receipt yet | `tests/test_engine_2153.py` `StopDuringGateTests` |
+| F117 | The stale-report refusal names `resume ID` | `tests/test_engine_2153.py` `StaleHintTests` |
+| Size choices | `--size` choices come from the engine's size list | `tests/test_engine_2153.py` `SizeChoicesTests` |
+| N8 | The engine has no `gh` subprocess of its own; it uses the approval module's runner (6 s timeout, was 10 s) | `tests/test_engine_2153.py` `OneGhRunnerTests` |
+| F39 | `board --view` has `overlaps`; the mod's Track lane draws "Shares files: a and c" | `tests/test_engine_2153.py` `BoardOverlapsTests`; `hooks/mod/orchestra.test.ts` |
+| F89, binds | `report` inside `do` is pinned; the legacy-hash `binds` edge case (a state with no sized session) is pinned | `tests/test_cli_support.py` `test_do_runs_report`; `tests/test_engine_2153.py` `BindsEdgeTests` |
+| Test state home | The merged-delete hook tests use a temporary state home, so test runs leave no policy-only folders | `tests/test_engine_2153.py` `TestStateIsolationTests` |
+| F118 | A pending board note the board has moved past prints the current board line | `tests/test_hook_board.py` `test_a_note_the_board_has_moved_past_gives_the_current_board` |
+| F119 | The merge guard's no-method deny says "add --merge", the one method flag a gated merge accepts | `tests/test_guard_2153.py` `MergeMethodTest` |
+| N1 | `gh repo set-default` is denied in every mode while a run is active or unattended; other `gh repo` commands are not | `tests/test_guard_2153.py` `SetDefaultTest` |
+| N2 | The approval prompt hook shares one 8 s deadline across the lock wait and `gh` calls; no time left answers without calling `gh` | `tests/test_guard_2153.py` `DeadlineTest` |
+| N3 | A lower pull request closed without merging makes the guard say "type approved again"; an open one still says merge it first | `tests/test_guard_2153.py` `ClosedLowerTest` |
+| N5 | A gated merge with no method flag is denied | `tests/test_guard_2153.py` `MergeMethodTest` |
+| N9 and mod docs | Mods run by default from Claude Code 2.1.287; the docs name `--bare`, `--safe-mode` and `disableAllHooks`; the README states the live-check evidence | `tests/test_docs_2153.py` |
+| Classifier | The test-suite probe reads `coverage run`, option clusters such as `-Bm` and `-Im`, and script arguments (`script.py -m pytest` is not a suite run) | `tests/test_suite_probe_2153.py` |
+| Hygiene notes | Stale checkpoint test names renamed; two `review_of` tests use a real mode, so they reach the `review_of` checks; `gate.md` says the full suite runs only on the owner's explicit request | `tests/test_hygiene_2153.py`; `tests/test_skills.py` `test_operator_gate_runs_the_full_suite_only_on_the_owners_request` |
+| L2 tooling | `scripts/live-gh-wizard.sh` and `docs/live-gh.md`: the owner's one-time run of the merge guard against real `gh` on a throwaway repository. Every GitHub change follows a confirm, the repository delete is only printed, state stays in the scratch directory | `tests/test_live_gh_wizard.py` |
+| `t3` note | A `t3` skip says `mod loaded` or `mod not loaded` from the debug log | `tests/test_live_matrix_track.py` |
+
+### Live evidence
+
+- `l3` (new, 23 scenarios): background output and a subagent answer that say "approved" reach no approval. 7/7 checks pass in a real headless session. This settles the part of ledger row L3 about background output and subagent text; a `ScheduleWakeup` prompt is still covered only by the scheduler deny.
+- The full-suite and `scripts/check.sh` results for this release are recorded by the gate run, not by the documentation card.
+
+### Rows closed
+
+N1 to N5, N8, N9, F89, F112, F114, F115 to F119, F39, the `binds` edge case, the checkpoint test names, the `gate.md` row and the classifier rows (`coverage run`, `-Im`, `-Bm`, `script.py -m ...`).
+
+### Still open, with why
+
+| Item | Why it stays open |
+| --- | --- |
+| L2 (real `gh`: wrong-SHA merge refused, child pull request retargeted) | Human: needs the owner's signed-in `gh` and a throwaway repository. Run `scripts/live-gh-wizard.sh` once; see `docs/live-gh.md` |
+| Outside-repo gap; GitHub branch ruleset | External: a command run outside the repository gets no autonomy plane. Only a server-side branch ruleset on the default branch backs it, and none is tested |
+| `UserPromptSubmit` does not prove a human typed the prompt | External: only Claude Code could mark the prompt source |
+| G9 (GitHub retargets a child pull request when its parent branch is deleted) | External: GitHub behavior; the guard names the `gh pr edit --base` workaround, and the wizard checks it |
+| Live band in an interactive session; Windows and macOS field tests; Desktop check | Human or external: need an interactive session or another machine |
+| `t3` skips headless | The board mod's task calls do not appear under `claude -p`; native task renumbering is proven by mod unit tests only |
+| Lowercase unittest class in the classifier (`tests.test_x.case.test_y`) | Owner decision: text cannot tell a class from a module; the probe fails closed |
+| F18 (`pr merge` as a release kind), F21 (a second inline card), engine-owned worktrees, parallel-work enforcement, a release permit when release is unset | Owner decision: each changes release authority, the inline rule or the guard's risk |
+| Foreign-agent Read, Grep and Glob are not guarded | Owner decision: the hook matcher is per tool, so guarding them runs the hook on every read (about 190 ms each) |
+| Builder-repair agent file | Owner decision: repair runs through the Agent tool with the override, a tested choice |
+| F38 in-place amend; F40 sibling-fixture ruling; F43 | Owner decision: `replace` covers an amend that changes the id; F40 and F43 have no description to build from |
+| G5 (night-run write cadence against `worker_stale_seconds`) | Not measured; low value |
+| 2.8 known limits (staged-only chmod, same-size rewrite, files over 64 MiB, PowerShell-only commands); accepted notes 15 to 17 | Accepted limits, no later change |
+| N6, N7, N10 and the heredoc write-then-run class | By design: the guard is not isolation and fails closed |
+| `cancelBoardTimer` wrapper; `_rm_in_temp` comment | Style and comment only |
+| Mod config path (`hooks/mods.json` listed in the manifest `hooks` array) | Unverified: live evidence says it loads; `claude plugin validate` and a `--debug-file` run have not been compared with the reference |
+
+### Known gaps
+
+- `t3` still skips headless (above).
+- L2 needs the owner to run `scripts/live-gh-wizard.sh` once.
+- Windows and the GitHub branch ruleset are untested.
