@@ -1,8 +1,10 @@
 """2.15.3 engine: a resumed card's range skips the commits made while it was reported (F112), a repair reserves only
 its own files and the files its finding names (F114), and a newline is never the gap before a trailing note (RY)."""
+import os
 import pathlib
 import sys
 import unittest
+from unittest import mock
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
@@ -34,6 +36,17 @@ class ResumeGapTests(tr.RefusalFixture):
         self.engine.resume_card('main', self.lease, 'a')
         self.engine.report('w-a', token, tr.report_for(self.commit(a='second', late='y')))
         self.assertIn('files outside the card: late, stray;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
+
+    def test_a_commit_after_the_named_artifact_but_before_the_report_still_counts(self):
+        """RC note: the gap starts at HEAD when the card reported, not at an earlier commit its ARTIFACT names."""
+        token = self.running('a', files=['a'])
+        self.engine.record_bases('main', self.lease, ['a'], self.git('rev-parse', 'HEAD'))
+        named = self.commit(a='first')
+        self.commit(hidden='made after the named commit')
+        self.engine.report('w-a', token, tr.report_for(named))
+        self.engine.resume_card('main', self.lease, 'a')
+        self.engine.report('w-a', token, tr.report_for(self.commit(a='second')))
+        self.assertIn('files outside the card: hidden;', self.refusal(self.engine.accept, 'main', self.lease, 'a'))
 
 
 
@@ -208,6 +221,38 @@ class SharedChainFileTests(te.FinalBlockerTests):
         self.assertNotIn('RB', self.engine.ready('main', self.lease))
         self.assertIsNone(self.edit_shared('RA', 'repair-a', ra, base))
 
+
+@t2.own_tests_only
+class SharedChainDirectoryTests(te.FinalBlockerTests):
+    """FX3 note on F114: chains that overlap only through a directory entry are caught too."""
+
+    def setUp(self):
+        super().setUp()
+        self.release_setup()
+        for card, files in (('B1', ['a', 'src']), ('B2', ['b', 'src/x.py'])):
+            self.task(card, files=files)
+            token = self.engine.dispatch('main', self.lease, card, 'builder-' + card, serial='test')
+            self.engine.report('builder-' + card, token, te.done('Result ' + card))
+            if card == 'B1':
+                self.engine.accept('main', self.lease, 'B1')
+        self.record('blocked', ['B1', 'B2'], findings=['Wrong output'])
+        self.task('RA', mode='repair', repair_of='B1', files=['a'])
+        self.task('RB', mode='repair', repair_of='B2', files=['b'])
+        self.engine.policy['max_workers'] = 3
+
+    def test_a_file_under_my_chain_directory_that_another_chain_holds_is_flagged(self):
+        base = self.git('rev-parse', 'HEAD')
+        ra = self.engine.dispatch('main', self.lease, 'RA', 'repair-a')
+        self.engine.dispatch('main', self.lease, 'RB', 'repair-b')
+        self.engine.record_bases('main', self.lease, ['RA'], base)
+        (self.repo / 'src').mkdir(exist_ok=True)
+        (self.repo / 'src' / 'x.py').write_text('by RA')
+        (self.repo / 'src' / 'y.py').write_text('by RA')
+        self.git('add', 'src')
+        self.git('commit', '-qm', 'RA edits src')
+        self.engine.report('repair-a', ra, tr.report_for(self.git('rev-parse', 'HEAD')))
+        self.assertEqual(['src/x.py'], self.engine.status()['tasks']['RA'].get('outside_files'))
+
 class BareNewlineTests(unittest.TestCase):
     def test_a_newline_before_a_note_keeps_the_text(self):
         self.assertEqual('make a\n(make b)', Engine._bare('make a\n(make b)'))
@@ -229,6 +274,12 @@ class PrReviewedScopeTests(te.PullRequestTests):
         self.reviewed('narrow', ['c'])
         self.assertFalse(self.engine.record_pr('main', self.lease, self.URL, tasks=['c', 'd'])[0]['reviewed'])
 
+    def test_a_pr_recorded_without_tasks_needs_a_final_review(self):
+        self.view()
+        self.built('c', files=['c.txt'])
+        self.reviewed('narrow', ['c'])
+        self.assertFalse(self.engine.record_pr('main', self.lease, self.URL)[0]['reviewed'])
+
     def test_a_clean_review_of_every_carried_card_marks_it_reviewed(self):
         self.view()
         self.built('c', files=['c.txt'])
@@ -248,6 +299,15 @@ class ReadOnlyReportTests(te.EngineFixture):
         (self.repo / 'a').write_text('edited after the report')
         self.engine.accept('main', self.lease, 'I')
         self.assertEqual('accepted', self.engine.status()['tasks']['I']['state'])
+
+    def test_an_investigator_report_under_another_policy_goes_stale(self):
+        self.task('I', role='investigator', mode='code', files=[])
+        token = self.engine.dispatch('main', self.lease, 'I', 'w-I')
+        self.engine.report('w-I', token, 'Read the code.\nARTIFACT: fixture')
+        with self.engine._state() as state:  # the report was made under another policy
+            state['tasks']['I']['report_artifact']['policy'] = 'another policy'
+        with self.assertRaisesRegex(EngineError, 'Reported artifact is stale'):
+            self.engine.accept('main', self.lease, 'I')
 
     def test_a_builder_report_still_goes_stale(self):
         self.task('B', files=['a'])
@@ -311,6 +371,18 @@ class TestStateIsolationTests(unittest.TestCase):
     """2.15.3: MergedDeleteHookTest writes policy.json into the state location, so it must not be the user's own."""
 
     def test_merged_delete_tests_use_a_temp_state_home(self):
+        import test_hooks
+        from orchestra_core.paths import state_location
+        case = test_hooks.MergedDeleteHookTest('test_the_merged_proof_runs_no_merge_driver')
+        with mock.patch.dict(os.environ, {'ORCHESTRA_STATE_DIR': '/nonexistent/user-state'}):  # RS note: it outranks XDG
+            case.setUp()
+            try:
+                temp = pathlib.Path(case.temp.name).resolve()
+                self.assertIn(temp, state_location(case.repo).parents)
+            finally:
+                case.doCleanups()
+
+    def test_merged_delete_setup_without_a_state_override(self):
         import test_hooks
         from orchestra_core.paths import state_location
         case = test_hooks.MergedDeleteHookTest('test_the_merged_proof_runs_no_merge_driver')

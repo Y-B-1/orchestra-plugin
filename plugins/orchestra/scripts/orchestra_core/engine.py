@@ -1744,7 +1744,7 @@ class Engine:
                 entry.update(number=number, head_ref=view['headRefName'], head_sha=sha, base_ref=view['baseRefName'],
                              verified_at=now, reviewed=any(
                                  not r['findings'] and r['artifact'].get('head') == sha and self._intact(r)
-                                 and (r.get('final') or set(entry['tasks']) <= set(r.get('tasks', [])))
+                                 and (r.get('final') or (entry['tasks'] and set(entry['tasks']) <= set(r.get('tasks', []))))
                                  for r in state['reviews']))
             entry['autonomous'] = bool(entry.get('autonomous')) or self._autonomy_on(state)
             state['pull_requests'] = prs
@@ -1970,8 +1970,11 @@ class Engine:
                     raise EngineError('Worktree cap: %d builder cards are already running; wait for one to report' % cap)
             task.setdefault('report_history', []).append(dict(report=task['report'], at=self._stamp()))
             if task.get('report_sha'):  # F112: commits from here to HEAD are other work, landed while this card was reported
-                try:
-                    task.setdefault('gaps', []).append([task['report_sha'], self._git('rev-parse', 'HEAD').decode().strip()])
+                try:  # the gap starts at HEAD when it reported, so its own commits after the named ARTIFACT still count
+                    start, at = task['report_sha'], (task.get('report_artifact') or {}).get('head')
+                    if at and at != start and self._is_ancestor(start, at):
+                        start = at
+                    task.setdefault('gaps', []).append([start, self._git('rev-parse', 'HEAD').decode().strip()])
                 except EngineError:
                     pass
             for key in ('report', 'report_artifact', 'report_sha', 'self_review', 'outside_files'):
@@ -2866,8 +2869,13 @@ class Engine:
             theirs = [Path(f).as_posix() for other in state['tasks'].values() if other['id'] != task['id']
                       and other.get('repair_of') and other['state'] in ('queued', 'running', 'reported')
                       for f in self._reservation(other, state)['files']]
-            owned = [f for f in owned if f in map(str, task['files']) or not self._in_scope(f, theirs)]
-        outside = sorted(c for c in changed if not self._in_scope(c, owned))
+            mine = [Path(f).as_posix() for f in task['files']]
+            owned = [f for f in owned if f in mine or not self._in_scope(f, theirs)]
+            # FX3: a file under my chain's directory entry that another active repair's chain names is theirs too
+            changed_theirs = {c for c in changed if self._in_scope(c, theirs) and not self._in_scope(c, mine)}
+        else:
+            changed_theirs = set()
+        outside = sorted(c for c in changed if not self._in_scope(c, owned) or c in changed_theirs)
         outside = self._not_sibling_owned(task, outside, state, sha)
         derived = [c for c in outside if c.startswith(self.GENERATED_DIR) and c.endswith('.md') and '/' not in c[len(self.GENERATED_DIR):]]
         if derived and self._generator_passes(sha):
@@ -3554,7 +3562,10 @@ class Engine:
         elif task.get('review_required', False):
             return None if verdicts else 'Task needs current independent review'
         if task['role'] == 'investigator' and not task['files']:
-            return None  # F116: a read-only report names the commit it read; later edits do not change what it found
+            reported = task['report_artifact']  # F116: a read-only report names the commit it read; later edits do not
+            if (reported.get('repo'), reported.get('policy')) == (str(self.repo), self.policy_hash):  # change what it
+                return None  # found, but another repository or policy does
+            return 'Reported artifact is stale: repo or policy differ since the report; resume %s and re-report' % task_id
         scope = self._scope_of(state, [task_id])
         reported, now = task['report_artifact'], self._artifact_cached(cache, scope)
         # A commit after the report moves HEAD but not the reported content, and the independent review above is current

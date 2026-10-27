@@ -66,7 +66,7 @@ class MergeFixture(te.AutonomyFixture):
         self.engine.record_owner_approval(prs, [], EVIDENCE)
 
     def merge(self, number, flags='--merge --delete-branch', sha=True):
-        return 'gh pr merge %d %s%s' % (number, flags, ' --match-head-commit ' + self.sha[number] if sha else '')
+        return 'gh pr merge %d -R o/r %s%s' % (number, flags, ' --match-head-commit ' + self.sha[number] if sha else '')
 
     def decide(self, command, **kw):
         return approval.merge_decision(command, self.repo, self.state, self.repo, **kw)
@@ -86,7 +86,7 @@ class MergeShapeTest(MergeFixture):
 
     def test_repo_flag_env_prefix_branch_and_foreign_url_denied(self):
         ok = '--merge --delete-branch --match-head-commit ' + self.sha[3]
-        for command in ('gh pr merge 3 -R o/r ' + ok, 'gh pr merge 3 --repo o/r ' + ok, 'gh -R o/r pr merge 3 ' + ok,
+        for command in ('gh pr merge 3 -R x/y ' + ok, 'gh pr merge 3 --repo x/y ' + ok, 'gh pr merge 3 ' + ok, 'gh -R o/r pr merge 3 ' + ok,
                         'GH_REPO=o/r gh pr merge 3 ' + ok, 'gh pr merge feat/3 ' + ok, 'gh pr merge ' + ok,
                         'gh pr merge https://github.example/x/y/pull/3 ' + ok):
             with self.subTest(command=command):
@@ -94,7 +94,7 @@ class MergeShapeTest(MergeFixture):
 
     def test_plain_number_and_recorded_url_allowed(self):
         ok = '--merge --delete-branch --match-head-commit ' + self.sha[3]
-        for target in ('3', PR_URL % 3):
+        for target in ('3 -R o/r', '3 --repo=o/r', PR_URL % 3):
             with self.subTest(target=target):
                 self.assertEqual(self.decide('gh pr merge %s %s' % (target, ok)), ('allow', ''))
 
@@ -263,7 +263,8 @@ class MinimalModeMergeGuardTest(MergeFixture):
 
     def test_wrong_order_head_or_form_denied_and_the_printed_merge_runs_in_minimal(self):
         for command in (self.merge(6), self.merge(3, sha=False), self.merge(3, '--squash'), self.merge(3, '--merge --admin'),
-                        'gh pr merge 3 -R o/r --merge --delete-branch --match-head-commit ' + self.sha[3]):
+                        'gh pr merge 3 -R x/y --merge --delete-branch --match-head-commit ' + self.sha[3],
+                        'gh pr merge 3 --merge --delete-branch --match-head-commit ' + self.sha[3]):
             with self.subTest(command=command):
                 decision, output = self.hook(command)
                 self.assertEqual(decision, 'deny')

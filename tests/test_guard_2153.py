@@ -57,7 +57,7 @@ class MergeMethodTest(tm.MergeFixture):
         self.open_pr(4, base='feat/3')
         self.assertEqual(self.decide('gh pr merge 4'), ('deny', METHOD_REASON))
         self.assertEqual(self.decide('gh pr merge 4 --delete-branch'), ('deny', METHOD_REASON))
-        self.assertEqual(self.decide('gh pr merge 4 --merge'), ('allow', ''))
+        self.assertEqual(self.decide('gh pr merge 4 -R o/r --merge'), ('allow', ''))
 
     def test_the_method_deny_names_only_a_flag_the_guard_then_allows(self):
         """F119 (2.15.3): the guard lets only --merge through on a run pull request, so its method deny names only it."""
@@ -76,7 +76,7 @@ class MergeMethodTest(tm.MergeFixture):
         self.approve([3])
         sha = ' --match-head-commit ' + self.sha[3]
         self.assertEqual(self.decide('gh pr merge 3 --delete-branch' + sha), ('deny', METHOD_REASON))
-        self.assertEqual(self.decide('gh pr merge 3 --merge --delete-branch' + sha), ('allow', ''))
+        self.assertEqual(self.decide('gh pr merge 3 -R o/r --merge --delete-branch' + sha), ('allow', ''))
 
 
 class ClosedLowerTest(tm.MergeFixture):
@@ -125,6 +125,24 @@ class DeadlineTest(tpa.PromptFixture):
         self.assertIn('gh did not answer in time; type approved again', tpa.context(reply))
         self.assertIsNone(self.receipt())
 
+    def test_engine_lock_waits_get_at_most_the_time_left(self):
+        """RC note (N2): the engine writes wait for the lock no longer than the deadline leaves."""
+        from orchestra_core.engine import Engine
+        self.stopped_run(3)
+        engine = Engine(self.state, self.repo, lock_wait=5.0)
+        seen = []
+        for name in ('stop_stale_autonomy', 'record_owner_approval'):
+            real = getattr(engine, name)
+
+            def wrapped(*args, _real=real, _name=name, **kw):
+                seen.append((_name, engine.lock_wait))
+                return _real(*args, **kw)
+            setattr(engine, name, wrapped)
+        with mock.patch.object(prompt_approval, 'DEADLINE', 1.0):
+            self.prompt('approved', engine=engine)
+        self.assertEqual([n for n, _ in seen], ['stop_stale_autonomy', 'record_owner_approval'])
+        self.assertTrue(all(wait <= 1.0 for _, wait in seen), seen)
+
     def test_the_default_deadline_is_eight_seconds_inside_the_hook_timeout(self):
         self.assertEqual(prompt_approval.DEADLINE, 8)
         hooks = json.loads((HERE.parent / 'plugins/orchestra/hooks/claude.json').read_text())
@@ -133,3 +151,66 @@ class DeadlineTest(tpa.PromptFixture):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class MergeNamesItsRepositoryTest(tm.MergeFixture):
+    """RS note (N1): a gated merge names the recorded repository with -R, so the checkout's remotes (a remote add, a
+    gh-resolved config, set-default) cannot point it at another one. The printed merge carries -R."""
+
+    def test_a_gated_merge_without_its_repository_is_denied(self):
+        self.arm()
+        self.open_pr(3)
+        self.open_pr(4, base='feat/3')
+        decision, reason = self.decide('gh pr merge 4 --merge')
+        self.assertEqual(decision, 'deny')
+        self.assertIn('gh pr merge 4 -R o/r', reason)
+
+    def test_the_recorded_repository_or_its_url_is_allowed(self):
+        self.arm()
+        self.open_pr(3)
+        self.open_pr(4, base='feat/3')
+        for command in ('gh pr merge 4 -R o/r --merge', 'gh pr merge 4 --repo o/r --merge', 'gh pr merge 4 --repo=o/r --merge',
+                        'gh pr merge https://github.example/o/r/pull/4 --merge'):
+            with self.subTest(command=command):
+                self.assertEqual(self.decide(command), ('allow', ''))
+
+    def test_another_repository_is_denied(self):
+        self.arm()
+        self.open_pr(3)
+        self.open_pr(4, base='feat/3')
+        decision, reason = self.decide('gh pr merge 4 -R x/y --merge')
+        self.assertEqual(decision, 'deny')
+        self.assertIn('o/r', reason)
+
+    def test_the_receipt_prints_the_repository(self):
+        self.arm()
+        self.open_pr(3)
+        self.approve([3])
+        decision, reason = self.decide('gh pr merge 3 --merge --delete-branch --match-head-commit ' + self.sha[3])
+        self.assertEqual(decision, 'deny')
+        self.assertIn('gh pr merge 3 -R o/r --merge --delete-branch --match-head-commit ' + self.sha[3], reason)
+        self.assertEqual(self.decide('gh pr merge 3 -R o/r --merge --delete-branch --match-head-commit ' + self.sha[3]),
+                         ('allow', ''))
+
+    def test_set_default_reason_matches_what_the_merge_accepts(self):
+        self.arm()
+        self.assertEqual(self.decide('gh repo set-default x/y')[0], 'deny')
+        self.assertIn('-R OWNER/REPO', approval.SET_DEFAULT_REASON)
+
+
+class GraphqlMergeTest(tm.MergeFixture):
+    """RS out-of-scope note: a gh api graphql merge mutation, or a query read from a file, is gated like gh api .../merge."""
+
+    def test_graphql_merge_is_denied_under_a_lock(self):
+        self.arm()
+        self.open_pr(3)
+        for command in ("gh api graphql -f query='mutation { mergePullRequest(input: {pullRequestId: \"X\"}) { clientMutationId } }'",
+                        "gh api graphql -f query='mutation { enablePullRequestAutoMerge(input: {}) { clientMutationId } }'",
+                        'gh api graphql -F query=@q.graphql'):
+            with self.subTest(command=command):
+                self.assertEqual(self.decide(command)[0], 'deny')
+
+    def test_a_graphql_read_is_not_gated(self):
+        self.arm()
+        self.open_pr(3)
+        self.assertIsNone(self.decide("gh api graphql -f query='{ viewer { login } }'"))

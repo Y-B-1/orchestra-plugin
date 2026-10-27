@@ -127,6 +127,7 @@ def handle_prompt(payload, state_dir, repo, gh=None, engine=None):
         wait = engine.lock_wait if engine.lock_wait is not None else LOCK_WAIT
         if not _lock_free(state_dir, max(0.0, min(wait, end - time.monotonic()))):
             return busy
+        engine.lock_wait = max(0.0, min(wait, end - time.monotonic()))  # RC N2: every engine lock wait fits the deadline
         stopped_here = engine.stop_stale_autonomy(session if isinstance(session, str) else '')
         state = json.loads(state_file.read_text())
         auto = state.get('autonomy') if isinstance(state.get('autonomy'), dict) else {}
@@ -159,13 +160,15 @@ def handle_prompt(payload, state_dir, repo, gh=None, engine=None):
         evidence = dict(event='UserPromptSubmit', session_id=session if isinstance(session, str) else None,
                         prompt_id=payload.get('prompt_id') if isinstance(payload.get('prompt_id'), str) else None,
                         prompt_sha256=hashlib.sha256(prompt.encode()).hexdigest())
+        engine.lock_wait = max(0.0, min(wait, end - time.monotonic()))
         engine.record_owner_approval(prs, excluded, evidence)
     except StateBusy:
         return busy
     except (EngineError, OSError, ValueError, KeyError, TypeError) as exc:
         return _reply('Approval not recorded: %s' % exc)
     lines = ['Approval recorded for run %s. Merge in this order, one command at a time:' % state.get('run_id')]
-    lines += ['  %d. gh pr merge %d --merge --delete-branch --match-head-commit %s' % (p['order'], p['number'], p['head_sha'])
+    lines += ['  %d. gh pr merge %d -R %s --merge --delete-branch --match-head-commit %s' % (p['order'], p['number'], p['repo'],
+                                                                                         p['head_sha'])
               for p in prs] or ['  (no pull request to merge)']
     if excluded:
         lines.append('Not approved: ' + '; '.join('#%d %s' % (e['number'], e['reason']) for e in excluded) + '.')

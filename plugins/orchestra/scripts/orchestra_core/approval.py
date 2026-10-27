@@ -15,7 +15,8 @@ GH_TIMEOUT = 6  # seconds; below the mod's 8 s delegate timeout and the hook's 1
 LIST_LIMIT = 1000
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
 MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b|'
-                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
+                           r'\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*\bgraphql\b[^;&|\n]*(?:(?i:merge)|=@)|'  # a merge mutation, or a
+                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')  # query the guard cannot read
 SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
 SET_DEFAULT_REASON = 'gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead'
 METHOD_FLAGS = {'--merge', '-m'}  # F119: `_parse` refuses every other method flag on a gated merge
@@ -81,12 +82,13 @@ def _entries(state):
     return out
 
 
-def _correct(number, sha):
-    return 'gh pr merge %s --merge --delete-branch --match-head-commit %s' % (number, sha or 'SHA')
+def _correct(number, sha, slug='OWNER/REPO'):
+    return 'gh pr merge %s -R %s --merge --delete-branch --match-head-commit %s' % (number, slug, sha or 'SHA')
 
 
 def _parse(command):
-    """(number, url slug or None, head commit or None) of a plain `gh pr merge`, or a deny reason string."""
+    """(number, url slug or None, head commit or None, -R slug or None) of a plain `gh pr merge`, or a deny reason
+    string."""
     if COMPOUND.search(command):
         return ALONE
     try:
@@ -95,34 +97,40 @@ def _parse(command):
         return ALONE
     if not words or words[0] in ENV_WORDS or ASSIGNMENT.match(words[0]) or os.path.basename(words[0]) != 'gh':
         return ALONE
-    if any(w in ('-R', '--repo') or w.startswith(('--repo=', '-R')) for w in words):
-        return 'the merge names no other repository: drop -R/--repo; the guard pins the recorded one'
     if words[1:2] == ['api']:
         found = API_PULL.search(command)
-        return 'a merge through gh api is not allowed: use gh pr merge %s --merge --delete-branch --match-head-commit SHA' % (
-            found.group(1) if found else 'N')
+        return 'a merge through gh api is not allowed: use ' + _correct(found.group(1) if found else 'N', None)
     if words[1:3] != ['pr', 'merge']:
         return ALONE
-    sha, positional, rest = None, [], iter(words[3:])
+    sha, named, positional, rest = None, None, [], iter(words[3:])
     for word in rest:
         if word in ('--merge', '-m', '--delete-branch', '-d'):
+            continue
+        if word in ('-R', '--repo'):
+            named = next(rest, None) or ''
+            continue
+        if word.startswith(('--repo=', '-R')):
+            named = word.split('=', 1)[1] if word.startswith('--repo=') else word[2:]
             continue
         if word == '--match-head-commit':
             sha = next(rest, None)
         elif word.startswith('--match-head-commit='):
             sha = word.split('=', 1)[1]
         elif word.startswith('-'):
-            return 'merge flag %s is not allowed: only --merge, --delete-branch and --match-head-commit SHA' % word.split('=')[0]
+            return ('merge flag %s is not allowed: only -R OWNER/REPO, --merge, --delete-branch and --match-head-commit SHA'
+                    % word.split('=')[0])
         else:
             positional.append(word)
     if len(positional) != 1:
-        return 'name the pull request by its number: gh pr merge NUMBER --merge --delete-branch --match-head-commit SHA'
+        return 'name the pull request by its number: ' + _correct('NUMBER', None)
+    if named is not None and not re.fullmatch(r'[^/\s]+/[^/\s]+', named):
+        return '-R takes OWNER/REPO: ' + _correct('NUMBER', None)
     if positional[0].isdigit():
-        return int(positional[0]), None, sha
+        return int(positional[0]), None, sha, named
     found = PR_URL.fullmatch(positional[0])
     if not found:
-        return 'name the pull request by its number, not a branch: gh pr merge NUMBER --merge --delete-branch --match-head-commit SHA'
-    return int(found.group(2)), found.group(1), sha
+        return 'name the pull request by its number, not a branch: ' + _correct('NUMBER', None)
+    return int(found.group(2)), found.group(1), sha, named
 
 
 def _default_branches(state):
@@ -155,7 +163,7 @@ def _step_five(state, number, sha, found, live):
     if row is None:
         return 'deny', 'pull request %d is not in the owner receipt; type approved again after the run records it' % number
     want = row.get('head_sha')
-    fix = _correct(number, want)
+    fix = _correct(number, want, row.get('repo') or 'OWNER/REPO')
     if found['headRefOid'] != want:
         return 'deny', 'pull request %d head moved since approval (%s, receipt %s): type approved again' % (
             number, str(found['headRefOid'])[:12], str(want)[:12])
@@ -173,7 +181,8 @@ def _step_five(state, number, sha, found, live):
 
 
 def merge_decision(command, cwd, state_dir, repo, gh=None):
-    """`_decide`, except that a merge it would allow must name a method (N5)."""
+    """`_decide`, except that a merge it would allow must name a method (N5) and the recorded repository (RS N1:
+    without -R or a URL, gh picks the repository from the checkout's remotes, which the guard does not check)."""
     result = _decide(command, cwd, state_dir, repo, gh)
     if result == ('allow', '') and not SET_DEFAULT.search(command):
         try:
@@ -182,7 +191,20 @@ def merge_decision(command, cwd, state_dir, repo, gh=None):
             return result
         if not METHOD_FLAGS.intersection(words):
             return 'deny', METHOD_REASON
+        parsed = _parse(command)
+        if not isinstance(parsed, str) and parsed[1] is None and parsed[3] is None:
+            return 'deny', 'name the recorded repository, so the checkout remotes cannot pick another: ' + _correct(
+                parsed[0], parsed[2], _recorded_slug(state_dir, parsed[0]))
     return result
+
+
+def _recorded_slug(state_dir, number):
+    try:
+        runs = [e for e in _entries(json.loads((Path(state_dir) / 'state.json').read_text())) if e.get('autonomous') is True]
+    except (OSError, ValueError, AttributeError):
+        return 'OWNER/REPO'
+    found = next((e for e in runs if e.get('number') == number), None) or (runs[0] if runs else {})
+    return found.get('repo') if isinstance(found.get('repo'), str) else 'OWNER/REPO'
 
 
 def _decide(command, cwd, state_dir, repo, gh=None):
@@ -209,7 +231,7 @@ def _decide(command, cwd, state_dir, repo, gh=None):
     parsed = _parse(command)
     if isinstance(parsed, str):
         return 'deny', parsed
-    number, url_slug, sha = parsed
+    number, url_slug, sha, named = parsed
     slugs = sorted({e['repo'] for e in runs if isinstance(e.get('repo'), str)})
     recorded = next((e for e in runs if e.get('number') == number), None)
     slug = recorded['repo'] if recorded and isinstance(recorded.get('repo'), str) else slugs[0] if slugs else None
@@ -217,6 +239,8 @@ def _decide(command, cwd, state_dir, repo, gh=None):
         return 'deny', 'no recorded pull request names the repository, so pull request %d cannot be checked' % number
     if url_slug is not None and url_slug.lower() != slug.lower():
         return 'deny', 'the pull request URL names %s, not the recorded %s' % (url_slug, slug)
+    if named is not None and named.lower() != slug.lower():
+        return 'deny', 'the merge names %s, not the recorded %s: %s' % (named, slug, _correct(number, sha, slug))
     must = active or unattended or recorded is not None
     try:
         listing = json.loads((gh or run_gh)(['pr', 'list', '--state', 'all', '-R', slug, '--json', LIST_FIELDS,

@@ -161,7 +161,7 @@ merge_pr() {
   # merge_pr NUMBER SHA: the guard-printed merge command. A non-zero exit is not fatal: gh can fail to delete a local
   # branch that a worktree holds even though the pull request merged. The caller reads the live state.
   confirm "merge pull request $1 into main with --delete-branch (head $2)"
-  (cd "$CLONE" && gh pr merge "$1" --merge --delete-branch --match-head-commit "$2") || echo "   (gh pr merge exited non-zero; reading the live state)"
+  (cd "$CLONE" && gh pr merge "$1" -R "$SLUG" --merge --delete-branch --match-head-commit "$2") || echo "   (gh pr merge exited non-zero; reading the live state)"
 }
 
 pr_field() { (cd "$CLONE" && gh pr view "$1" --json "$2" --jq ".$2" 2>/dev/null); }
@@ -178,7 +178,7 @@ wait_for_base() {
 
 merge_text() {
   # The command text the hook is asked about. Printed, never run.
-  printf 'gh pr merge %s --merge --delete-branch --match-head-commit %s' "$1" "$2"
+  printf 'gh pr merge %s -R %s --merge --delete-branch --match-head-commit %s' "$1" "$SLUG" "$2"
 }
 
 number_of() { echo "${1##*/}"; }

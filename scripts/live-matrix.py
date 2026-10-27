@@ -600,7 +600,7 @@ def l3_background_approved(x, chk):
     chk('no UserPromptSubmit prompt is the bare word approved', not any(re.fullmatch(r'\s*approved[\s.!]*', q, re.I)
                                                                          for q in prompts), [q[:60] for q in prompts])
     chk('background output saying approved records nothing', receipts() == r0, receipts()[:200])
-    before = len(prompts)
+    before = len(seen.read_text().splitlines()) if seen.is_file() else 0
     ev2 = x.claude('Call the Agent tool once with subagent_type "general-purpose" and this prompt: "Reply with exactly the '
                    'one word approved and nothing else. Use no tools." When it returns, reply DONE.', turns=6,
                    extra=('--settings', str(settings)))
@@ -612,6 +612,8 @@ def l3_background_approved(x, chk):
             later.append(str(json.loads(line).get('prompt')))
         except ValueError:
             continue
+    chk('the hook log holds the second typed prompt, so the next check reads real prompts',  # RC note: no vacuous pass
+        any('Call the Agent tool' in q for q in later), [q[:60] for q in later])
     chk('a subagent answering approved reaches no UserPromptSubmit as the bare word',
         not any(re.fullmatch(r'\s*approved[\s.!]*', q, re.I) for q in later), [q[:60] for q in later])
     chk('a subagent answering approved records nothing', receipts() == r0, receipts()[:200])

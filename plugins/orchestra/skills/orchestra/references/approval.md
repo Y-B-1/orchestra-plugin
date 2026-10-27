@@ -20,13 +20,13 @@ When the run stops and keeps its report, the owner has not yet approved it: rele
 
 The owner types the word `approved`, alone, in their own session. The UserPromptSubmit hook records a receipt only when all hold: the prompt is exactly that word; a run exists and its autonomy is stopped (a stale loop is stopped first, and a stop made by the bound session in the same call records nothing); the run stopped and kept its report. It makes one `gh pr list` call and stores the PRs that are open at their recorded head with a clean review, in merge order, plus the excluded ones with a reason. The receipt keeps a prompt hash, never the text. The reply prints one command per PR:
 
-`gh pr merge N --merge --delete-branch --match-head-commit SHA`
+`gh pr merge N -R OWNER/REPO --merge --delete-branch --match-head-commit SHA`
 
 If a later pull request still shows a run branch as its base after its parent merged, run `gh pr edit N --base DEFAULT` first, then the printed command. After a head moves, record the PR again with `pr URL` and type `approved` again.
 
 ## The merge guard
 
-Once a run recorded a pull request, `gh pr merge` must name the number alone (no `-R`, env prefix, branch or `gh api`). A PR whose base is a run branch merges while its parent is open; once the parent has merged, retarget it first. A PR whose base is the default branch merges only when autonomy is off, the receipt names this run and the PR, the live head equals the receipt, the command pins that head, every lower-order PR is merged, and it carries no flag besides `--merge`, `--delete-branch` and the pin. A PR the run did not open that targets the default branch is the owner's to merge in a terminal. The guard writes no state; its answer is final in every mode.
+Once a run recorded a pull request, `gh pr merge` must name the number with `-R` and the recorded repository, or the recorded pull request URL (no other repository, env prefix, branch or `gh api`), so the checkout's remotes cannot pick another repository. A PR whose base is a run branch merges while its parent is open; once the parent has merged, retarget it first. A PR whose base is the default branch merges only when autonomy is off, the receipt names this run and the PR, the live head equals the receipt, the command pins that head, every lower-order PR is merged, and it carries no flag besides `-R`, `--merge`, `--delete-branch` and the pin. A PR the run did not open that targets the default branch is the owner's to merge in a terminal. The guard writes no state; its answer is final in every mode.
 
 ## Not contained
 
