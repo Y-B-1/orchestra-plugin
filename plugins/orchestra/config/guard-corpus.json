@@ -1163,6 +1163,14 @@
    "category": "delete"
   },
   {
+   "id": "boundary-delete-gh-set-default",
+   "input": {
+    "command": "gh repo set-default owner/name"
+   },
+   "class": "boundary",
+   "category": "delete"
+  },
+  {
    "id": "boundary-delete-15",
    "input": {
     "command": "sudo rm -r x"

@@ -876,7 +876,7 @@ def _gh_reading_decision(words, argv):
     if (found := _gh(words)) is not None:
         return replace(found, argv=argv) if found.argv else found
     if words[1:3] in _BOUNDARY['gh']:
-        return _boundary('delete', 'Deletion is a boundary action')
+        return _boundary('delete', _BOUNDARY['gh_reasons'].get(' '.join(words[1:3]), 'Deletion is a boundary action'))
     return Decision()
 
 

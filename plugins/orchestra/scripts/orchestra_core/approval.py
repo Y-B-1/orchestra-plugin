@@ -8,12 +8,18 @@ import shlex
 import shutil
 import subprocess
 from pathlib import Path
+from subprocess import TimeoutExpired
 
 APPROVAL_PROMPT = re.compile(r'\s*approved[\s.!]*', re.I)
 GH_TIMEOUT = 6  # seconds; below the mod's 8 s delegate timeout and the hook's 10 s
 LIST_LIMIT = 1000
 PR_URL = re.compile(r'https?://[^/]+/([^/]+/[^/]+)/pull/([0-9]+)/?')
-MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b')
+MERGE_SEGMENT = re.compile(r'\bgh\b[^;&|\n]*\bpr\s+merge\b|\bgh\b[^;&|\n]*\bapi\b[^;&|\n]*/merge\b|'
+                           r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
+SET_DEFAULT = re.compile(r'\bgh\b[^;&|\n]*\brepo\s+set-default\b')
+SET_DEFAULT_REASON = 'gh repo set-default changes which repository gh merges into; pass -R OWNER/REPO instead'
+METHOD_FLAGS = {'--squash', '--merge', '--rebase', '-s', '-m', '-r'}
+METHOD_REASON = 'add --squash, --merge or --rebase'
 COMPOUND = re.compile(r'[;&|\n`<>()]|\$\(')
 API_PULL = re.compile(r'pulls/([0-9]+)/merge\b')
 ENV_WORDS = {'env', 'export', 'command', 'sudo', 'exec', 'nohup', 'time'}
@@ -27,17 +33,24 @@ class GhError(Exception):
     """gh is missing, failed, timed out or answered something unreadable."""
 
 
-def run_gh(args, cwd):
-    """Run `gh ARGS` and return its stdout; GhError on any failure."""
+class GhTimeout(GhError):
+    """gh did not answer within the time it was given."""
+
+
+def run_gh(args, cwd, timeout=None):
+    """Run `gh ARGS` and return its stdout; GhError on any failure. `timeout` (seconds) is capped at GH_TIMEOUT."""
+    limit = GH_TIMEOUT if timeout is None else min(GH_TIMEOUT, timeout)
     gh = shutil.which('gh')
     if not gh:
         raise GhError('gh is not installed')
     try:
         done = subprocess.run([gh, *args], cwd=cwd if cwd and Path(cwd).is_dir() else None, capture_output=True,
-                              text=True, timeout=GH_TIMEOUT, stdin=subprocess.DEVNULL,
+                              text=True, timeout=limit, stdin=subprocess.DEVNULL,
                               env=dict(os.environ, GH_PROMPT_DISABLED='1'))
     except (OSError, subprocess.SubprocessError) as exc:
-        raise GhError('gh did not answer within %ss: %s' % (GH_TIMEOUT, type(exc).__name__)) from exc
+        if isinstance(exc, TimeoutExpired):
+            raise GhTimeout('gh did not answer within %ss' % limit) from exc
+        raise GhError('gh did not answer within %ss: %s' % (limit, type(exc).__name__)) from exc
     if done.returncode:
         raise GhError('gh exited %d' % done.returncode)
     return done.stdout
@@ -151,12 +164,28 @@ def _step_five(state, number, sha, found, live):
     for lower in sorted((p for p in prs if isinstance(p, dict) and isinstance(p.get('order'), int)
                          and p['order'] < row.get('order', 0)), key=lambda p: p['order']):
         other = live.get(lower.get('number'))
+        if other is not None and other.get('state') == 'CLOSED':
+            return 'deny', ('pull request %s was closed without merging; type approved again so the receipt drops it'
+                            % lower.get('number'))
         if other is None or other.get('state') != 'MERGED':
             return 'deny', 'merge pull request %s first (receipt order %s); then run: %s' % (lower.get('number'), lower['order'], fix)
     return 'allow', ''
 
 
 def merge_decision(command, cwd, state_dir, repo, gh=None):
+    """`_decide`, except that a merge it would allow must name a method (N5)."""
+    result = _decide(command, cwd, state_dir, repo, gh)
+    if result == ('allow', '') and not SET_DEFAULT.search(command):
+        try:
+            words = shlex.split(command)
+        except ValueError:
+            return result
+        if not METHOD_FLAGS.intersection(words):
+            return 'deny', METHOD_REASON
+    return result
+
+
+def _decide(command, cwd, state_dir, repo, gh=None):
     """None: not gated, the caller continues. ('allow', ''): the merge may run. ('deny', reason). `gh(args, cwd)`
     returns gh's stdout or raises GhError; it defaults to the real gh."""
     if not isinstance(command, str) or not MERGE_SEGMENT.search(command):
@@ -173,6 +202,8 @@ def merge_decision(command, cwd, state_dir, repo, gh=None):
     entries = _entries(state)
     runs = [e for e in entries if e.get('autonomous') is True]
     active, unattended = auto.get('active') is True, raw_unattended(state)
+    if SET_DEFAULT.search(command):  # N1: the cwd remotes would point a later gh pr merge at another repository
+        return ('deny', SET_DEFAULT_REASON) if active or unattended else None
     if not (runs or active or unattended):
         return None
     parsed = _parse(command)
