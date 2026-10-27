@@ -287,7 +287,7 @@ def handle_event(event, payload, *, harness='claude', state_dir=None, engine=Non
     return result
 
 
-OVERSIZE_REASON = ('a shell command over 128 KB is denied: the guard cannot read it inside the hook timeout, and a timed-out '
+OVERSIZE_REASON = ('a shell command over 131072 characters is denied: the guard cannot read it inside the hook timeout, and a timed-out '
                    'hook does not block. Write the content to a file with the Write tool, then run a short command')
 
 
@@ -2597,10 +2597,13 @@ def main(argv=None):
 
     def expire():
         if answered.acquire(blocking=False):
-            code = _cannot_check(event, 'the check did not finish within %g s' % HOOK_BUDGET, real_out, real_err)
-            real_out.flush()
-            real_err.flush()
-            os._exit(code)
+            code = 2
+            try:
+                code = _cannot_check(event, 'the check did not finish within %g s' % HOOK_BUDGET, real_out, real_err)
+                real_out.flush()
+                real_err.flush()
+            finally:
+                os._exit(code)  # FX10: even when the write fails, the process ends instead of holding the lock
 
     timer = threading.Timer(HOOK_BUDGET, expire)
     timer.daemon = True
@@ -2622,6 +2625,10 @@ def _checked_main(argv, event, out, err):
     except SystemExit:
         raise
     except Exception as exc:
+        for held in (out, err):
+            if isinstance(held, io.StringIO):
+                held.seek(0)
+                held.truncate()  # FX10: what the check printed before it crashed is not an answer
         return _cannot_check(event, '%s: %s' % (type(exc).__name__, exc), out, err)
 
 

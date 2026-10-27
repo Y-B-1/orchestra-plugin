@@ -57,17 +57,18 @@ class MustDenyTableTest(tm.MergeFixture):
 
 
 class OversizeCommandTest(tm.MergeFixture):
-    """RZ5: shlex grows quadratically on one long word, so the real hook entry denies a shell command over 128 KB
-    before any parse, in every mode, with or without a run: a timed-out hook does not block."""
+    """RZ5: shlex grows quadratically on one long word, so the real hook entry denies a shell command over 131072
+    characters before any parse, in every mode, with or without a run: a timed-out hook does not block."""
 
-    def main(self, command):
+    def main(self, command, *flags):
         import io
         from unittest import mock
         from orchestra_core.hooks import _main
         payload = {'tool_name': 'Bash', 'tool_input': {'command': command}, 'cwd': str(self.repo)}
         with mock.patch('sys.stdin', io.StringIO(json.dumps(payload))), \
+                mock.patch.dict(os.environ, ORCHESTRA_STATE_DIR=str(self.state)), \
                 mock.patch('sys.stdout', new_callable=io.StringIO) as out, mock.patch('sys.stderr', new_callable=io.StringIO):
-            _main(['PreToolUse'])
+            _main(['PreToolUse', *flags])
         return json.loads(out.getvalue()).get('hookSpecificOutput', {})
 
     def test_a_huge_command_is_denied_fast_through_the_real_entry(self):
@@ -81,7 +82,20 @@ class OversizeCommandTest(tm.MergeFixture):
                 output = self.main(command)
                 self.assertLess(time.monotonic() - start, 2.0)
                 self.assertEqual(output.get('permissionDecision'), 'deny')
-                self.assertIn('128 KB', output.get('permissionDecisionReason', ''))
+                self.assertIn('131072 characters', output.get('permissionDecisionReason', ''))
+
+    def test_the_cap_is_exact_on_both_entries(self):
+        """RZ6 note: COMMAND_MAX characters pass the size check, one more is denied; --from-mod denies the same way."""
+        from orchestra_core.approval import COMMAND_MAX
+        self.arm()
+        at_cap = "echo '" + 'a' * (COMMAND_MAX - 7) + "'"
+        self.assertEqual(len(at_cap), COMMAND_MAX)
+        for flags in ((), ('--from-mod',)):
+            with self.subTest(flags=flags):
+                self.assertNotIn('131072 characters', self.main(at_cap, *flags).get('permissionDecisionReason', ''))
+                over = self.main(at_cap + ' ', *flags)
+                self.assertEqual(over.get('permissionDecision'), 'deny')
+                self.assertIn('131072 characters', over.get('permissionDecisionReason', ''))
 
     def test_a_command_under_the_cap_is_not_affected(self):
         output = self.main("echo '" + 'a' * 1000 + "'")
@@ -89,7 +103,7 @@ class OversizeCommandTest(tm.MergeFixture):
 
 
 class HookBudgetTest(tm.MergeFixture):
-    """RZ6: a command under the 128 KB cap can still take the check past the 30 s hook timeout (nested `| sh`
+    """RZ6: a command under the 131072-character cap can still take the check past the 30 s hook timeout (nested `| sh`
     payloads are reparsed by each caller), and a timed-out hook does not block. hooks.main denies a guarded call
     that has not answered after HOOK_BUDGET seconds."""
 
@@ -135,6 +149,14 @@ class HookBudgetTest(tm.MergeFixture):
         self.assertEqual(answer['permissionDecision'], 'deny')
         self.assertIn('did not finish', answer['permissionDecisionReason'])
         self.assertLess(took, 10)
+
+    def test_a_crash_answers_once_with_the_deny(self):
+        """FX10 note: output the check printed before it crashed is dropped, so the deny is the only answer."""
+        prelude = ('hooks._decide = lambda *a, **k: (print("{}"), (_ for _ in ()).throw(RuntimeError("x"))); ')
+        done, _ = self.run_hook('ls', prelude)
+        self.assertEqual(done.returncode, 2)
+        self.assertEqual(len(done.stdout.splitlines()), 1)
+        self.assertEqual(json.loads(done.stdout)['hookSpecificOutput']['permissionDecision'], 'deny')
 
     def test_a_quick_check_answers_once(self):
         done, _ = self.run_hook('ls')
