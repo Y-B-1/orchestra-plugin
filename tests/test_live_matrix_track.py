@@ -170,3 +170,21 @@ class ExactRuleScenarioTest(unittest.TestCase):
         source = PATH.read_text()
         body = source[source.index('def m1_'):source.index('\n\n\ndef ', source.index('def m1_'))]
         self.assertIn("model_fit='exact'", body)
+
+
+class ModLoadedNoteTest(unittest.TestCase):
+    """2.15.3: t3 reads the debug log to say whether the board mod loaded in the headless session."""
+
+    def test_loaded_line_gives_mod_loaded(self):
+        log = '2026-10-27 debug start\nhooks module /p/hooks/mod/orchestra.ts loaded\n'
+        self.assertEqual(lm.mod_load_note(log), 'mod loaded')
+
+    def test_missing_line_gives_mod_not_loaded(self):
+        self.assertEqual(lm.mod_load_note('debug start\nhooks module failed\n'), 'mod not loaded')
+        self.assertEqual(lm.mod_load_note(''), 'mod not loaded')
+
+    def test_t3_skip_note_carries_the_verdict(self):
+        source = PATH.read_text()
+        body = source[source.index('def t3_'):source.index('\n\n\nSCENARIOS')]
+        self.assertIn('--debug-file', body)
+        self.assertIn('mod_load_note', body)
