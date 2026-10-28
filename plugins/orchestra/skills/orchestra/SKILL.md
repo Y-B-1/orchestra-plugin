@@ -49,7 +49,7 @@ Order matters: write the ledger, then start the Workflow, and only then do your 
 
 Builders share your checkout when their files are disjoint: no worktrees, no extra installs. Only when two running units must edit the same file, run one of them through the Agent tool with `isolation: "worktree"` and merge its branch when it returns. Each builder commits its own unit with explicit paths when its checks pass, so finished work never waits for a slow sibling.
 
-A builder brief holds: the ask text in the user's words, the exact files it owns, files it must not touch, what it can rely on from units before it, the checks to run, its time cap (default 15 minutes), and the plugin's `lean.py` path for bounded commands. Builders only fix check errors in their own files; errors in a sibling's file mid-edit are expected.
+A builder brief holds: the ask text in the user's words, the exact files it owns, files it must not touch, what it can rely on from units before it, the checks to run, its time cap (default 15 minutes), and the plugin's `lean.py` path for bounded commands. It also holds every cross-cutting rule from the prompt (an ask that says "wherever", "everywhere", "all" or "every", such as an arrow on every price change or a format for every date), so new code in other units follows it too; name the shared helper that implements the rule, and make the unit that builds it a dependency. Builders only fix check errors in their own files; errors in a sibling's file mid-edit are expected.
 
 ## 4. Self-check, then one review
 

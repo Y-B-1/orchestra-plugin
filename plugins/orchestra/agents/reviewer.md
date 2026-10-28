@@ -13,6 +13,7 @@ Full review: read the ask ledger (the spec) and the whole diff (`git diff <base>
 2. Defect hunt, file by file through the diff. Report what must change before merge:
    - a bug, regression, broken state or accessibility failure in changed code;
    - fragile code: comparisons by serialisation (`JSON.stringify` of deps or objects), state seeded once from props that goes stale, timers or fixed sleeps in tests, races between async results;
+   - a cross-cutting rule (an ask that says "wherever", "every" or "all") that new code from another unit does not follow: grep the whole diff for each such rule;
    - inconsistency: the same value shown in two places with different formatting, a string or list duplicated where a single source exists, two units solving the same thing two ways;
    - test debt: duplicate, skipped, brittle or implementation-detail tests, suppressions without a reason;
    - code that ignores the repo's rules (AGENTS.md or equivalent) or its patterns.
