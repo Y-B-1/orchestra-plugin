@@ -52,7 +52,7 @@ The PreToolUse hook reads every Bash command and denies only the steps that merg
 
 ## What 3.0.0 removed, and why
 
-Versions up to 2.15.3 ran a Python card engine with leases, reservations, receipts, gates and an autonomy mode, a 7,000-line board mod, three guard modes, size tiers, eight role skills and twelve agents. A benchmark on long multi-request prompts showed that this smaller design delivers the same quality about twice as fast as plain Claude Code, and far faster than 2.15.3: the removed parts cost time without a measured quality gain. The ask ledger and Git now hold all state, `/orchestra:goal` replaces autonomy, and one guard replaces the guard modes. Details: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+Versions up to 2.15.3 ran a Python card engine with leases, reservations, receipts, gates and an autonomy mode, a 7,000-line board mod, three guard modes, size tiers, eight role skills and twelve agents. A benchmark on long multi-request prompts showed that this smaller design delivers about the same quality in about 40% less time than plain Claude Code (7.4 against 12.7 minutes per task, at the same cost), and in about a third of the time and cost of 2.15.3: the removed parts cost time without a measured quality gain. The ask ledger and Git now hold all state, `/orchestra:goal` replaces autonomy, and one guard replaces the guard modes. Details: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 ## Set up your agent session (once)
 
