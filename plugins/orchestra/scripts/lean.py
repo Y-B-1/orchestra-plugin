@@ -149,11 +149,11 @@ def gh_reason(rest, main):
     if method == 'GET':
         return None
     m = re.escape(main)
-    if re.search(rf'git/refs/heads/{m}(\b|$)', flat) or re.search(rf'\bref=refs/heads/{m}(\b|$)', flat):
+    if re.search(rf'git/refs/heads/{m}(?![\w./-])', flat) or re.search(rf'\bref=refs/heads/{m}(?![\w./-])', flat):
         return f'a GitHub API write to {main}'
     if re.search(rf'/branches/{m}/rename\b', flat):
         return f'a rename of {main}'
-    if '/contents/' in flat and re.search(rf'\bbranch={m}(\b|$)', flat):
+    if '/contents/' in flat and re.search(rf'\bbranch={m}(?![\w./-])', flat):
         return f'a GitHub API commit to {main}'
     return None
 
@@ -260,6 +260,11 @@ def hook_stop(event):
     cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else None
     session = event.get('session_id') if isinstance(event.get('session_id'), str) else None
     gf = goal_file(cwd, session)
+    if session and not gf.exists():
+        # A goal set where Bash had no CLAUDE_CODE_SESSION_ID lands in the shared folder: enforce it rather than drop it.
+        shared = state_dir(cwd) / 'goal.json'
+        if shared.exists() and json.loads(shared.read_text()).get('state') == 'active':
+            gf, session = shared, None
     asks = open_asks(cwd, session)
     if gf.exists():
         goal = json.loads(gf.read_text())

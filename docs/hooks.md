@@ -10,7 +10,7 @@ Orchestra registers three hooks in `plugins/orchestra/hooks/hooks.json`. Each ru
 
 ## The ledger and goal files
 
-State is per session and lives in the Git common directory of the repository, outside the working tree: `.git/orchestra/sessions/<session id>/asks.md` (the ask ledger) and `goal.json` (the goal) in the same folder. The session id comes from the hook event, and from `CLAUDE_CODE_SESSION_ID` in a Bash command, so another session or worktree of the same repository never sees this session's goal or ledger. Without a session id the folder is `.git/orchestra/`. Outside a Git repository the folder is `.orchestra/` in the current directory, created only when a goal is set. `lean.py ledger` prints the ledger path.
+State is per session and lives in the Git common directory of the repository, outside the working tree: `.git/orchestra/sessions/<session id>/asks.md` (the ask ledger) and `goal.json` (the goal) in the same folder. The session id comes from the hook event, and from `CLAUDE_CODE_SESSION_ID` in a Bash command, so another session or worktree of the same repository never sees this session's goal or ledger. Without a session id the folder is `.git/orchestra/`; an active goal there is still enforced, so a Claude Code version that does not set `CLAUDE_CODE_SESSION_ID` falls back to one shared goal rather than none. Outside a Git repository the folder is `.orchestra/` in the current directory, created only when a goal is set. `lean.py ledger` prints the ledger path.
 
 A ledger line is `- [mark] ID: text`, with any `| files: ... | after: ...` fields after the text. The marks are `[ ]` todo, `[>]` running, `[x]` done and `[~]` dropped with a reason. A line marked `[ ]` or `[>]` is open.
 

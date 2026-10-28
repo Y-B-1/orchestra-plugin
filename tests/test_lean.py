@@ -81,7 +81,9 @@ class GuardTest(Repo):
              'git push origin feature:feature', 'git push --tags', 'npm run build', 'git reset --hard HEAD~1',
              'gh api repos/o/r/git/refs/heads/main', 'gh api -X PATCH repos/o/r/git/refs/heads/feature -f sha=abc',
              'gh api -X DELETE repos/o/r/git/refs/heads/old', 'gh api -X PUT repos/o/r/contents/x -f branch=feature',
-             'echo "a (b) {c} & d"', 'git log --oneline -3', 'git push origin main-backup']
+             'echo "a (b) {c} & d"', 'git log --oneline -3', 'git push origin main-backup',
+             'gh api -X DELETE repos/o/r/git/refs/heads/main-old', 'gh api -X PATCH repos/o/r/git/refs/heads/main.bak -f sha=a',
+             'gh api repos/o/r/git/refs -f ref=refs/heads/main-v2 -f sha=a', 'gh api -X PUT repos/o/r/contents/x -f branch=main-docs']
 
     def test_merges_into_main_are_denied(self):
         for command in self.DENY:
@@ -206,6 +208,12 @@ class StopTest(Repo):
         self.ledger('- [ ] A1: open\n', session='s-one')
         self.assertIsNone(self.hook('stop', {'session_id': 's-two'}))
         self.assertEqual(self.hook('stop', {'session_id': 's-one'})['decision'], 'block')
+
+    def test_a_goal_set_without_a_session_id_is_still_enforced(self):
+        self.goal()  # the shared folder, as goal set writes it when Bash has no CLAUDE_CODE_SESSION_ID
+        self.ledger('- [ ] A1: open\n')
+        out = self.hook('stop', {'session_id': 's-one', 'stop_hook_active': True})
+        self.assertIn('Goal not done', out['reason'])
 
     def test_another_worktree_of_the_repo_does_not_share_a_session_goal(self):
         self.goal(session='s-one')
