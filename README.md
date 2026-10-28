@@ -2,7 +2,7 @@
 
 Orchestra is a Claude Code plugin for prompts that hold more than one ask. It splits the prompt into asks, runs every independent ask at the same time, reviews the finished work once, and pushes a branch for you to merge. `/orchestra:goal` keeps a session working until every ask is done. One guard blocks merging into the default branch; everything else runs.
 
-Version 3.0.0 is a rewrite. The plugin is now one coordinator skill, five agents, one command and three small hooks in one Python file (`scripts/lean.py`, standard library only). It needs no API key, daemon or extra service.
+Version 3.2.0 keeps 3.0's fast design and brings back every 2.15 capability as an on-demand part: one coordinator skill, eleven agents with pinned models, six role skills and five shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
 
 ## Install
 
@@ -24,7 +24,7 @@ Restart the client, then enable the plugin and review its hooks in the native tr
 3. **Plan by novelty.** Copy, styles, small fixes, renames, refactors with a clear target, test cleanup and docs need no plan, however many there are. A new page, feature or capability whose shape is a real choice gets a short spec, written by its own builder first. Only a large or risky feature gets a separate planner and critic, and only that ask waits for them.
 4. **Units in one Workflow.** Asks are packed into 3 to 6 units, one builder each. Asks that edit the same file share a unit or run in order. The whole dependency graph runs in one Workflow script, so a dependent unit starts the moment its inputs finish. The main session builds one unit itself while the Workflow runs. Builders with disjoint files share the checkout; only units that must edit the same file use a worktree.
 5. **Builders check and commit.** Each builder checks its work against its asks, runs the checks for its own files (bounded with `lean.py run SECONDS -- CMD`) and commits its own files with explicit paths.
-6. **One review.** When every unit has landed, the main session starts the review at once: two or three `orchestra:reviewer` agents in one Workflow, each on one area of the diff and its seams (one reviewer when the diff is under about 300 lines), with the ledger as the spec. While they work, the main session runs the project's full checks once. Real findings go to one repair builder, then one re-review of only the repair diff and only the raised findings. New notes go in the final message, not another round.
+6. **One review loop, before the pull request.** When every unit has landed, the main session runs `lean.py check` once (a few seconds) and starts the review at once in one Workflow: one `orchestra:reviewer-light` under about 300 changed lines, otherwise two or three `orchestra:reviewer` agents, each on one area and its seams, plus `orchestra:reviewer-standards` when the scan flags size, tests or rules. The ledger is the spec. While they work, the main session runs the project's full checks once (or hands long ones to `orchestra:operator`). Real findings go to a repair builder; each repair is re-reviewed on the files it touched and the findings it answers only, until clean, at most 3 rounds, then one Opus repair. There is no review per unit.
 7. **Test hygiene.** Before every pull request, while the review runs, the main session removes duplicate, skipped and implementation-detail tests, replaces brittle markup snapshots with behavior checks and removes lint suppressions without a reason. A failing test is fixed, never silenced.
 8. **Push and pull request.** The main session pushes the branch and opens a pull request when the remote is GitHub. It deletes the worktrees and branches it created. The final message lists each ask with its status, the decisions made without asking, the check results and the branch or pull request. Merging is the owner's step.
 
@@ -33,10 +33,24 @@ Restart the client, then enable the plugin and review its hooks in the native tr
 | Agent | Model | Effort | Job |
 | --- | --- | --- | --- |
 | `orchestra:builder` | Sonnet 5.5 | medium | Builds one unit, checks it and commits it |
-| `orchestra:reviewer` | Opus 5.5 | medium | One independent review of the whole diff, and the scoped re-review of a repair |
-| `orchestra:planner` | Sonnet 5.5 | high | A short spec for one large or risky feature |
-| `orchestra:critic` | Opus 5.5 | high | Challenges that spec before it is built |
+| `orchestra:builder-mechanical` | Haiku 5.5 | high | One uniform change across many files |
+| `orchestra:builder-cleanup` | Haiku 5.5 | high | The simplify and test-hygiene pass on a large diff |
+| `orchestra:reviewer` | Opus 5.5 | medium | Review of one area of a large diff, and its scoped re-reviews |
+| `orchestra:reviewer-light` | Sonnet 5.5 | medium | Review of a diff under about 300 lines |
+| `orchestra:reviewer-standards` | Sonnet 5.5 | medium | Standards, file budget and test quality when the scan flags them |
+| `orchestra:planner` | Sonnet 5.5 | high | A short spec for a feature whose shape is a real choice |
+| `orchestra:critic` | Opus 5.5 | high | Challenges a large or risky spec before it is built |
 | `orchestra:investigator` | Haiku 5.5 | high | Fast read-only discovery of the files an ask touches |
+| `orchestra:investigator-research` | Sonnet 5.5 | medium | Checks a library or API for the version the repo uses |
+| `orchestra:operator` | Haiku 5.5 | high | Runs long checks in parallel; release steps only on an owner approval |
+
+## Skills
+
+Every skill loads only when its situation applies, so a routine task reads none of them.
+
+- **Main session only:** `orchestra:orchestra`, the coordinator.
+- **Role skills**, loaded by their agent in the cases its file names: `build` (repair, mechanical and cleanup modes), `review` (lenses: correctness, data and contracts, architecture, standards, tests, security, accessibility, performance), `plan`, `critique`, `investigate` (code and research modes), `operate`.
+- **Shared situation skills**, for any agent or the main session: `diagnose` (a bug whose cause is unknown), `decide` (conflicting asks, two valid product shapes, a harmful suggestion), `test-quality`, `frontend-proof` (new interactive components, accessibility), `large-work`.
 
 The main session runs on the model and effort you pick.
 
@@ -64,7 +78,7 @@ Context you pay for in every session comes from a short list: the system prompt,
 
 - `/context` shows the breakdown for the current session; `/context all` expands each item. It also warns about context-heavy tools and memory bloat.
 - `/skills` lists skills; press `t` to sort them by token count.
-- `claude plugin details <plugin>` prints a plugin's always-on tokens. Orchestra's always-on cost is one skill description, five agent descriptions, one command description and a two-line session-start note. The skill body loads only when the skill runs.
+- `claude plugin details <plugin>` prints a plugin's always-on tokens. Orchestra's always-on cost is twelve skill descriptions, eleven agent descriptions, one command description and a two-line session-start note. Skill bodies load only when a skill runs.
 - The script below lists the instruction files, skill and agent descriptions and MCP servers on disk, biggest first. It is standard-library Python and runs on Windows too. Run it from a project root: `python scan.py`.
 
 <details>

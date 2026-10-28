@@ -2,14 +2,17 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
-## 3.1.0 — 2026-10-29
+## 3.2.0 — 2026-10-30
 
-Restores the lessons of 2.15 without giving up 3.0's speed. Rules load only when a situation needs them, and rules a script can check became a script.
+Brings back every capability of 2.15 that 3.0 dropped, without slowing 3.0's fast path. Version 3.1.0 was built and benchmarked but not released: it loaded its lessons into every builder and reviewer, which cost about 36% more time with no quality gain. 3.2 keeps 3.0's agent text on the fast path and loads each lesson only when its situation applies.
 
-- **Added:** nine reference files beside the skill (`references/`): bugs, decisions, tests, frontend, review lenses, large work, research, repair and finishing. They hold the 2.15.3 lessons (reproduce a bug before fixing it, fix at the source, decide or ask on two-shape asks, name conflicting asks, tests first, test quality, review lenses for security, data and performance, repair rules, worktree cleanup, PR merge risk) and ideas from the newest mattpocock/skills and pstack. The skill's situation table loads a file only when it applies.
-- **Added:** `lean.py check` (code in `scripts/check.py`): a pre-PR diff scan for files that grew past 500 lines, weakened tests and gates, mocks of in-repo modules, debug leftovers, rule-file and security-relevant changes, and secrets (value never shown). It never blocks; the reviewer judges each item. See `docs/check.md`.
-- **Changed:** builders write tests first, fix bugs where the bad value starts, split files before 500 lines, and report BLOCKED instead of guessing an open choice. Reviewers run the check, read rules from the base commit, try to refute each finding, quote the rule or ask it breaks, and end with a coverage line. The final message has a Decisions list.
-- **Benchmark:** two longer tasks (D and E, 18 asks each) with hidden traps for the situations the lessons cover; the scorer records the largest changed file. Results in `docs/BENCHMARK.md`.
+- **Added: eleven agents.** Back from 2.15.3, each with its model and effort pinned: `builder-mechanical`, `builder-cleanup` and `operator` (Haiku 5.5 high); `reviewer-light`, `reviewer-standards` and `investigator-research` (Sonnet 5.5 medium). Kept: `builder`, `reviewer`, `planner`, `critic`, `investigator`.
+- **Added: role skills.** `build`, `review`, `plan`, `critique`, `investigate` and `operate` hold each role's deeper rules from 2.15.3, updated with the newest mattpocock/skills and pstack ideas. An agent loads its role skill only in the cases its file names (a repair, a named review lens, a twice-failed check).
+- **Added: shared situation skills.** `diagnose`, `decide`, `test-quality`, `frontend-proof` and `large-work`, open to every agent and the main session. The main skill names the situation for each and writes "Load `orchestra:<skill>` first" only into the briefs it applies to.
+- **Added: `lean.py check`** (code in `scripts/check.py`): a pre-PR diff scan for files that grew past 500 lines, weakened tests and gates, mocks of in-repo modules, debug leftovers, rule-file and security-relevant changes, and secrets (value never shown). The main session runs it once and gives the output to the reviewers. It never blocks. See `docs/check.md`.
+- **Changed: routing.** The main skill picks the agent by unit kind (Haiku for uniform changes across many files and code lookups, Sonnet for normal builds and research) and the reviewer by diff size (`reviewer-light` under about 300 lines; 2 or 3 Opus reviewers by area above; `reviewer-standards` when the scan flags size, tests or rules).
+- **Changed: the pre-PR review loop.** Review runs once, after all units land. Each repair is re-reviewed on the files it touched and the findings it answers only, until clean, at most 3 rounds; a finding that survives goes to one Opus repair.
+- **Benchmark:** two longer tasks (D and E, 18 asks each) with hidden traps (a misleading bug report, conflicting asks, a data migration, unsafe HTML, a race, a new status that must show everywhere, a midnight boundary, a harmful owner suggestion). The scorer records the largest changed file. Results in `docs/BENCHMARK.md`.
 
 ## 3.0.0 — 2026-10-28
 
