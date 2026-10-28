@@ -179,7 +179,7 @@ def stream_metrics(run):
 
 
 def score(run):
-    run = Path(run)
+    run = Path(run).resolve()  # vitest runs in the run's folder; a relative report path would land inside it
     s = dict(stream=stream_metrics(run))
     org = run / 'origin.git'
     _, refs = sh(['git', '-C', str(org), 'for-each-ref', '--sort=-committerdate', '--format=%(refname:short)', 'refs/heads'])
