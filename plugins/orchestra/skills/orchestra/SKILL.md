@@ -18,7 +18,23 @@ Write the ask ledger (path from the session context, or `python3 <plugin>/script
 
 Marks: `[ ]` todo, `[>]` running, `[x]` done, `[~]` dropped with a reason after it. Split compound sentences into separate asks; keep implied asks (a route for a new page, a nav link) inside the ask that needs them. Find files by reading the code yourself with grep and short reads; for a large unknown area send one fast read-only investigator, and do not wait for it before starting asks whose files you already know.
 
-## 2. Decide what needs a plan
+## 2. Situations: load a reference only when it applies
+
+The core below is enough for most asks. When a situation applies, read its file in `references/` (beside this skill) before you write the briefs it affects, and put the file's absolute path in each affected brief so the builder reads it too. Never load a file whose situation does not apply.
+
+| Situation | File |
+|---|---|
+| An ask reports something broken, or a fix did not hold | `bugs.md` |
+| An ask has two valid shapes, two asks conflict, or a suggestion would break existing behavior | `decisions.md` |
+| A unit adds or changes tests; the hygiene pass before the PR | `tests.md` |
+| An ask changes pages, components, styles or interaction | `frontend.md` |
+| An ask is too big for one builder, has unknowns, changes an interface others use, or the prompt has over 15 asks | `large.md` |
+| An ask depends on a library, API or behavior not yet checked here | `research.md` |
+| The review returns findings | `repair.md` |
+| Writing the review brief (the reviewer also loads it) | `review.md` |
+| Before the final message, PR and cleanup | `finish.md` |
+
+## 3. Decide what needs a plan
 
 Plan only for novelty, never for size:
 - No plan: copy, labels, colors, fonts, spacing, small bug fixes, renames, refactors with a clear target, test cleanup, docs. Twenty of these are still no plan.
@@ -26,7 +42,7 @@ Plan only for novelty, never for size:
 
 A planned ask gets a short spec written by its own builder as its first step (put "write a 10-line spec in your report first, then build it" in its brief). Only a large or risky feature gets a separate planner agent and a critic, and only that ask waits for them; every other ask keeps running.
 
-## 3. Units and waves
+## 4. Units and waves
 
 Pack asks into units, one builder each:
 - Asks that edit the same file go in the same unit, or the later one depends on the earlier.
@@ -51,33 +67,28 @@ Builders share your checkout when their files are disjoint: no worktrees, no ext
 
 A builder brief holds: the ask text in the user's words, the exact files it owns, files it must not touch, what it can rely on from units before it, the checks to run, its time cap (default 15 minutes), and the plugin's `lean.py` path for bounded commands. It also holds every cross-cutting rule from the prompt (an ask that says "wherever", "everywhere", "all" or "every", such as an arrow on every price change or a format for every date), so new code in other units follows it too; name the shared helper that implements the rule, and make the unit that builds it a dependency. Builders only fix check errors in their own files; errors in a sibling's file mid-edit are expected.
 
-## 4. Self-check, then one review
+## 5. Self-check, then one review
 
 Each builder checks its own work against its ask before it reports. There is no review per unit.
 
 When every unit has landed, in this order and as parallel as it allows:
-1. Start the review at once, in one Workflow: split the changed files into 2 or 3 groups by area (one reviewer for the whole diff only when it is under about 300 lines). Each `orchestra:reviewer` reviews its group and reads the rest of the diff only for the seams. Give each the ask ledger as the spec.
+1. Run `python3 <plugin>/scripts/lean.py check --base <base>` (a few seconds; it lists oversized files that grew, weakened tests, self-mocks, debug leftovers, rule-file and sensitive changes, secrets). Then start the review at once, in one Workflow: split the changed files into 2 or 3 groups by area (one reviewer for the whole diff only when it is under about 300 lines). Each `orchestra:reviewer` reviews its group and reads the rest of the diff only for the seams. Give each the ask ledger as the spec, the check output, the absolute path of `references/review.md`, and the lenses in it that apply.
 2. While the reviewers work, run the project's full checks once (typecheck, lint, tests, build), each bounded: `python3 <plugin>/scripts/lean.py run 300 -- npm test`, and do test hygiene (below) and the docs.
-3. Check each finding against the code. Fix every real finding a user or maintainer would hit, notes included when the fix is small; do not leave it for later. Send them to one repair builder (or one per disjoint file group, in parallel), or fix a few small ones yourself.
+3. Repair per `repair.md`: check each finding against the code, fix every real one a user or maintainer would hit (notes too when small), reject wrong ones with evidence.
 4. One re-review of only the repair diff and only the raised findings; run the full checks again while it works. Whatever it says, you are done reviewing; list any new notes in the final message instead of starting another round.
 
-## 5. Test hygiene before every PR
+If no independent reviewer can run, say so in the final message: the work is unreviewed. Your own checks never count as the review.
 
-Keep tests few, fast and behavior-level. In the changed area and the suite:
-- remove duplicate tests and tests of implementation details or mocks;
-- delete or fix every skipped test; no stale skip reasons;
-- replace brittle snapshots of markup with a behavior assertion;
-- remove lint suppressions without a reason, or fix the code;
-- a failing test is fixed (code or test), never silenced or excepted;
-- every new module gets the smallest test that proves its behavior.
-Use fast native tools if the repo already has them (oxlint, tsgo, tsrs); never add tools unasked.
+## 6. Test hygiene before every PR
 
-## 6. Finish
+One cleanup unit per `tests.md`: remove duplicate, skipped and implementation-detail tests, replace markup snapshots with behavior checks, remove suppressions without a reason. A failing test is fixed, never silenced. Never add tools unasked.
+
+## 7. Finish
 
 Push the branch and open a PR when the remote is GitHub (a plain git remote: push only). Merging into the default branch is the one step only the owner takes. Deleting stale worktrees and branches you created is part of finishing.
 
-Final message: the user reads only your last message, so it stands alone; never write "see above". It holds the ledger as a short table (ask, status, one-line note), every answer the user asked for in full (a bug's cause, a choice you made, where something now lives), the check results, and the PR or branch.
+Final message (see `finish.md`): the user reads only your last message, so it stands alone; never write "see above". It holds the ledger as a short table (ask, status, one-line note), a "Decisions" list (each choice you made without asking, each conflict between asks and how you settled it, each suggestion you adapted and why), every answer the user asked for in full (a bug's cause, where something now lives), the check results with exit codes, and the PR or branch.
 
 ## /goal
 
-When the user sets a goal, the Stop hook keeps you working until every ledger line is `[x]` or `[~]` and the branch is pushed. Do not stop to ask; make sensible calls and note them. If only the owner can unblock you, run `lean.py goal stop REASON`.
+When the user sets a goal, the Stop hook keeps you working until every ledger line is `[x]` or `[~]` and the branch is pushed. Do not stop to ask; decide per `decisions.md` and list each decision in the final message. If only the owner can unblock you, run `lean.py goal stop REASON`.

@@ -71,6 +71,17 @@ class SkillTest(unittest.TestCase):
         self.assertLess(len(path.read_text().splitlines()), 200)
 
 
+    def test_every_reference_is_in_the_situation_table_and_stays_short(self):
+        skill = (PLUGIN / 'skills/orchestra/SKILL.md').read_text()
+        named = set(re.findall(r'`([a-z-]+\.md)`', skill))
+        files = {f.name for f in (PLUGIN / 'skills/orchestra/references').glob('*.md')}
+        self.assertEqual(named & files, files, 'a reference file no situation loads')
+        self.assertTrue({n for n in named if n != 'SKILL.md'} <= files, 'a situation names a missing file')
+        for f in (PLUGIN / 'skills/orchestra/references').glob('*.md'):
+            with self.subTest(f.name):
+                self.assertLessEqual(len(f.read_text().splitlines()), 60)
+
+
 class PrivacyTest(unittest.TestCase):
     def test_no_shipped_file_holds_a_personal_path_or_name(self):
         words = private_words()
