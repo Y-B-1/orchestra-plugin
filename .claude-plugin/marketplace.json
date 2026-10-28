@@ -7,7 +7,7 @@
     {
       "name": "orchestra",
       "source": "./plugins/orchestra",
-      "description": "Coordinate independent coding agents with explicit ownership, evidence and release checks.",
+      "description": "Deliver multi-request prompts fast: every independent ask in parallel, one independent review, /goal, and a guard that blocks only merging into the default branch.",
       "author": {
         "name": "Orchestra contributors"
       }
