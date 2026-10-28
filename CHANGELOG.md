@@ -2,6 +2,15 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.1.0 — 2026-10-29
+
+Restores the lessons of 2.15 without giving up 3.0's speed. Rules load only when a situation needs them, and rules a script can check became a script.
+
+- **Added:** nine reference files beside the skill (`references/`): bugs, decisions, tests, frontend, review lenses, large work, research, repair and finishing. They hold the 2.15.3 lessons (reproduce a bug before fixing it, fix at the source, decide or ask on two-shape asks, name conflicting asks, tests first, test quality, review lenses for security, data and performance, repair rules, worktree cleanup, PR merge risk) and ideas from the newest mattpocock/skills and pstack. The skill's situation table loads a file only when it applies.
+- **Added:** `lean.py check` (code in `scripts/check.py`): a pre-PR diff scan for files that grew past 500 lines, weakened tests and gates, mocks of in-repo modules, debug leftovers, rule-file and security-relevant changes, and secrets (value never shown). It never blocks; the reviewer judges each item. See `docs/check.md`.
+- **Changed:** builders write tests first, fix bugs where the bad value starts, split files before 500 lines, and report BLOCKED instead of guessing an open choice. Reviewers run the check, read rules from the base commit, try to refute each finding, quote the rule or ask it breaks, and end with a coverage line. The final message has a Decisions list.
+- **Benchmark:** two longer tasks (D and E, 18 asks each) with hidden traps for the situations the lessons cover; the scorer records the largest changed file. Results in `docs/BENCHMARK.md`.
+
 ## 3.0.0 — 2026-10-28
 
 A rewrite. Orchestra is now a small plugin for fast delivery of multi-request prompts: every independent ask runs in parallel, one independent review follows, `/orchestra:goal` keeps a session going, and one guard blocks only merging into the default branch. A benchmark showed this design delivers about the same quality in about 40% less time than plain Claude Code (7.4 against 12.7 minutes per task, at the same cost), and in about a third of the time and cost of 2.15.3 (see `docs/BENCHMARK.md`).

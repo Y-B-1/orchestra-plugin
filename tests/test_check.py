@@ -75,6 +75,8 @@ class Check(unittest.TestCase):
         self.write('dist/out.js', 'x\n' * 600)
         self.write('gen.py', '# This file is generated\n' + 'x = 1\n' * 600)
         (self.repo / 'blob.bin').write_bytes(b'\0\1\2\n' * 600)
+        self.write('fix.patch', '+x\n' * 600)
+        self.write('rows.csv', 'a,b\n' * 600)
         self.assertFalse([k for k in self.kinds() if k[0] == 'size'])
 
     def test_size_waiver(self):
@@ -135,6 +137,10 @@ class Check(unittest.TestCase):
         self.write('app.py', "print('hello')\nprint('DEBUG x')\nbreakpoint()\n")
         f = [f for f in self.findings() if f['kind'] == 'debug']
         self.assertEqual([x['line'] for x in f], [2, 3])
+
+    def test_docs_that_quote_patterns_are_not_code(self):
+        self.write('notes.md', "Use `[DEBUG-a1]` tags and never `.skip(` a test.\n")
+        self.assertFalse([f for f in self.findings() if f['kind'] in ('debug', 'test-weakened')])
 
     def test_rules_files(self):
         self.write('AGENTS.md', 'rules\n')
