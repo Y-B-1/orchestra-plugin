@@ -1,0 +1,1670 @@
+diff --git a/README.md b/README.md
+index 344f452..89e52c7 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,17 @@
+ # Pulse
+ 
+-Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications in the top bar; and user settings (theme and notifications) saved in the browser.
++Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications in the top bar; and user settings (theme, alerts and the large trade threshold) saved in the browser.
+ 
+-Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
++Routes: `/` dashboard, `/portfolio`, `/trades` (`?trade=T-10150` opens that trade's drawer, `?symbol=AAPL` pre-filters), `/exposure` (`?client=c-002` picks the client), `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
++
++## Trade operations
++
++- **Today panel** on the trades page counts the trades of the current trading day by status. The trading day is the UTC calendar day (midnight to midnight UTC) wherever the viewer is.
++- **Statuses**: Filled, Partially filled, Cancelled and Pending. Their labels and order live in one place, `src/utils/tradeStatus.ts`, which the badge, the Status filter, the Today panel and the CSV export all read. Pending has its own color token, `--color-pending`.
++- **Booking**: "Book trade" opens a dialog (client, instrument, side, quantity, price; the price starts at the instrument's last price). A booked trade gets the next trade id, is booked by D. Whitaker on venue "Pulse", and starts as Pending with nothing filled. A pending trade can be cancelled from its drawer; filled and partially filled trades cannot. Booked trades live in memory until the page reloads (the mock API has no backend).
++- **Large trade alerts**: booking a trade whose order value in USD (quantity times price, converted with the portfolio FX rates) is at least the "Large trade alert (USD)" setting adds an unread notification that links to the trade. The default is $1,000,000.
++- **Blotter**: Trader column, Status filter, "Rows per page" (25, 50, 100 or All), and links to a single trade. The instrument filter waits 150 ms after typing stops before asking the API, so typing a symbol sends one request rather than one per keystroke.
++- **Exposure** (`/exposure`): pick a client to see bought, sold and net filled quantity and the number of orders per instrument. Each client's trades are kept for the rest of the visit to the page, so flipping back is instant; leaving the page drops them, so a trade booked meanwhile always shows. Only the latest pick is ever shown, however the answers arrive. The client drawer links here with "View exposure".
+ 
+ All data is mocked: typed fetchers in `src/api` read JSON files in `src/data` after a short artificial delay.
+ 
+diff --git a/src/App.tsx b/src/App.tsx
+index cbe0cf5..d7cfbf1 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,7 +1,8 @@
+-import { Route, Routes } from "react-router-dom";
++import { Link, Route, Routes } from "react-router-dom";
+ import { Shell } from "./components/Shell";
+ import { Clients } from "./pages/Clients";
+ import { Dashboard } from "./pages/Dashboard";
++import { Exposure } from "./pages/Exposure";
+ import { InstrumentDetail } from "./pages/InstrumentDetail";
+ import { Portfolio } from "./pages/Portfolio";
+ import { Reports } from "./pages/Reports";
+@@ -16,10 +17,18 @@ export function App() {
+         <Route path="portfolio" element={<Portfolio />} />
+         <Route path="trades" element={<Trades />} />
+         <Route path="instruments/:symbol" element={<InstrumentDetail />} />
++        <Route path="exposure" element={<Exposure />} />
+         <Route path="clients" element={<Clients />} />
+         <Route path="reports" element={<Reports />} />
+         <Route path="settings" element={<Settings />} />
+-        <Route path="*" element={<p className="feedback feedback--empty">Page not found.</p>} />
++        <Route
++          path="*"
++          element={
++            <p className="feedback feedback--empty">
++              Page not found. <Link to="/">Back to the dashboard</Link>
++            </p>
++          }
++        />
+       </Route>
+     </Routes>
+   );
+diff --git a/src/api/index.ts b/src/api/index.ts
+index 41b6cdc..aa7b45c 100644
+--- a/src/api/index.ts
++++ b/src/api/index.ts
+@@ -3,7 +3,17 @@ export { fetchClients, fetchClient, clientName } from "./clients";
+ export { fetchReports } from "./reports";
+ export { fetchKpis } from "./kpis";
+ export { fetchHoldings, fetchFxRates, fetchPositions } from "./holdings";
+-export { fetchTrades, fetchTrade, fetchRecentTrades, emptyTradeFilters, matchesTradeFilters } from "./trades";
++export {
++  fetchTrades,
++  fetchTrade,
++  fetchRecentTrades,
++  fetchClientTrades,
++  bookTrade,
++  cancelTrade,
++  orderValueUsd,
++  emptyTradeFilters,
++  matchesTradeFilters,
++} from "./trades";
+ export { fetchPriceHistory, type HistoryRange } from "./history";
+ export { fetchNotifications } from "./notifications";
+ export { latency, NotFoundError, ValidationError } from "./client";
+diff --git a/src/api/trades.test.ts b/src/api/trades.test.ts
+index 91c3338..58443fc 100644
+--- a/src/api/trades.test.ts
++++ b/src/api/trades.test.ts
+@@ -1,4 +1,4 @@
+-import { beforeAll, describe, expect, it } from "vitest";
++import { beforeAll, describe, expect, it, vi } from "vitest";
+ import { fetchRecentTrades, fetchTrade, fetchTrades, latency, NotFoundError, ValidationError } from "./index";
+ 
+ beforeAll(() => {
+@@ -42,3 +42,30 @@ describe("single trades", () => {
+     expect(trades.every((t) => t.symbol === "AAPL")).toBe(true);
+   });
+ });
++
++describe("booking and cancelling", () => {
++  // Booking changes the module's trade list, so each test loads a fresh copy of the module.
++  async function freshApi() {
++    vi.resetModules();
++    const api = await import("./index");
++    api.latency.ms = 0;
++    return api;
++  }
++
++  it("books a pending order with the next id and nothing filled", async () => {
++    const api = await freshApi();
++    const now = new Date("2026-10-27T23:59:00Z");
++    const trade = await api.bookTrade({ clientId: "c-002", symbol: "SAP", side: "sell", quantity: 100, price: 215 }, now);
++    expect(trade).toMatchObject({ id: "T-10151", status: "pending", filledQuantity: 0, currency: "EUR", executedAt: now.toISOString() });
++    expect((await api.fetchTrades({ status: "pending" })).map((t) => t.id)).toEqual(["T-10151"]);
++    await expect(api.bookTrade({ clientId: "c-002", symbol: "SAP", side: "buy", quantity: 0, price: 1 })).rejects.toBeInstanceOf(api.ValidationError);
++  });
++
++  it("cancels only pending orders", async () => {
++    const api = await freshApi();
++    const trade = await api.bookTrade({ clientId: "c-001", symbol: "AAPL", side: "buy", quantity: 10, price: 227.48 });
++    expect(trade.id).toBe("T-10151");
++    expect((await api.cancelTrade(trade.id)).status).toBe("cancelled");
++    await expect(api.cancelTrade("T-10150")).rejects.toBeInstanceOf(api.ValidationError);
++  });
++});
+diff --git a/src/api/trades.ts b/src/api/trades.ts
+index da8d697..c652e9f 100644
+--- a/src/api/trades.ts
++++ b/src/api/trades.ts
+@@ -1,9 +1,19 @@
+ import data from "../data/trades.json";
+-import type { Trade, TradeFilters } from "../types";
++import instrumentData from "../data/instruments.json";
++import ratesData from "../data/fx-rates.json";
++import type { FxRates, Instrument, Trade, TradeFilters, TradeTicket } from "../types";
+ import { isInvertedRange, isWithinRange } from "../utils/dates";
++import { toUsd } from "../utils/numbers";
+ import { delay, NotFoundError, ValidationError } from "./client";
+ 
+-const trades = data as Trade[];
++// A copy, so trades booked or cancelled in this session never touch the imported fixture.
++const trades: Trade[] = (data as Trade[]).map((trade) => ({ ...trade }));
++const instruments = instrumentData as Instrument[];
++const rates = ratesData as FxRates;
++
++/** Who books trades from Pulse and where they are recorded until the order is routed. */
++export const BOOKING_TRADER = "D. Whitaker";
++export const BOOKING_VENUE = "Pulse";
+ 
+ export const emptyTradeFilters: TradeFilters = {
+   side: "all",
+@@ -11,24 +21,32 @@ export const emptyTradeFilters: TradeFilters = {
+   from: "",
+   to: "",
+   symbol: "",
++  status: "all",
+ };
+ 
+ export function matchesTradeFilters(trade: Trade, filters: TradeFilters): boolean {
+   if (filters.side !== "all" && trade.side !== filters.side) return false;
+   if (filters.assetClass !== "all" && trade.assetClass !== filters.assetClass) return false;
++  if (filters.status !== "all" && trade.status !== filters.status) return false;
+   if (filters.symbol && !trade.symbol.toLowerCase().includes(filters.symbol.trim().toLowerCase())) return false;
+   return isWithinRange(trade.executedAt, filters.from, filters.to);
+ }
+ 
++const newestFirst = (a: Trade, b: Trade) => b.executedAt.localeCompare(a.executedAt);
++
+ /** Trades matching `filters`, newest first. */
+ export async function fetchTrades(filters: Partial<TradeFilters> = {}): Promise<Trade[]> {
+   const merged = { ...emptyTradeFilters, ...filters };
+   if (isInvertedRange(merged.from, merged.to)) {
+     throw new ValidationError("The start date must be on or before the end date.");
+   }
+-  const rows = trades
+-    .filter((trade) => matchesTradeFilters(trade, merged))
+-    .sort((a, b) => b.executedAt.localeCompare(a.executedAt));
++  const rows = trades.filter((trade) => matchesTradeFilters(trade, merged)).sort(newestFirst);
++  return delay(rows.map((row) => ({ ...row })));
++}
++
++/** Every trade of one client, newest first. */
++export async function fetchClientTrades(clientId: string): Promise<Trade[]> {
++  const rows = trades.filter((trade) => trade.clientId === clientId).sort(newestFirst);
+   return delay(rows.map((row) => ({ ...row })));
+ }
+ 
+@@ -42,7 +60,52 @@ export async function fetchTrade(id: string): Promise<Trade> {
+ export async function fetchRecentTrades(symbol: string, limit = 10): Promise<Trade[]> {
+   const rows = trades
+     .filter((trade) => trade.symbol === symbol)
+-    .sort((a, b) => b.executedAt.localeCompare(a.executedAt))
++    .sort(newestFirst)
+     .slice(0, limit);
+   return delay(rows.map((row) => ({ ...row })));
+ }
++
++function nextTradeId(): string {
++  const highest = Math.max(0, ...trades.map((trade) => Number(trade.id.slice(2)) || 0));
++  return `T-${highest + 1}`;
++}
++
++/** Books a new order. It starts as pending, with nothing filled yet. */
++export async function bookTrade(ticket: TradeTicket, now: Date = new Date()): Promise<Trade> {
++  const instrument = instruments.find((i) => i.symbol === ticket.symbol);
++  if (!instrument) throw new NotFoundError("Instrument", ticket.symbol);
++  if (!Number.isInteger(ticket.quantity) || ticket.quantity <= 0) throw new ValidationError("Enter a quantity above zero");
++  if (!(ticket.price > 0)) throw new ValidationError("Enter a price above zero");
++  const trade: Trade = {
++    id: nextTradeId(),
++    symbol: instrument.symbol,
++    assetClass: instrument.assetClass,
++    side: ticket.side,
++    quantity: ticket.quantity,
++    filledQuantity: 0,
++    price: ticket.price,
++    currency: instrument.currency,
++    executedAt: now.toISOString(),
++    clientId: ticket.clientId,
++    trader: BOOKING_TRADER,
++    venue: BOOKING_VENUE,
++    status: "pending",
++    fees: 0,
++  };
++  trades.push(trade);
++  return delay({ ...trade });
++}
++
++/** Cancels a pending order; anything already (partly) filled cannot be cancelled here. */
++export async function cancelTrade(id: string): Promise<Trade> {
++  const found = trades.find((t) => t.id === id);
++  if (!found) throw new NotFoundError("Trade", id);
++  if (found.status !== "pending") throw new ValidationError(`Trade ${id} is not pending`);
++  found.status = "cancelled";
++  return delay({ ...found });
++}
++
++/** The full order size in USD, at the order price. */
++export function orderValueUsd(trade: Pick<Trade, "quantity" | "price" | "currency">): number {
++  return toUsd(trade.quantity * trade.price, trade.currency, rates);
++}
+diff --git a/src/components/ClientDrawer.test.tsx b/src/components/ClientDrawer.test.tsx
+index c8329fa..adf8f3d 100644
+--- a/src/components/ClientDrawer.test.tsx
++++ b/src/components/ClientDrawer.test.tsx
+@@ -1,4 +1,5 @@
+ import { render, screen } from "@testing-library/react";
++import { MemoryRouter } from "react-router-dom";
+ import { beforeAll, describe, expect, it } from "vitest";
+ import { latency } from "../api";
+ import { ClientDrawer } from "./ClientDrawer";
+@@ -9,7 +10,11 @@ beforeAll(() => {
+ 
+ describe("ClientDrawer", () => {
+   it("loads and shows the client", async () => {
+-    render(<ClientDrawer clientId="c-001" onClose={() => undefined} />);
++    render(
++      <MemoryRouter>
++        <ClientDrawer clientId="c-001" onClose={() => undefined} />
++      </MemoryRouter>,
++    );
+     expect(await screen.findByRole("heading", { name: "Northwind Capital" })).toBeInTheDocument();
+     expect(screen.getByText("Ines Vogel", { exact: false })).toBeInTheDocument();
+   });
+diff --git a/src/components/ClientDrawer.tsx b/src/components/ClientDrawer.tsx
+index 97a7dcc..0728333 100644
+--- a/src/components/ClientDrawer.tsx
++++ b/src/components/ClientDrawer.tsx
+@@ -1,3 +1,4 @@
++import { Link } from "react-router-dom";
+ import type { Client } from "../types";
+ import { fetchClient } from "../api";
+ import { useAsync } from "../hooks/useAsync";
+@@ -29,6 +30,10 @@ function Details({ client }: { client: Client }) {
+       <dd>{formatDateTime(client.lastActivity)} UTC</dd>
+       <dt>Notes</dt>
+       <dd>{client.notes}</dd>
++      <dt>Exposure</dt>
++      <dd>
++        <Link to={`/exposure?client=${client.id}`}>View exposure</Link>
++      </dd>
+     </dl>
+   );
+ }
+diff --git a/src/components/Dialog.test.tsx b/src/components/Dialog.test.tsx
+new file mode 100644
+index 0000000..d6b5838
+--- /dev/null
++++ b/src/components/Dialog.test.tsx
+@@ -0,0 +1,34 @@
++import { fireEvent, render, screen } from "@testing-library/react";
++import { useState } from "react";
++import { describe, expect, it } from "vitest";
++import { Dialog } from "./Dialog";
++
++function Harness() {
++  const [open, setOpen] = useState(false);
++  return (
++    <>
++      <button type="button" onClick={() => setOpen(true)}>
++        Open
++      </button>
++      {open ? (
++        <Dialog title="Book trade" onClose={() => setOpen(false)}>
++          <input aria-label="Quantity" />
++        </Dialog>
++      ) : null}
++    </>
++  );
++}
++
++describe("Dialog", () => {
++  it("takes focus, closes on Escape and hands focus back", () => {
++    render(<Harness />);
++    const opener = screen.getByRole("button", { name: "Open" });
++    opener.focus();
++    fireEvent.click(opener);
++    const dialog = screen.getByRole("dialog", { name: "Book trade" });
++    expect(dialog.contains(document.activeElement)).toBe(true);
++    fireEvent.keyDown(screen.getByLabelText("Quantity"), { key: "Escape" });
++    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
++    expect(opener).toHaveFocus();
++  });
++});
+diff --git a/src/components/Dialog.tsx b/src/components/Dialog.tsx
+new file mode 100644
+index 0000000..286c4b2
+--- /dev/null
++++ b/src/components/Dialog.tsx
+@@ -0,0 +1,55 @@
++import { useEffect, useId, useRef, type KeyboardEvent, type ReactNode } from "react";
++
++interface DialogProps {
++  title: string;
++  onClose: () => void;
++  children: ReactNode;
++}
++
++const focusable = 'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex="0"]';
++
++/**
++ * A modal dialog. Focus moves into it on open and stays inside while Tab cycles, Escape
++ * closes it, and focus goes back to whatever was focused before it opened.
++ */
++export function Dialog({ title, onClose, children }: DialogProps) {
++  const titleId = useId();
++  const ref = useRef<HTMLDivElement>(null);
++
++  useEffect(() => {
++    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
++    ref.current?.focus();
++    return () => previous?.focus();
++  }, []);
++
++  function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
++    if (event.key === "Escape") {
++      event.stopPropagation();
++      onClose();
++      return;
++    }
++    if (event.key !== "Tab" || !ref.current) return;
++    const items = Array.from(ref.current.querySelectorAll<HTMLElement>(focusable));
++    const first = items[0];
++    const last = items[items.length - 1];
++    if (!first || !last) return;
++    if (event.shiftKey && (document.activeElement === first || document.activeElement === ref.current)) {
++      event.preventDefault();
++      last.focus();
++    } else if (!event.shiftKey && document.activeElement === last) {
++      event.preventDefault();
++      first.focus();
++    }
++  }
++
++  return (
++    <div className="dialog-backdrop">
++      <div ref={ref} className="dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onKeyDown}>
++        <h2 id={titleId} className="dialog__title">
++          {title}
++        </h2>
++        {children}
++      </div>
++    </div>
++  );
++}
+diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx
+index 450347b..5a755f9 100644
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -4,6 +4,7 @@ const links = [
+   { to: "/", label: "Dashboard", end: true },
+   { to: "/portfolio", label: "Portfolio", end: false },
+   { to: "/trades", label: "Trades", end: false },
++  { to: "/exposure", label: "Exposure", end: false },
+   { to: "/clients", label: "Clients", end: false },
+   { to: "/reports", label: "Reports", end: false },
+   { to: "/settings", label: "Settings", end: false },
+diff --git a/src/components/TopBar.tsx b/src/components/TopBar.tsx
+index 6fe578a..8b97d9e 100644
+--- a/src/components/TopBar.tsx
++++ b/src/components/TopBar.tsx
+@@ -6,6 +6,7 @@ const titles: Record<string, string> = {
+   "/": "Dashboard",
+   "/portfolio": "Portfolio",
+   "/trades": "Trades",
++  "/exposure": "Exposure",
+   "/clients": "Clients",
+   "/reports": "Reports",
+   "/settings": "Settings",
+diff --git a/src/components/trades/Blotter.tsx b/src/components/trades/Blotter.tsx
+new file mode 100644
+index 0000000..cbb4e37
+--- /dev/null
++++ b/src/components/trades/Blotter.tsx
+@@ -0,0 +1,68 @@
++import { useMemo } from "react";
++import type { SortState, Trade } from "../../types";
++import { formatNumber } from "../../utils/format";
++import { paginate } from "../../utils/pagination";
++import { Pagination } from "../Pagination";
++import { sortRows, Table } from "../Table";
++import { blotterColumns } from "./tradeColumns";
++
++export type PageSize = 25 | 50 | 100 | "all";
++
++export const pageSizes: readonly PageSize[] = [25, 50, 100, "all"];
++
++interface BlotterProps {
++  trades: Trade[];
++  sort: SortState | null;
++  onSortChange: (next: SortState) => void;
++  page: number;
++  onPageChange: (page: number) => void;
++  pageSize: PageSize;
++  onPageSizeChange: (size: PageSize) => void;
++  selectedId: string | null;
++  onSelect: (id: string) => void;
++}
++
++export function Blotter({ trades, sort, onSortChange, page, onPageChange, pageSize, onPageSizeChange, selectedId, onSelect }: BlotterProps) {
++  // Sorting is the only work proportional to the whole list; it runs once per data or sort change.
++  const sorted = useMemo(() => sortRows(trades, blotterColumns, sort), [trades, sort]);
++  const visible = pageSize === "all" ? sorted : paginate(sorted, page, pageSize);
++  return (
++    <>
++      <Table
++        caption="Trade blotter"
++        columns={blotterColumns}
++        rows={visible}
++        rowKey={(trade) => trade.id}
++        sort={sort}
++        onSortChange={onSortChange}
++        onRowClick={(trade) => onSelect(trade.id)}
++        rowLabel={(trade) => `Trade ${trade.id}`}
++        selectedKey={selectedId}
++        emptyMessage="No trades match these filters."
++      />
++      <div className="blotter-footer">
++        {pageSize === "all" ? (
++          <p className="pagination__summary" aria-live="polite">
++            Showing all {formatNumber(trades.length)} trades
++          </p>
++        ) : (
++          <Pagination total={trades.length} page={page} pageSize={pageSize} onPageChange={onPageChange} noun="trades" />
++        )}
++        <label className="blotter-footer__size">
++          Rows per page
++          <select
++            className="input input--compact"
++            value={String(pageSize)}
++            onChange={(event) => onPageSizeChange(event.target.value === "all" ? "all" : (Number(event.target.value) as PageSize))}
++          >
++            {pageSizes.map((size) => (
++              <option key={size} value={String(size)}>
++                {size === "all" ? "All" : size}
++              </option>
++            ))}
++          </select>
++        </label>
++      </div>
++    </>
++  );
++}
+diff --git a/src/components/trades/BookTradeDialog.tsx b/src/components/trades/BookTradeDialog.tsx
+new file mode 100644
+index 0000000..60c3f31
+--- /dev/null
++++ b/src/components/trades/BookTradeDialog.tsx
+@@ -0,0 +1,151 @@
++import { useId, useState, type FormEvent } from "react";
++import { bookTrade, fetchClients, fetchInstruments } from "../../api";
++import { toError, useAsync } from "../../hooks/useAsync";
++import type { Client, Instrument, Trade, TradeSide } from "../../types";
++import { AsyncContent } from "../AsyncContent";
++import { Dialog } from "../Dialog";
++import { ErrorState } from "../Feedback";
++
++interface BookTradeDialogProps {
++  onClose: () => void;
++  onBooked: (trade: Trade) => void;
++}
++
++interface Lists {
++  clients: Client[];
++  instruments: Instrument[];
++}
++
++async function loadLists(): Promise<Lists> {
++  const [clients, instruments] = await Promise.all([fetchClients(), fetchInstruments()]);
++  return { clients: [...clients].sort((a, b) => a.name.localeCompare(b.name)), instruments };
++}
++
++/** Checks the ticket and returns the problems to show, keyed by field. */
++export function ticketErrors(quantity: string, price: string): { quantity?: string; price?: string } {
++  const errors: { quantity?: string; price?: string } = {};
++  const qty = Number(quantity);
++  if (quantity.trim() === "" || !Number.isInteger(qty) || qty <= 0) errors.quantity = "Enter a quantity above zero";
++  if (price.trim() === "" || !(Number(price) > 0)) errors.price = "Enter a price above zero";
++  return errors;
++}
++
++function Ticket({ lists, onClose, onBooked }: BookTradeDialogProps & { lists: Lists }) {
++  const id = useId();
++  const [clientId, setClientId] = useState(lists.clients[0]?.id ?? "");
++  const [symbol, setSymbol] = useState(lists.instruments[0]?.symbol ?? "");
++  const [side, setSide] = useState<TradeSide>("buy");
++  const [quantity, setQuantity] = useState("");
++  const [price, setPrice] = useState(String(lists.instruments[0]?.price ?? ""));
++  const [shown, setShown] = useState<{ quantity?: string; price?: string }>({});
++  const [failure, setFailure] = useState<Error | null>(null);
++  const [busy, setBusy] = useState(false);
++
++  function changeInstrument(next: string) {
++    setSymbol(next);
++    const instrument = lists.instruments.find((i) => i.symbol === next);
++    if (instrument) setPrice(String(instrument.price));
++  }
++
++  function submit(event: FormEvent<HTMLFormElement>) {
++    event.preventDefault();
++    const errors = ticketErrors(quantity, price);
++    setShown(errors);
++    if (errors.quantity || errors.price) return;
++    setBusy(true);
++    bookTrade({ clientId, symbol, side, quantity: Number(quantity), price: Number(price) }).then(onBooked, (reason: unknown) => {
++      setFailure(toError(reason));
++      setBusy(false);
++    });
++  }
++
++  return (
++    <form className="ticket" onSubmit={submit} noValidate>
++      <div className="ticket__field">
++        <label htmlFor={`${id}-client`}>Client</label>
++        <select id={`${id}-client`} className="input" value={clientId} onChange={(event) => setClientId(event.target.value)}>
++          {lists.clients.map((client) => (
++            <option key={client.id} value={client.id}>
++              {client.name}
++            </option>
++          ))}
++        </select>
++      </div>
++      <div className="ticket__field">
++        <label htmlFor={`${id}-symbol`}>Instrument</label>
++        <select id={`${id}-symbol`} className="input" value={symbol} onChange={(event) => changeInstrument(event.target.value)}>
++          {lists.instruments.map((instrument) => (
++            <option key={instrument.symbol} value={instrument.symbol}>
++              {instrument.symbol} {instrument.name}
++            </option>
++          ))}
++        </select>
++      </div>
++      <div className="ticket__field">
++        <label htmlFor={`${id}-side`}>Side</label>
++        <select id={`${id}-side`} className="input" value={side} onChange={(event) => setSide(event.target.value as TradeSide)}>
++          <option value="buy">Buy</option>
++          <option value="sell">Sell</option>
++        </select>
++      </div>
++      <div className="ticket__field">
++        <label htmlFor={`${id}-quantity`}>Quantity</label>
++        <input
++          id={`${id}-quantity`}
++          className="input"
++          type="number"
++          min={1}
++          step={1}
++          value={quantity}
++          aria-invalid={shown.quantity ? true : undefined}
++          aria-describedby={shown.quantity ? `${id}-quantity-error` : undefined}
++          onChange={(event) => setQuantity(event.target.value)}
++        />
++        {shown.quantity ? (
++          <p id={`${id}-quantity-error`} className="ticket__error" role="alert">
++            {shown.quantity}
++          </p>
++        ) : null}
++      </div>
++      <div className="ticket__field">
++        <label htmlFor={`${id}-price`}>Price</label>
++        <input
++          id={`${id}-price`}
++          className="input"
++          type="number"
++          min={0}
++          step="any"
++          value={price}
++          aria-invalid={shown.price ? true : undefined}
++          aria-describedby={shown.price ? `${id}-price-error` : undefined}
++          onChange={(event) => setPrice(event.target.value)}
++        />
++        {shown.price ? (
++          <p id={`${id}-price-error`} className="ticket__error" role="alert">
++            {shown.price}
++          </p>
++        ) : null}
++      </div>
++      {failure ? <ErrorState error={failure} /> : null}
++      <div className="ticket__actions">
++        <button type="button" className="button button--ghost" onClick={onClose}>
++          Cancel
++        </button>
++        <button type="submit" className="button button--primary" disabled={busy}>
++          Book
++        </button>
++      </div>
++    </form>
++  );
++}
++
++export function BookTradeDialog({ onClose, onBooked }: BookTradeDialogProps) {
++  const lists = useAsync(loadLists, []);
++  return (
++    <Dialog title="Book trade" onClose={onClose}>
++      <AsyncContent state={lists} loadingLabel="Loading ticket">
++        {(data) => <Ticket lists={data} onClose={onClose} onBooked={onBooked} />}
++      </AsyncContent>
++    </Dialog>
++  );
++}
+diff --git a/src/components/trades/TodaySummary.tsx b/src/components/trades/TodaySummary.tsx
+new file mode 100644
+index 0000000..3e9d823
+--- /dev/null
++++ b/src/components/trades/TodaySummary.tsx
+@@ -0,0 +1,36 @@
++import { fetchTrades } from "../../api";
++import { useAsync } from "../../hooks/useAsync";
++import { formatShortDate } from "../../utils/dates";
++import { formatNumber } from "../../utils/format";
++import { summarizeDay } from "../../utils/tradeDay";
++import { tradeStatuses } from "../../utils/tradeStatus";
++import { AsyncContent } from "../AsyncContent";
++import { StatList } from "../StatList";
++
++/** Counts for the current UTC trading day. `version` changes whenever trades were booked or changed. */
++export function TodaySummary({ version }: { version: number }) {
++  const state = useAsync(() => fetchTrades(), [version]);
++  return (
++    <section className="panel day-summary" aria-label="Today">
++      <AsyncContent state={state} loadingLabel="Loading today's trades">
++        {(trades) => {
++          const summary = summarizeDay(trades, new Date());
++          return (
++            <>
++              <div className="panel__header">
++                <h2 className="panel__title">Today, {formatShortDate(`${summary.day}T00:00:00Z`)} (UTC)</h2>
++              </div>
++              <StatList
++                columns={4}
++                stats={[
++                  { label: "Trades", value: formatNumber(summary.trades) },
++                  ...tradeStatuses.map((status) => ({ label: status.label, value: formatNumber(summary.byStatus[status.value]) })),
++                ]}
++              />
++            </>
++          );
++        }}
++      </AsyncContent>
++    </section>
++  );
++}
+diff --git a/src/components/trades/TradeBadges.tsx b/src/components/trades/TradeBadges.tsx
+index d96982a..e46e3e1 100644
+--- a/src/components/trades/TradeBadges.tsx
++++ b/src/components/trades/TradeBadges.tsx
+@@ -1,15 +1,10 @@
+ import type { TradeSide, TradeStatus } from "../../types";
+-
+-const statusLabels: Record<TradeStatus, string> = {
+-  filled: "Filled",
+-  partial: "Partial",
+-  cancelled: "Cancelled",
+-};
++import { tradeStatusLabel } from "../../utils/tradeStatus";
+ 
+ export function TradeSideBadge({ side }: { side: TradeSide }) {
+   return <span className={`side side--${side}`}>{side === "buy" ? "Buy" : "Sell"}</span>;
+ }
+ 
+ export function TradeStatusBadge({ status }: { status: TradeStatus }) {
+-  return <span className={`badge badge--trade-${status}`}>{statusLabels[status]}</span>;
++  return <span className={`badge badge--trade-${status}`}>{tradeStatusLabel(status)}</span>;
+ }
+diff --git a/src/components/trades/TradeDetail.tsx b/src/components/trades/TradeDetail.tsx
+index 9b9917b..2516e91 100644
+--- a/src/components/trades/TradeDetail.tsx
++++ b/src/components/trades/TradeDetail.tsx
+@@ -1,12 +1,14 @@
++import { useState } from "react";
+ import { Link } from "react-router-dom";
+-import { fetchClient, fetchTrade } from "../../api";
+-import { useAsync } from "../../hooks/useAsync";
++import { cancelTrade, fetchClient, fetchTrade } from "../../api";
++import { toError, useAsync } from "../../hooks/useAsync";
+ import type { Trade } from "../../types";
+ import { formatCurrency, formatDateTime } from "../../utils/format";
+ import { formatPrice, formatQuantity, percentOf } from "../../utils/numbers";
+ import { assetClassLabels } from "../../utils/portfolio";
+ import { AsyncContent } from "../AsyncContent";
+ import { Drawer } from "../Drawer";
++import { ErrorState } from "../Feedback";
+ import { StatList } from "../StatList";
+ import { TradeSideBadge, TradeStatusBadge } from "./TradeBadges";
+ import { tradeNotional } from "./tradeColumns";
+@@ -14,6 +16,8 @@ import { tradeNotional } from "./tradeColumns";
+ interface TradeDetailProps {
+   tradeId: string;
+   onClose: () => void;
++  /** Called after the trade changed here, for example when a pending order is cancelled. */
++  onChanged?: (trade: Trade) => void;
+ }
+ 
+ function ClientLine({ clientId }: { clientId: string }) {
+@@ -27,7 +31,30 @@ function ClientLine({ clientId }: { clientId: string }) {
+   );
+ }
+ 
+-function TradeBody({ trade }: { trade: Trade }) {
++function CancelButton({ trade, onCancelled }: { trade: Trade; onCancelled: (trade: Trade) => void }) {
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState<Error | null>(null);
++
++  function cancel() {
++    setBusy(true);
++    setError(null);
++    cancelTrade(trade.id).then(onCancelled, (reason: unknown) => {
++      setError(toError(reason));
++      setBusy(false);
++    });
++  }
++
++  return (
++    <>
++      <button type="button" className="button" onClick={cancel} disabled={busy}>
++        Cancel trade
++      </button>
++      {error ? <ErrorState error={error} /> : null}
++    </>
++  );
++}
++
++function TradeBody({ trade, onCancelled }: { trade: Trade; onCancelled: (trade: Trade) => void }) {
+   const fillRatio = percentOf(trade.filledQuantity, trade.quantity);
+   return (
+     <div className="trade-detail">
+@@ -43,6 +70,7 @@ function TradeBody({ trade }: { trade: Trade }) {
+           { label: "Executed", value: `${formatDateTime(trade.executedAt)} UTC` },
+           { label: "Asset class", value: assetClassLabels[trade.assetClass] },
+           { label: "Filled", value: `${formatQuantity(trade.filledQuantity)} (${Math.round(fillRatio * 100)}%)` },
++          { label: "Remaining", value: formatQuantity(trade.quantity - trade.filledQuantity) },
+           { label: "Notional", value: formatPrice(tradeNotional(trade), trade.currency) },
+           { label: "Fees", value: formatCurrency(trade.fees, trade.currency) },
+           { label: "Venue", value: trade.venue },
+@@ -50,6 +78,7 @@ function TradeBody({ trade }: { trade: Trade }) {
+           { label: "Client", value: <ClientLine clientId={trade.clientId} /> },
+         ]}
+       />
++      {trade.status === "pending" ? <CancelButton key={trade.id} trade={trade} onCancelled={onCancelled} /> : null}
+       <p className="trade-detail__links">
+         <Link to={`/instruments/${trade.symbol}`}>View {trade.symbol}</Link>
+       </p>
+@@ -57,12 +86,19 @@ function TradeBody({ trade }: { trade: Trade }) {
+   );
+ }
+ 
+-export function TradeDetail({ tradeId, onClose }: TradeDetailProps) {
++export function TradeDetail({ tradeId, onClose, onChanged }: TradeDetailProps) {
+   const state = useAsync(() => fetchTrade(tradeId), [tradeId]);
++  const { reload } = state;
++
++  function cancelled(trade: Trade) {
++    reload();
++    onChanged?.(trade);
++  }
++
+   return (
+     <Drawer label="Trade details" title={`Trade ${tradeId}`} onClose={onClose} closeLabel="Close trade details">
+       <AsyncContent state={state} loadingLabel="Loading trade">
+-        {(trade) => <TradeBody trade={trade} />}
++        {(trade) => <TradeBody trade={trade} onCancelled={cancelled} />}
+       </AsyncContent>
+     </Drawer>
+   );
+diff --git a/src/components/trades/TradeFilters.tsx b/src/components/trades/TradeFilters.tsx
+index aa05581..28a1347 100644
+--- a/src/components/trades/TradeFilters.tsx
++++ b/src/components/trades/TradeFilters.tsx
+@@ -1,7 +1,8 @@
+ import { useId } from "react";
+-import type { AssetClass, TradeFilters as Filters, TradeSide } from "../../types";
++import type { AssetClass, TradeFilters as Filters, TradeSide, TradeStatus } from "../../types";
+ import { isInvertedRange } from "../../utils/dates";
+ import { assetClassLabels } from "../../utils/portfolio";
++import { tradeStatuses } from "../../utils/tradeStatus";
+ import { SegmentedControl } from "../SegmentedControl";
+ 
+ interface TradeFiltersProps {
+@@ -20,7 +21,12 @@ const assetClasses = Object.keys(assetClassLabels) as AssetClass[];
+ 
+ export function isFiltered(filters: Filters): boolean {
+   return (
+-    filters.side !== "all" || filters.assetClass !== "all" || filters.from !== "" || filters.to !== "" || filters.symbol.trim() !== ""
++    filters.side !== "all" ||
++    filters.assetClass !== "all" ||
++    filters.status !== "all" ||
++    filters.from !== "" ||
++    filters.to !== "" ||
++    filters.symbol.trim() !== ""
+   );
+ }
+ 
+@@ -58,6 +64,24 @@ export function TradeFilters({ value, onChange, onReset }: TradeFiltersProps) {
+           ))}
+         </select>
+       </div>
++      <div className="filters__field">
++        <label className="filters__label" htmlFor={`${id}-status`}>
++          Status
++        </label>
++        <select
++          id={`${id}-status`}
++          className="input input--compact"
++          value={value.status}
++          onChange={(event) => set("status", event.target.value as TradeStatus | "all")}
++        >
++          <option value="all">All statuses</option>
++          {tradeStatuses.map((status) => (
++            <option key={status.value} value={status.value}>
++              {status.label}
++            </option>
++          ))}
++        </select>
++      </div>
+       <div className="filters__field">
+         <label className="filters__label" htmlFor={`${id}-symbol`}>
+           Instrument
+diff --git a/src/components/trades/tradeColumns.tsx b/src/components/trades/tradeColumns.tsx
+index 8ab2680..4933f60 100644
+--- a/src/components/trades/tradeColumns.tsx
++++ b/src/components/trades/tradeColumns.tsx
+@@ -3,6 +3,7 @@ import { clientName } from "../../api";
+ import type { Trade } from "../../types";
+ import { formatDateTime } from "../../utils/format";
+ import { formatPrice, formatQuantity } from "../../utils/numbers";
++import { tradeStatusLabel } from "../../utils/tradeStatus";
+ import type { Column } from "../Table";
+ import { TradeSideBadge, TradeStatusBadge } from "./TradeBadges";
+ 
+@@ -74,15 +75,22 @@ const client: Column<Trade> = {
+   sortValue: (trade) => clientName(trade.clientId),
+ };
+ 
++const trader: Column<Trade> = {
++  key: "trader",
++  header: "Trader",
++  render: (trade) => trade.trader,
++  sortValue: (trade) => trade.trader,
++};
++
+ const status: Column<Trade> = {
+   key: "status",
+   header: "Status",
+   render: (trade) => <TradeStatusBadge status={trade.status} />,
+-  sortValue: (trade) => trade.status,
++  sortValue: (trade) => tradeStatusLabel(trade.status),
+ };
+ 
+ /** Columns of the full trade blotter. */
+-export const blotterColumns: Column<Trade>[] = [id, executed, symbol, side, quantity, price, notional, client, status];
++export const blotterColumns: Column<Trade>[] = [id, executed, symbol, side, quantity, price, notional, client, trader, status];
+ 
+ /** Columns for a trade list already scoped to one instrument. */
+ export const instrumentTradeColumns: Column<Trade>[] = [id, executed, side, quantity, price, client, status];
+diff --git a/src/hooks/useNotifications.tsx b/src/hooks/useNotifications.tsx
+index 8495e67..5fd7c44 100644
+--- a/src/hooks/useNotifications.tsx
++++ b/src/hooks/useNotifications.tsx
+@@ -12,6 +12,8 @@ interface NotificationsContextValue {
+   error: Error | null;
+   markRead: (id: string) => void;
+   markAllRead: () => void;
++  /** Adds a notification raised in this session, such as a large trade alert, at the top. */
++  notify: (item: AppNotification) => void;
+ }
+ 
+ const NotificationsContext = createContext<NotificationsContextValue | null>(null);
+@@ -46,7 +48,9 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
+       (rows) => {
+         if (cancelled) return;
+         const readIds = loadReadIds();
+-        setItems(rows.map((row) => (readIds.has(row.id) ? { ...row, read: true } : row)));
++        const loaded = rows.map((row) => (readIds.has(row.id) ? { ...row, read: true } : row));
++        // Keep anything raised in this session before the list came back.
++        setItems((prev) => [...prev, ...loaded]);
+         setLoading(false);
+       },
+       (reason: unknown) => {
+@@ -78,9 +82,13 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
+     });
+   }, []);
+ 
++  const notify = useCallback((item: AppNotification) => {
++    setItems((prev) => [item, ...prev.filter((existing) => existing.id !== item.id)]);
++  }, []);
++
+   const value = useMemo<NotificationsContextValue>(
+-    () => ({ items, unreadCount, loading, error, markRead, markAllRead }),
+-    [items, unreadCount, loading, error, markRead, markAllRead],
++    () => ({ items, unreadCount, loading, error, markRead, markAllRead, notify }),
++    [items, unreadCount, loading, error, markRead, markAllRead, notify],
+   );
+ 
+   return <NotificationsContext.Provider value={value}>{children}</NotificationsContext.Provider>;
+diff --git a/src/hooks/useSettings.tsx b/src/hooks/useSettings.tsx
+index aeed2d4..93804eb 100644
+--- a/src/hooks/useSettings.tsx
++++ b/src/hooks/useSettings.tsx
+@@ -9,6 +9,7 @@ export const defaultSettings: Settings = {
+   emailAlerts: true,
+   pushAlerts: false,
+   weeklyDigest: true,
++  largeTradeUsd: 1_000_000,
+ };
+ 
+ interface SettingsContextValue {
+diff --git a/src/pages/Exposure.tsx b/src/pages/Exposure.tsx
+new file mode 100644
+index 0000000..113b769
+--- /dev/null
++++ b/src/pages/Exposure.tsx
+@@ -0,0 +1,101 @@
++import { useId, useRef } from "react";
++import { useSearchParams } from "react-router-dom";
++import { fetchClient, fetchClients, fetchClientTrades } from "../api";
++import { AsyncContent } from "../components/AsyncContent";
++import { Table, type Column } from "../components/Table";
++import { useAsync } from "../hooks/useAsync";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import type { Client, Trade } from "../types";
++import { exposureBySymbol, type ExposureRow } from "../utils/exposure";
++import { formatQuantity } from "../utils/numbers";
++
++const columns: Column<ExposureRow>[] = [
++  { key: "symbol", header: "Instrument", rowHeader: true, render: (row) => row.symbol },
++  { key: "bought", header: "Bought", align: "right", render: (row) => formatQuantity(row.bought) },
++  { key: "sold", header: "Sold", align: "right", render: (row) => formatQuantity(row.sold) },
++  { key: "net", header: "Net", align: "right", render: (row) => formatQuantity(row.net) },
++  { key: "trades", header: "Trades", align: "right", render: (row) => formatQuantity(row.trades) },
++];
++
++interface ClientExposure {
++  client: Client;
++  rows: ExposureRow[];
++}
++
++async function loadClientList(): Promise<Client[]> {
++  return [...(await fetchClients())].sort((a, b) => a.name.localeCompare(b.name));
++}
++
++function ExposureView({ clientId }: { clientId: string }) {
++  // Trades already loaded on this visit, so flipping back to a client is instant. The cache
++  // lives with the page, not the module: leaving the page (for example to book a trade) drops it.
++  const cache = useRef(new Map<string, Trade[]>());
++  // The client and its rows load together, so a slow answer for an earlier pick can never
++  // show under the name of a later one; useAsync also drops answers for a superseded pick.
++  const state = useAsync(async (): Promise<ClientExposure> => {
++    const cached = cache.current.get(clientId);
++    const [client, trades] = await Promise.all([
++      fetchClient(clientId),
++      cached ? Promise.resolve(cached) : fetchClientTrades(clientId),
++    ]);
++    cache.current.set(clientId, trades);
++    return { client, rows: exposureBySymbol(trades) };
++  }, [clientId]);
++  return (
++    <AsyncContent state={state} loadingLabel="Loading exposure">
++      {({ client, rows }) => (
++        <>
++          <h3 className="panel__title">Exposure for {client.name}</h3>
++          <Table
++            caption="Exposure by instrument"
++            columns={columns}
++            rows={rows}
++            rowKey={(row) => row.symbol}
++            emptyMessage={`${client.name} has no trades.`}
++          />
++        </>
++      )}
++    </AsyncContent>
++  );
++}
++
++export function Exposure() {
++  useDocumentTitle("Exposure");
++  const id = useId();
++  const [params, setParams] = useSearchParams();
++  const clientId = params.get("client") ?? "";
++  const clients = useAsync(loadClientList, []);
++
++  return (
++    <div className="page">
++      <section className="panel" aria-label="Client exposure">
++        <div className="panel__header">
++          <h2 className="panel__title">Client exposure</h2>
++          <div className="filters__field">
++            <label className="filters__label" htmlFor={id}>
++              Client
++            </label>
++            <select
++              id={id}
++              className="input input--compact"
++              value={clientId}
++              onChange={(event) => setParams(event.target.value ? { client: event.target.value } : {})}
++            >
++              <option value="">Choose a client</option>
++              {(clients.data ?? []).map((client) => (
++                <option key={client.id} value={client.id}>
++                  {client.name}
++                </option>
++              ))}
++            </select>
++          </div>
++        </div>
++        {clientId ? (
++          <ExposureView clientId={clientId} />
++        ) : (
++          <p className="feedback feedback--empty">Pick a client to see their exposure.</p>
++        )}
++      </section>
++    </div>
++  );
++}
+diff --git a/src/pages/Settings.tsx b/src/pages/Settings.tsx
+index 139ca21..ae31dbf 100644
+--- a/src/pages/Settings.tsx
++++ b/src/pages/Settings.tsx
+@@ -1,6 +1,36 @@
++import { useId, useState } from "react";
+ import { Toggle } from "../components/Toggle";
+ import { useSettings } from "../hooks/useSettings";
+ 
++function LargeTradeField({ value, onChange }: { value: number; onChange: (next: number) => void }) {
++  const id = useId();
++  const [draft, setDraft] = useState(String(value));
++  return (
++    <div className="settings-field">
++      <label htmlFor={id} className="toggle__label">
++        Large trade alert (USD)
++      </label>
++      <p className="toggle__description" id={`${id}-hint`}>
++        Booking a trade worth at least this much adds a notification.
++      </p>
++      <input
++        id={id}
++        className="input"
++        type="number"
++        min={0}
++        step={1000}
++        value={draft}
++        aria-describedby={`${id}-hint`}
++        onChange={(event) => {
++          setDraft(event.target.value);
++          const next = Number(event.target.value);
++          if (event.target.value.trim() !== "" && Number.isFinite(next) && next >= 0) onChange(next);
++        }}
++      />
++    </div>
++  );
++}
++
+ export function Settings() {
+   const { settings, update } = useSettings();
+   return (
+@@ -16,9 +46,9 @@ export function Settings() {
+           onChange={(on) => update("theme", on ? "dark" : "light")}
+         />
+       </section>
+-      <section className="panel" aria-label="Notifications">
++      <section className="panel" aria-label="Alerts">
+         <div className="panel__header">
+-          <h2 className="panel__title">Notifications</h2>
++          <h2 className="panel__title">Alerts</h2>
+         </div>
+         <Toggle
+           label="Email alerts"
+@@ -38,6 +68,7 @@ export function Settings() {
+           checked={settings.weeklyDigest}
+           onChange={(on) => update("weeklyDigest", on)}
+         />
++        <LargeTradeField value={settings.largeTradeUsd} onChange={(next) => update("largeTradeUsd", next)} />
+       </section>
+     </div>
+   );
+diff --git a/src/pages/Trades.test.tsx b/src/pages/Trades.test.tsx
+index c0a015a..d32159e 100644
+--- a/src/pages/Trades.test.tsx
++++ b/src/pages/Trades.test.tsx
+@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
+ import { MemoryRouter } from "react-router-dom";
+ import { beforeAll, describe, expect, it } from "vitest";
+ import { latency } from "../api";
++import { NotificationsProvider } from "../hooks/useNotifications";
++import { SettingsProvider } from "../hooks/useSettings";
+ import { Trades } from "./Trades";
+ 
+ beforeAll(() => {
+@@ -11,7 +13,11 @@ beforeAll(() => {
+ function renderTrades(path = "/trades") {
+   return render(
+     <MemoryRouter initialEntries={[path]}>
+-      <Trades />
++      <SettingsProvider>
++        <NotificationsProvider>
++          <Trades />
++        </NotificationsProvider>
++      </SettingsProvider>
+     </MemoryRouter>,
+   );
+ }
+diff --git a/src/pages/Trades.tsx b/src/pages/Trades.tsx
+index d51b2ca..1bc2019 100644
+--- a/src/pages/Trades.tsx
++++ b/src/pages/Trades.tsx
+@@ -1,18 +1,31 @@
+-import { useCallback, useMemo, useState } from "react";
++import { useCallback, useState } from "react";
+ import { useSearchParams } from "react-router-dom";
+-import { clientName, emptyTradeFilters, fetchTrades } from "../api";
++import { clientName, emptyTradeFilters, fetchTrades, orderValueUsd } from "../api";
+ import { AsyncContent } from "../components/AsyncContent";
+-import { Pagination } from "../components/Pagination";
+-import { sortRows, Table } from "../components/Table";
++import { sortRows } from "../components/Table";
++import { Blotter, type PageSize } from "../components/trades/Blotter";
++import { BookTradeDialog } from "../components/trades/BookTradeDialog";
+ import { blotterColumns, tradeNotional } from "../components/trades/tradeColumns";
++import { TodaySummary } from "../components/trades/TodaySummary";
+ import { TradeDetail } from "../components/trades/TradeDetail";
+ import { TradeFilters } from "../components/trades/TradeFilters";
+ import { useAsync } from "../hooks/useAsync";
+ import { useDebounce } from "../hooks/useDebounce";
+ import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import { useNotifications } from "../hooks/useNotifications";
++import { useSettings } from "../hooks/useSettings";
+ import type { SortState, Trade, TradeFilters as Filters } from "../types";
+ import { toCsv, downloadCsv, type CsvColumn } from "../utils/csv";
+-import { DEFAULT_PAGE_SIZE, paginate } from "../utils/pagination";
++import { largeTradeNotification } from "../utils/largeTrade";
++import { DEFAULT_PAGE_SIZE } from "../utils/pagination";
++import { tradeStatusLabel } from "../utils/tradeStatus";
++
++/**
++ * How long the instrument box waits for typing to pause before asking the API again.
++ * Shorter than before so results feel quicker, but still one request per pause rather
++ * than one per keystroke: the trades endpoint is the expensive one.
++ */
++export const SYMBOL_DEBOUNCE_MS = 150;
+ 
+ const csvColumns: CsvColumn<Trade>[] = [
+   { header: "Trade", value: (t) => t.id },
+@@ -27,57 +40,32 @@ const csvColumns: CsvColumn<Trade>[] = [
+   { header: "Client", value: (t) => clientName(t.clientId) },
+   { header: "Trader", value: (t) => t.trader },
+   { header: "Venue", value: (t) => t.venue },
+-  { header: "Status", value: (t) => t.status },
++  { header: "Status", value: (t) => tradeStatusLabel(t.status) },
+ ];
+ 
+ function initialFilters(params: URLSearchParams): Filters {
+   return { ...emptyTradeFilters, symbol: params.get("symbol") ?? "" };
+ }
+ 
+-interface BlotterProps {
+-  trades: Trade[];
+-  sort: SortState | null;
+-  onSortChange: (next: SortState) => void;
+-  page: number;
+-  onPageChange: (page: number) => void;
+-  selectedId: string | null;
+-  onSelect: (id: string) => void;
+-}
+-
+-function Blotter({ trades, sort, onSortChange, page, onPageChange, selectedId, onSelect }: BlotterProps) {
+-  const sorted = useMemo(() => sortRows(trades, blotterColumns, sort), [trades, sort]);
+-  const visible = paginate(sorted, page, DEFAULT_PAGE_SIZE);
+-  return (
+-    <>
+-      <Table
+-        caption="Trade blotter"
+-        columns={blotterColumns}
+-        rows={visible}
+-        rowKey={(trade) => trade.id}
+-        sort={sort}
+-        onSortChange={onSortChange}
+-        onRowClick={(trade) => onSelect(trade.id)}
+-        rowLabel={(trade) => `Trade ${trade.id}`}
+-        selectedKey={selectedId}
+-        emptyMessage="No trades match these filters."
+-      />
+-      <Pagination total={trades.length} page={page} pageSize={DEFAULT_PAGE_SIZE} onPageChange={onPageChange} noun="trades" />
+-    </>
+-  );
+-}
+-
+ export function Trades() {
+   useDocumentTitle("Trades");
+-  const [params] = useSearchParams();
++  const [params, setParams] = useSearchParams();
++  const { settings } = useSettings();
++  const { notify } = useNotifications();
+   const [filters, setFilters] = useState<Filters>(() => initialFilters(params));
+   const [sort, setSort] = useState<SortState | null>(null);
+   const [page, setPage] = useState(1);
+-  const [selectedId, setSelectedId] = useState<string | null>(null);
+-  const symbol = useDebounce(filters.symbol, 250);
++  const [pageSize, setPageSize] = useState<PageSize>(DEFAULT_PAGE_SIZE);
++  const [booking, setBooking] = useState(false);
++  const [message, setMessage] = useState("");
++  // Bumped after a trade is booked or cancelled so every list on the page loads again.
++  const [version, setVersion] = useState(0);
++  const selectedId = params.get("trade");
++  const symbol = useDebounce(filters.symbol, SYMBOL_DEBOUNCE_MS);
+ 
+   const state = useAsync(
+     () => fetchTrades({ ...filters, symbol }),
+-    [filters.side, filters.assetClass, filters.from, filters.to, symbol],
++    [filters.side, filters.assetClass, filters.status, filters.from, filters.to, symbol, version],
+   );
+ 
+   const changeFilters = useCallback((next: Filters) => {
+@@ -90,7 +78,40 @@ export function Trades() {
+     setPage(1);
+   }, []);
+ 
+-  const close = useCallback(() => setSelectedId(null), []);
++  const changePageSize = useCallback((next: PageSize) => {
++    setPageSize(next);
++    setPage(1);
++  }, []);
++
++  const select = useCallback(
++    (id: string) =>
++      setParams((prev) => {
++        const next = new URLSearchParams(prev);
++        next.set("trade", id);
++        return next;
++      }),
++    [setParams],
++  );
++
++  const close = useCallback(
++    () =>
++      setParams((prev) => {
++        const next = new URLSearchParams(prev);
++        next.delete("trade");
++        return next;
++      }),
++    [setParams],
++  );
++
++  const changed = useCallback(() => setVersion((prev) => prev + 1), []);
++
++  function booked(trade: Trade) {
++    setBooking(false);
++    setMessage(`Trade ${trade.id} booked.`);
++    changed();
++    const alert = largeTradeNotification(trade, orderValueUsd(trade), settings.largeTradeUsd, clientName(trade.clientId));
++    if (alert) notify(alert);
++  }
+ 
+   function exportCsv() {
+     if (!state.data) return;
+@@ -100,13 +121,22 @@ export function Trades() {
+ 
+   return (
+     <div className="page">
++      <TodaySummary version={version} />
+       <section className="panel" aria-label="Trades">
+         <div className="panel__header">
+           <h2 className="panel__title">Trade blotter</h2>
+-          <button type="button" className="button" onClick={exportCsv} disabled={!state.data || state.data.length === 0}>
+-            Export CSV
+-          </button>
++          <div className="panel__actions">
++            <button type="button" className="button button--primary" onClick={() => setBooking(true)}>
++              Book trade
++            </button>
++            <button type="button" className="button" onClick={exportCsv} disabled={!state.data || state.data.length === 0}>
++              Export CSV
++            </button>
++          </div>
+         </div>
++        <p className="text-muted" role="status">
++          {message}
++        </p>
+         <TradeFilters value={filters} onChange={changeFilters} onReset={() => changeFilters(emptyTradeFilters)} />
+         <AsyncContent state={state} loadingLabel="Loading trades">
+           {(trades) => (
+@@ -116,13 +146,16 @@ export function Trades() {
+               onSortChange={changeSort}
+               page={page}
+               onPageChange={setPage}
++              pageSize={pageSize}
++              onPageSizeChange={changePageSize}
+               selectedId={selectedId}
+-              onSelect={setSelectedId}
++              onSelect={select}
+             />
+           )}
+         </AsyncContent>
+       </section>
+-      {selectedId ? <TradeDetail tradeId={selectedId} onClose={close} /> : null}
++      {selectedId ? <TradeDetail tradeId={selectedId} onClose={close} onChanged={changed} /> : null}
++      {booking ? <BookTradeDialog onClose={() => setBooking(false)} onBooked={booked} /> : null}
+     </div>
+   );
+ }
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 3f94e98..05b3222 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -841,6 +841,85 @@ p {
+   color: var(--color-neutral);
+ }
+ 
++.badge--trade-pending {
++  color: var(--color-pending);
++}
++
++.day-summary {
++  margin-bottom: var(--space-4);
++}
++
++.dialog-backdrop {
++  position: fixed;
++  inset: 0;
++  display: grid;
++  place-items: center;
++  padding: var(--space-4);
++  background: var(--color-overlay);
++  z-index: var(--z-dialog);
++}
++
++.dialog {
++  width: var(--dialog-width);
++  max-width: 100%;
++  background: var(--color-surface);
++  border: 1px solid var(--color-border);
++  border-radius: var(--radius);
++  box-shadow: var(--shadow);
++  padding: var(--space-5);
++}
++
++.dialog__title {
++  font-size: var(--font-size-lg);
++  margin-bottom: var(--space-4);
++}
++
++.ticket {
++  display: grid;
++  gap: var(--space-3);
++}
++
++.ticket__field {
++  display: grid;
++  gap: var(--space-1);
++}
++
++.ticket__error {
++  color: var(--color-down);
++  font-size: var(--font-size-sm);
++}
++
++.ticket__actions {
++  display: flex;
++  justify-content: flex-end;
++  gap: var(--space-2);
++}
++
++.panel__actions {
++  display: flex;
++  gap: var(--space-2);
++}
++
++.settings-field {
++  display: grid;
++  gap: var(--space-1);
++  padding: var(--space-3) 0;
++}
++
++.blotter-footer {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: center;
++  justify-content: space-between;
++  gap: var(--space-3);
++}
++
++.blotter-footer__size {
++  display: flex;
++  align-items: center;
++  gap: var(--space-2);
++}
++
+ .trade-detail {
+   display: flex;
+   flex-direction: column;
+diff --git a/src/styles/theme.css b/src/styles/theme.css
+index 5ddf04a..0a153ac 100644
+--- a/src/styles/theme.css
++++ b/src/styles/theme.css
+@@ -13,6 +13,7 @@
+   --color-up: #0f8a5f;
+   --color-down: #c8372d;
+   --color-warning: #b7791f;
++  --color-pending: #b54708;
+   --color-neutral: #6b7385;
+ 
+   --space-1: 4px;
+@@ -47,6 +48,8 @@
+   --popover-width: 360px;
+   --z-popover: 15;
+   --z-drawer: 20;
++  --z-dialog: 30;
++  --dialog-width: 440px;
+ }
+ 
+ :root[data-theme="dark"] {
+@@ -61,6 +64,7 @@
+   --color-up: #3ec790;
+   --color-down: #ff6b61;
+   --color-warning: #e3a84a;
++  --color-pending: #fdb022;
+   --color-neutral: #8590a6;
+   --color-chart-equity: #6b8cff;
+   --color-chart-bond: #3ec790;
+diff --git a/src/types.ts b/src/types.ts
+index cbc9d94..cf62e6b 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -50,11 +50,13 @@ export interface Settings {
+   emailAlerts: boolean;
+   pushAlerts: boolean;
+   weeklyDigest: boolean;
++  /** Booked trades worth at least this much in USD raise a notification. */
++  largeTradeUsd: number;
+ }
+ 
+ export type TradeSide = "buy" | "sell";
+ 
+-export type TradeStatus = "filled" | "partial" | "cancelled";
++export type TradeStatus = "filled" | "partial" | "cancelled" | "pending";
+ 
+ export interface Trade {
+   id: string;
+@@ -79,6 +81,15 @@ export interface TradeFilters {
+   from: string;
+   to: string;
+   symbol: string;
++  status: TradeStatus | "all";
++}
++
++export interface TradeTicket {
++  clientId: string;
++  symbol: string;
++  side: TradeSide;
++  quantity: number;
++  price: number;
+ }
+ 
+ export interface Holding {
+diff --git a/src/utils/exposure.test.ts b/src/utils/exposure.test.ts
+new file mode 100644
+index 0000000..ac61c4f
+--- /dev/null
++++ b/src/utils/exposure.test.ts
+@@ -0,0 +1,21 @@
++import { describe, expect, it } from "vitest";
++import type { Trade } from "../types";
++import { exposureBySymbol } from "./exposure";
++
++const trade = (symbol: string, side: Trade["side"], filledQuantity: number, status: Trade["status"] = "filled") =>
++  ({ symbol, side, filledQuantity, status }) as Trade;
++
++describe("exposureBySymbol", () => {
++  it("nets filled quantities per instrument and counts every order", () => {
++    const rows = exposureBySymbol([
++      trade("MSFT", "buy", 100),
++      trade("AAPL", "sell", 40),
++      trade("AAPL", "buy", 100),
++      trade("AAPL", "buy", 0, "pending"),
++    ]);
++    expect(rows).toEqual([
++      { symbol: "AAPL", bought: 100, sold: 40, net: 60, trades: 3 },
++      { symbol: "MSFT", bought: 100, sold: 0, net: 100, trades: 1 },
++    ]);
++  });
++});
+diff --git a/src/utils/exposure.ts b/src/utils/exposure.ts
+new file mode 100644
+index 0000000..6ca0e40
+--- /dev/null
++++ b/src/utils/exposure.ts
+@@ -0,0 +1,26 @@
++import type { Trade } from "../types";
++
++export interface ExposureRow {
++  symbol: string;
++  bought: number;
++  sold: number;
++  net: number;
++  trades: number;
++}
++
++/**
++ * One row per instrument, A to Z. Bought and sold add up filled quantities, so pending and
++ * cancelled orders move nothing; the trade count includes every order whatever its status.
++ */
++export function exposureBySymbol(trades: readonly Trade[]): ExposureRow[] {
++  const rows = new Map<string, ExposureRow>();
++  for (const trade of trades) {
++    const row = rows.get(trade.symbol) ?? { symbol: trade.symbol, bought: 0, sold: 0, net: 0, trades: 0 };
++    if (trade.side === "buy") row.bought += trade.filledQuantity;
++    else row.sold += trade.filledQuantity;
++    row.net = row.bought - row.sold;
++    row.trades += 1;
++    rows.set(trade.symbol, row);
++  }
++  return [...rows.values()].sort((a, b) => a.symbol.localeCompare(b.symbol));
++}
+diff --git a/src/utils/largeTrade.test.ts b/src/utils/largeTrade.test.ts
+new file mode 100644
+index 0000000..4e31b58
+--- /dev/null
++++ b/src/utils/largeTrade.test.ts
+@@ -0,0 +1,17 @@
++import { describe, expect, it } from "vitest";
++import type { Trade } from "../types";
++import { largeTradeNotification } from "./largeTrade";
++
++const trade = { id: "T-10151", side: "buy", quantity: 10000, symbol: "AAPL", executedAt: "2026-10-27T20:00:00.000Z" } as Trade;
++
++describe("largeTradeNotification", () => {
++  it("raises an unread trade notification at or above the threshold only", () => {
++    expect(largeTradeNotification(trade, 999_999, 1_000_000, "Harbor Pension Trust")).toBeNull();
++    expect(largeTradeNotification(trade, 1_000_000, 1_000_000, "Harbor Pension Trust")).toMatchObject({
++      title: "Large trade booked: T-10151",
++      body: "Buy 10,000 AAPL for Harbor Pension Trust",
++      read: false,
++      link: "/trades?trade=T-10151",
++    });
++  });
++});
+diff --git a/src/utils/largeTrade.ts b/src/utils/largeTrade.ts
+new file mode 100644
+index 0000000..59f5385
+--- /dev/null
++++ b/src/utils/largeTrade.ts
+@@ -0,0 +1,16 @@
++import type { AppNotification, Trade } from "../types";
++import { formatQuantity } from "./numbers";
++
++/** The unread notification for a booked trade worth at least the alert threshold, or null below it. */
++export function largeTradeNotification(trade: Trade, valueUsd: number, thresholdUsd: number, clientName: string): AppNotification | null {
++  if (!(thresholdUsd > 0) || valueUsd < thresholdUsd) return null;
++  return {
++    id: `large-${trade.id}`,
++    kind: "trade",
++    title: `Large trade booked: ${trade.id}`,
++    body: `${trade.side === "buy" ? "Buy" : "Sell"} ${formatQuantity(trade.quantity)} ${trade.symbol} for ${clientName}`,
++    createdAt: trade.executedAt,
++    read: false,
++    link: `/trades?trade=${trade.id}`,
++  };
++}
+diff --git a/src/utils/tradeDay.test.ts b/src/utils/tradeDay.test.ts
+new file mode 100644
+index 0000000..c28d64d
+--- /dev/null
++++ b/src/utils/tradeDay.test.ts
+@@ -0,0 +1,18 @@
++import { describe, expect, it } from "vitest";
++import type { Trade } from "../types";
++import { summarizeDay } from "./tradeDay";
++
++const trade = (executedAt: string, status: Trade["status"] = "filled") => ({ executedAt, status }) as Trade;
++
++describe("summarizeDay", () => {
++  const trades = [trade("2026-10-27T23:59:00Z", "pending"), trade("2026-10-28T00:01:00Z"), trade("2026-10-27T00:00:00Z", "partial")];
++
++  it("counts by the UTC day, so trades either side of midnight land on different days", () => {
++    const late = summarizeDay(trades, new Date("2026-10-27T23:59:30Z"));
++    expect(late).toMatchObject({ day: "2026-10-27", trades: 2 });
++    expect(late.byStatus).toEqual({ filled: 0, partial: 1, cancelled: 0, pending: 1 });
++    const early = summarizeDay(trades, new Date("2026-10-28T00:01:30Z"));
++    expect(early).toMatchObject({ day: "2026-10-28", trades: 1 });
++    expect(early.byStatus.filled).toBe(1);
++  });
++});
+diff --git a/src/utils/tradeDay.ts b/src/utils/tradeDay.ts
+new file mode 100644
+index 0000000..468b7f3
+--- /dev/null
++++ b/src/utils/tradeDay.ts
+@@ -0,0 +1,26 @@
++import type { Trade, TradeStatus } from "../types";
++import { toIsoDay } from "./dates";
++import { tradeStatuses } from "./tradeStatus";
++
++export interface DaySummary {
++  day: string;
++  trades: number;
++  byStatus: Record<TradeStatus, number>;
++}
++
++/**
++ * Counts the trades executed on the UTC calendar day that contains `now`. The trading day
++ * runs from midnight to midnight UTC wherever the viewer is, so 23:59 UTC still counts
++ * for that day and 00:01 UTC belongs to the next one.
++ */
++export function summarizeDay(trades: readonly Trade[], now: Date): DaySummary {
++  const day = toIsoDay(now);
++  const byStatus = Object.fromEntries(tradeStatuses.map((status) => [status.value, 0])) as Record<TradeStatus, number>;
++  let count = 0;
++  for (const trade of trades) {
++    if (toIsoDay(new Date(trade.executedAt)) !== day) continue;
++    count += 1;
++    byStatus[trade.status] += 1;
++  }
++  return { day, trades: count, byStatus };
++}
+diff --git a/src/utils/tradeStatus.ts b/src/utils/tradeStatus.ts
+new file mode 100644
+index 0000000..483fa68
+--- /dev/null
++++ b/src/utils/tradeStatus.ts
+@@ -0,0 +1,15 @@
++import type { TradeStatus } from "../types";
++
++/** Every trade status in display order, with the words the badge, filters, summaries and exports use. */
++export const tradeStatuses: readonly { value: TradeStatus; label: string }[] = [
++  { value: "filled", label: "Filled" },
++  { value: "partial", label: "Partially filled" },
++  { value: "cancelled", label: "Cancelled" },
++  { value: "pending", label: "Pending" },
++];
++
++const labels = new Map(tradeStatuses.map((status) => [status.value, status.label]));
++
++export function tradeStatusLabel(status: TradeStatus): string {
++  return labels.get(status) ?? status;
++}
