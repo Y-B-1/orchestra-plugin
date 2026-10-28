@@ -356,6 +356,7 @@ def queue_file(path):
             print(datetime.now().strftime('%H:%M'), 'queue empty', flush=True)
             return
         import threading
+        ensure_fixture()  # once, before the pair: two threads must not run npm ci in the fixture at the same time
         pair = todo[:2]
         threads = [threading.Thread(target=queue, args=([it],)) for it in pair]
         for th in threads:

@@ -86,7 +86,7 @@ def scenario_init(base):
         problems.append(f'agents missing: {sorted(missing)}')
     if 'orchestra:goal' not in init.get('slash_commands', []):
         problems.append('command orchestra:goal missing')
-    if not any('.git/orchestra/asks.md' in o for o in hook_outputs(events, 'SessionStart')):
+    if not any('.git/orchestra/sessions/' in o and 'asks.md' in o for o in hook_outputs(events, 'SessionStart')):
         problems.append('SessionStart output does not name the ledger path')
     return problems
 
@@ -116,19 +116,24 @@ def scenario_guard(base):
 
 def scenario_goal(base):
     _, repo = scratch(base)
-    ledger = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir')) / 'orchestra' / 'asks.md'
-    ledger.parent.mkdir(parents=True, exist_ok=True)
-    ledger.write_text('- [ ] A1: add notes.txt containing the word done | files: notes.txt (new) | after: -\n')
-    # The goal names a first step only, so the session stops while A1 is still open and the Stop hook must block.
+    # No ledger is seeded: under an active goal the Stop hook blocks with "Goal not done" (no ledger yet), a reason
+    # only the goal path produces, so the block proves /orchestra:goal set the goal for this session.
     events = claude(repo, '/orchestra:goal first step only: run `git status`, reply with one line, and stop. '
-                    'Leave the ledger as it is.', base / 'goal.jsonl', extra=('--max-turns', '40'))
+                    'Do not write an ask ledger.', base / 'goal.jsonl', extra=('--max-turns', '40'))
+    session = next((e.get('session_id') for e in events if e.get('subtype') == 'init'), '')
     # A Stop hook block shows as a hook_response with the decision, or (in Claude Code 2.1.x headless runs, which
     # emit no hook_response for Stop) as the "Stop hook feedback" message fed back to the session.
-    blocks = [o for o in hook_outputs(events, 'Stop') if '"decision": "block"' in o or '"decision":"block"' in o]
+    blocks = [o for o in hook_outputs(events, 'Stop') if 'Goal not done' in o]
     feedback = [b for e in events if e.get('type') == 'user' for b in (e.get('message') or {}).get('content') or []
                 if isinstance(b, dict) and b.get('type') == 'text' and b.get('text', '').startswith('Stop hook feedback')
-                and 'A1' in b['text']]
-    return [] if blocks or feedback else ['the Stop hook never blocked']
+                and 'Goal not done' in b['text']]
+    problems = [] if blocks or feedback else ['the Stop hook never blocked for the goal']
+    goal = Path(git(repo, 'rev-parse', '--path-format=absolute', '--git-common-dir')) / 'orchestra' / 'sessions' / session / 'goal.json'
+    if not session or not goal.exists():
+        problems.append('/orchestra:goal wrote no goal.json for the session')
+    elif json.loads(goal.read_text()).get('state') not in ('active', 'done', 'capped', 'stopped'):
+        problems.append('goal.json has an unexpected state')
+    return problems
 
 
 def main():

@@ -10,7 +10,7 @@ Orchestra registers three hooks in `plugins/orchestra/hooks/hooks.json`. Each ru
 
 ## The ledger and goal files
 
-State lives in the Git common directory of the repository, outside the working tree: `.git/orchestra/asks.md` (the ask ledger) and `.git/orchestra/goal.json` (the goal). All worktrees of one repository share them. Outside a Git repository the folder is `.orchestra-lean/` in the current directory. `lean.py ledger` prints the ledger path.
+State is per session and lives in the Git common directory of the repository, outside the working tree: `.git/orchestra/sessions/<session id>/asks.md` (the ask ledger) and `goal.json` (the goal) in the same folder. The session id comes from the hook event, and from `CLAUDE_CODE_SESSION_ID` in a Bash command, so another session or worktree of the same repository never sees this session's goal or ledger. Without a session id the folder is `.git/orchestra/`. Outside a Git repository the folder is `.orchestra/` in the current directory, created only when a goal is set. `lean.py ledger` prints the ledger path.
 
 A ledger line is `- [mark] ID: text`, with any `| files: ... | after: ...` fields after the text. The marks are `[ ]` todo, `[>]` running, `[x]` done and `[~]` dropped with a reason. A line marked `[ ]` or `[>]` is open.
 
@@ -18,13 +18,17 @@ A ledger line is `- [mark] ID: text`, with any `| files: ... | after: ...` field
 
 The default branch is the target of `refs/remotes/origin/HEAD`. Without it, the guard takes the first local branch of `main`, `master` and `trunk`, else `main`.
 
-The guard splits the command at `&&`, `||`, `;`, `|`, newlines, `$(` and backticks, and also reads the payload of `sh -c`, `bash -c` and `zsh -c`. It denies:
+The guard splits the command into simple commands at `&&`, `||`, `;`, `|`, `&`, newlines, subshell and group brackets, `$(` and backticks, outside quotes. It follows `cd DIR` to the later commands, reads the payload of `sh`, `bash`, `zsh`, `dash` and `ksh` with `-c` (also `-lc` and similar) and of `eval`, and skips prefixes such as `VAR=value`, `sudo` and `env` and git's global options (`-C`, `-c`, `--git-dir`, `--no-pager`). A command is checked only when `gh` or `git` is the command itself, so `echo gh pr merge` and `grep "git push origin main"` run. It denies:
 
-- `gh pr merge`, also with an option such as `-R OWNER/REPO` between `pr` and `merge`;
+- `gh pr merge`, also with an option such as `-R OWNER/REPO` before `pr` or between `pr` and `merge`;
 - a `gh api` call to a `/merge` or `/merges` endpoint, or a GraphQL `mergePullRequest` or `enablePullRequestAutoMerge` mutation;
-- `git push` with a destination ref that is the default branch, written as `main`, `HEAD:main`, `refs/heads/main` or `HEAD` while on it;
+- a `gh api` write (any method other than GET, or a call with fields) to `git/refs/heads/main`, a `contents/` write with `branch=main`, a ref create of `refs/heads/main`, or a rename of `main`;
+- `git push` with a destination ref that is the default branch, written as `main`, `HEAD:main`, `refs/heads/main`, a wildcard refspec, or `HEAD` or `@` while on it;
 - a force push (`+main`, `-f`) or a delete (`:main`, `--delete main`) of the default branch;
-- a bare `git push` while the default branch is checked out.
+- `git push --mirror`, and `git push --all` or `--branches` while a local default branch exists;
+- a bare `git push` (options such as `-o` allowed) while the default branch is checked out.
+
+When the guard cannot read a command that mentions merge or push, it denies it rather than letting it through.
 
 Everything else runs: pushing other branches and tags, deleting other branches, removing worktrees, `git merge` in the local checkout, `git reset`, opening and reading pull requests. Claude Code's permission mode decides those as usual.
 
@@ -32,20 +36,21 @@ The deny reason tells the agent to push its branch and open a pull request; merg
 
 ## The Stop hook and /orchestra:goal
 
-`/orchestra:goal TEXT` runs `lean.py goal set TEXT`, which writes `goal.json` with state `active`. While a goal is active, each stop attempt counts one continuation, and the Stop hook blocks with the reason when any of these holds:
+`/orchestra:goal TEXT` runs `lean.py goal set` before the model starts (a command pre-run line), so the goal is set even if the model skips a step; the goal text stays in the prompt and never reaches the shell. `goal set` writes `goal.json` with state `active` for the session. While a goal is active, each stop attempt counts one continuation, and the Stop hook blocks with the reason when any of these holds:
 
 - no ledger exists yet;
 - the ledger has open asks (the reason names them);
 - the working tree has uncommitted changes to tracked files;
-- the repository has a remote and the current branch has no upstream, or is ahead of it.
+- the repository has a remote and the current branch has no upstream, or is ahead of it;
+- the repository has a remote and the work is on the default branch or a detached HEAD: the reason says to create a feature branch, push it and open a PR, since pushing the default branch is denied.
 
 When none holds, the goal state becomes `done` and the session stops. After 60 continuations the state becomes `capped` and the hook stops blocking. `lean.py goal stop REASON` sets the state to `stopped` for a blocker only the owner can clear. `lean.py goal status` prints the goal and the open asks.
 
-When no goal file exists, the Stop hook blocks once when the ledger has open asks, and stays quiet when the stop is already a continuation (`stop_hook_active`), so it never loops.
+When no goal file exists, the Stop hook blocks once when this session's ledger has open asks, and stays quiet when the stop is already a continuation (`stop_hook_active`), so it never loops.
 
 ## Bounded commands
 
-`lean.py run SECONDS -- CMD` runs a command in its own process group and stops the group after SECONDS (exit 124), so a hanging test cannot hold a builder. It is a CLI, not a hook.
+`lean.py run SECONDS -- CMD` runs a command in its own process group and stops the group after SECONDS (exit 124), so a hanging test cannot hold a builder. When `lean.py` itself is stopped (SIGTERM, SIGINT or SIGHUP, as a Bash tool timeout does), it stops the command's group too. It is a CLI, not a hook.
 
 ## Checks
 

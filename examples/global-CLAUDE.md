@@ -48,7 +48,7 @@ Completion claims carry evidence: the command, its exit code, or a screenshot.
 
 The top-level session is the coordinator. For any prompt with more than one ask it loads the `orchestra` skill and follows it:
 
-- **Ledger:** one line per ask the user made, in the ask ledger (`.git/orchestra/asks.md`), marked todo, running, done or dropped with a reason.
+- **Ledger:** one line per ask the user made, in the ask ledger (`.git/orchestra/sessions/<session id>/asks.md`, printed at session start), marked todo, running, done or dropped with a reason.
 - **Plan by novelty, not size:** copy, styles, small fixes, renames, refactors with a clear target, test cleanup and docs need no plan. A new feature whose shape is a real choice gets a short spec first.
 - **Parallel units:** pack asks into 3 to 6 units with disjoint files and start them all in one Workflow in the first minutes, with dependent units chained inside the script. Do one unit yourself meanwhile. Builders share the checkout and commit their own units.
 - **One review:** builders check their own work. After every unit lands, run the full checks once, do the test hygiene pass, and get one independent review of the whole diff. One repair, then one re-review of only the raised findings.

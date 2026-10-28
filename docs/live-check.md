@@ -6,9 +6,9 @@ Each scenario creates a scratch Git repository with a bare `origin` and runs `cl
 
 | Scenario | Passes when |
 | --- | --- |
-| init | The init event lists the skill `orchestra:orchestra`, the five `orchestra:*` agents and the command `orchestra:goal`, and the SessionStart hook output names `.git/orchestra/asks.md` |
+| init | The init event lists the skill `orchestra:orchestra`, the five `orchestra:*` agents and the command `orchestra:goal`, and the SessionStart hook output names the session's ledger under `.git/orchestra/sessions/` |
 | guard | `git push origin main` is denied with the Orchestra reason and `origin/main` does not move; `git push -u origin feature` runs and creates the branch on `origin` |
-| goal | `/orchestra:goal` runs with one open ask in the ledger, and the Stop hook blocks at least once |
+| goal | `/orchestra:goal` runs with no ledger; the Stop hook blocks with "Goal not done" (a reason only an active goal gives), and `goal.json` exists for the session the init event names |
 
 The script prints PASS or FAIL per scenario and exits 0 only when all three pass. A failed scenario keeps its event stream in the temporary directory and prints the path.
 
