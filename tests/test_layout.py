@@ -5,7 +5,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'plugins/orchestra'
 MODELS = {'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'}
-AGENTS = {'builder', 'reviewer', 'planner', 'critic', 'investigator'}
+AGENTS = {'builder', 'builder-mechanical', 'builder-cleanup', 'reviewer', 'reviewer-light', 'reviewer-standards',
+          'planner', 'critic', 'investigator', 'investigator-research', 'operator'}
 
 
 def frontmatter(path):
@@ -71,16 +72,38 @@ class SkillTest(unittest.TestCase):
         self.assertLess(len(path.read_text().splitlines()), 200)
 
 
-    def test_every_reference_is_in_the_situation_table_and_stays_short(self):
+    def test_every_reference_is_named_by_the_skill_and_stays_short(self):
         skill = (PLUGIN / 'skills/orchestra/SKILL.md').read_text()
-        named = set(re.findall(r'`([a-z-]+\.md)`', skill))
         files = {f.name for f in (PLUGIN / 'skills/orchestra/references').glob('*.md')}
-        self.assertEqual(named & files, files, 'a reference file no situation loads')
-        self.assertTrue({n for n in named if n != 'SKILL.md'} <= files, 'a situation names a missing file')
-        for f in (PLUGIN / 'skills/orchestra/references').glob('*.md'):
-            with self.subTest(f.name):
-                self.assertLessEqual(len(f.read_text().splitlines()), 60)
+        for name in files:
+            with self.subTest(name):
+                self.assertTrue(name in skill, 'a reference file the skill never names')
+                self.assertLessEqual(len((PLUGIN / 'skills/orchestra/references' / name).read_text().splitlines()), 60)
 
+    def test_every_skill_is_reachable_short_and_well_formed(self):
+        """A skill no agent file or the main skill names is dead weight; one over 70 lines costs every load."""
+        readers = (PLUGIN / 'skills/orchestra/SKILL.md').read_text() + ''.join(
+            f.read_text() for f in (PLUGIN / 'agents').glob('*.md'))
+        for d in sorted((PLUGIN / 'skills').iterdir()):
+            if not d.is_dir():
+                continue
+            with self.subTest(d.name):
+                text = (d / 'SKILL.md').read_text()
+                fields = frontmatter(d / 'SKILL.md')
+                self.assertEqual(fields.get('name'), d.name)
+                if d.name != 'orchestra':
+                    self.assertTrue('Load when' in fields.get('description', ''), 'a skill without a narrow trigger')
+                self.assertLessEqual(len(text.splitlines()), 200 if d.name == 'orchestra' else 70)
+                if d.name != 'orchestra':
+                    self.assertTrue(f'orchestra:{d.name}' in readers or f'`{d.name}`' in readers, 'a skill nothing names')
+
+    def test_every_agent_that_names_a_skill_can_load_it(self):
+        for path in (PLUGIN / 'agents').glob('*.md'):
+            body = path.read_text()
+            for name in re.findall(r'orchestra:([a-z-]+)', body):
+                with self.subTest(path.name, skill=name):
+                    self.assertTrue((PLUGIN / 'skills' / name / 'SKILL.md').exists())
+                    self.assertIn('Skill', frontmatter(path).get('tools', ''))
 
 class PrivacyTest(unittest.TestCase):
     def test_no_shipped_file_holds_a_personal_path_or_name(self):

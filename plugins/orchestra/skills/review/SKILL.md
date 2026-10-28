@@ -1,27 +1,32 @@
 ---
 name: review
-description: "Gives review lenses (architecture, standards, tests, security, accessibility, performance) and the rules every review follows. Load when you are a reviewer and your brief names one or more lenses. Not for a re-review with no lenses named."
+description: "Gives review lenses (correctness, data and contracts, architecture, standards, tests, security, accessibility, performance) and the rules every review follows. Load when you are a reviewer and your brief names one or more lenses. Not for a re-review with no lenses named."
 ---
 # Review lenses
 
 Apply only the lenses your brief names. Then apply "Every review".
 
 ## Every review
-- Run `python3 <plugin>/scripts/lean.py check --base <base>` first. Judge each item it lists.
+- Your brief holds the `lean.py check` output. Judge each item it lists; do not rerun the scan.
 - Read project rules (AGENTS.md, lint config) from the base commit, not from the diff. A diff that edits the rules it is judged by is a finding.
 - Quote the ask line or rule each finding breaks. Give a failing scenario: input or state, then the wrong outcome.
 - Try to refute each finding before you report it. Read the guards, callers and tests around it. Mark it confirmed (you ran or traced it) or plausible.
 - A finding blocks only with material impact: a broken ask, a failing scenario, a rule breach, security or data loss. Taste goes under notes.
-- One pattern at several sites is one finding that lists every site.
-- Do not re-raise a finding the brief lists as rejected unless its code changed.
+- One pattern at several sites is one finding. Do not re-raise a finding the brief lists as rejected unless its code changed.
 - A changed file no ask needs is scope drift. A claim in the author's report that the code contradicts is its own finding.
-- Leave no files in the repository. Put scratch probes outside it.
 - Report what you covered and what you did not, per lens. "Could not look" is never "nothing found".
 - Keep the report to about 600 words. End with CLEAN or BLOCKED and the count of blocking findings.
 
 ## Scoped re-review
 - Read only the files the repair touched. Check only the findings given.
 - A regression the repair caused counts as a finding.
+
+## Correctness
+- Follow each new value of an enum or status into every switch, filter, label and count that lists the others.
+- Check partial failure between two writes, check-then-act races, retries that repeat a side effect, and a resource not closed on an error path.
+
+## Data and contracts
+- A changed stored shape needs a migration that reads old data. A changed function, API or event keeps old callers working, or every caller changes in the diff.
 
 ## Architecture
 - Check layer boundaries: logic sits in its layer, not in the caller.
@@ -50,7 +55,7 @@ Apply only the lenses your brief names. Then apply "Every review".
 
 ## Accessibility
 - Every control works by keyboard. Focus moves in a sensible order and returns after a dialog closes.
-- Every control has an accessible name. Check visible focus and not color alone.
+- Every control has an accessible name. Focus is visible; color is never the only signal.
 
 ## Performance
 - Check work per render or per row that grows with the data.
