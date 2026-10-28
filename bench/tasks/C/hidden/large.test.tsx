@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
-import { closeApp, openApp, pick, SLOW } from "./helpers";
+import { closeApp, openApp, pick, pickReady, SLOW } from "./helpers";
 
 afterEach(closeApp);
 
 type Screen = Awaited<ReturnType<typeof openApp>>;
 
 async function addAlert(s: Screen, symbol: string, condition: "goes above" | "goes below", price: string) {
-  pick(await s.findByLabelText("Instrument", {}, SLOW), new RegExp(`^${symbol}\\b`));
+  await pickReady(await s.findByLabelText("Instrument", {}, SLOW), new RegExp(`^${symbol}\\b`));
   pick(s.getByLabelText("Condition"), new RegExp(`^${condition}$`));
   fireEvent.change(s.getByLabelText("Price"), { target: { value: price } });
   fireEvent.click(s.getByRole("button", { name: "Add alert" }));
@@ -121,7 +121,7 @@ describe("C11 watchlist page", () => {
   it("C11 adds an instrument that the rest of the app then shows as watched", async () => {
     let s = await openApp("/watchlist");
     const select = await s.findByLabelText("Add instrument", {}, SLOW);
-    pick(select, /^MSFT\b/);
+    await pickReady(select, /^MSFT\b/);
     fireEvent.click(s.getByRole("button", { name: "Add" }));
     const table = await s.findByRole("table", { name: "Watched instruments" }, SLOW);
     await waitFor(() => expect(watchRow(table, "MSFT").textContent).toContain("$431.20"));

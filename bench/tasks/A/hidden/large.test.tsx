@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { fireEvent, waitFor, within } from "@testing-library/react";
-import { closeApp, openApp, pick, rowByLabel, SLOW } from "./helpers";
+import { closeApp, openApp, pick, pickReady, rowByLabel, SLOW } from "./helpers";
 
 afterEach(closeApp);
 
@@ -32,7 +32,7 @@ describe("A10 compare page", () => {
     expect(await s.findByRole("heading", { name: "NVDA vs TSLA" }, SLOW)).toBeInTheDocument();
     await compareTable();
     expect(rowByLabel("3 month change").textContent).toMatch(/\+?46\.09%[\s\S]*-24\.43%/);
-    pick(await s.findByLabelText("Second instrument", {}, SLOW), /^XAU\b/);
+    await pickReady(await s.findByLabelText("Second instrument", {}, SLOW), /^XAU\b/);
     expect(await s.findByRole("heading", { name: "NVDA vs XAU" }, SLOW)).toBeInTheDocument();
     await waitFor(() => expect(new URLSearchParams(window.location.search).get("b")).toBe("XAU"));
     expect(new URLSearchParams(window.location.search).get("a")).toBe("NVDA");

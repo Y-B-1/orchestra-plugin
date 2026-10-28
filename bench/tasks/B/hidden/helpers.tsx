@@ -3,7 +3,7 @@
 // the solution put them. Only what a user sees is asserted.
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { vi } from "vitest";
 
 // The first import of main.tsx transforms the whole app, which can take seconds under load.
@@ -51,6 +51,11 @@ export function pick(select: HTMLElement, text: RegExp) {
   const option = Array.from(el.options).find((o) => text.test(o.textContent ?? ""));
   if (!option) throw new Error(`no option matching ${String(text)}`);
   fireEvent.change(el, { target: { value: option.value } });
+}
+
+// Wait for the option: a page may fill its dropdown after data loads, as a user would see it fill in.
+export async function pickReady(select: HTMLElement, text: RegExp) {
+  await waitFor(() => pick(select, text), SLOW);
 }
 
 export const SRC = join(process.cwd(), "src");
