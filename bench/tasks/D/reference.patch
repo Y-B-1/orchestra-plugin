@@ -1,0 +1,1651 @@
+diff --git a/README.md b/README.md
+index 344f452..f9369e1 100644
+--- a/README.md
++++ b/README.md
+@@ -4,6 +4,16 @@ Pulse is an internal market-insights dashboard. It shows key figures, a sortable
+ 
+ Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
+ 
++Portfolio: the summary cards show signed P&L and day change ("+$121.6K"); the holdings table can be narrowed to one book with the "Book" filter (the totals row and its weight follow the filter); "Show values in" switches every money value on the page (cards, market value, P&L, totals, allocation legend, P&L by book) between USD, EUR and GBP at today's FX rates, while prices and average cost stay in the instrument's own currency; a "P&L by book" panel lists every book with its positions, market value and unrealized P&L; and "Export holdings" downloads the holdings shown as CSV, values in the chosen currency.
++
++Clients: the list is sorted A to Z and searches by name, contact or region; the drawer shows AUM in whole dollars. Client notes support `**bold**` and `[label](https://...)` links; anything else, HTML included, shows as typed, and only http and https links become links. Notes can be pinned to the top ("Pin" / "Unpin"). Notes are stored per client under `pulse.client-notes.<client id>`; notes saved before pinning read as unpinned, and an unreadable value reads as no notes.
++
++Reports: a "Search reports" box filters the current tab by title or author; each report reads "Oct 27, 2026 · A. Moreau · 6 pages", and scheduled ones "Due Oct 30, 2026 · L. Duarte".
++
++Trades: notionals are formatted as amounts with cents, so a cancelled trade reads "$0.00" in the blotter, the dashboard and the trade drawer.
++
++Settings: the "Report digest" choice (Off, Daily, Weekly) replaces the weekly digest switch. Settings are saved under `pulse.settings`; an old save with `weeklyDigest` keeps its choice (on is Weekly, off is Off), and an unreadable save falls back to the defaults.
++
+ All data is mocked: typed fetchers in `src/api` read JSON files in `src/data` after a short artificial delay.
+ 
+ ## Run it
+diff --git a/src/components/ClientDrawer.test.tsx b/src/components/ClientDrawer.test.tsx
+index c8329fa..6514b33 100644
+--- a/src/components/ClientDrawer.test.tsx
++++ b/src/components/ClientDrawer.test.tsx
+@@ -12,6 +12,7 @@ describe("ClientDrawer", () => {
+     render(<ClientDrawer clientId="c-001" onClose={() => undefined} />);
+     expect(await screen.findByRole("heading", { name: "Northwind Capital" })).toBeInTheDocument();
+     expect(screen.getByText("Ines Vogel", { exact: false })).toBeInTheDocument();
++    expect(screen.getByText("$1,250,000,000")).toBeInTheDocument();
+   });
+ 
+ 
+diff --git a/src/components/ClientDrawer.tsx b/src/components/ClientDrawer.tsx
+index 97a7dcc..c425c99 100644
+--- a/src/components/ClientDrawer.tsx
++++ b/src/components/ClientDrawer.tsx
+@@ -24,7 +24,7 @@ function Details({ client }: { client: Client }) {
+         {client.contact} (<a href={`mailto:${client.email}`}>{client.email}</a>)
+       </dd>
+       <dt>Assets under management</dt>
+-      <dd>{formatCurrency(client.aum)}</dd>
++      <dd>{formatCurrency(client.aum, "USD", { wholeUnits: true })}</dd>
+       <dt>Last activity</dt>
+       <dd>{formatDateTime(client.lastActivity)} UTC</dd>
+       <dt>Notes</dt>
+diff --git a/src/components/clients/ClientNotes.test.tsx b/src/components/clients/ClientNotes.test.tsx
+index 17ee604..91230d4 100644
+--- a/src/components/clients/ClientNotes.test.tsx
++++ b/src/components/clients/ClientNotes.test.tsx
+@@ -40,3 +40,35 @@ describe("ClientNotes", () => {
+     expect(screen.getByText("No notes yet.")).toBeInTheDocument();
+   });
+ });
++
++describe("ClientNotes formatting and pins", () => {
++  it("renders bold and web links but never markup or script links", () => {
++    render(<ClientNotes clientId="c-004" now={fixedNow} />);
++    const text = 'Call **Rosa** re [pack](https://example.com/pack) <img src=x onerror="alert(1)"> [x](javascript:alert(1))';
++    fireEvent.change(screen.getByLabelText("New note"), { target: { value: text } });
++    fireEvent.click(screen.getByRole("button", { name: "Add note" }));
++    const item = screen.getByRole("listitem");
++    expect(within(item).getByText("Rosa").tagName).toBe("STRONG");
++    expect(within(item).getByRole("link", { name: "pack" })).toHaveAttribute("href", "https://example.com/pack");
++    expect(item.querySelector("img")).toBeNull();
++    expect(within(item).getAllByRole("link")).toHaveLength(1);
++  });
++
++  it("pins a saved note to the top and keeps it pinned", () => {
++    localStorage.setItem(
++      notesKey("c-005"),
++      JSON.stringify([
++        { id: "n2", text: "Newer", author: "Dana Whitaker", createdAt: "2026-10-26T10:00:00Z" },
++        { id: "n1", text: "Older", author: "Dana Whitaker", createdAt: "2026-10-25T10:00:00Z" },
++      ]),
++    );
++    render(<ClientNotes clientId="c-005" now={fixedNow} />);
++    fireEvent.click(within(screen.getAllByRole("listitem")[1]!).getByRole("button", { name: "Pin" }));
++    cleanup();
++    render(<ClientNotes clientId="c-005" now={fixedNow} />);
++    const [first] = screen.getAllByRole("listitem");
++    expect(within(first!).getByText("Older")).toBeInTheDocument();
++    expect(within(first!).getByText("Pinned")).toBeInTheDocument();
++    expect(within(first!).getByRole("button", { name: "Unpin" })).toBeInTheDocument();
++  });
++});
+diff --git a/src/components/clients/ClientNotes.tsx b/src/components/clients/ClientNotes.tsx
+index b886d58..d922b2b 100644
+--- a/src/components/clients/ClientNotes.tsx
++++ b/src/components/clients/ClientNotes.tsx
+@@ -4,6 +4,8 @@ import type { ClientNote } from "../../types";
+ import { formatDateTime } from "../../utils/format";
+ import { createId } from "../../utils/ids";
+ import { EmptyState } from "../Feedback";
++import { NoteText } from "./NoteText";
++import { pinnedFirst, storedNotes } from "./storedNotes";
+ 
+ export const NOTE_MAX_LENGTH = 500;
+ 
+@@ -19,7 +21,9 @@ interface ClientNotesProps {
+ }
+ 
+ export function ClientNotes({ clientId, author = "Dana Whitaker", now = () => new Date() }: ClientNotesProps) {
+-  const [notes, setNotes] = useLocalStorage<ClientNote[]>(notesKey(clientId), []);
++  const [saved, setSaved] = useLocalStorage<unknown>(notesKey(clientId), []);
++  const notes = storedNotes(saved);
++  const setNotes = (change: (prev: ClientNote[]) => ClientNote[]) => setSaved((prev: unknown) => change(storedNotes(prev)));
+   const [draft, setDraft] = useState("");
+   const fieldId = useId();
+   const trimmed = draft.trim();
+@@ -27,7 +31,7 @@ export function ClientNotes({ clientId, author = "Dana Whitaker", now = () => ne
+   function submit(event: FormEvent<HTMLFormElement>) {
+     event.preventDefault();
+     if (!trimmed) return;
+-    const note: ClientNote = { id: createId("note"), text: trimmed, author, createdAt: now().toISOString() };
++    const note: ClientNote = { id: createId("note"), text: trimmed, author, createdAt: now().toISOString(), pinned: false };
+     setNotes((prev) => [note, ...prev]);
+     setDraft("");
+   }
+@@ -36,6 +40,10 @@ export function ClientNotes({ clientId, author = "Dana Whitaker", now = () => ne
+     setNotes((prev) => prev.filter((note) => note.id !== id));
+   }
+ 
++  function togglePin(id: string) {
++    setNotes((prev) => prev.map((note) => (note.id === id ? { ...note, pinned: !note.pinned } : note)));
++  }
++
+   return (
+     <section className="client-notes" aria-label="Client notes">
+       <form className="client-notes__form" onSubmit={submit}>
+@@ -48,7 +56,7 @@ export function ClientNotes({ clientId, author = "Dana Whitaker", now = () => ne
+           rows={3}
+           maxLength={NOTE_MAX_LENGTH}
+           value={draft}
+-          placeholder="Call summary, follow-ups, preferences..."
++          placeholder="Call summary, follow-ups, preferences... **bold** and [links](https://...) work"
+           onChange={(event) => setDraft(event.target.value)}
+         />
+         <div className="client-notes__actions">
+@@ -64,11 +72,15 @@ export function ClientNotes({ clientId, author = "Dana Whitaker", now = () => ne
+         <EmptyState message="No notes yet." />
+       ) : (
+         <ol className="client-notes__list">
+-          {notes.map((note) => (
+-            <li key={note.id} className="client-notes__item">
+-              <p className="client-notes__text">{note.text}</p>
++          {pinnedFirst(notes).map((note) => (
++            <li key={note.id} className={`client-notes__item${note.pinned ? " client-notes__item--pinned" : ""}`}>
++              {note.pinned ? <span className="client-notes__pinned">Pinned</span> : null}
++              <NoteText text={note.text} />
+               <p className="client-notes__meta">
+                 {note.author}, <time dateTime={note.createdAt}>{formatDateTime(note.createdAt)} UTC</time>
++                <button type="button" className="client-notes__pin" onClick={() => togglePin(note.id)}>
++                  {note.pinned ? "Unpin" : "Pin"}
++                </button>
+                 <button
+                   type="button"
+                   className="client-notes__delete"
+diff --git a/src/components/clients/NoteText.tsx b/src/components/clients/NoteText.tsx
+new file mode 100644
+index 0000000..1bd0f1c
+--- /dev/null
++++ b/src/components/clients/NoteText.tsx
+@@ -0,0 +1,20 @@
++import { parseNote } from "../../utils/noteText";
++
++/** A note with its **bold** and [link](https://...) formatting; everything else is plain text. */
++export function NoteText({ text }: { text: string }) {
++  return (
++    <p className="client-notes__text">
++      {parseNote(text).map((part, index) => {
++        if (part.kind === "bold") return <strong key={index}>{part.text}</strong>;
++        if (part.kind === "link") {
++          return (
++            <a key={index} href={part.href} target="_blank" rel="noopener noreferrer">
++              {part.text}
++            </a>
++          );
++        }
++        return part.text;
++      })}
++    </p>
++  );
++}
+diff --git a/src/components/clients/storedNotes.test.ts b/src/components/clients/storedNotes.test.ts
+new file mode 100644
+index 0000000..31a4040
+--- /dev/null
++++ b/src/components/clients/storedNotes.test.ts
+@@ -0,0 +1,22 @@
++import { describe, expect, it } from "vitest";
++import { pinnedFirst, storedNotes } from "./storedNotes";
++
++const old = { id: "n1", text: "Older", author: "Dana Whitaker", createdAt: "2026-10-25T10:00:00Z" };
++
++describe("storedNotes", () => {
++  it("reads notes saved before pinning as unpinned", () => {
++    expect(storedNotes([old])).toEqual([{ ...old, pinned: false }]);
++  });
++
++  it("reads anything that is not a list of notes as no notes", () => {
++    expect(storedNotes({ notes: [old] })).toEqual([]);
++    expect(storedNotes("text")).toEqual([]);
++    expect(storedNotes(null)).toEqual([]);
++    expect(storedNotes([old, 5, { id: 1 }])).toHaveLength(1);
++  });
++
++  it("lists pinned notes first", () => {
++    const notes = storedNotes([{ ...old, id: "a" }, { ...old, id: "b", pinned: true }]);
++    expect(pinnedFirst(notes).map((note) => note.id)).toEqual(["b", "a"]);
++  });
++});
+diff --git a/src/components/clients/storedNotes.ts b/src/components/clients/storedNotes.ts
+new file mode 100644
+index 0000000..efc630f
+--- /dev/null
++++ b/src/components/clients/storedNotes.ts
+@@ -0,0 +1,25 @@
++import type { ClientNote } from "../../types";
++
++function isNote(value: unknown): value is ClientNote {
++  if (typeof value !== "object" || value === null) return false;
++  const note = value as Record<string, unknown>;
++  return typeof note.id === "string" && typeof note.text === "string" && typeof note.createdAt === "string";
++}
++
++/**
++ * Notes as saved in the browser. Anything that is not a list of notes reads as no
++ * notes, and notes saved before pinning existed come back unpinned.
++ */
++export function storedNotes(value: unknown): ClientNote[] {
++  if (!Array.isArray(value)) return [];
++  return value.filter(isNote).map((note) => ({
++    ...note,
++    author: typeof note.author === "string" ? note.author : "",
++    pinned: note.pinned === true,
++  }));
++}
++
++/** Pinned notes first; each group keeps its saved order (newest first). */
++export function pinnedFirst(notes: readonly ClientNote[]): ClientNote[] {
++  return [...notes.filter((note) => note.pinned), ...notes.filter((note) => !note.pinned)];
++}
+diff --git a/src/components/portfolio/AllocationChart.test.tsx b/src/components/portfolio/AllocationChart.test.tsx
+index bf71024..1d108d0 100644
+--- a/src/components/portfolio/AllocationChart.test.tsx
++++ b/src/components/portfolio/AllocationChart.test.tsx
+@@ -14,6 +14,11 @@ describe("AllocationChart", () => {
+     expect(chart).toHaveAccessibleName("Allocation by asset class Equities 60.0%, Bonds 40.0%");
+   });
+ 
++  it("lists each amount with its share, in the chosen currency", () => {
++    render(<AllocationChart slices={slices} money={{ currency: "EUR", convert: (usd) => usd / 2 }} />);
++    expect(screen.getAllByRole("listitem")[0]?.textContent).toBe("Equities: €300 (60.0%)");
++  });
++
+   it("scales bars to the largest slice and explains an empty portfolio", () => {
+     const { container } = render(<AllocationChart slices={slices} />);
+     const bars = container.querySelectorAll("rect.allocation__bar");
+diff --git a/src/components/portfolio/AllocationChart.tsx b/src/components/portfolio/AllocationChart.tsx
+index 9e5035c..3e37e41 100644
+--- a/src/components/portfolio/AllocationChart.tsx
++++ b/src/components/portfolio/AllocationChart.tsx
+@@ -2,12 +2,17 @@ import { useId } from "react";
+ import type { AllocationSlice } from "../../types";
+ import { formatCompactCurrency, formatPercent } from "../../utils/format";
+ import { assetClassLabels } from "../../utils/portfolio";
++import type { Money } from "./money";
+ 
+ interface AllocationChartProps {
+   slices: readonly AllocationSlice[];
+   title?: string;
++  /** Currency of the legend amounts; US dollars when left out. */
++  money?: Money;
+ }
+ 
++const usd: Money = { currency: "USD", convert: (amountUsd) => amountUsd };
++
+ const BAR_HEIGHT = 22;
+ const GAP = 14;
+ const LABEL_WIDTH = 110;
+@@ -15,7 +20,7 @@ const VALUE_WIDTH = 70;
+ const WIDTH = 480;
+ 
+ /** Horizontal bars, one per asset class, scaled so the largest slice fills the track. */
+-export function AllocationChart({ slices, title = "Allocation by asset class" }: AllocationChartProps) {
++export function AllocationChart({ slices, title = "Allocation by asset class", money = usd }: AllocationChartProps) {
+   const titleId = useId();
+   const descId = useId();
+   const largest = Math.max(0, ...slices.map((slice) => slice.weight));
+@@ -76,7 +81,7 @@ export function AllocationChart({ slices, title = "Allocation by asset class" }:
+           {slices.map((slice) => (
+             <li key={slice.assetClass}>
+               <span className={`allocation__swatch allocation__swatch--${slice.assetClass}`} aria-hidden="true" />
+-              {assetClassLabels[slice.assetClass]}: {formatCompactCurrency(slice.valueUsd)}
++              {`${assetClassLabels[slice.assetClass]}: ${formatCompactCurrency(money.convert(slice.valueUsd), money.currency)} (${formatPercent(slice.weight, 1)})`}
+             </li>
+           ))}
+         </ul>
+diff --git a/src/components/portfolio/BookPnl.tsx b/src/components/portfolio/BookPnl.tsx
+new file mode 100644
+index 0000000..0137044
+--- /dev/null
++++ b/src/components/portfolio/BookPnl.tsx
+@@ -0,0 +1,34 @@
++import { useMemo } from "react";
++import type { Position } from "../../types";
++import { formatCurrency } from "../../utils/format";
++import { formatSignedCurrency, toneOf } from "../../utils/numbers";
++import { pnlByBook, type BookPnl as Row } from "../../utils/portfolio";
++import { Table, type Column } from "../Table";
++import type { Money } from "./money";
++
++function bookColumns({ currency, convert }: Money): Column<Row>[] {
++  return [
++    { key: "book", header: "Book", rowHeader: true, render: (row) => row.book },
++    { key: "positions", header: "Positions", align: "right", render: (row) => row.positions },
++    {
++      key: "marketValue",
++      header: "Market value",
++      align: "right",
++      render: (row) => formatCurrency(convert(row.marketValueUsd), currency, { wholeUnits: true }),
++    },
++    {
++      key: "pnl",
++      header: "Unrealized P&L",
++      align: "right",
++      render: (row) => formatSignedCurrency(convert(row.unrealizedPnlUsd), currency),
++      cellClassName: (row) => `text-${toneOf(row.unrealizedPnlUsd)}`,
++    },
++  ];
++}
++
++/** Every book in the portfolio, whatever the holdings table is filtered to. */
++export function BookPnl({ positions, money }: { positions: Position[]; money: Money }) {
++  const rows = useMemo(() => pnlByBook(positions), [positions]);
++  const columns = useMemo(() => bookColumns(money), [money]);
++  return <Table caption="P&L by book" columns={columns} rows={rows} rowKey={(row) => row.book} />;
++}
+diff --git a/src/components/portfolio/HoldingsTable.tsx b/src/components/portfolio/HoldingsTable.tsx
+index 9bbceff..5b33663 100644
+--- a/src/components/portfolio/HoldingsTable.tsx
++++ b/src/components/portfolio/HoldingsTable.tsx
+@@ -1,3 +1,4 @@
++import { useMemo } from "react";
+ import { Link } from "react-router-dom";
+ import type { PortfolioTotals, Position } from "../../types";
+ import { formatCurrency, formatPercent } from "../../utils/format";
+@@ -5,100 +6,118 @@ import { formatPrice, formatQuantity, formatSignedCurrency, toneOf } from "../..
+ import { assetClassLabels } from "../../utils/portfolio";
+ import { PriceChange } from "../PriceChange";
+ import { Table, type Column } from "../Table";
++import type { Money } from "./money";
+ 
+-const columns: Column<Position>[] = [
+-  {
+-    key: "symbol",
+-    header: "Instrument",
+-    rowHeader: true,
+-    render: (p) => (
+-      <>
+-        <Link to={`/instruments/${p.symbol}`} className="table__symbol table__link">
+-          {p.symbol}
+-        </Link>
+-        <span className="table__name">{p.name}</span>
+-      </>
+-    ),
+-    sortValue: (p) => p.symbol,
+-  },
+-  {
+-    key: "assetClass",
+-    header: "Asset class",
+-    render: (p) => assetClassLabels[p.assetClass],
+-    sortValue: (p) => assetClassLabels[p.assetClass],
+-  },
+-  {
+-    key: "book",
+-    header: "Book",
+-    render: (p) => p.book,
+-    sortValue: (p) => p.book,
+-  },
+-  {
+-    key: "quantity",
+-    header: "Quantity",
+-    align: "right",
+-    render: (p) => formatQuantity(p.quantity),
+-    sortValue: (p) => p.quantity,
+-  },
+-  {
+-    key: "avgCost",
+-    header: "Avg cost",
+-    align: "right",
+-    render: (p) => formatPrice(p.avgCost, p.currency),
+-    sortValue: (p) => p.avgCost,
+-  },
+-  {
+-    key: "price",
+-    header: "Price",
+-    align: "right",
+-    render: (p) => (
+-      <>
+-        {formatPrice(p.price, p.currency)}
+-        <PriceChange pct={p.changePct} className="table__sub" />
+-      </>
+-    ),
+-    sortValue: (p) => p.price,
+-  },
+-  {
+-    key: "marketValueUsd",
+-    header: "Market value (USD)",
+-    align: "right",
+-    render: (p) => formatCurrency(p.marketValueUsd),
+-    sortValue: (p) => p.marketValueUsd,
+-  },
+-  {
+-    key: "unrealizedPnlUsd",
+-    header: "Unrealized P&L",
+-    align: "right",
+-    render: (p) => formatSignedCurrency(p.unrealizedPnlUsd),
+-    sortValue: (p) => p.unrealizedPnlUsd,
+-    cellClassName: (p) => `text-${toneOf(p.unrealizedPnlUsd)}`,
+-  },
+-  {
+-    key: "weight",
+-    header: "Weight",
+-    align: "right",
+-    render: (p) => formatPercent(p.weight, 1),
+-    sortValue: (p) => p.weight,
+-  },
+-];
++/** Prices and average cost stay in the instrument's currency; values follow `money`. */
++function holdingColumns({ currency, convert }: Money): Column<Position>[] {
++  return [
++    {
++      key: "symbol",
++      header: "Instrument",
++      rowHeader: true,
++      render: (p) => (
++        <>
++          <Link to={`/instruments/${p.symbol}`} className="table__symbol table__link">
++            {p.symbol}
++          </Link>
++          <span className="table__name">{p.name}</span>
++        </>
++      ),
++      sortValue: (p) => p.symbol,
++    },
++    {
++      key: "assetClass",
++      header: "Asset class",
++      render: (p) => assetClassLabels[p.assetClass],
++      sortValue: (p) => assetClassLabels[p.assetClass],
++    },
++    {
++      key: "book",
++      header: "Book",
++      render: (p) => p.book,
++      sortValue: (p) => p.book,
++    },
++    {
++      key: "quantity",
++      header: "Quantity",
++      align: "right",
++      render: (p) => formatQuantity(p.quantity),
++      sortValue: (p) => p.quantity,
++    },
++    {
++      key: "avgCost",
++      header: "Avg cost",
++      align: "right",
++      render: (p) => formatPrice(p.avgCost, p.currency),
++      sortValue: (p) => p.avgCost,
++    },
++    {
++      key: "price",
++      header: "Price",
++      align: "right",
++      render: (p) => (
++        <>
++          {formatPrice(p.price, p.currency)}
++          <PriceChange pct={p.changePct} className="table__sub" />
++        </>
++      ),
++      sortValue: (p) => p.price,
++    },
++    {
++      key: "marketValueUsd",
++      header: `Market value (${currency})`,
++      align: "right",
++      render: (p) => formatCurrency(convert(p.marketValueUsd), currency),
++      sortValue: (p) => p.marketValueUsd,
++    },
++    {
++      key: "unrealizedPnlUsd",
++      header: "Unrealized P&L",
++      align: "right",
++      render: (p) => formatSignedCurrency(convert(p.unrealizedPnlUsd), currency),
++      sortValue: (p) => p.unrealizedPnlUsd,
++      cellClassName: (p) => `text-${toneOf(p.unrealizedPnlUsd)}`,
++    },
++    {
++      key: "weight",
++      header: "Weight",
++      align: "right",
++      render: (p) => formatPercent(p.weight, 1),
++      sortValue: (p) => p.weight,
++    },
++  ];
++}
++
++interface TotalsRowProps {
++  totals: PortfolioTotals;
++  /** Share of the whole portfolio held by the rows shown. */
++  weight: number;
++  money: Money;
++}
+ 
+-function TotalsRow({ totals }: { totals: PortfolioTotals }) {
++function TotalsRow({ totals, weight, money: { currency, convert } }: TotalsRowProps) {
+   return (
+     <tr className="table__totals">
+       <th scope="row" colSpan={6}>
+         Total ({totals.positions} positions)
+       </th>
+       <td className="table__num" data-testid="total-market-value">
+-        {formatCurrency(totals.marketValueUsd)}
++        {formatCurrency(convert(totals.marketValueUsd), currency)}
+       </td>
+-      <td className={`table__num text-${toneOf(totals.unrealizedPnlUsd)}`}>{formatSignedCurrency(totals.unrealizedPnlUsd)}</td>
+-      <td className="table__num">{formatPercent(totals.positions > 0 ? 1 : 0, 1)}</td>
++      <td className={`table__num text-${toneOf(totals.unrealizedPnlUsd)}`}>
++        {formatSignedCurrency(convert(totals.unrealizedPnlUsd), currency)}
++      </td>
++      <td className="table__num">{formatPercent(weight, 1)}</td>
+     </tr>
+   );
+ }
+ 
+-export function HoldingsTable({ positions, totals }: { positions: Position[]; totals: PortfolioTotals }) {
++interface HoldingsTableProps extends TotalsRowProps {
++  positions: Position[];
++}
++
++export function HoldingsTable({ positions, totals, weight, money }: HoldingsTableProps) {
++  const columns = useMemo(() => holdingColumns(money), [money]);
+   return (
+     <Table
+       caption="Holdings"
+@@ -107,7 +126,7 @@ export function HoldingsTable({ positions, totals }: { positions: Position[]; to
+       rowKey={(p) => p.id}
+       initialSort={{ key: "marketValueUsd", direction: "desc" }}
+       emptyMessage="This portfolio has no holdings."
+-      footer={<TotalsRow totals={totals} />}
++      footer={<TotalsRow totals={totals} weight={weight} money={money} />}
+     />
+   );
+ }
+diff --git a/src/components/portfolio/PortfolioControls.tsx b/src/components/portfolio/PortfolioControls.tsx
+new file mode 100644
+index 0000000..dc3aadf
+--- /dev/null
++++ b/src/components/portfolio/PortfolioControls.tsx
+@@ -0,0 +1,56 @@
++import { useId } from "react";
++import { displayCurrencies, type DisplayCurrency } from "../../utils/portfolio";
++
++export const ALL_BOOKS = "";
++
++interface PortfolioControlsProps {
++  books: readonly string[];
++  book: string;
++  onBookChange: (book: string) => void;
++  currency: DisplayCurrency;
++  onCurrencyChange: (currency: DisplayCurrency) => void;
++  onExport: () => void;
++}
++
++export function PortfolioControls({ books, book, onBookChange, currency, onCurrencyChange, onExport }: PortfolioControlsProps) {
++  const id = useId();
++  return (
++    <div className="filters" role="group" aria-label="Portfolio view">
++      <div className="filters__field">
++        <label className="filters__label" htmlFor={`${id}-book`}>
++          Book
++        </label>
++        <select id={`${id}-book`} className="input input--compact" value={book} onChange={(event) => onBookChange(event.target.value)}>
++          <option value={ALL_BOOKS}>All books</option>
++          {books.map((name) => (
++            <option key={name} value={name}>
++              {name}
++            </option>
++          ))}
++        </select>
++      </div>
++      <div className="filters__field">
++        <label className="filters__label" htmlFor={`${id}-currency`}>
++          Show values in
++        </label>
++        <select
++          id={`${id}-currency`}
++          className="input input--compact"
++          value={currency}
++          onChange={(event) => onCurrencyChange(event.target.value as DisplayCurrency)}
++        >
++          {displayCurrencies.map((code) => (
++            <option key={code} value={code}>
++              {code}
++            </option>
++          ))}
++        </select>
++      </div>
++      <div className="filters__actions">
++        <button type="button" className="button" onClick={onExport}>
++          Export holdings
++        </button>
++      </div>
++    </div>
++  );
++}
+diff --git a/src/components/portfolio/PortfolioSummary.tsx b/src/components/portfolio/PortfolioSummary.tsx
+index d616da2..e9b7f18 100644
+--- a/src/components/portfolio/PortfolioSummary.tsx
++++ b/src/components/portfolio/PortfolioSummary.tsx
+@@ -1,32 +1,35 @@
+ import type { PortfolioTotals } from "../../types";
+ import { formatCompactCurrency, formatNumber } from "../../utils/format";
+ import { PriceChange } from "../PriceChange";
++import type { Money } from "./money";
+ 
+-export function PortfolioSummary({ totals }: { totals: PortfolioTotals }) {
++export function PortfolioSummary({ totals, money: { currency, convert } }: { totals: PortfolioTotals; money: Money }) {
+   const dayPct = totals.marketValueUsd - totals.dayChangeUsd === 0
+     ? 0
+     : totals.dayChangeUsd / (totals.marketValueUsd - totals.dayChangeUsd);
++  const amount = (usd: number) => formatCompactCurrency(convert(usd), currency);
++  const signed = (usd: number) => formatCompactCurrency(convert(usd), currency, { signed: true });
+   return (
+     <section className="kpi-grid" aria-label="Portfolio summary">
+       <article className="kpi-card" aria-label="Market value">
+         <h3 className="kpi-card__label">Market value</h3>
+-        <p className="kpi-card__value">{formatCompactCurrency(totals.marketValueUsd)}</p>
++        <p className="kpi-card__value">{amount(totals.marketValueUsd)}</p>
+         <p className="kpi-card__note">{formatNumber(totals.positions)} positions</p>
+       </article>
+       <article className="kpi-card" aria-label="Unrealized P&L">
+         <h3 className="kpi-card__label">Unrealized P&amp;L</h3>
+-        <p className="kpi-card__value">{formatCompactCurrency(totals.unrealizedPnlUsd)}</p>
++        <p className="kpi-card__value">{signed(totals.unrealizedPnlUsd)}</p>
+         <PriceChange pct={totals.unrealizedPnlPct} className="kpi-card__note" />
+       </article>
+       <article className="kpi-card" aria-label="Day change">
+         <h3 className="kpi-card__label">Day change</h3>
+-        <p className="kpi-card__value">{formatCompactCurrency(totals.dayChangeUsd)}</p>
++        <p className="kpi-card__value">{signed(totals.dayChangeUsd)}</p>
+         <PriceChange pct={dayPct} className="kpi-card__note" />
+       </article>
+       <article className="kpi-card" aria-label="Cost basis">
+         <h3 className="kpi-card__label">Cost basis</h3>
+-        <p className="kpi-card__value">{formatCompactCurrency(totals.costBasisUsd)}</p>
+-        <p className="kpi-card__note">USD at today's rates</p>
++        <p className="kpi-card__value">{amount(totals.costBasisUsd)}</p>
++        <p className="kpi-card__note">{currency} at today's rates</p>
+       </article>
+     </section>
+   );
+diff --git a/src/components/portfolio/exportHoldings.test.ts b/src/components/portfolio/exportHoldings.test.ts
+new file mode 100644
+index 0000000..117562c
+--- /dev/null
++++ b/src/components/portfolio/exportHoldings.test.ts
+@@ -0,0 +1,33 @@
++import { describe, expect, it } from "vitest";
++import type { Position } from "../../types";
++import { toCsv } from "../../utils/csv";
++import { holdingsCsvColumns } from "./exportHoldings";
++
++const position: Position = {
++  id: "h-01",
++  symbol: "SAP",
++  quantity: 4000,
++  avgCost: 182.6,
++  openedAt: "2026-05-07",
++  book: "Core equity",
++  name: "SAP SE",
++  assetClass: "equity",
++  currency: "EUR",
++  price: 214.9,
++  changePct: 0.0052,
++  marketValueUsd: 1000,
++  costBasisUsd: 900,
++  unrealizedPnlUsd: 100,
++  unrealizedPnlPct: 0.1111,
++  dayChangeUsd: 5,
++  weight: 0.25,
++};
++
++describe("holdings export", () => {
++  it("writes one row per holding with values in the chosen currency", () => {
++    const csv = toCsv([position], holdingsCsvColumns({ currency: "EUR", convert: (usd) => usd / 2 }));
++    const [header, row] = csv.split("\r\n");
++    expect(header).toContain("Market value (EUR),Unrealized P&L (EUR)");
++    expect(row).toBe("SAP,SAP SE,Equities,Core equity,4000,182.6,214.9,EUR,500.00,50.00,0.2500");
++  });
++});
+diff --git a/src/components/portfolio/exportHoldings.ts b/src/components/portfolio/exportHoldings.ts
+new file mode 100644
+index 0000000..6804573
+--- /dev/null
++++ b/src/components/portfolio/exportHoldings.ts
+@@ -0,0 +1,26 @@
++import type { Position } from "../../types";
++import { downloadCsv, toCsv, type CsvColumn } from "../../utils/csv";
++import { assetClassLabels } from "../../utils/portfolio";
++import type { Money } from "./money";
++
++/** CSV columns of the holdings export: raw numbers, values in the currency on screen. */
++export function holdingsCsvColumns({ currency, convert }: Money): CsvColumn<Position>[] {
++  return [
++    { header: "Instrument", value: (p) => p.symbol },
++    { header: "Name", value: (p) => p.name },
++    { header: "Asset class", value: (p) => assetClassLabels[p.assetClass] },
++    { header: "Book", value: (p) => p.book },
++    { header: "Quantity", value: (p) => p.quantity },
++    { header: "Avg cost", value: (p) => p.avgCost },
++    { header: "Price", value: (p) => p.price },
++    { header: "Price currency", value: (p) => p.currency },
++    { header: `Market value (${currency})`, value: (p) => convert(p.marketValueUsd).toFixed(2) },
++    { header: `Unrealized P&L (${currency})`, value: (p) => convert(p.unrealizedPnlUsd).toFixed(2) },
++    { header: "Weight", value: (p) => p.weight.toFixed(4) },
++  ];
++}
++
++export function exportHoldings(positions: readonly Position[], money: Money, today = new Date()): void {
++  const day = today.toISOString().slice(0, 10);
++  downloadCsv(`pulse-holdings-${day}.csv`, toCsv(positions, holdingsCsvColumns(money)));
++}
+diff --git a/src/components/portfolio/money.ts b/src/components/portfolio/money.ts
+new file mode 100644
+index 0000000..36dd348
+--- /dev/null
++++ b/src/components/portfolio/money.ts
+@@ -0,0 +1,12 @@
++import type { FxRates } from "../../types";
++import { fromUsd, type DisplayCurrency } from "../../utils/portfolio";
++
++/** The currency the portfolio page shows its values in, and how to get there from USD. */
++export interface Money {
++  currency: DisplayCurrency;
++  convert: (amountUsd: number) => number;
++}
++
++export function moneyIn(currency: DisplayCurrency, rates: FxRates): Money {
++  return { currency, convert: (amountUsd) => fromUsd(amountUsd, currency, rates) };
++}
+diff --git a/src/components/reports/reportMeta.test.ts b/src/components/reports/reportMeta.test.ts
+new file mode 100644
+index 0000000..c663f1b
+--- /dev/null
++++ b/src/components/reports/reportMeta.test.ts
+@@ -0,0 +1,25 @@
++import { describe, expect, it } from "vitest";
++import type { Report } from "../../types";
++import { reportMeta, searchReports } from "./reportMeta";
++
++const wrap: Report = { id: "r-1", title: "Daily market wrap", date: "2026-10-27", status: "published", author: "A. Moreau", pages: 6 };
++const due: Report = { id: "r-2", title: "Weekly strategy note", date: "2026-10-30", status: "scheduled", author: "L. Duarte", pages: 0 };
++
++describe("reportMeta", () => {
++  it("joins date, author and pages with dots", () => {
++    expect(reportMeta(wrap)).toBe("Oct 27, 2026 · A. Moreau · 6 pages");
++    expect(reportMeta({ ...wrap, pages: 1 })).toBe("Oct 27, 2026 · A. Moreau · 1 page");
++  });
++
++  it("shows when a scheduled report is due", () => {
++    expect(reportMeta(due)).toBe("Due Oct 30, 2026 · L. Duarte");
++  });
++});
++
++describe("searchReports", () => {
++  it("matches title or author, ignoring case", () => {
++    expect(searchReports([wrap, due], "STRATEGY")).toEqual([due]);
++    expect(searchReports([wrap, due], "moreau")).toEqual([wrap]);
++    expect(searchReports([wrap, due], " ")).toEqual([wrap, due]);
++  });
++});
+diff --git a/src/components/reports/reportMeta.ts b/src/components/reports/reportMeta.ts
+new file mode 100644
+index 0000000..64d4036
+--- /dev/null
++++ b/src/components/reports/reportMeta.ts
+@@ -0,0 +1,16 @@
++import type { Report } from "../../types";
++import { formatDate } from "../../utils/format";
++import { matchesQuery } from "../../utils/search";
++
++/** "Oct 27, 2026 · A. Moreau · 6 pages"; scheduled reports read "Due Oct 30, 2026 · L. Duarte". */
++export function reportMeta(report: Report): string {
++  const date = formatDate(report.date);
++  const parts = [report.status === "scheduled" ? `Due ${date}` : date, report.author];
++  if (report.pages > 0) parts.push(`${report.pages} ${report.pages === 1 ? "page" : "pages"}`);
++  return parts.join(" · ");
++}
++
++/** Reports whose title or author contains the query, ignoring case. */
++export function searchReports(reports: readonly Report[], query: string): Report[] {
++  return reports.filter((report) => matchesQuery(query, report.title, report.author));
++}
+diff --git a/src/components/trades/TradeDetail.tsx b/src/components/trades/TradeDetail.tsx
+index 9b9917b..3a1631f 100644
+--- a/src/components/trades/TradeDetail.tsx
++++ b/src/components/trades/TradeDetail.tsx
+@@ -9,7 +9,7 @@ import { AsyncContent } from "../AsyncContent";
+ import { Drawer } from "../Drawer";
+ import { StatList } from "../StatList";
+ import { TradeSideBadge, TradeStatusBadge } from "./TradeBadges";
+-import { tradeNotional } from "./tradeColumns";
++import { formatNotional } from "./tradeColumns";
+ 
+ interface TradeDetailProps {
+   tradeId: string;
+@@ -43,7 +43,7 @@ function TradeBody({ trade }: { trade: Trade }) {
+           { label: "Executed", value: `${formatDateTime(trade.executedAt)} UTC` },
+           { label: "Asset class", value: assetClassLabels[trade.assetClass] },
+           { label: "Filled", value: `${formatQuantity(trade.filledQuantity)} (${Math.round(fillRatio * 100)}%)` },
+-          { label: "Notional", value: formatPrice(tradeNotional(trade), trade.currency) },
++          { label: "Notional", value: formatNotional(trade) },
+           { label: "Fees", value: formatCurrency(trade.fees, trade.currency) },
+           { label: "Venue", value: trade.venue },
+           { label: "Trader", value: trade.trader },
+diff --git a/src/components/trades/tradeColumns.test.tsx b/src/components/trades/tradeColumns.test.tsx
+new file mode 100644
+index 0000000..ff53e45
+--- /dev/null
++++ b/src/components/trades/tradeColumns.test.tsx
+@@ -0,0 +1,31 @@
++import { describe, expect, it } from "vitest";
++import type { Trade } from "../../types";
++import { formatNotional } from "./tradeColumns";
++
++const trade: Trade = {
++  id: "T-1",
++  symbol: "AAPL",
++  assetClass: "equity",
++  side: "buy",
++  quantity: 1000,
++  filledQuantity: 1000,
++  price: 227.48,
++  currency: "USD",
++  executedAt: "2026-10-27T15:58:46Z",
++  clientId: "c-002",
++  trader: "D. Whitaker",
++  venue: "NASDAQ",
++  status: "filled",
++  fees: 10,
++};
++
++describe("formatNotional", () => {
++  it("formats the filled amount as money, with cents", () => {
++    expect(formatNotional(trade)).toBe("$227,480.00");
++    expect(formatNotional({ ...trade, filledQuantity: 400 })).toBe("$90,992.00");
++  });
++
++  it("shows a cancelled trade as $0.00, not with a quote's four decimals", () => {
++    expect(formatNotional({ ...trade, filledQuantity: 0, status: "cancelled" })).toBe("$0.00");
++  });
++});
+diff --git a/src/components/trades/tradeColumns.tsx b/src/components/trades/tradeColumns.tsx
+index 8ab2680..b97fcd0 100644
+--- a/src/components/trades/tradeColumns.tsx
++++ b/src/components/trades/tradeColumns.tsx
+@@ -1,7 +1,7 @@
+ import { Link } from "react-router-dom";
+ import { clientName } from "../../api";
+ import type { Trade } from "../../types";
+-import { formatDateTime } from "../../utils/format";
++import { formatCurrency, formatDateTime } from "../../utils/format";
+ import { formatPrice, formatQuantity } from "../../utils/numbers";
+ import type { Column } from "../Table";
+ import { TradeSideBadge, TradeStatusBadge } from "./TradeBadges";
+@@ -10,6 +10,14 @@ export function tradeNotional(trade: Trade): number {
+   return trade.filledQuantity * trade.price;
+ }
+ 
++/**
++ * The notional as an amount of money. `formatPrice` is for quotes: it picks its
++ * decimals from the size of the number, so a zero notional read "$0.0000".
++ */
++export function formatNotional(trade: Trade): string {
++  return formatCurrency(tradeNotional(trade), trade.currency);
++}
++
+ const executed: Column<Trade> = {
+   key: "executedAt",
+   header: "Time",
+@@ -63,7 +71,7 @@ const notional: Column<Trade> = {
+   key: "notional",
+   header: "Notional",
+   align: "right",
+-  render: (trade) => formatPrice(tradeNotional(trade), trade.currency),
++  render: (trade) => formatNotional(trade),
+   sortValue: (trade) => tradeNotional(trade),
+ };
+ 
+diff --git a/src/hooks/useSettings.tsx b/src/hooks/useSettings.tsx
+index aeed2d4..6683780 100644
+--- a/src/hooks/useSettings.tsx
++++ b/src/hooks/useSettings.tsx
+@@ -1,15 +1,11 @@
+ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+ import type { Settings } from "../types";
+-import { readJson, writeJson } from "../utils/storage";
++import { loadSettings } from "../utils/settings";
++import { writeJson } from "../utils/storage";
+ 
+ export const SETTINGS_KEY = "pulse.settings";
+ 
+-export const defaultSettings: Settings = {
+-  theme: "light",
+-  emailAlerts: true,
+-  pushAlerts: false,
+-  weeklyDigest: true,
+-};
++export { defaultSettings } from "../utils/settings";
+ 
+ interface SettingsContextValue {
+   settings: Settings;
+@@ -19,7 +15,7 @@ interface SettingsContextValue {
+ const SettingsContext = createContext<SettingsContextValue | null>(null);
+ 
+ export function SettingsProvider({ children }: { children: ReactNode }) {
+-  const [settings, setSettings] = useState<Settings>(() => readJson(SETTINGS_KEY, defaultSettings));
++  const [settings, setSettings] = useState<Settings>(() => loadSettings(SETTINGS_KEY));
+ 
+   useEffect(() => {
+     writeJson(SETTINGS_KEY, settings);
+diff --git a/src/pages/Clients.test.tsx b/src/pages/Clients.test.tsx
+index 5a207a0..cc61e95 100644
+--- a/src/pages/Clients.test.tsx
++++ b/src/pages/Clients.test.tsx
+@@ -21,6 +21,18 @@ describe("Clients page", () => {
+     expect(screen.getByText("Quill Software")).toBeInTheDocument();
+   });
+ 
++  it("lists clients A to Z by name", async () => {
++    render(
++      <MemoryRouter>
++        <Clients />
++      </MemoryRouter>,
++    );
++    await screen.findByText("Northwind Capital");
++    const names = Array.from(document.querySelectorAll(".client-list__name")).map((el) => el.textContent ?? "");
++    expect(names[0]).toBe("Baltic Shipping Fund");
++    expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
++  });
++
+   it("opens the detail drawer for a client", async () => {
+     render(
+       <MemoryRouter>
+diff --git a/src/pages/Clients.tsx b/src/pages/Clients.tsx
+index cf4a047..b0e95d7 100644
+--- a/src/pages/Clients.tsx
++++ b/src/pages/Clients.tsx
+@@ -10,6 +10,11 @@ import type { Client } from "../types";
+ 
+ export const SEARCH_DEBOUNCE_MS = 150;
+ 
++/** The list reads A to Z by name. */
++export function byName(clients: readonly Client[]): Client[] {
++  return [...clients].sort((a, b) => a.name.localeCompare(b.name));
++}
++
+ export function Clients() {
+   useDocumentTitle("Clients");
+   const [query, setQuery] = useState("");
+@@ -22,7 +27,7 @@ export function Clients() {
+   useEffect(() => {
+     setResults((prev) => ({ ...prev, loading: true, error: null }));
+     fetchClients(debouncedQuery).then(
+-      (data) => setResults({ data, loading: false, error: null }),
++      (data) => setResults({ data: byName(data), loading: false, error: null }),
+       (error: unknown) => setResults({ data: null, loading: false, error: toError(error) }),
+     );
+   }, [debouncedQuery]);
+@@ -35,7 +40,7 @@ export function Clients() {
+           <input
+             type="search"
+             className="input"
+-            placeholder="Search clients"
++            placeholder="Search by name, contact or region"
+             aria-label="Search clients"
+             value={query}
+             onChange={(event) => setQuery(event.target.value)}
+diff --git a/src/pages/Portfolio.test.tsx b/src/pages/Portfolio.test.tsx
+index 8affe68..d35d4ce 100644
+--- a/src/pages/Portfolio.test.tsx
++++ b/src/pages/Portfolio.test.tsx
+@@ -29,6 +29,17 @@ describe("Portfolio page", () => {
+     expect(screen.getByTestId("total-market-value")).toHaveTextContent(formatCurrency(total));
+   });
+ 
++  it("filters holdings by book and shows values in another currency", async () => {
++    renderPortfolio();
++    const table = await screen.findByRole("table", { name: "Holdings" });
++    fireEvent.change(screen.getByLabelText("Book"), { target: { value: "Growth" } });
++    expect(within(table).getByText("Total (2 positions)")).toBeInTheDocument();
++    expect(screen.getByTestId("total-market-value")).toHaveTextContent("$5,398,600.00");
++    fireEvent.change(screen.getByLabelText("Show values in"), { target: { value: "EUR" } });
++    expect(within(table).getByRole("columnheader", { name: "Market value (EUR)" })).toBeInTheDocument();
++    expect(within(screen.getByRole("table", { name: "P&L by book" })).getAllByRole("rowheader")[0]).toHaveTextContent("Macro overlay");
++  });
++
+   it("re-sorts holdings and charts the allocation", async () => {
+     renderPortfolio();
+     const table = await screen.findByRole("table", { name: "Holdings" });
+diff --git a/src/pages/Portfolio.tsx b/src/pages/Portfolio.tsx
+index 0d10092..f5adda2 100644
+--- a/src/pages/Portfolio.tsx
++++ b/src/pages/Portfolio.tsx
+@@ -1,34 +1,77 @@
+-import { useMemo } from "react";
+-import { fetchPositions } from "../api";
++import { useMemo, useState } from "react";
++import { fetchFxRates, fetchPositions } from "../api";
+ import { AsyncContent } from "../components/AsyncContent";
+ import { AllocationChart } from "../components/portfolio/AllocationChart";
++import { BookPnl } from "../components/portfolio/BookPnl";
++import { exportHoldings } from "../components/portfolio/exportHoldings";
+ import { HoldingsTable } from "../components/portfolio/HoldingsTable";
++import { moneyIn } from "../components/portfolio/money";
++import { ALL_BOOKS, PortfolioControls } from "../components/portfolio/PortfolioControls";
+ import { PortfolioSummary } from "../components/portfolio/PortfolioSummary";
+ import { useAsync } from "../hooks/useAsync";
+ import { useDocumentTitle } from "../hooks/useDocumentTitle";
+-import type { Position } from "../types";
+-import { allocationByClass, portfolioTotals } from "../utils/portfolio";
++import type { FxRates, Position } from "../types";
++import { percentOf } from "../utils/numbers";
++import { allocationByClass, bookNames, portfolioTotals, type DisplayCurrency } from "../utils/portfolio";
+ 
+-function PortfolioView({ positions }: { positions: Position[] }) {
++interface PortfolioData {
++  positions: Position[];
++  rates: FxRates;
++}
++
++async function fetchPortfolio(): Promise<PortfolioData> {
++  const [positions, rates] = await Promise.all([fetchPositions(), fetchFxRates()]);
++  return { positions, rates };
++}
++
++function PortfolioView({ positions, rates }: PortfolioData) {
++  const [book, setBook] = useState(ALL_BOOKS);
++  const [currency, setCurrency] = useState<DisplayCurrency>("USD");
++  const money = useMemo(() => moneyIn(currency, rates), [currency, rates]);
+   const totals = useMemo(() => portfolioTotals(positions), [positions]);
+   const allocation = useMemo(() => allocationByClass(positions), [positions]);
++  const books = useMemo(() => bookNames(positions), [positions]);
++  const shown = useMemo(() => (book === ALL_BOOKS ? positions : positions.filter((p) => p.book === book)), [positions, book]);
++  const shownTotals = useMemo(() => portfolioTotals(shown), [shown]);
++
+   return (
+     <>
+-      <PortfolioSummary totals={totals} />
++      <PortfolioSummary totals={totals} money={money} />
++      <PortfolioControls
++        books={books}
++        book={book}
++        onBookChange={setBook}
++        currency={currency}
++        onCurrencyChange={setCurrency}
++        onExport={() => exportHoldings(shown, money)}
++      />
+       <div className="page__columns">
+         <section className="panel" aria-label="Holdings">
+           <div className="panel__header">
+             <h2 className="panel__title">Holdings</h2>
+-            <p className="panel__hint">Values in USD at today's FX rates</p>
+-          </div>
+-          <HoldingsTable positions={positions} totals={totals} />
+-        </section>
+-        <section className="panel" aria-label="Allocation">
+-          <div className="panel__header">
+-            <h2 className="panel__title">Allocation</h2>
++            <p className="panel__hint">Values in {currency} at today's FX rates</p>
+           </div>
+-          <AllocationChart slices={allocation} />
++          <HoldingsTable
++            positions={shown}
++            totals={shownTotals}
++            weight={percentOf(shownTotals.marketValueUsd, totals.marketValueUsd)}
++            money={money}
++          />
+         </section>
++        <div className="page__stack">
++          <section className="panel" aria-label="Allocation">
++            <div className="panel__header">
++              <h2 className="panel__title">Allocation</h2>
++            </div>
++            <AllocationChart slices={allocation} money={money} />
++          </section>
++          <section className="panel" aria-label="P&L by book">
++            <div className="panel__header">
++              <h2 className="panel__title">P&amp;L by book</h2>
++            </div>
++            <BookPnl positions={positions} money={money} />
++          </section>
++        </div>
+       </div>
+     </>
+   );
+@@ -36,16 +79,16 @@ function PortfolioView({ positions }: { positions: Position[] }) {
+ 
+ export function Portfolio() {
+   useDocumentTitle("Portfolio");
+-  const state = useAsync(fetchPositions, []);
++  const state = useAsync(fetchPortfolio, []);
+   return (
+     <div className="page">
+       <AsyncContent
+         state={state}
+         loadingLabel="Loading portfolio"
+-        isEmpty={(positions) => positions.length === 0}
++        isEmpty={(data) => data.positions.length === 0}
+         emptyMessage="This portfolio has no holdings."
+       >
+-        {(positions) => <PortfolioView positions={positions} />}
++        {(data) => <PortfolioView positions={data.positions} rates={data.rates} />}
+       </AsyncContent>
+     </div>
+   );
+diff --git a/src/pages/Reports.tsx b/src/pages/Reports.tsx
+index 8b630fa..2a8a1f4 100644
+--- a/src/pages/Reports.tsx
++++ b/src/pages/Reports.tsx
+@@ -1,12 +1,13 @@
+ import { useState } from "react";
+ import { fetchReports } from "../api";
+ import { AsyncContent } from "../components/AsyncContent";
++import { EmptyState } from "../components/Feedback";
+ import { StatusBadge } from "../components/StatusBadge";
+ import { Tabs } from "../components/Tabs";
+ import { useAsync } from "../hooks/useAsync";
+ import { useDocumentTitle } from "../hooks/useDocumentTitle";
+ import type { Report, ReportStatus } from "../types";
+-import { formatDate } from "../utils/format";
++import { reportMeta, searchReports } from "../components/reports/reportMeta";
+ 
+ type ReportFilter = ReportStatus | "all";
+ 
+@@ -25,10 +26,7 @@ function ReportList({ reports }: { reports: Report[] }) {
+         <li key={report.id} className="report-list__item">
+           <div>
+             <p className="report-list__title">{report.title}</p>
+-            <p className="report-list__meta">
+-              {formatDate(report.date)} by {report.author}
+-              {report.pages > 0 ? `, ${report.pages} pages` : ""}
+-            </p>
++            <p className="report-list__meta">{reportMeta(report)}</p>
+           </div>
+           <StatusBadge status={report.status} />
+         </li>
+@@ -37,8 +35,9 @@ function ReportList({ reports }: { reports: Report[] }) {
+   );
+ }
+ 
+-function FilteredReports({ filter }: { filter: ReportFilter }) {
++function FilteredReports({ filter, query }: { filter: ReportFilter; query: string }) {
+   const state = useAsync(() => fetchReports(filter === "all" ? undefined : filter), [filter]);
++  const searching = query.trim() !== "";
+   return (
+     <AsyncContent
+       state={state}
+@@ -46,7 +45,11 @@ function FilteredReports({ filter }: { filter: ReportFilter }) {
+       isEmpty={(rows) => rows.length === 0}
+       emptyMessage="No reports with this status."
+     >
+-      {(rows) => <ReportList reports={rows} />}
++      {(rows) => {
++        const found = searchReports(rows, query);
++        if (searching && found.length === 0) return <EmptyState message="No reports match your search." />;
++        return <ReportList reports={found} />;
++      }}
+     </AsyncContent>
+   );
+ }
+@@ -54,12 +57,21 @@ function FilteredReports({ filter }: { filter: ReportFilter }) {
+ export function Reports() {
+   useDocumentTitle("Reports");
+   const [filter, setFilter] = useState<ReportFilter>("all");
++  const [query, setQuery] = useState("");
+ 
+   return (
+     <div className="page">
+       <section className="panel" aria-label="Daily reports">
+         <div className="panel__header">
+           <h2 className="panel__title">Daily reports</h2>
++          <input
++            type="search"
++            className="input"
++            placeholder="Title or author"
++            aria-label="Search reports"
++            value={query}
++            onChange={(event) => setQuery(event.target.value)}
++          />
+         </div>
+         <Tabs
+           label="Report status"
+@@ -68,7 +80,7 @@ export function Reports() {
+           tabs={filters.map((item) => ({
+             id: item.id,
+             label: item.label,
+-            render: () => <FilteredReports filter={item.id} />,
++            render: () => <FilteredReports filter={item.id} query={query} />,
+           }))}
+         />
+       </section>
+diff --git a/src/pages/Settings.test.tsx b/src/pages/Settings.test.tsx
+index 5025615..206b221 100644
+--- a/src/pages/Settings.test.tsx
++++ b/src/pages/Settings.test.tsx
+@@ -19,6 +19,14 @@ describe("Settings page", () => {
+     expect(JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}").pushAlerts).toBe(true);
+   });
+ 
++  it("keeps an old weekly digest choice as the report digest", () => {
++    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ theme: "light", weeklyDigest: false }));
++    renderSettings();
++    expect(screen.getByLabelText("Report digest")).toHaveDisplayValue("Off");
++    fireEvent.change(screen.getByLabelText("Report digest"), { target: { value: "daily" } });
++    expect(JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}")).toMatchObject({ reportDigest: "daily" });
++  });
++
+   it("applies the dark theme to the document", () => {
+     renderSettings();
+     fireEvent.click(screen.getByRole("switch", { name: "Dark theme" }));
+diff --git a/src/pages/Settings.tsx b/src/pages/Settings.tsx
+index 139ca21..54d1671 100644
+--- a/src/pages/Settings.tsx
++++ b/src/pages/Settings.tsx
+@@ -1,8 +1,12 @@
++import { useId } from "react";
+ import { Toggle } from "../components/Toggle";
+ import { useSettings } from "../hooks/useSettings";
++import type { ReportDigest } from "../types";
++import { reportDigests } from "../utils/settings";
+ 
+ export function Settings() {
+   const { settings, update } = useSettings();
++  const digestId = useId();
+   return (
+     <div className="page">
+       <section className="panel" aria-label="Appearance">
+@@ -32,12 +36,26 @@ export function Settings() {
+           checked={settings.pushAlerts}
+           onChange={(on) => update("pushAlerts", on)}
+         />
+-        <Toggle
+-          label="Weekly digest"
+-          description="A summary email every Monday."
+-          checked={settings.weeklyDigest}
+-          onChange={(on) => update("weeklyDigest", on)}
+-        />
++        <div className="toggle">
++          <div className="toggle__text">
++            <label htmlFor={digestId} className="toggle__label">
++              Report digest
++            </label>
++            <p className="toggle__description">A summary email of the day's or the week's reports.</p>
++          </div>
++          <select
++            id={digestId}
++            className="input input--compact"
++            value={settings.reportDigest}
++            onChange={(event) => update("reportDigest", event.target.value as ReportDigest)}
++          >
++            {reportDigests.map((digest) => (
++              <option key={digest.value} value={digest.value}>
++                {digest.label}
++              </option>
++            ))}
++          </select>
++        </div>
+       </section>
+     </div>
+   );
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 3f94e98..51fc9b9 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -1286,6 +1286,29 @@ p {
+   font-size: var(--font-size-xs);
+ }
+ 
++.client-notes__pin {
++  margin-left: auto;
++  padding: 0;
++  border: 0;
++  background: none;
++  color: var(--color-accent);
++  font-size: var(--font-size-xs);
++}
++
++.client-notes__pin + .client-notes__delete {
++  margin-left: 0;
++}
++
++.client-notes__item--pinned {
++  border-color: var(--color-accent);
++}
++
++.client-notes__pinned {
++  font-size: var(--font-size-xs);
++  font-weight: 600;
++  color: var(--color-accent);
++}
++
+ @media (max-width: 1100px) {
+   .page__columns {
+     grid-template-columns: 1fr;
+diff --git a/src/types.ts b/src/types.ts
+index cbc9d94..4e32763 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -45,11 +45,13 @@ export interface Report {
+ 
+ export type Theme = "light" | "dark";
+ 
++export type ReportDigest = "off" | "daily" | "weekly";
++
+ export interface Settings {
+   theme: Theme;
+   emailAlerts: boolean;
+   pushAlerts: boolean;
+-  weeklyDigest: boolean;
++  reportDigest: ReportDigest;
+ }
+ 
+ export type TradeSide = "buy" | "sell";
+@@ -159,6 +161,8 @@ export interface ClientNote {
+   text: string;
+   author: string;
+   createdAt: string;
++  /** Pinned notes list first. Notes saved before pinning existed have no flag. */
++  pinned?: boolean;
+ }
+ 
+ export type SortDirection = "asc" | "desc";
+diff --git a/src/utils/format.test.ts b/src/utils/format.test.ts
+index 774d082..0f36c48 100644
+--- a/src/utils/format.test.ts
++++ b/src/utils/format.test.ts
+@@ -1,5 +1,6 @@
+ import { describe, expect, it } from "vitest";
+ import {
++  formatCompactCurrency,
+   formatCurrency,
+   formatDate,
+   formatPercent,
+@@ -16,6 +17,20 @@ describe("formatCurrency", () => {
+   it("formats US dollars with grouping", () => {
+     expect(formatCurrency(1234.5)).toBe("$1,234.50");
+   });
++
++  it("drops the cents when asked and keeps other currencies", () => {
++    expect(formatCurrency(1250000000, "USD", { wholeUnits: true })).toBe("$1,250,000,000");
++    expect(formatCurrency(669.19, "EUR")).toBe("€669.19");
++  });
++});
++
++describe("formatCompactCurrency", () => {
++  it("abbreviates and signs only when asked", () => {
++    expect(formatCompactCurrency(121627.6)).toBe("$121.6K");
++    expect(formatCompactCurrency(121627.6, "USD", { signed: true })).toBe("+$121.6K");
++    expect(formatCompactCurrency(-88000, "EUR", { signed: true })).toBe("-€88K");
++    expect(formatCompactCurrency(0, "USD", { signed: true })).toBe("$0");
++  });
+ });
+ 
+ describe("formatPercent", () => {
+diff --git a/src/utils/format.ts b/src/utils/format.ts
+index 47a0af8..4553cb0 100644
+--- a/src/utils/format.ts
++++ b/src/utils/format.ts
+@@ -15,20 +15,31 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en-US", {
+   timeZone: "UTC",
+ });
+ 
+-export function formatCurrency(value: number, currency = "USD"): string {
++export interface CurrencyOptions {
++  /** Whole units only, such as "$1,250,000,000". Defaults to cents where the currency has them. */
++  wholeUnits?: boolean;
++}
++
++export function formatCurrency(value: number, currency = "USD", { wholeUnits = false }: CurrencyOptions = {}): string {
+   return new Intl.NumberFormat("en-US", {
+     style: "currency",
+     currency,
+-    maximumFractionDigits: 2,
++    maximumFractionDigits: wholeUnits ? 0 : 2,
+   }).format(value);
+ }
+ 
+-export function formatCompactCurrency(value: number, currency = "USD"): string {
++export interface CompactCurrencyOptions {
++  /** Puts a "+" in front of gains, like "+$121.6K"; losses keep their "-". */
++  signed?: boolean;
++}
++
++export function formatCompactCurrency(value: number, currency = "USD", { signed = false }: CompactCurrencyOptions = {}): string {
+   return new Intl.NumberFormat("en-US", {
+     style: "currency",
+     currency,
+     notation: "compact",
+     maximumFractionDigits: 1,
++    signDisplay: signed ? "exceptZero" : "auto",
+   }).format(value);
+ }
+ 
+diff --git a/src/utils/noteText.test.ts b/src/utils/noteText.test.ts
+new file mode 100644
+index 0000000..2268813
+--- /dev/null
++++ b/src/utils/noteText.test.ts
+@@ -0,0 +1,23 @@
++import { describe, expect, it } from "vitest";
++import { parseNote, safeHref } from "./noteText";
++
++describe("parseNote", () => {
++  it("finds bold text and web links", () => {
++    expect(parseNote("Call **Ines** about [the pack](https://example.com/pack).")).toEqual([
++      { kind: "text", text: "Call " },
++      { kind: "bold", text: "Ines" },
++      { kind: "text", text: " about " },
++      { kind: "link", text: "the pack", href: "https://example.com/pack" },
++      { kind: "text", text: "." },
++    ]);
++  });
++
++  it("keeps unsafe links and markup as plain text", () => {
++    expect(parseNote("[x](javascript:alert(1)) <img src=x onerror=alert(1)>")).toEqual([
++      { kind: "text", text: "[x](javascript:alert(1)) <img src=x onerror=alert(1)>" },
++    ]);
++    expect(safeHref(" JavaScript:alert(1)")).toBeNull();
++    expect(safeHref("data:text/html,hi")).toBeNull();
++    expect(safeHref("/clients")).toBeNull();
++  });
++});
+diff --git a/src/utils/noteText.ts b/src/utils/noteText.ts
+new file mode 100644
+index 0000000..f1e5ca7
+--- /dev/null
++++ b/src/utils/noteText.ts
+@@ -0,0 +1,45 @@
++/** A piece of a client note: plain text, **bold** text, or a [label](https://...) link. */
++export type NotePart =
++  | { kind: "text"; text: string }
++  | { kind: "bold"; text: string }
++  | { kind: "link"; text: string; href: string };
++
++const TOKEN = /\*\*(.+?)\*\*|\[([^\]\n]+)\]\(([^)\s]+)\)/g;
++
++/** Only web links become links; anything else (javascript:, data:, relative) stays text. */
++export function safeHref(url: string): string | null {
++  try {
++    const parsed = new URL(url);
++    return parsed.protocol === "https:" || parsed.protocol === "http:" ? parsed.href : null;
++  } catch {
++    return null;
++  }
++}
++
++/**
++ * Splits a note into parts. The result is rendered as React text and elements,
++ * never as HTML, so markup typed into a note shows as the characters typed.
++ */
++export function parseNote(text: string): NotePart[] {
++  const parts: NotePart[] = [];
++  let last = 0;
++  const push = (part: NotePart) => {
++    const prev = parts[parts.length - 1];
++    if (part.kind === "text" && prev?.kind === "text") prev.text += part.text;
++    else parts.push(part);
++  };
++  for (const match of text.matchAll(TOKEN)) {
++    const index = match.index ?? 0;
++    if (index > last) push({ kind: "text", text: text.slice(last, index) });
++    const [whole, bold, label, url] = match;
++    if (bold !== undefined) {
++      push({ kind: "bold", text: bold });
++    } else {
++      const href = safeHref(url ?? "");
++      push(href ? { kind: "link", text: label ?? "", href } : { kind: "text", text: whole });
++    }
++    last = index + whole.length;
++  }
++  if (last < text.length) push({ kind: "text", text: text.slice(last) });
++  return parts;
++}
+diff --git a/src/utils/portfolio.test.ts b/src/utils/portfolio.test.ts
+index 89cbe24..9131dd2 100644
+--- a/src/utils/portfolio.test.ts
++++ b/src/utils/portfolio.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it } from "vitest";
+ import type { Holding, Instrument } from "../types";
+-import { allocationByClass, buildPositions, portfolioTotals } from "./portfolio";
++import { allocationByClass, bookNames, buildPositions, fromUsd, pnlByBook, portfolioTotals } from "./portfolio";
+ 
+ const instruments: Instrument[] = [
+   { symbol: "AAA", name: "Alpha", assetClass: "equity", price: 110, changePct: 0.1, volume: 1, currency: "USD" },
+@@ -36,3 +36,20 @@ describe("portfolioTotals and allocationByClass", () => {
+     expect(slices[0]?.weight).toBeCloseTo(2000 / 3100);
+   });
+ });
++
++describe("books and currencies", () => {
++  it("groups positions by book, largest market value first", () => {
++    const positions = buildPositions(holdings, instruments, rates);
++    expect(bookNames(positions)).toEqual(["Core", "Rates"]);
++    expect(pnlByBook(positions)).toEqual([
++      { book: "Rates", positions: 1, marketValueUsd: 2000, unrealizedPnlUsd: 0 },
++      { book: "Core", positions: 1, marketValueUsd: 1100, unrealizedPnlUsd: 100 },
++    ]);
++  });
++
++  it("converts USD into another currency at today's rate", () => {
++    expect(fromUsd(200, "EUR", rates)).toBe(100);
++    expect(fromUsd(200, "USD", rates)).toBe(200);
++    expect(() => fromUsd(1, "CHF", rates)).toThrow("No FX rate for CHF");
++  });
++});
+diff --git a/src/utils/portfolio.ts b/src/utils/portfolio.ts
+index 69737e2..3421e0e 100644
+--- a/src/utils/portfolio.ts
++++ b/src/utils/portfolio.ts
+@@ -63,3 +63,39 @@ export function allocationByClass(positions: readonly Position[]): AllocationSli
+   });
+   return slices.filter((slice) => slice.valueUsd > 0).sort((a, b) => b.valueUsd - a.valueUsd);
+ }
++
++/** Currencies the portfolio page can show its values in. */
++export const displayCurrencies = ["USD", "EUR", "GBP"] as const;
++export type DisplayCurrency = (typeof displayCurrencies)[number];
++
++/** Converts a USD amount into `currency` at today's rates (rates are USD per unit). */
++export function fromUsd(amountUsd: number, currency: string, rates: FxRates): number {
++  return amountUsd / toUsd(1, currency, rates);
++}
++
++export interface BookPnl {
++  book: string;
++  positions: number;
++  marketValueUsd: number;
++  unrealizedPnlUsd: number;
++}
++
++/** Book names in A to Z order. */
++export function bookNames(positions: readonly Position[]): string[] {
++  return [...new Set(positions.map((p) => p.book))].sort((a, b) => a.localeCompare(b));
++}
++
++/** Positions, market value and unrealized P&L per book, largest market value first. */
++export function pnlByBook(positions: readonly Position[]): BookPnl[] {
++  return bookNames(positions)
++    .map((book) => {
++      const rows = positions.filter((p) => p.book === book);
++      return {
++        book,
++        positions: rows.length,
++        marketValueUsd: sum(rows.map((p) => p.marketValueUsd)),
++        unrealizedPnlUsd: sum(rows.map((p) => p.unrealizedPnlUsd)),
++      };
++    })
++    .sort((a, b) => b.marketValueUsd - a.marketValueUsd);
++}
+diff --git a/src/utils/settings.test.ts b/src/utils/settings.test.ts
+new file mode 100644
+index 0000000..910b1da
+--- /dev/null
++++ b/src/utils/settings.test.ts
+@@ -0,0 +1,18 @@
++import { describe, expect, it } from "vitest";
++import { defaultSettings, loadSettings, migrateSettings } from "./settings";
++
++describe("migrateSettings", () => {
++  it("turns the old weekly digest switch into a report digest", () => {
++    const old = { theme: "dark", emailAlerts: false, pushAlerts: true, weeklyDigest: false };
++    expect(migrateSettings(old)).toEqual({ theme: "dark", emailAlerts: false, pushAlerts: true, reportDigest: "off" });
++    expect(migrateSettings({ weeklyDigest: true }).reportDigest).toBe("weekly");
++    expect(migrateSettings({ reportDigest: "daily", weeklyDigest: false }).reportDigest).toBe("daily");
++  });
++
++  it("falls back to defaults for anything it cannot read", () => {
++    for (const value of [null, 42, "dark", [1, 2]]) expect(migrateSettings(value)).toEqual(defaultSettings);
++    expect(migrateSettings({ theme: "blue", emailAlerts: "yes", reportDigest: "hourly" })).toEqual(defaultSettings);
++    localStorage.setItem("settings-test", "{not json");
++    expect(loadSettings("settings-test")).toEqual(defaultSettings);
++  });
++});
+diff --git a/src/utils/settings.ts b/src/utils/settings.ts
+new file mode 100644
+index 0000000..15ef1fb
+--- /dev/null
++++ b/src/utils/settings.ts
+@@ -0,0 +1,46 @@
++import type { ReportDigest, Settings } from "../types";
++
++export const defaultSettings: Settings = {
++  theme: "light",
++  emailAlerts: true,
++  pushAlerts: false,
++  reportDigest: "weekly",
++};
++
++export const reportDigests: { value: ReportDigest; label: string }[] = [
++  { value: "off", label: "Off" },
++  { value: "daily", label: "Daily" },
++  { value: "weekly", label: "Weekly" },
++];
++
++const isDigest = (value: unknown): value is ReportDigest => reportDigests.some((digest) => digest.value === value);
++
++/**
++ * Settings from whatever was saved. Older saves had a `weeklyDigest` switch:
++ * on becomes a weekly digest and off becomes no digest. Fields that are missing
++ * or of the wrong type fall back to the defaults, and so does anything that is
++ * not a settings object at all.
++ */
++export function migrateSettings(saved: unknown): Settings {
++  if (typeof saved !== "object" || saved === null || Array.isArray(saved)) return { ...defaultSettings };
++  const raw = saved as Record<string, unknown>;
++  const flag = (key: "emailAlerts" | "pushAlerts") => (typeof raw[key] === "boolean" ? raw[key] : defaultSettings[key]);
++  let reportDigest = defaultSettings.reportDigest;
++  if (isDigest(raw.reportDigest)) reportDigest = raw.reportDigest;
++  else if (typeof raw.weeklyDigest === "boolean") reportDigest = raw.weeklyDigest ? "weekly" : "off";
++  return {
++    theme: raw.theme === "dark" || raw.theme === "light" ? raw.theme : defaultSettings.theme,
++    emailAlerts: flag("emailAlerts"),
++    pushAlerts: flag("pushAlerts"),
++    reportDigest,
++  };
++}
++
++export function loadSettings(key: string): Settings {
++  try {
++    const raw = localStorage.getItem(key);
++    return raw === null ? { ...defaultSettings } : migrateSettings(JSON.parse(raw));
++  } catch {
++    return { ...defaultSettings };
++  }
++}
