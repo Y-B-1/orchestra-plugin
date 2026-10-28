@@ -45,7 +45,7 @@ return await Promise.all([pill, ...others, alerts])
 
 Dependent units start the moment their inputs finish, inside the script, so nothing waits for a whole wave. Start the Workflow within your first few minutes: read only what you need to write the briefs; builders read the rest themselves.
 
-While the Workflow runs, do one independent unit yourself (often docs or a small cluster). Then end your turn with one status line (which units are running, and that you resume on your own when they finish): the Workflow's completion wakes you. Never use ScheduleWakeup, Monitor or sleep to wait for your own background work, and never poll it. If you are woken and one unit has run more than twice its expected time, read its transcript; stop and redo it smaller rather than waiting.
+Order matters: write the ledger, then start the Workflow, and only then do your own small edits. Never do your own unit before the Workflow is running; every second before dispatch delays every builder. While the Workflow runs, do one independent unit yourself (often docs or a small cluster). Then end your turn with one status line (which units are running, and that you resume on your own when they finish): the Workflow's completion wakes you. Never use ScheduleWakeup, Monitor or sleep to wait for your own background work, and never poll it. If you are woken and one unit has run more than twice its expected time, read its transcript; stop and redo it smaller rather than waiting.
 
 Builders share your checkout when their files are disjoint: no worktrees, no extra installs. Only when two running units must edit the same file, run one of them through the Agent tool with `isolation: "worktree"` and merge its branch when it returns. Each builder commits its own unit with explicit paths when its checks pass, so finished work never waits for a slow sibling.
 
@@ -55,12 +55,11 @@ A builder brief holds: the ask text in the user's words, the exact files it owns
 
 Each builder checks its own work against its ask before it reports. There is no review per unit.
 
-When every unit has landed:
-1. Run the project's full checks once (typecheck, lint, tests, build), each bounded: `python3 <plugin>/scripts/lean.py run 300 -- npm test`.
-2. Test hygiene (below) as one cleanup unit, while you write docs and the final notes.
-3. One independent review of the whole diff by `orchestra:reviewer` (two reviewers with split lenses only when the diff is over about 1,500 lines). Give it the ask ledger as the spec.
-4. Check each finding against the code. Fix every real finding a user or maintainer would hit, notes included when the fix is small; do not leave it for later. Send them to one repair builder (or one per disjoint file group, in parallel), or fix a few small ones yourself.
-5. One re-review of only the repair diff and only the raised findings. Whatever it says, you are done reviewing; list any new notes in the final message instead of starting another round.
+When every unit has landed, in this order and as parallel as it allows:
+1. Start the review at once, in one Workflow: split the changed files into 2 or 3 groups by area (one reviewer for the whole diff only when it is under about 300 lines). Each `orchestra:reviewer` reviews its group and reads the rest of the diff only for the seams. Give each the ask ledger as the spec.
+2. While the reviewers work, run the project's full checks once (typecheck, lint, tests, build), each bounded: `python3 <plugin>/scripts/lean.py run 300 -- npm test`, and do test hygiene (below) and the docs.
+3. Check each finding against the code. Fix every real finding a user or maintainer would hit, notes included when the fix is small; do not leave it for later. Send them to one repair builder (or one per disjoint file group, in parallel), or fix a few small ones yourself.
+4. One re-review of only the repair diff and only the raised findings; run the full checks again while it works. Whatever it says, you are done reviewing; list any new notes in the final message instead of starting another round.
 
 ## 5. Test hygiene before every PR
 
