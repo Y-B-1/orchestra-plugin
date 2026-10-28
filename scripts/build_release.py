@@ -12,8 +12,8 @@ import tarfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-# Development files stay out of the archive: tests, agent and editor tooling, the e2e scaffold and mod test files.
-EXCLUDE = re.compile(r'(tests/|\.github/|\.agents/|\.claude/|\.cursor/|\.mcp\.json$|package(-lock)?\.json$|e2e\.config\.ts$'
+# Development files stay out of the archive: tests, the benchmark kit, agent and editor tooling, the e2e scaffold and mod test files.
+EXCLUDE = re.compile(r'(tests/|bench/|\.github/|\.agents/|\.claude/|\.cursor/|\.mcp\.json$|package(-lock)?\.json$|e2e\.config\.ts$'
                      r'|plugins/orchestra/hooks/mod/(fixtures/|testkit\.ts$|[^/]+\.test\.ts$))')
 PRIVATE = re.compile(rb'/' + rb'(Users|home)/[^/\s]+/|gh[op]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}'
                      rb'|AKIA[0-9A-Z]{16}|sk-ant-api[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----')
