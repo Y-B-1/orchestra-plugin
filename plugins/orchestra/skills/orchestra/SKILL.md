@@ -45,7 +45,7 @@ return await Promise.all([pill, ...others, alerts])
 
 Dependent units start the moment their inputs finish, inside the script, so nothing waits for a whole wave. Start the Workflow within your first few minutes: read only what you need to write the briefs; builders read the rest themselves.
 
-While the Workflow runs, do one independent unit yourself (often docs or a small cluster). Then end your turn: the Workflow's completion wakes you. Never use ScheduleWakeup or sleep to wait for your own background work. If you are woken and one unit has run more than twice its expected time, read its transcript; stop and redo it smaller rather than waiting.
+While the Workflow runs, do one independent unit yourself (often docs or a small cluster). Then end your turn with one status line (which units are running, and that you resume on your own when they finish): the Workflow's completion wakes you. Never use ScheduleWakeup, Monitor or sleep to wait for your own background work, and never poll it. If you are woken and one unit has run more than twice its expected time, read its transcript; stop and redo it smaller rather than waiting.
 
 Builders share your checkout when their files are disjoint: no worktrees, no extra installs. Only when two running units must edit the same file, run one of them through the Agent tool with `isolation: "worktree"` and merge its branch when it returns. Each builder commits its own unit with explicit paths when its checks pass, so finished work never waits for a slow sibling.
 
