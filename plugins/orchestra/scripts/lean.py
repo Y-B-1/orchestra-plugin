@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Orchestra Lean: hooks and the small CLI behind /goal.
+"""Orchestra: hooks and the small CLI behind /goal.
 
 Hooks (stdin JSON from Claude Code):
   lean.py hook session-start   prints the session context
@@ -161,7 +161,7 @@ def hook_stop(event):
 
 def hook_session_start(event):
     cwd = event.get('cwd')
-    print(f'Orchestra Lean is on. Ask ledger: {ledger(cwd)}. CLI: python3 "{__file__}".\n'
+    print(f'Orchestra is on. Ask ledger: {ledger(cwd)}. CLI: python3 "{__file__}".\n'
           'For any prompt with more than one ask, load the orchestra skill first and follow it: split the asks, '
           'start every independent one at once, review once at the end. Only merging into the default branch is blocked.')
 

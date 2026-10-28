@@ -46,37 +46,14 @@ Completion claims carry evidence: the command, its exit code, or a screenshot.
 
 ## 6. Process routing (Orchestra)
 
-The top-level session is the coordinator. It loads the `orchestra` skill (session start injects the path and the harness session id) and dispatches workers. The card engine is `python3 <plugin>/scripts/orchestra.py`; `--help` lists the commands.
+The top-level session is the coordinator. For any prompt with more than one ask it loads the `orchestra` skill and follows it:
 
-**Size each ask by the diff it will produce**, not by the message:
+- **Ledger:** one line per ask the user made, in the ask ledger (`.git/orchestra/asks.md`), marked todo, running, done or dropped with a reason.
+- **Plan by novelty, not size:** copy, styles, small fixes, renames, refactors with a clear target, test cleanup and docs need no plan. A new feature whose shape is a real choice gets a short spec first.
+- **Parallel units:** pack asks into 3 to 6 units with disjoint files and start them all in one Workflow in the first minutes, with dependent units chained inside the script. Do one unit yourself meanwhile. Builders share the checkout and commit their own units.
+- **One review:** builders check their own work. After every unit lands, run the full checks once, do the test hygiene pass, and get one independent review of the whole diff. One repair, then one re-review of only the raised findings.
+- **Finish:** push the branch and open a pull request. Merging into the default branch is the owner's step; the plugin's guard blocks it and nothing else.
 
-| Tier | Changed lines | How it runs |
-|---|---|---|
-| tiny | up to 50 | inline edit in the main session |
-| medium | up to 400 | inline, one unit after another |
-| large | by escalation or owner request | 2+ independent units go to builders through the Workflow tool; the coordinator takes its own inline card in the same turn |
-
-Start a run with `start --size tiny|medium`. Escalate with `route --size large --reason TEXT`.
-
-**Lanes** (route by readiness and consequence):
-
-- **answer:** a self-contained question. No ceremony.
-- **investigate:** an unknown API or behavior. Investigator first; evidence before design.
-- **direct:** settled, bounded, low risk. Goal, ownership, acceptance checks, self-review, then the pre-PR review.
-- **design:** a product choice remains. Look facts up yourself; put decisions to the owner and wait.
-- **plan:** an approved substantial design. Designer-planner in plan mode, then an independent critic.
-- **bug:** investigator diagnosis and a failing behavior test before any repair. After the fix, name the check that would have caught the bug.
-- **review:** an independent code-reviewer.
-- **full-test:** only on the owner's explicit request.
-
-**Roles:** `investigator` (code, docs), `designer-planner` (product, design, plan), `critic`, `builder` (implementation, frontend, sensitive, mechanical, repair, cleanup), `code-reviewer`, `operator` (gate, cleanup, release). The plugin pins each role's model, effort and tool allowlist.
-
-**Briefs:** every worker brief has a `Mode: <mode>` line, the objective, owned files, checkable acceptance criteria, the project's standing orders pasted verbatim and the plugin root path. Reports start with `STATUS:` and `ARTIFACT:`.
-
-**Independence:** the agent that built a change never approves it. One independent pre-PR review covers the frozen candidate. `prepr` picks the reviewer: Sonnet with one combined lens up to 400 changed lines, one card per lens above that (Opus; Sonnet for the standards lens). Any later edit voids earlier evidence.
-
-**Guard:** the plugin's PreToolUse hook denies force push, `reset --hard`, `clean -f`, `branch -D` on an unmerged branch, `stash`, wholesale `git add`, `commit -a` and Agent calls from subagents. Do not register these again in projects. Never route around the guard with `gh api`, a Git alias, an MCP tool or a terminal tool.
-
-**Autonomy:** an unattended run needs a written ledger (`<state>/autonomy.md`): completion checks, a deadline with UTC offset, approval boundaries. `orchestra.py autonomy arm` refuses without it. While armed, the coordinator may push one feature branch (`git push [-u] <remote> <branch>`, never the default branch) and open a pull request in the same turn as the last accept; it never merges. It may delete only branches and worktrees provably merged into the default branch; `rm` stays denied. Other pushes and deletion are denied, and release is denied unless the ledger pre-authorizes that exact remote and target. Blocked cards park instead. Arm only a run started with `start --harness-session`.
+`/orchestra:goal TEXT` keeps the session working until every ask is done or dropped and the branch is pushed.
 
 **Human-only steps** (credentials, dashboards, one-off cutovers): generate a bash wizard script instead of numbered steps in chat.

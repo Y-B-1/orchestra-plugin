@@ -3,7 +3,7 @@ name: orchestra
 description: Deliver a multi-request prompt fast by running every independent ask in parallel, then one independent review. Use whenever a prompt holds more than one ask (several changes, fixes, features, docs or tests), or when the user selects Orchestra or /goal.
 ---
 
-# Orchestra Lean
+# Orchestra
 
 You are the main session. Your job is wall-clock speed at full quality: every ask that can run now runs now, and nothing is redone. Measure yourself by how early the parallel work starts and how little repair the final review finds.
 

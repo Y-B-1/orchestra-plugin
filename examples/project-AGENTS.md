@@ -2,8 +2,8 @@
 
 <!-- Example project charter. Save it as AGENTS.md at the repository root.
      Claude Code loads AGENTS.md when the project has no CLAUDE.md.
-     The Orchestra coordinator copies the "Standing orders" section verbatim into every worker brief,
-     so keep binding rules there and keep them checkable. Replace every name, path and command. -->
+     The Orchestra coordinator copies the binding rules below into every builder brief,
+     so keep them checkable. Replace every name, path and command. -->
 
 Customer-facing web app: a TypeScript API in `api/` and a React client in `web/`. Read `docs/AGENT-MEMORY.md` before you start; it holds current state and open decisions. Domain terms are in `CONTEXT.md`.
 
@@ -24,7 +24,7 @@ Each worker that runs end-to-end tests takes its own port from 4100 to 4199.
 
 These rules bind every agent and every worker, including subagents.
 
-1. Edit only the paths your card owns. Preserve edits made by others.
+1. Edit only the files your unit owns. Preserve edits made by others.
 2. Never edit `api/migrations/` once a migration is merged. Add a new migration instead.
 3. Never commit secrets. Configuration comes from `.env.local`, which Git ignores.
 4. Commit each working iteration with explicit paths. Never stage wholesale, stash, force push or reset hard.
@@ -34,8 +34,8 @@ These rules bind every agent and every worker, including subagents.
 
 ## Ownership and parallel work
 
-- `api/` and `web/` are independent units. Two builders can work on them at the same time in separate worktrees.
-- `packages/shared/` is shared. Only one card owns it at a time; dependent cards wait until that card is accepted.
+- `api/` and `web/` are independent units. Two builders can work on them at the same time in the same checkout.
+- `packages/shared/` is shared. Only one unit edits it at a time; units that depend on it start when it lands.
 
 ## Review
 
