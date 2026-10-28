@@ -1,0 +1,10 @@
+[
+  { "id": "r-1042", "title": "Daily market wrap", "date": "2026-10-27", "status": "published", "author": "A. Moreau", "pages": 6 },
+  { "id": "r-1041", "title": "FX flows and positioning", "date": "2026-10-26", "status": "published", "author": "S. Kim", "pages": 9 },
+  { "id": "r-1040", "title": "Rates desk summary", "date": "2026-10-25", "status": "failed", "author": "L. Duarte", "pages": 0 },
+  { "id": "r-1039", "title": "Commodities snapshot", "date": "2026-10-24", "status": "published", "author": "A. Moreau", "pages": 5 },
+  { "id": "r-1038", "title": "Equity movers", "date": "2026-10-23", "status": "draft", "author": "J. Ortiz", "pages": 3 },
+  { "id": "r-1037", "title": "Client exposure digest", "date": "2026-10-22", "status": "published", "author": "S. Kim", "pages": 12 },
+  { "id": "r-1043", "title": "Weekly strategy note", "date": "2026-10-30", "status": "scheduled", "author": "L. Duarte", "pages": 0 },
+  { "id": "r-1044", "title": "Month-end risk review", "date": "2026-10-31", "status": "scheduled", "author": "J. Ortiz", "pages": 0 }
+]

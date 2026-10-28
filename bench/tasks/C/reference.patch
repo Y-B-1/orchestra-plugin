@@ -1,0 +1,1343 @@
+diff --git a/README.md b/README.md
+index 344f452..678523a 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,8 @@
+ # Pulse
+ 
+-Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications in the top bar; and user settings (theme and notifications) saved in the browser.
++Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist (also as its own page with 1 month trends and a details drawer), top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications in the top bar; price alerts that post a notification to the bell when an instrument is past the alert's level; and user settings (theme and notifications) saved in the browser.
+ 
+-Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
++Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/watchlist`, `/alerts`, `/clients`, `/reports`, `/settings`.
+ 
+ All data is mocked: typed fetchers in `src/api` read JSON files in `src/data` after a short artificial delay.
+ 
+@@ -24,7 +24,9 @@ npm run build      # type check, then production build into dist/
+ - `src/components` shared UI pieces (Table, Drawer, Tabs, Pagination, AsyncContent and more), with tests beside them
+ - `src/components/<feature>` pieces used by one area: `trades`, `portfolio`, `instrument`, `notifications`, `clients`, `dashboard`
+ - `src/pages` one component per route
+-- `src/hooks` data loading (`useAsync`), `useDebounce`, `useLocalStorage`, and the settings and notifications contexts
++- `src/hooks` data loading (`useAsync`), `useDebounce`, `useLocalStorage` (hooks on the same key stay in step), and the settings, alerts and notifications contexts
++
++Alerts live in this browser under `pulse.alerts`, the watchlist under `pulse.watchlist`, and read notifications under `pulse.notifications.read`.
+ - `src/api` mock fetchers; `src/data` JSON fixtures
+-- `src/utils` formatting (`format`, `numbers`, `dates`), sorting, pagination, CSV, portfolio maths, storage and search helpers
++- `src/utils` formatting (`format` holds every money, price, number and date formatter; `numbers` holds arithmetic only; `dates`), alerts, sorting, pagination, CSV, portfolio maths, storage and search helpers
+ - `src/styles/theme.css` theme variables; `global.css` styles
+diff --git a/src/App.tsx b/src/App.tsx
+index cbe0cf5..67e1ee3 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,5 +1,6 @@
+ import { Route, Routes } from "react-router-dom";
+ import { Shell } from "./components/Shell";
++import { Alerts } from "./pages/Alerts";
+ import { Clients } from "./pages/Clients";
+ import { Dashboard } from "./pages/Dashboard";
+ import { InstrumentDetail } from "./pages/InstrumentDetail";
+@@ -7,6 +8,7 @@ import { Portfolio } from "./pages/Portfolio";
+ import { Reports } from "./pages/Reports";
+ import { Settings } from "./pages/Settings";
+ import { Trades } from "./pages/Trades";
++import { WatchlistPage } from "./pages/Watchlist";
+ 
+ export function App() {
+   return (
+@@ -16,6 +18,8 @@ export function App() {
+         <Route path="portfolio" element={<Portfolio />} />
+         <Route path="trades" element={<Trades />} />
+         <Route path="instruments/:symbol" element={<InstrumentDetail />} />
++        <Route path="watchlist" element={<WatchlistPage />} />
++        <Route path="alerts" element={<Alerts />} />
+         <Route path="clients" element={<Clients />} />
+         <Route path="reports" element={<Reports />} />
+         <Route path="settings" element={<Settings />} />
+diff --git a/src/components/InstrumentTable.tsx b/src/components/InstrumentTable.tsx
+index 329284c..6a8125d 100644
+--- a/src/components/InstrumentTable.tsx
++++ b/src/components/InstrumentTable.tsx
+@@ -1,7 +1,7 @@
+ import { useMemo, useState } from "react";
+ import { Link } from "react-router-dom";
+ import type { Instrument } from "../types";
+-import { formatCurrency, formatSignedPercent, formatVolume } from "../utils/format";
++import { formatPrice, formatSignedPercent, formatVolume } from "../utils/format";
+ 
+ type SortKey = "symbol" | "price" | "changePct" | "volume";
+ 
+@@ -58,7 +58,7 @@ export function InstrumentTable({ instruments }: { instruments: Instrument[] })
+               </Link>
+               <span className="table__name">{row.name}</span>
+             </th>
+-            <td className="table__num">{formatCurrency(row.price, row.currency)}</td>
++            <td className="table__num">{formatPrice(row.price, row.currency)}</td>
+             <td className={`table__num ${row.changePct >= 0 ? "text-up" : "text-down"}`}>
+               {formatSignedPercent(row.changePct)}
+             </td>
+diff --git a/src/components/PriceChange.tsx b/src/components/PriceChange.tsx
+index 3a532aa..0b1ff5d 100644
+--- a/src/components/PriceChange.tsx
++++ b/src/components/PriceChange.tsx
+@@ -1,5 +1,5 @@
+-import { formatSignedPercent } from "../utils/format";
+-import { formatSignedCurrency, toneOf } from "../utils/numbers";
++import { formatSignedCurrency, formatSignedPercent } from "../utils/format";
++import { toneOf } from "../utils/numbers";
+ 
+ interface PriceChangeProps {
+   /** Change as a fraction, e.g. 0.0124 for +1.24%. */
+diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx
+index 450347b..5dbef40 100644
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -4,6 +4,8 @@ const links = [
+   { to: "/", label: "Dashboard", end: true },
+   { to: "/portfolio", label: "Portfolio", end: false },
+   { to: "/trades", label: "Trades", end: false },
++  { to: "/watchlist", label: "Watchlist", end: false },
++  { to: "/alerts", label: "Alerts", end: false },
+   { to: "/clients", label: "Clients", end: false },
+   { to: "/reports", label: "Reports", end: false },
+   { to: "/settings", label: "Settings", end: false },
+diff --git a/src/components/Sparkline.test.tsx b/src/components/Sparkline.test.tsx
+index e414fea..5365e95 100644
+--- a/src/components/Sparkline.test.tsx
++++ b/src/components/Sparkline.test.tsx
+@@ -8,6 +8,8 @@ describe("sparklinePoints", () => {
+     expect(points).toHaveLength(4);
+     expect(points[0]?.[0]).toBe(2);
+     expect(points[3]?.[0]).toBe(98);
++    expect(points[0]?.[1]).toBe(38);
++    expect(points[3]?.[1]).toBe(2);
+     const flat = sparklinePoints([5, 5, 5], 60, 20, 2);
+     expect(flat.every(([, y]) => y >= 0 && y <= 20)).toBe(true);
+     expect(sparklinePoints([], 60, 20)).toEqual([]);
+diff --git a/src/components/Sparkline.tsx b/src/components/Sparkline.tsx
+index c3790fe..74cd89b 100644
+--- a/src/components/Sparkline.tsx
++++ b/src/components/Sparkline.tsx
+@@ -22,7 +22,8 @@ export function sparklinePoints(values: readonly number[], width: number, height
+   const usable = height - padding * 2;
+   return values.map((value, index) => {
+     const x = padding + index * step;
+-    const y = padding + ((value - min) / span) * usable;
++    // SVG y grows downward, so the highest value gets the smallest y.
++    const y = height - padding - ((value - min) / span) * usable;
+     return [Number(x.toFixed(2)), Number(y.toFixed(2))];
+   });
+ }
+diff --git a/src/components/TopBar.tsx b/src/components/TopBar.tsx
+index 6fe578a..78033d7 100644
+--- a/src/components/TopBar.tsx
++++ b/src/components/TopBar.tsx
+@@ -6,6 +6,8 @@ const titles: Record<string, string> = {
+   "/": "Dashboard",
+   "/portfolio": "Portfolio",
+   "/trades": "Trades",
++  "/watchlist": "Watchlist",
++  "/alerts": "Alerts",
+   "/clients": "Clients",
+   "/reports": "Reports",
+   "/settings": "Settings",
+diff --git a/src/components/dashboard/Watchlist.tsx b/src/components/dashboard/Watchlist.tsx
+index 8d224b0..a67af96 100644
+--- a/src/components/dashboard/Watchlist.tsx
++++ b/src/components/dashboard/Watchlist.tsx
+@@ -1,7 +1,7 @@
+ import { Link } from "react-router-dom";
+ import { useWatchlist } from "../../hooks/useWatchlist";
+ import type { Instrument } from "../../types";
+-import { formatPrice } from "../../utils/numbers";
++import { formatPrice } from "../../utils/format";
+ import { EmptyState } from "../Feedback";
+ import { PriceChange } from "../PriceChange";
+ 
+@@ -20,9 +20,12 @@ export function Watchlist({ instruments }: { instruments: readonly Instrument[]
+     <ul className="watchlist">
+       {rows.map((instrument) => (
+         <li key={instrument.symbol} className="watchlist__item">
+-          <Link to={`/instruments/${instrument.symbol}`} className="watchlist__symbol">
+-            {instrument.symbol}
+-          </Link>
++          <span>
++            <Link to={`/instruments/${instrument.symbol}`} className="watchlist__symbol">
++              {instrument.symbol}
++            </Link>
++            <span className="watchlist__name">{instrument.name}</span>
++          </span>
+           <span className="watchlist__price">{formatPrice(instrument.price, instrument.currency)}</span>
+           <PriceChange pct={instrument.changePct} />
+           <button
+diff --git a/src/components/instrument/InstrumentHeader.tsx b/src/components/instrument/InstrumentHeader.tsx
+index 61a5fa3..99a862b 100644
+--- a/src/components/instrument/InstrumentHeader.tsx
++++ b/src/components/instrument/InstrumentHeader.tsx
+@@ -1,6 +1,5 @@
+ import type { Instrument } from "../../types";
+-import { formatVolume } from "../../utils/format";
+-import { formatPrice } from "../../utils/numbers";
++import { formatPrice, formatVolume } from "../../utils/format";
+ import { assetClassLabels } from "../../utils/portfolio";
+ import { PriceChange } from "../PriceChange";
+ import { WatchButton } from "./WatchButton";
+diff --git a/src/components/instrument/KeyStats.tsx b/src/components/instrument/KeyStats.tsx
+index af4d6b2..d00d052 100644
+--- a/src/components/instrument/KeyStats.tsx
++++ b/src/components/instrument/KeyStats.tsx
+@@ -1,6 +1,5 @@
+ import type { Instrument, InstrumentStats } from "../../types";
+-import { formatCompactCurrency, formatPercent, formatVolume } from "../../utils/format";
+-import { formatMultiple, formatPrice } from "../../utils/numbers";
++import { formatCompactCurrency, formatMultiple, formatPercent, formatPrice, formatVolume } from "../../utils/format";
+ import { StatList, type Stat } from "../StatList";
+ 
+ export function KeyStats({ instrument, stats }: { instrument: Instrument; stats: InstrumentStats }) {
+diff --git a/src/components/instrument/PriceHistory.tsx b/src/components/instrument/PriceHistory.tsx
+index d2ffc6a..d3d879e 100644
+--- a/src/components/instrument/PriceHistory.tsx
++++ b/src/components/instrument/PriceHistory.tsx
+@@ -3,8 +3,8 @@ import { fetchPriceHistory, type HistoryRange } from "../../api";
+ import { useAsync } from "../../hooks/useAsync";
+ import type { PricePoint } from "../../types";
+ import { formatShortDate } from "../../utils/dates";
+-import { formatSignedPercent } from "../../utils/format";
+-import { formatPrice, toneOf } from "../../utils/numbers";
++import { formatPrice, formatSignedPercent } from "../../utils/format";
++import { toneOf } from "../../utils/numbers";
+ import { AsyncContent } from "../AsyncContent";
+ import { Sparkline } from "../Sparkline";
+ import { Tabs } from "../Tabs";
+diff --git a/src/components/instrument/WatchButton.tsx b/src/components/instrument/WatchButton.tsx
+index ffcfbf4..ceb76ad 100644
+--- a/src/components/instrument/WatchButton.tsx
++++ b/src/components/instrument/WatchButton.tsx
+@@ -10,7 +10,7 @@ export function WatchButton({ symbol }: { symbol: string }) {
+       aria-pressed={watched}
+       onClick={() => toggle(symbol)}
+     >
+-      <span aria-hidden="true">{watched ? "★" : "☆"}</span> {watched ? "Watching" : "Watch"}
++      <span aria-hidden="true">{watched ? "★" : "☆"}</span> {watched ? "On watchlist" : "Add to watchlist"}
+     </button>
+   );
+ }
+diff --git a/src/components/notifications/NotificationBell.test.tsx b/src/components/notifications/NotificationBell.test.tsx
+index 52791a6..dc2d6c9 100644
+--- a/src/components/notifications/NotificationBell.test.tsx
++++ b/src/components/notifications/NotificationBell.test.tsx
+@@ -42,7 +42,8 @@ describe("NotificationBell", () => {
+   it("saves every notification as read on mark all", async () => {
+     renderBell();
+     fireEvent.click(await screen.findByRole("button", { name: /Notifications, 3 unread/ }));
+-    fireEvent.click(screen.getByRole("button", { name: "Mark all as read" }));
++    fireEvent.click(screen.getByRole("button", { name: "Mark all read" }));
++    expect(screen.getByRole("button", { name: "Notifications" })).toBeInTheDocument();
+     const saved = JSON.parse(localStorage.getItem(READ_NOTIFICATIONS_KEY) ?? "[]") as string[];
+     expect(saved).toEqual(expect.arrayContaining(["n-108", "n-107", "n-106"]));
+   });
+diff --git a/src/components/notifications/NotificationBell.tsx b/src/components/notifications/NotificationBell.tsx
+index 233f574..ca15922 100644
+--- a/src/components/notifications/NotificationBell.tsx
++++ b/src/components/notifications/NotificationBell.tsx
+@@ -49,7 +49,7 @@ export function NotificationBell({ now }: { now?: Date }) {
+               onClick={markAllRead}
+               disabled={unreadCount === 0}
+             >
+-              Mark all as read
++              Mark all read
+             </button>
+           </div>
+           {loading ? <Loading label="Loading notifications" /> : null}
+diff --git a/src/components/notifications/NotificationItem.tsx b/src/components/notifications/NotificationItem.tsx
+index d614107..a70d9cb 100644
+--- a/src/components/notifications/NotificationItem.tsx
++++ b/src/components/notifications/NotificationItem.tsx
+@@ -2,11 +2,21 @@ import { Link } from "react-router-dom";
+ import type { AppNotification, NotificationKind } from "../../types";
+ import { formatRelative } from "../../utils/dates";
+ 
++// 24x24 outline icons per kind, drawn with the current text color.
++const kindIcons: Record<NotificationKind, string> = {
++  trade: "M4 7h13l-3-3M20 17H7l3 3",
++  report: "M6 3h9l4 4v14H6zM9 12h7M9 16h7",
++  client: "M12 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 20c0-3 3-5 6-5s6 2 6 5",
++  system: "M12 3l9 16H3zM12 10v4M12 17v.5",
++  alert: "M12 3a6 6 0 0 0-6 6v4l-2 3h16l-2-3V9a6 6 0 0 0-6-6zM10 19a2 2 0 0 0 4 0",
++};
++
+ const kindLabels: Record<NotificationKind, string> = {
+   trade: "Trade",
+   report: "Report",
+   client: "Client",
+   system: "System",
++  alert: "Alert",
+ };
+ 
+ interface NotificationItemProps {
+@@ -20,7 +30,12 @@ export function NotificationItem({ item, now, onMarkRead, onNavigate }: Notifica
+   return (
+     <li className={`notification${item.read ? "" : " notification--unread"}`}>
+       <div className="notification__meta">
+-        <span className={`notification__kind notification__kind--${item.kind}`}>{kindLabels[item.kind]}</span>
++        <span className={`notification__kind notification__kind--${item.kind}`}>
++          <svg className="notification__icon" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true">
++            <path d={kindIcons[item.kind]} />
++          </svg>
++          {kindLabels[item.kind]}
++        </span>
+         <time dateTime={item.createdAt}>{formatRelative(item.createdAt, now)}</time>
+       </div>
+       <p className="notification__title">
+diff --git a/src/components/portfolio/HoldingsTable.tsx b/src/components/portfolio/HoldingsTable.tsx
+index 9bbceff..287aebe 100644
+--- a/src/components/portfolio/HoldingsTable.tsx
++++ b/src/components/portfolio/HoldingsTable.tsx
+@@ -1,7 +1,7 @@
+ import { Link } from "react-router-dom";
+ import type { PortfolioTotals, Position } from "../../types";
+-import { formatCurrency, formatPercent } from "../../utils/format";
+-import { formatPrice, formatQuantity, formatSignedCurrency, toneOf } from "../../utils/numbers";
++import { formatCurrency, formatPercent, formatPrice, formatQuantity, formatSignedCurrency } from "../../utils/format";
++import { toneOf } from "../../utils/numbers";
+ import { assetClassLabels } from "../../utils/portfolio";
+ import { PriceChange } from "../PriceChange";
+ import { Table, type Column } from "../Table";
+diff --git a/src/components/trades/TradeDetail.tsx b/src/components/trades/TradeDetail.tsx
+index 9b9917b..c428460 100644
+--- a/src/components/trades/TradeDetail.tsx
++++ b/src/components/trades/TradeDetail.tsx
+@@ -2,8 +2,8 @@ import { Link } from "react-router-dom";
+ import { fetchClient, fetchTrade } from "../../api";
+ import { useAsync } from "../../hooks/useAsync";
+ import type { Trade } from "../../types";
+-import { formatCurrency, formatDateTime } from "../../utils/format";
+-import { formatPrice, formatQuantity, percentOf } from "../../utils/numbers";
++import { formatCurrency, formatDateTime, formatPrice, formatQuantity } from "../../utils/format";
++import { percentOf } from "../../utils/numbers";
+ import { assetClassLabels } from "../../utils/portfolio";
+ import { AsyncContent } from "../AsyncContent";
+ import { Drawer } from "../Drawer";
+diff --git a/src/components/trades/tradeColumns.tsx b/src/components/trades/tradeColumns.tsx
+index 8ab2680..268cab4 100644
+--- a/src/components/trades/tradeColumns.tsx
++++ b/src/components/trades/tradeColumns.tsx
+@@ -1,8 +1,7 @@
+ import { Link } from "react-router-dom";
+ import { clientName } from "../../api";
+ import type { Trade } from "../../types";
+-import { formatDateTime } from "../../utils/format";
+-import { formatPrice, formatQuantity } from "../../utils/numbers";
++import { formatDateTime, formatPrice, formatQuantity } from "../../utils/format";
+ import type { Column } from "../Table";
+ import { TradeSideBadge, TradeStatusBadge } from "./TradeBadges";
+ 
+diff --git a/src/hooks/useAlerts.tsx b/src/hooks/useAlerts.tsx
+new file mode 100644
+index 0000000..b3c2efb
+--- /dev/null
++++ b/src/hooks/useAlerts.tsx
+@@ -0,0 +1,45 @@
++import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
++import type { AlertCondition, PriceAlert } from "../types";
++import { createId } from "../utils/ids";
++import { useLocalStorage } from "./useLocalStorage";
++
++export const ALERTS_KEY = "pulse.alerts";
++
++interface AlertsContextValue {
++  alerts: PriceAlert[];
++  add: (symbol: string, condition: AlertCondition, price: number) => void;
++  remove: (id: string) => void;
++}
++
++const AlertsContext = createContext<AlertsContextValue | null>(null);
++
++/** Price alerts the user has set, kept in this browser. */
++export function AlertsProvider({ children }: { children: ReactNode }) {
++  const [alerts, setAlerts] = useLocalStorage<PriceAlert[]>(ALERTS_KEY, []);
++
++  const add = useCallback(
++    (symbol: string, condition: AlertCondition, price: number) => {
++      const alert: PriceAlert = { id: createId("alert"), symbol, condition, price, createdAt: new Date().toISOString() };
++      setAlerts((prev) => [alert, ...prev]);
++    },
++    [setAlerts],
++  );
++
++  const remove = useCallback((id: string) => setAlerts((prev) => prev.filter((alert) => alert.id !== id)), [setAlerts]);
++
++  const value = useMemo(() => ({ alerts, add, remove }), [alerts, add, remove]);
++  return <AlertsContext.Provider value={value}>{children}</AlertsContext.Provider>;
++}
++
++export function useAlerts(): AlertsContextValue {
++  const ctx = useContext(AlertsContext);
++  if (!ctx) throw new Error("useAlerts must be used inside AlertsProvider");
++  return ctx;
++}
++
++const noAlerts: PriceAlert[] = [];
++
++/** The alert list, or none outside an AlertsProvider (the bell works without alerts). */
++export function useAlertList(): PriceAlert[] {
++  return useContext(AlertsContext)?.alerts ?? noAlerts;
++}
+diff --git a/src/hooks/useLocalStorage.test.ts b/src/hooks/useLocalStorage.test.ts
+index 1bf2d14..95834fd 100644
+--- a/src/hooks/useLocalStorage.test.ts
++++ b/src/hooks/useLocalStorage.test.ts
+@@ -19,6 +19,13 @@ describe("useLocalStorage", () => {
+     expect(broken.result.current[0]).toBe("fallback");
+   });
+ 
++  it("keeps two hooks on the same key in step", () => {
++    const first = renderHook(() => useLocalStorage<string[]>("pulse.shared", []));
++    const second = renderHook(() => useLocalStorage<string[]>("pulse.shared", []));
++    act(() => first.result.current[1](["AAPL"]));
++    expect(second.result.current[0]).toEqual(["AAPL"]);
++  });
++
+   it("reads the new key when the key changes", () => {
+     localStorage.setItem("pulse.notes.a", JSON.stringify(["note for a"]));
+     localStorage.setItem("pulse.notes.b", JSON.stringify(["note for b"]));
+diff --git a/src/hooks/useLocalStorage.ts b/src/hooks/useLocalStorage.ts
+index 58c7e31..5ae9383 100644
+--- a/src/hooks/useLocalStorage.ts
++++ b/src/hooks/useLocalStorage.ts
+@@ -1,4 +1,6 @@
+-import { useCallback, useEffect, useState } from "react";
++import { useCallback, useEffect, useRef, useState } from "react";
++
++const SYNC_EVENT = "pulse:storage";
+ 
+ function read<T>(key: string, fallback: T): T {
+   try {
+@@ -16,6 +18,7 @@ function read<T>(key: string, fallback: T): T {
+  */
+ export function useLocalStorage<T>(key: string, fallback: T): [T, (next: T | ((prev: T) => T)) => void] {
+   const [entry, setEntry] = useState(() => ({ key, value: read(key, fallback) }));
++  const fallbackRef = useRef(fallback);
+ 
+   // A new key (for example another client's notes) starts from what is stored under it.
+   let current = entry;
+@@ -26,12 +29,28 @@ export function useLocalStorage<T>(key: string, fallback: T): [T, (next: T | ((p
+ 
+   useEffect(() => {
+     try {
+-      localStorage.setItem(current.key, JSON.stringify(current.value));
++      const raw = JSON.stringify(current.value);
++      if (localStorage.getItem(current.key) === raw) return;
++      localStorage.setItem(current.key, raw);
++      window.dispatchEvent(new CustomEvent<string>(SYNC_EVENT, { detail: current.key }));
+     } catch {
+       // Storage can be full or blocked; the in-memory value still applies.
+     }
+   }, [current.key, current.value]);
+ 
++  // Other hooks on the same key (say the watch button and the watchlist page) pick up the change.
++  useEffect(() => {
++    function onSync(event: Event) {
++      if ((event as CustomEvent<string>).detail !== key) return;
++      setEntry((prev) => {
++        const next = read(key, fallbackRef.current);
++        return JSON.stringify(next) === JSON.stringify(prev.value) ? prev : { key, value: next };
++      });
++    }
++    window.addEventListener(SYNC_EVENT, onSync);
++    return () => window.removeEventListener(SYNC_EVENT, onSync);
++  }, [key]);
++
+   const update = useCallback(
+     (next: T | ((prev: T) => T)) => {
+       setEntry((prev) => {
+diff --git a/src/hooks/useNotifications.tsx b/src/hooks/useNotifications.tsx
+index 8495e67..1eb2848 100644
+--- a/src/hooks/useNotifications.tsx
++++ b/src/hooks/useNotifications.tsx
+@@ -1,7 +1,9 @@
+ import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+-import { fetchNotifications } from "../api";
+-import type { AppNotification } from "../types";
++import { fetchInstruments, fetchNotifications } from "../api";
++import type { AppNotification, Instrument } from "../types";
++import { alertNotifications } from "../utils/alerts";
+ import { toError } from "./useAsync";
++import { useAlertList } from "./useAlerts";
+ 
+ export const READ_NOTIFICATIONS_KEY = "pulse.notifications.read";
+ 
+@@ -26,27 +28,33 @@ function loadReadIds(): Set<string> {
+   }
+ }
+ 
+-function saveReadIds(items: readonly AppNotification[]): void {
++function saveReadIds(ids: ReadonlySet<string>): void {
+   try {
+-    const ids = items.filter((item) => item.read).map((item) => item.id);
+-    localStorage.setItem(READ_NOTIFICATIONS_KEY, JSON.stringify(ids));
++    localStorage.setItem(READ_NOTIFICATIONS_KEY, JSON.stringify([...ids]));
+   } catch {
+     // Storage can be full or blocked; read state then lasts for this session only.
+   }
+ }
+ 
++/**
++ * Server notifications plus one per triggered price alert. Read state is a set of ids
++ * kept in this browser, so alert notifications stay read (or unread) across reloads.
++ */
+ export function NotificationsProvider({ children }: { children: ReactNode }) {
+-  const [items, setItems] = useState<AppNotification[]>([]);
++  const [base, setBase] = useState<AppNotification[]>([]);
++  const [instruments, setInstruments] = useState<Instrument[]>([]);
++  const [readIds, setReadIds] = useState<Set<string>>(loadReadIds);
+   const [loading, setLoading] = useState(true);
+   const [error, setError] = useState<Error | null>(null);
++  const alerts = useAlertList();
+ 
+   useEffect(() => {
+     let cancelled = false;
+-    fetchNotifications().then(
+-      (rows) => {
++    Promise.all([fetchNotifications(), fetchInstruments()]).then(
++      ([rows, prices]) => {
+         if (cancelled) return;
+-        const readIds = loadReadIds();
+-        setItems(rows.map((row) => (readIds.has(row.id) ? { ...row, read: true } : row)));
++        setBase(rows);
++        setInstruments(prices);
+         setLoading(false);
+       },
+       (reason: unknown) => {
+@@ -60,23 +68,32 @@ export function NotificationsProvider({ children }: { children: ReactNode }) {
+     };
+   }, []);
+ 
++  const items = useMemo(
++    () =>
++      [...alertNotifications(alerts, instruments), ...base]
++        .map((item) => (item.read || readIds.has(item.id) ? { ...item, read: true } : item))
++        .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
++    [alerts, instruments, base, readIds],
++  );
++
+   const unreadCount = useMemo(() => items.filter((item) => !item.read).length, [items]);
+ 
+   const markRead = useCallback((id: string) => {
+-    setItems((prev) => {
+-      const next = prev.map((item) => (item.id === id ? { ...item, read: true } : item));
++    setReadIds((prev) => {
++      const next = new Set(prev).add(id);
+       saveReadIds(next);
+       return next;
+     });
+   }, []);
+ 
+   const markAllRead = useCallback(() => {
+-    setItems((prev) => {
+-      for (const item of prev) item.read = true;
+-      saveReadIds(prev);
+-      return prev;
++    setReadIds((prev) => {
++      const next = new Set(prev);
++      for (const item of items) next.add(item.id);
++      saveReadIds(next);
++      return next;
+     });
+-  }, []);
++  }, [items]);
+ 
+   const value = useMemo<NotificationsContextValue>(
+     () => ({ items, unreadCount, loading, error, markRead, markAllRead }),
+diff --git a/src/main.tsx b/src/main.tsx
+index 0f190b5..721c341 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -2,6 +2,7 @@ import { StrictMode } from "react";
+ import { createRoot } from "react-dom/client";
+ import { BrowserRouter } from "react-router-dom";
+ import { App } from "./App";
++import { AlertsProvider } from "./hooks/useAlerts";
+ import { NotificationsProvider } from "./hooks/useNotifications";
+ import { SettingsProvider } from "./hooks/useSettings";
+ import "./styles/theme.css";
+@@ -11,9 +12,11 @@ createRoot(document.getElementById("root")!).render(
+   <StrictMode>
+     <BrowserRouter>
+       <SettingsProvider>
+-        <NotificationsProvider>
+-          <App />
+-        </NotificationsProvider>
++        <AlertsProvider>
++          <NotificationsProvider>
++            <App />
++          </NotificationsProvider>
++        </AlertsProvider>
+       </SettingsProvider>
+     </BrowserRouter>
+   </StrictMode>,
+diff --git a/src/pages/Alerts.test.tsx b/src/pages/Alerts.test.tsx
+new file mode 100644
+index 0000000..c1c11cb
+--- /dev/null
++++ b/src/pages/Alerts.test.tsx
+@@ -0,0 +1,34 @@
++import { fireEvent, render, screen, within } from "@testing-library/react";
++import { MemoryRouter } from "react-router-dom";
++import { beforeAll, describe, expect, it } from "vitest";
++import { latency } from "../api";
++import { AlertsProvider } from "../hooks/useAlerts";
++import { Alerts } from "./Alerts";
++
++beforeAll(() => {
++  latency.ms = 0;
++});
++
++function renderAlerts() {
++  return render(
++    <MemoryRouter>
++      <AlertsProvider>
++        <Alerts />
++      </AlertsProvider>
++    </MemoryRouter>,
++  );
++}
++
++describe("Alerts page", () => {
++  it("validates the price, adds an alert with its status and removes it", async () => {
++    renderAlerts();
++    fireEvent.click(await screen.findByRole("button", { name: "Add alert" }));
++    expect(screen.getByRole("alert")).toHaveTextContent("Enter a price above zero");
++    fireEvent.change(screen.getByLabelText("Price"), { target: { value: "200" } });
++    fireEvent.click(screen.getByRole("button", { name: "Add alert" }));
++    const item = screen.getByText("AAPL goes above $200.00").closest("li")!;
++    expect(within(item).getByText("Triggered")).toBeInTheDocument();
++    fireEvent.click(within(item).getByRole("button", { name: /Remove/ }));
++    expect(screen.getByText("No alerts yet.")).toBeInTheDocument();
++  });
++});
+diff --git a/src/pages/Alerts.tsx b/src/pages/Alerts.tsx
+new file mode 100644
+index 0000000..a9161e3
+--- /dev/null
++++ b/src/pages/Alerts.tsx
+@@ -0,0 +1,130 @@
++import { useId, useState, type FormEvent } from "react";
++import { fetchInstruments } from "../api";
++import { AsyncContent } from "../components/AsyncContent";
++import { EmptyState } from "../components/Feedback";
++import { useAlerts } from "../hooks/useAlerts";
++import { useAsync } from "../hooks/useAsync";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import type { AlertCondition, Instrument } from "../types";
++import { describeAlert, isTriggered } from "../utils/alerts";
++
++function AlertForm({ instruments }: { instruments: Instrument[] }) {
++  const id = useId();
++  const { add } = useAlerts();
++  const [symbol, setSymbol] = useState(instruments[0]?.symbol ?? "");
++  const [condition, setCondition] = useState<AlertCondition>("above");
++  const [price, setPrice] = useState("");
++  const [error, setError] = useState<string | null>(null);
++
++  function submit(event: FormEvent<HTMLFormElement>) {
++    event.preventDefault();
++    const value = Number(price);
++    if (price.trim() === "" || !Number.isFinite(value) || value <= 0) {
++      setError("Enter a price above zero");
++      return;
++    }
++    add(symbol, condition, value);
++    setError(null);
++    setPrice("");
++  }
++
++  return (
++    <form className="filters" onSubmit={submit} aria-label="New alert">
++      <div className="filters__field">
++        <label className="filters__label" htmlFor={`${id}-symbol`}>
++          Instrument
++        </label>
++        <select id={`${id}-symbol`} className="input input--compact" value={symbol} onChange={(e) => setSymbol(e.target.value)}>
++          {instruments.map((instrument) => (
++            <option key={instrument.symbol} value={instrument.symbol}>
++              {instrument.symbol} {instrument.name}
++            </option>
++          ))}
++        </select>
++      </div>
++      <div className="filters__field">
++        <label className="filters__label" htmlFor={`${id}-condition`}>
++          Condition
++        </label>
++        <select
++          id={`${id}-condition`}
++          className="input input--compact"
++          value={condition}
++          onChange={(e) => setCondition(e.target.value as AlertCondition)}
++        >
++          <option value="above">goes above</option>
++          <option value="below">goes below</option>
++        </select>
++      </div>
++      <div className="filters__field">
++        <label className="filters__label" htmlFor={`${id}-price`}>
++          Price
++        </label>
++        <input
++          id={`${id}-price`}
++          type="number"
++          min={0}
++          step="any"
++          className="input input--compact"
++          value={price}
++          onChange={(e) => setPrice(e.target.value)}
++        />
++      </div>
++      <div className="filters__actions">
++        <button type="submit" className="button button--primary">
++          Add alert
++        </button>
++      </div>
++      {error ? (
++        <p className="filters__error" role="alert">
++          {error}
++        </p>
++      ) : null}
++    </form>
++  );
++}
++
++function AlertList({ instruments }: { instruments: Instrument[] }) {
++  const { alerts, remove } = useAlerts();
++  if (alerts.length === 0) return <EmptyState message="No alerts yet." />;
++  return (
++    <ul className="alert-list">
++      {alerts.map((alert) => {
++        const instrument = instruments.find((i) => i.symbol === alert.symbol);
++        const text = describeAlert(alert, instrument?.currency);
++        const triggered = instrument ? isTriggered(alert, instrument.price) : false;
++        return (
++          <li key={alert.id} className="alert-list__item">
++            <span className="alert-list__text">{text}</span>
++            <span className={`badge ${triggered ? "badge--triggered" : "badge--watching"}`}>{triggered ? "Triggered" : "Watching"}</span>
++            <button type="button" className="button button--small button--ghost" onClick={() => remove(alert.id)} aria-label={`Remove ${text}`}>
++              Remove
++            </button>
++          </li>
++        );
++      })}
++    </ul>
++  );
++}
++
++export function Alerts() {
++  useDocumentTitle("Alerts");
++  const instruments = useAsync(() => fetchInstruments(), []);
++  return (
++    <div className="page">
++      <section className="panel" aria-label="Price alerts">
++        <div className="panel__header">
++          <h2 className="panel__title">Price alerts</h2>
++        </div>
++        <AsyncContent state={instruments} loadingLabel="Loading instruments">
++          {(list) => (
++            <>
++              <AlertForm instruments={list} />
++              <AlertList instruments={list} />
++            </>
++          )}
++        </AsyncContent>
++      </section>
++    </div>
++  );
++}
+diff --git a/src/pages/Settings.tsx b/src/pages/Settings.tsx
+index 139ca21..d9dc32b 100644
+--- a/src/pages/Settings.tsx
++++ b/src/pages/Settings.tsx
+@@ -22,7 +22,7 @@ export function Settings() {
+         </div>
+         <Toggle
+           label="Email alerts"
+-          description="Price moves above your thresholds."
++          description="When one of your price alerts goes off."
+           checked={settings.emailAlerts}
+           onChange={(on) => update("emailAlerts", on)}
+         />
+diff --git a/src/pages/Watchlist.test.tsx b/src/pages/Watchlist.test.tsx
+new file mode 100644
+index 0000000..9b8e9fc
+--- /dev/null
++++ b/src/pages/Watchlist.test.tsx
+@@ -0,0 +1,29 @@
++import { fireEvent, render, screen, within } from "@testing-library/react";
++import { MemoryRouter } from "react-router-dom";
++import { beforeAll, describe, expect, it } from "vitest";
++import { latency } from "../api";
++import { WATCHLIST_KEY } from "../hooks/useWatchlist";
++import { WatchlistPage } from "./Watchlist";
++
++beforeAll(() => {
++  latency.ms = 0;
++});
++
++describe("Watchlist page", () => {
++  it("adds and removes instruments and keeps them in storage", async () => {
++    localStorage.setItem(WATCHLIST_KEY, JSON.stringify(["AAPL"]));
++    render(
++      <MemoryRouter>
++        <WatchlistPage />
++      </MemoryRouter>,
++    );
++    const table = await screen.findByRole("table", { name: "Watched instruments" });
++    expect(within(table).getAllByRole("row")).toHaveLength(2);
++    fireEvent.change(screen.getByLabelText("Add instrument"), { target: { value: "MSFT" } });
++    fireEvent.click(screen.getByRole("button", { name: "Add" }));
++    expect(JSON.parse(localStorage.getItem(WATCHLIST_KEY) ?? "[]")).toEqual(["AAPL", "MSFT"]);
++    fireEvent.click(screen.getByRole("button", { name: "Remove AAPL" }));
++    fireEvent.click(screen.getByRole("button", { name: "Remove MSFT" }));
++    expect(screen.getByText("Your watchlist is empty.")).toBeInTheDocument();
++  });
++});
+diff --git a/src/pages/Watchlist.tsx b/src/pages/Watchlist.tsx
+new file mode 100644
+index 0000000..a07954b
+--- /dev/null
++++ b/src/pages/Watchlist.tsx
+@@ -0,0 +1,150 @@
++import { useState } from "react";
++import { Link } from "react-router-dom";
++import { fetchInstrumentStats, fetchInstruments, fetchPriceHistory } from "../api";
++import { AsyncContent } from "../components/AsyncContent";
++import { Drawer } from "../components/Drawer";
++import { EmptyState } from "../components/Feedback";
++import { KeyStats } from "../components/instrument/KeyStats";
++import { WatchButton } from "../components/instrument/WatchButton";
++import { PriceChange } from "../components/PriceChange";
++import { Sparkline } from "../components/Sparkline";
++import { Table, type Column } from "../components/Table";
++import { useAsync } from "../hooks/useAsync";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import { useWatchlist } from "../hooks/useWatchlist";
++import type { Instrument } from "../types";
++import { formatPrice } from "../utils/format";
++import { toneOf } from "../utils/numbers";
++
++function Trend({ symbol }: { symbol: string }) {
++  const state = useAsync(() => fetchPriceHistory(symbol, "1M"), [symbol]);
++  if (!state.data) return null;
++  const closes = state.data.map((point) => point.close);
++  const first = closes[0] ?? 0;
++  const last = closes[closes.length - 1] ?? 0;
++  return <Sparkline values={closes} label={`${symbol} 1 month trend`} width={120} height={32} tone={toneOf(last - first)} showArea={false} />;
++}
++
++function Details({ instrument, onClose }: { instrument: Instrument; onClose: () => void }) {
++  const stats = useAsync(() => fetchInstrumentStats(instrument.symbol), [instrument.symbol]);
++  return (
++    <Drawer label="Instrument details" title={instrument.name} subtitle={instrument.symbol} onClose={onClose} closeLabel="Close instrument details">
++      <p className="watch-details__actions">
++        <WatchButton symbol={instrument.symbol} />
++        <Link to={`/instruments/${instrument.symbol}`}>Open instrument page</Link>
++      </p>
++      <AsyncContent state={stats} loadingLabel="Loading key stats">
++        {(data) => <KeyStats instrument={instrument} stats={data} />}
++      </AsyncContent>
++    </Drawer>
++  );
++}
++
++function WatchlistView({ instruments }: { instruments: Instrument[] }) {
++  const { symbols, toggle } = useWatchlist();
++  const [openSymbol, setOpenSymbol] = useState<string | null>(null);
++  const rows = symbols
++    .map((symbol) => instruments.find((instrument) => instrument.symbol === symbol))
++    .filter((instrument): instrument is Instrument => instrument !== undefined);
++  const available = instruments.filter((instrument) => !symbols.includes(instrument.symbol));
++  const [choice, setChoice] = useState("");
++  const selected = available.some((i) => i.symbol === choice) ? choice : (available[0]?.symbol ?? "");
++  const open = rows.find((row) => row.symbol === openSymbol) ?? instruments.find((i) => i.symbol === openSymbol);
++
++  const columns: Column<Instrument>[] = [
++    {
++      key: "symbol",
++      header: "Instrument",
++      rowHeader: true,
++      render: (row) => (
++        <>
++          <span className="table__symbol">{row.symbol}</span>
++          <span className="table__name">{row.name}</span>
++        </>
++      ),
++    },
++    { key: "price", header: "Last price", align: "right", render: (row) => formatPrice(row.price, row.currency) },
++    { key: "change", header: "Day change", align: "right", render: (row) => <PriceChange pct={row.changePct} /> },
++    { key: "trend", header: "1 month trend", render: (row) => <Trend symbol={row.symbol} /> },
++    {
++      key: "remove",
++      header: "",
++      render: (row) => (
++        <button
++          type="button"
++          className="button button--small button--ghost"
++          aria-label={`Remove ${row.symbol}`}
++          onClick={(event) => {
++            event.stopPropagation();
++            toggle(row.symbol);
++          }}
++        >
++          Remove
++        </button>
++      ),
++    },
++  ];
++
++  return (
++    <>
++      {available.length > 0 ? (
++        <form
++          className="filters"
++          onSubmit={(event) => {
++            event.preventDefault();
++            if (selected) toggle(selected);
++          }}
++        >
++          <div className="filters__field">
++            <label className="filters__label" htmlFor="watchlist-add">
++              Add instrument
++            </label>
++            <select id="watchlist-add" className="input input--compact" value={selected} onChange={(e) => setChoice(e.target.value)}>
++              {available.map((instrument) => (
++                <option key={instrument.symbol} value={instrument.symbol}>
++                  {instrument.symbol} {instrument.name}
++                </option>
++              ))}
++            </select>
++          </div>
++          <div className="filters__actions">
++            <button type="submit" className="button button--primary">
++              Add
++            </button>
++          </div>
++        </form>
++      ) : null}
++      {rows.length === 0 ? (
++        <EmptyState message="Your watchlist is empty." />
++      ) : (
++        <Table
++          caption="Watched instruments"
++          columns={columns}
++          rows={rows}
++          rowKey={(row) => row.symbol}
++          onRowClick={(row) => setOpenSymbol(row.symbol)}
++          selectedKey={openSymbol}
++        />
++      )}
++      {open ? <Details instrument={open} onClose={() => setOpenSymbol(null)} /> : null}
++    </>
++  );
++}
++
++/** Every followed instrument with its price, day change and a 1 month trend; rows open details. */
++export function WatchlistPage() {
++  useDocumentTitle("Watchlist");
++  const instruments = useAsync(() => fetchInstruments(), []);
++  return (
++    <div className="page">
++      <section className="panel" aria-label="Watchlist">
++        <div className="panel__header">
++          <h2 className="panel__title">Watchlist</h2>
++        </div>
++        <AsyncContent state={instruments} loadingLabel="Loading watchlist">
++          {(list) => <WatchlistView instruments={list} />}
++        </AsyncContent>
++      </section>
++    </div>
++  );
++}
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 3f94e98..28c2f6d 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -1108,7 +1108,7 @@ p {
+   height: 18px;
+   padding: 0 var(--space-1);
+   border-radius: var(--radius-pill);
+-  background: var(--color-down);
++  background: var(--color-badge);
+   color: var(--color-accent-contrast);
+   font-size: var(--font-size-xs);
+   font-weight: 700;
+@@ -1408,3 +1408,60 @@ p {
+   font-size: var(--font-size-sm);
+   color: var(--color-text-muted);
+ }
++
++.notification__icon {
++  margin-right: var(--space-1);
++  vertical-align: -1px;
++  fill: none;
++  stroke: currentColor;
++  stroke-width: 2;
++  stroke-linecap: round;
++  stroke-linejoin: round;
++}
++
++.watchlist__name {
++  display: block;
++  color: var(--color-text-muted);
++  font-size: var(--font-size-xs);
++}
++
++.notification__kind--alert {
++  color: var(--color-warning);
++}
++
++/* Alerts */
++.alert-list {
++  list-style: none;
++  margin: var(--space-4) 0 0;
++  padding: 0;
++}
++
++.alert-list__item {
++  display: flex;
++  align-items: center;
++  gap: var(--space-3);
++  padding: var(--space-2) 0;
++  border-bottom: 1px solid var(--color-border);
++}
++
++.alert-list__text {
++  flex: 1;
++}
++
++.badge--triggered {
++  background: var(--color-surface-alt);
++  color: var(--color-warning);
++}
++
++.badge--watching {
++  background: var(--color-surface-alt);
++  color: var(--color-neutral);
++}
++
++/* Watchlist page */
++.watch-details__actions {
++  display: flex;
++  align-items: center;
++  gap: var(--space-3);
++  margin: 0 0 var(--space-4);
++}
+diff --git a/src/styles/theme.css b/src/styles/theme.css
+index 5ddf04a..a3c9d1e 100644
+--- a/src/styles/theme.css
++++ b/src/styles/theme.css
+@@ -30,6 +30,7 @@
+   --color-overlay: rgba(16, 24, 40, 0.28);
+   --color-selected: #e8eefe;
+   --color-unread: #f3f6ff;
++  --color-badge: #d92d20;
+ 
+   --font-size-xs: 11px;
+   --font-size-sm: 12px;
+@@ -70,5 +71,6 @@
+   --color-overlay: rgba(0, 0, 0, 0.5);
+   --color-selected: #1d2742;
+   --color-unread: #1a2135;
++  --color-badge: #ff6b61;
+   --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+ }
+diff --git a/src/types.ts b/src/types.ts
+index cbc9d94..e242aeb 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -142,7 +142,7 @@ export interface InstrumentStats {
+   avgVolume: number;
+ }
+ 
+-export type NotificationKind = "trade" | "report" | "client" | "system";
++export type NotificationKind = "trade" | "report" | "client" | "system" | "alert";
+ 
+ export interface AppNotification {
+   id: string;
+@@ -154,6 +154,16 @@ export interface AppNotification {
+   link?: string;
+ }
+ 
++export type AlertCondition = "above" | "below";
++
++export interface PriceAlert {
++  id: string;
++  symbol: string;
++  condition: AlertCondition;
++  price: number;
++  createdAt: string;
++}
++
+ export interface ClientNote {
+   id: string;
+   text: string;
+diff --git a/src/utils/alerts.test.ts b/src/utils/alerts.test.ts
+new file mode 100644
+index 0000000..761440a
+--- /dev/null
++++ b/src/utils/alerts.test.ts
+@@ -0,0 +1,21 @@
++import { describe, expect, it } from "vitest";
++import type { Instrument, PriceAlert } from "../types";
++import { alertNotifications, describeAlert, isTriggered } from "./alerts";
++
++const aapl: Instrument = { symbol: "AAPL", name: "Apple Inc.", assetClass: "equity", price: 227.48, changePct: 0, volume: 1, currency: "USD" };
++const above: PriceAlert = { id: "a1", symbol: "AAPL", condition: "above", price: 200, createdAt: "2026-10-27T10:00:00Z" };
++
++describe("price alerts", () => {
++  it("knows when an alert is already past its level", () => {
++    expect(isTriggered(above, 227.48)).toBe(true);
++    expect(isTriggered({ ...above, condition: "below" }, 227.48)).toBe(false);
++    expect(describeAlert({ ...above, symbol: "EURUSD", condition: "below", price: 1.1 })).toBe("EURUSD goes below $1.1000");
++  });
++
++  it("turns triggered alerts into notifications with stable ids", () => {
++    const notes = alertNotifications([above, { ...above, id: "a2", price: 500 }], [aapl]);
++    expect(notes).toEqual([
++      expect.objectContaining({ id: "alert-a1", kind: "alert", title: "AAPL is above $200.00", body: "Last price $227.48.", read: false }),
++    ]);
++  });
++});
+diff --git a/src/utils/alerts.ts b/src/utils/alerts.ts
+new file mode 100644
+index 0000000..445b979
+--- /dev/null
++++ b/src/utils/alerts.ts
+@@ -0,0 +1,31 @@
++import type { AppNotification, Instrument, PriceAlert } from "../types";
++import { formatPrice } from "./format";
++
++/** True when the last price is already past the alert's level. */
++export function isTriggered(alert: PriceAlert, lastPrice: number): boolean {
++  return alert.condition === "above" ? lastPrice > alert.price : lastPrice < alert.price;
++}
++
++/** "AAPL goes above $250.00", priced with the instrument's usual digits. */
++export function describeAlert(alert: PriceAlert, currency = "USD"): string {
++  return `${alert.symbol} goes ${alert.condition} ${formatPrice(alert.price, currency)}`;
++}
++
++/** One unread bell notification per triggered alert; its id is stable so read state survives reloads. */
++export function alertNotifications(alerts: readonly PriceAlert[], instruments: readonly Instrument[]): AppNotification[] {
++  const out: AppNotification[] = [];
++  for (const alert of alerts) {
++    const instrument = instruments.find((i) => i.symbol === alert.symbol);
++    if (!instrument || !isTriggered(alert, instrument.price)) continue;
++    out.push({
++      id: `alert-${alert.id}`,
++      kind: "alert",
++      title: `${alert.symbol} is ${alert.condition} ${formatPrice(alert.price, instrument.currency)}`,
++      body: `Last price ${formatPrice(instrument.price, instrument.currency)}.`,
++      createdAt: alert.createdAt,
++      read: false,
++      link: "/alerts",
++    });
++  }
++  return out;
++}
+diff --git a/src/utils/format.test.ts b/src/utils/format.test.ts
+index 774d082..34c8d03 100644
+--- a/src/utils/format.test.ts
++++ b/src/utils/format.test.ts
+@@ -1,8 +1,13 @@
+ import { describe, expect, it } from "vitest";
+ import {
++  formatBasisPoints,
+   formatCurrency,
+   formatDate,
++  formatMultiple,
+   formatPercent,
++  formatPrice,
++  formatQuantity,
++  formatSignedCurrency,
+   formatSignedPercent,
+   formatVolume,
+ } from "./format";
+@@ -46,3 +51,17 @@ describe("formatDate", () => {
+   });
+ });
+ 
++describe("number formatting", () => {
++  it("formats prices, signed amounts, quantities and ratios", () => {
++    expect(formatPrice(1.0842)).toBe("$1.0842");
++    expect(formatPrice(227.48)).toBe("$227.48");
++    expect(formatPrice(214.9, "EUR")).toBe("€214.90");
++    expect(formatSignedCurrency(1520.4)).toBe("+$1,520");
++    expect(formatSignedCurrency(-98)).toBe("-$98");
++    expect(formatSignedCurrency(0)).toBe("$0");
++    expect(formatQuantity(5000000)).toBe("5,000,000");
++    expect(formatBasisPoints(0.0087)).toBe("87 bp");
++    expect(formatMultiple(34.21)).toBe("34.2x");
++    expect(formatMultiple(null)).toBe("n/a");
++  });
++});
+diff --git a/src/utils/format.ts b/src/utils/format.ts
+index 47a0af8..a8a1d60 100644
+--- a/src/utils/format.ts
++++ b/src/utils/format.ts
+@@ -1,3 +1,8 @@
++// All display formatting (money, prices, quantities, percents, dates) lives in this module.
++import { roundTo } from "./numbers";
++
++const quantityFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
++
+ const dateFormatter = new Intl.DateTimeFormat("en-US", {
+   year: "numeric",
+   month: "short",
+@@ -78,3 +83,44 @@ export function initials(name: string): string {
+     .map((part) => part[0]?.toUpperCase() ?? "")
+     .join("");
+ }
++
++export function formatQuantity(value: number): string {
++  return quantityFormatter.format(value);
++}
++
++/** Number of decimals a price needs: FX pairs quote to 4 or 5 places. */
++export function priceDigits(price: number): number {
++  if (price < 2) return 4;
++  if (price < 20) return 3;
++  return 2;
++}
++
++export function formatPrice(price: number, currency = "USD"): string {
++  const digits = priceDigits(price);
++  return new Intl.NumberFormat("en-US", {
++    style: "currency",
++    currency,
++    minimumFractionDigits: digits,
++    maximumFractionDigits: digits,
++  }).format(price);
++}
++
++export function formatSignedCurrency(value: number, currency = "USD"): string {
++  const text = new Intl.NumberFormat("en-US", {
++    style: "currency",
++    currency,
++    maximumFractionDigits: 0,
++  }).format(Math.abs(value));
++  if (value > 0) return `+${text}`;
++  if (value < 0) return `-${text}`;
++  return text;
++}
++
++export function formatBasisPoints(fraction: number): string {
++  return `${roundTo(fraction * 10000, 1)} bp`;
++}
++
++export function formatMultiple(value: number | null): string {
++  if (value === null) return "n/a";
++  return `${value.toFixed(1)}x`;
++}
+diff --git a/src/utils/numbers.test.ts b/src/utils/numbers.test.ts
+index af45f97..ed51147 100644
+--- a/src/utils/numbers.test.ts
++++ b/src/utils/numbers.test.ts
+@@ -1,17 +1,5 @@
+ import { describe, expect, it } from "vitest";
+-import {
+-  clamp,
+-  formatBasisPoints,
+-  formatMultiple,
+-  formatPrice,
+-  formatQuantity,
+-  formatSignedCurrency,
+-  percentOf,
+-  roundTo,
+-  sum,
+-  toUsd,
+-  toneOf,
+-} from "./numbers";
++import { clamp, percentOf, roundTo, sum, toUsd, toneOf } from "./numbers";
+ 
+ describe("arithmetic helpers", () => {
+   it("sums, rounds, clamps and takes shares", () => {
+@@ -29,21 +17,6 @@ describe("arithmetic helpers", () => {
+     expect(toUsd(100, "EUR", rates)).toBeCloseTo(110);
+     expect(toUsd(100, "USD", rates)).toBe(100);
+     expect(() => toUsd(1, "CHF", rates)).toThrow("No FX rate for CHF");
+-  });
+-});
+-
+-describe("number formatting", () => {
+-  it("formats prices, signed amounts, quantities and ratios", () => {
+-    expect(formatPrice(1.0842)).toBe("$1.0842");
+-    expect(formatPrice(227.48)).toBe("$227.48");
+-    expect(formatPrice(214.9, "EUR")).toBe("€214.90");
+-    expect(formatSignedCurrency(1520.4)).toBe("+$1,520");
+-    expect(formatSignedCurrency(-98)).toBe("-$98");
+-    expect(formatSignedCurrency(0)).toBe("$0");
+-    expect(formatQuantity(5000000)).toBe("5,000,000");
+-    expect(formatBasisPoints(0.0087)).toBe("87 bp");
+-    expect(formatMultiple(34.21)).toBe("34.2x");
+-    expect(formatMultiple(null)).toBe("n/a");
+     expect([toneOf(0.01), toneOf(-2), toneOf(0)]).toEqual(["up", "down", "flat"]);
+   });
+ });
+diff --git a/src/utils/numbers.ts b/src/utils/numbers.ts
+index 4df7af8..a7ef64d 100644
+--- a/src/utils/numbers.ts
++++ b/src/utils/numbers.ts
+@@ -1,7 +1,5 @@
+ import type { FxRates } from "../types";
+ 
+-const quantityFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 });
+-
+ export function sum(values: readonly number[]): number {
+   return values.reduce((total, value) => total + value, 0);
+ }
+@@ -28,47 +26,6 @@ export function toUsd(amount: number, currency: string, rates: FxRates): number
+   return amount * rate;
+ }
+ 
+-export function formatQuantity(value: number): string {
+-  return quantityFormatter.format(value);
+-}
+-
+-/** Number of decimals a price needs: FX pairs quote to 4 or 5 places. */
+-export function priceDigits(price: number): number {
+-  if (price < 2) return 4;
+-  if (price < 20) return 3;
+-  return 2;
+-}
+-
+-export function formatPrice(price: number, currency = "USD"): string {
+-  const digits = priceDigits(price);
+-  return new Intl.NumberFormat("en-US", {
+-    style: "currency",
+-    currency,
+-    minimumFractionDigits: digits,
+-    maximumFractionDigits: digits,
+-  }).format(price);
+-}
+-
+-export function formatSignedCurrency(value: number, currency = "USD"): string {
+-  const text = new Intl.NumberFormat("en-US", {
+-    style: "currency",
+-    currency,
+-    maximumFractionDigits: 0,
+-  }).format(Math.abs(value));
+-  if (value > 0) return `+${text}`;
+-  if (value < 0) return `-${text}`;
+-  return text;
+-}
+-
+-export function formatBasisPoints(fraction: number): string {
+-  return `${roundTo(fraction * 10000, 1)} bp`;
+-}
+-
+-export function formatMultiple(value: number | null): string {
+-  if (value === null) return "n/a";
+-  return `${value.toFixed(1)}x`;
+-}
+-
+ export function toneOf(value: number): "up" | "down" | "flat" {
+   if (value > 0) return "up";
+   if (value < 0) return "down";

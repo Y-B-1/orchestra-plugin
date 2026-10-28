@@ -1,0 +1,13 @@
+[
+  { "id": "h-01", "symbol": "AAPL", "quantity": 12000, "avgCost": 188.4, "openedAt": "2026-03-12", "book": "Core equity" },
+  { "id": "h-02", "symbol": "MSFT", "quantity": 6500, "avgCost": 402.15, "openedAt": "2026-02-02", "book": "Core equity" },
+  { "id": "h-03", "symbol": "NVDA", "quantity": 30000, "avgCost": 96.2, "openedAt": "2025-11-18", "book": "Growth" },
+  { "id": "h-04", "symbol": "SAP", "quantity": 4000, "avgCost": 182.6, "openedAt": "2026-05-07", "book": "Core equity" },
+  { "id": "h-05", "symbol": "TSLA", "quantity": 5000, "avgCost": 268.9, "openedAt": "2026-08-21", "book": "Growth" },
+  { "id": "h-06", "symbol": "EURUSD", "quantity": 5000000, "avgCost": 1.0915, "openedAt": "2026-09-30", "book": "Macro overlay" },
+  { "id": "h-07", "symbol": "USDJPY", "quantity": 3000000, "avgCost": 151.2, "openedAt": "2026-07-15", "book": "Macro overlay" },
+  { "id": "h-08", "symbol": "XAU", "quantity": 1200, "avgCost": 2310, "openedAt": "2026-01-09", "book": "Real assets" },
+  { "id": "h-09", "symbol": "WTI", "quantity": 15000, "avgCost": 76.4, "openedAt": "2026-06-03", "book": "Real assets" },
+  { "id": "h-10", "symbol": "UST10", "quantity": 40000, "avgCost": 99.1, "openedAt": "2026-04-22", "book": "Rates" },
+  { "id": "h-11", "symbol": "BUND10", "quantity": 25000, "avgCost": 100.4, "openedAt": "2026-04-22", "book": "Rates" }
+]

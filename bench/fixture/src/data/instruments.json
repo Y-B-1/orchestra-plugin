@@ -1,0 +1,14 @@
+[
+  { "symbol": "AAPL", "name": "Apple Inc.", "assetClass": "equity", "price": 227.48, "changePct": 0.0124, "volume": 51230000, "currency": "USD" },
+  { "symbol": "MSFT", "name": "Microsoft Corp.", "assetClass": "equity", "price": 431.2, "changePct": -0.0036, "volume": 22140000, "currency": "USD" },
+  { "symbol": "NVDA", "name": "NVIDIA Corp.", "assetClass": "equity", "price": 138.07, "changePct": 0.0281, "volume": 188400000, "currency": "USD" },
+  { "symbol": "SAP", "name": "SAP SE", "assetClass": "equity", "price": 214.9, "changePct": 0.0052, "volume": 1840000, "currency": "EUR" },
+  { "symbol": "EURUSD", "name": "Euro / US dollar", "assetClass": "fx", "price": 1.0842, "changePct": -0.0011, "volume": 920000000, "currency": "USD" },
+  { "symbol": "GBPUSD", "name": "Pound / US dollar", "assetClass": "fx", "price": 1.2967, "changePct": 0.0008, "volume": 610000000, "currency": "USD" },
+  { "symbol": "USDJPY", "name": "US dollar / Yen", "assetClass": "fx", "price": 149.35, "changePct": 0.0034, "volume": 745000000, "currency": "JPY" },
+  { "symbol": "XAU", "name": "Gold spot", "assetClass": "commodity", "price": 2641.5, "changePct": 0.0067, "volume": 3120000, "currency": "USD" },
+  { "symbol": "WTI", "name": "WTI crude", "assetClass": "commodity", "price": 71.84, "changePct": -0.0152, "volume": 9800000, "currency": "USD" },
+  { "symbol": "UST10", "name": "US Treasury 10Y", "assetClass": "bond", "price": 98.42, "changePct": -0.0004, "volume": 15200000, "currency": "USD" },
+  { "symbol": "BUND10", "name": "German Bund 10Y", "assetClass": "bond", "price": 101.15, "changePct": 0.0002, "volume": 4100000, "currency": "EUR" },
+  { "symbol": "TSLA", "name": "Tesla Inc.", "assetClass": "equity", "price": 251.3, "changePct": -0.0213, "volume": 97600000, "currency": "USD" }
+]
