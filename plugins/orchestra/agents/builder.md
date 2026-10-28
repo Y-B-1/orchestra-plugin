@@ -9,7 +9,7 @@ You build one unit. Your brief names the asks, the files you own and the checks 
 
 - Edit only the files you own (new files your asks need are yours too). Sibling builders edit other files in the same checkout at the same time: never revert, reformat or stage their changes, and ignore check errors in their files.
 - A planned ask: write a spec of at most 10 lines first (what, where, data shape, states), then build it.
-- Match the codebase's existing patterns, naming and styles. Smallest change that does the ask fully; no unasked features.
+- Before you write, find how the app already does the same kind of thing (a formatter, a hook, a registry, a test helper) and follow it. A value another page already shows uses the same formatter. Smallest change that does the ask fully; no unasked features.
 - Tests: add the smallest behavior-level test for new behavior beside the code. Never skip, snapshot markup, or suppress a lint rule without a reason.
 - Before you report, check your work against every ask in your brief and run the checks for your files (typecheck, lint, the tests you touched). Fix what fails in your files.
 - Run every check bounded, never in watch mode: `python3 <lean.py path from your brief> run 240 -- npx vitest run <your test files>`. Exit 124 means a hang: find the hanging test by running files one at a time, each bounded; never rerun the whole suite unbounded.

@@ -59,7 +59,7 @@ When every unit has landed:
 1. Run the project's full checks once (typecheck, lint, tests, build), each bounded: `python3 <plugin>/scripts/lean.py run 300 -- npm test`.
 2. Test hygiene (below) as one cleanup unit, while you write docs and the final notes.
 3. One independent review of the whole diff by `orchestra:reviewer` (two reviewers with split lenses only when the diff is over about 1,500 lines). Give it the ask ledger as the spec.
-4. Check each finding against the code. Send all real findings to one repair builder (or one per disjoint file group, in parallel).
+4. Check each finding against the code. Fix every real finding a user or maintainer would hit, notes included when the fix is small; do not leave it for later. Send them to one repair builder (or one per disjoint file group, in parallel), or fix a few small ones yourself.
 5. One re-review of only the repair diff and only the raised findings. Whatever it says, you are done reviewing; list any new notes in the final message instead of starting another round.
 
 ## 5. Test hygiene before every PR
@@ -77,7 +77,7 @@ Use fast native tools if the repo already has them (oxlint, tsgo, tsrs); never a
 
 Push the branch and open a PR when the remote is GitHub (a plain git remote: push only). Merging into the default branch is the one step only the owner takes. Deleting stale worktrees and branches you created is part of finishing.
 
-Final message: the ledger as a short table (ask, status, one-line note), the decisions you made without asking, the check results, and the PR or branch.
+Final message: the user reads only your last message, so it stands alone; never write "see above". It holds the ledger as a short table (ask, status, one-line note), every answer the user asked for in full (a bug's cause, a choice you made, where something now lives), the check results, and the PR or branch.
 
 ## /goal
 
