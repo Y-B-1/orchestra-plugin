@@ -31,8 +31,6 @@ jobs:
           git config --global user.name ci
           git config --global user.email ci@example.invalid
           git config --global init.defaultBranch main
-      - name: Agent files match the generator
-        run: python plugins/orchestra/scripts/generate.py --check
       - name: Unit and integration tests
         run: python -m unittest discover -s tests
 
@@ -54,36 +52,26 @@ jobs:
         run: python -m unittest discover -s tests
 
   windows:
-    name: Windows tests (${{ matrix.shard }})
+    name: Windows tests
     runs-on: windows-latest
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [engine, hooks, rest]
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Git identity for the test repositories
+        shell: bash
         run: |
           git config --global user.name ci
           git config --global user.email ci@example.invalid
           git config --global init.defaultBranch main
           git config --global core.autocrlf false
-      - name: Unit and integration tests (UTF-8 mode, as the launcher runs them)
-        shell: bash
-        run: |
-          case "${{ matrix.shard }}" in
-            engine) mods="test_engine" ;;
-            hooks) mods="test_hooks" ;;
-            rest) mods=$(cd tests && ls test_*.py | grep -v -e test_engine -e test_hooks | sed 's#\.py$##' | tr '\n' ' ') ;;
-          esac
-          PYTHONPATH=tests python -u -X utf8 -m unittest -v $mods 2>&1 | grep -v " ok$"
+      - name: Unit tests
+        run: python -X utf8 -m unittest discover -s tests
 
   plugin:
-    name: Plugin validation and mod tests
+    name: Plugin validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -96,5 +84,3 @@ jobs:
         run: |
           claude plugin validate --strict plugins/orchestra
           claude plugin validate --strict .claude-plugin/marketplace.json
-      - name: Mod tests
-        run: claude plugin test plugins/orchestra

@@ -2,6 +2,17 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.0.0 — 2026-10-28
+
+A rewrite. Orchestra is now a small plugin for fast delivery of multi-request prompts: every independent ask runs in parallel, one independent review follows, `/orchestra:goal` keeps a session going, and one guard blocks only merging into the default branch. A benchmark showed this design delivers the same quality about twice as fast as plain Claude Code, and far faster than 2.15.3 (see `docs/BENCHMARK.md`).
+
+- **Added:** `scripts/lean.py` (standard-library Python) with three hooks (SessionStart, PreToolUse on Bash, Stop) and a small CLI: `run SECONDS -- CMD` for bounded checks, `ledger`, and `goal set|stop|status`. One coordinator skill, `orchestra:orchestra`, under 200 lines: ask ledger, plan by novelty, units in one Workflow, builders that check and commit their own units, one review with one repair and one scoped re-review, test hygiene, push and pull request. The `/orchestra:goal` command. Five agents: builder (Sonnet 5.5 medium), reviewer (Opus 5.5 medium), planner (Sonnet 5.5 high), critic (Opus 5.5 high), investigator (Haiku 5.5 high).
+- **State:** the ask ledger `.git/orchestra/asks.md` and the goal file `.git/orchestra/goal.json`, in the Git common directory. Nothing else.
+- **Guard:** denies `gh pr merge`, `gh api` merge calls, pushes to the default branch and force pushes or deletes of it. Everything else runs; Orchestra never asks.
+- **Removed:** the card engine (`orchestra.py`, `orchestra_core/`, leases, reservations, receipts, gates, autonomy, approval receipts), the board mod and its type stubs, `config/`, the agent generator, the guard modes, size tiers, eight role skills and twelve agents, and their tests. `scripts/live-matrix.py`, `scripts/live-gh-wizard.sh` and their docs, and `docs/cli.md`, `docs/roles.md` and `docs/models.md`.
+- **Checks:** `tests/test_lean.py` (guard, Stop hook, CLI) and `tests/test_layout.py` (manifests, hook paths, agent and skill frontmatter, no personal paths). `scripts/check.sh` runs the unit tests on Python 3.11 and 3.13, a JSON check of `hooks.json` and the strict plugin and marketplace validation. New `scripts/live-check.py` runs the hooks in three real headless sessions (`docs/live-check.md`).
+- **Upgrade:** finish any active 2.x run before upgrading. The 2.x run state is no longer read.
+
 ## 2.15.3 — 2026-10-27
 
 Closes the friction and review notes left from 2.15.2 and 2.15.1 (F112 to F121, N1 to N5, N8, N9, F39).
