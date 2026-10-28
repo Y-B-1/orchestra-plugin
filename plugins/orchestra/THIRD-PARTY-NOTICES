@@ -1,6 +1,6 @@
 Third-party notices for the Orchestra plugin
 
-Orchestra skill files are written in our own words. Where a skill file was derived from or informed by the sources below, its `Source:` header cites the repository, the first 12 characters of the pinned commit and the paths. Each MIT source is credited here with its repository URL, the full pinned commit SHA and its license text exactly as found at that commit. The capability matrix is docs/SKILL-SOURCES.md in the package repository.
+Orchestra 3.0.0 files are written in our own words and copy no text from the sources below. Earlier versions shipped skill files derived from these sources; those files were removed in 3.0.0. The credits stay because the ideas they carried are still used: parallel dispatch of independent work, a spec before a novel build, one independent review, and test hygiene. Each MIT source is credited with its repository URL, the full pinned commit SHA and its license text exactly as found at that commit. The historical capability matrix is docs/SKILL-SOURCES.md in the package repository.
 
 ================================================================
 obra/superpowers

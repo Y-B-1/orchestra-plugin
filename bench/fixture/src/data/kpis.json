@@ -1,0 +1,6 @@
+[
+  { "id": "aum", "label": "Assets under management", "value": 48210000000, "format": "currency", "deltaPct": 0.0142 },
+  { "id": "trades", "label": "Trades today", "value": 18342, "format": "number", "deltaPct": -0.0311 },
+  { "id": "spread", "label": "Average spread", "value": 0.0087, "format": "percent", "deltaPct": -0.0045 },
+  { "id": "clients", "label": "Active clients", "value": 1264, "format": "number", "deltaPct": 0.0075 }
+]

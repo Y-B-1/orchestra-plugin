@@ -725,3 +725,21 @@ N1 to N5, N8, N9, F89, F112, F114, F115 to F119, F121, F39, the `binds` edge cas
 - `t3` still skips headless (above).
 - L2 needs the owner to run `scripts/live-gh-wizard.sh` once.
 - Windows and the GitHub branch ruleset are untested.
+
+## 3.0.0 (2026-10-28)
+
+Source: the Lean design that won the speed benchmark (`docs/BENCHMARK.md`). Built on branch `orchestra-3.0.0` from `6dbd3d6`. The changes are listed in `CHANGELOG.md`.
+
+| Item | Change | Evidence |
+| --- | --- | --- |
+| Plugin | 2.15.3 engine, mod, config, types, skills and agents removed; `lean.py`, one skill, `/orchestra:goal` and five agents added | `tests/test_layout.py` |
+| Guard, Stop hook, CLI | Ported from the benchmark arm with its tests | `tests/test_lean.py` (16 tests) |
+| Checks | `scripts/check.sh` rewritten for the new layout | `scripts/check.sh` exit 0 |
+| Live hooks | `scripts/live-check.py`: init, guard and goal scenarios in real headless sessions | exit 0, two runs |
+| Tests | Every 2.x engine, hook and mod test removed with the code it covered; `tests/test_build_release.py` kept | `scripts/check.sh` |
+
+### Known gaps
+
+- Claude Code 2.1.306 emits no `hook_response` event for the Stop hook in headless runs; the goal scenario reads the `Stop hook feedback` message instead.
+- `examples/global-CLAUDE.md` and `examples/project-AGENTS.md` still describe the 2.x engine.
+- The guard reads command text only; aliases, variables and scripts are not followed.

@@ -1,0 +1,14 @@
+[
+  {"symbol":"AAPL","exchange":"NASDAQ","sector":"Technology","marketCap":3460000000000,"peRatio":34.2,"dividendYield":0.0044,"open":225.38,"dayHigh":227.71,"dayLow":224.13,"prevClose":224.69,"rangeHigh":227.48,"rangeLow":161.41,"avgVolume":41830789},
+  {"symbol":"MSFT","exchange":"NASDAQ","sector":"Technology","marketCap":3205000000000,"peRatio":36.1,"dividendYield":0.0072,"open":434.07,"dayHigh":436.1,"dayLow":429.18,"prevClose":432.76,"rangeHigh":454.81,"rangeLow":419.5,"avgVolume":18803000},
+  {"symbol":"NVDA","exchange":"NASDAQ","sector":"Semiconductors","marketCap":3390000000000,"peRatio":55.8,"dividendYield":0.0003,"open":134.6,"dayHigh":138.45,"dayLow":133.24,"prevClose":134.3,"rangeHigh":138.07,"rangeLow":83.05,"avgVolume":153376745},
+  {"symbol":"SAP","exchange":"XETRA","sector":"Software","marketCap":251000000000,"peRatio":47.5,"dividendYield":0.0103,"open":214.25,"dayHigh":215.32,"dayLow":213.3,"prevClose":213.79,"rangeHigh":230.48,"rangeLow":210.12,"avgVolume":2155151},
+  {"symbol":"EURUSD","exchange":"OTC","sector":"G10 FX","marketCap":null,"peRatio":null,"dividendYield":null,"open":1.08521,"dayHigh":1.08559,"dayLow":1.0823,"prevClose":1.08539,"rangeHigh":1.11688,"rangeLow":1.0842,"avgVolume":866679781},
+  {"symbol":"GBPUSD","exchange":"OTC","sector":"G10 FX","marketCap":null,"peRatio":null,"dividendYield":null,"open":1.29475,"dayHigh":1.29843,"dayLow":1.29333,"prevClose":1.29566,"rangeHigh":1.2967,"rangeLow":1.26343,"avgVolume":579343694},
+  {"symbol":"USDJPY","exchange":"OTC","sector":"G10 FX","marketCap":null,"peRatio":null,"dividendYield":null,"open":148.948,"dayHigh":149.418,"dayLow":148.594,"prevClose":148.844,"rangeHigh":149.35,"rangeLow":143.768,"avgVolume":875286403},
+  {"symbol":"XAU","exchange":"LBMA","sector":"Precious metals","marketCap":null,"peRatio":null,"dividendYield":null,"open":2624.61,"dayHigh":2644.37,"dayLow":2608.02,"prevClose":2623.92,"rangeHigh":2671.28,"rangeLow":2205.1,"avgVolume":3413830},
+  {"symbol":"WTI","exchange":"NYMEX","sector":"Energy","marketCap":null,"peRatio":null,"dividendYield":null,"open":72.84,"dayHigh":73.4,"dayLow":71.53,"prevClose":72.95,"rangeHigh":91.28,"rangeLow":71.84,"avgVolume":10302850},
+  {"symbol":"UST10","exchange":"OTC","sector":"Government bonds","marketCap":null,"peRatio":null,"dividendYield":0.0425,"open":98.4,"dayHigh":98.47,"dayLow":98.4,"prevClose":98.46,"rangeHigh":101,"rangeLow":98.22,"avgVolume":14897256},
+  {"symbol":"BUND10","exchange":"OTC","sector":"Government bonds","marketCap":null,"peRatio":null,"dividendYield":0.0228,"open":101.09,"dayHigh":101.25,"dayLow":101.13,"prevClose":101.13,"rangeHigh":101.15,"rangeLow":97.21,"avgVolume":4124759},
+  {"symbol":"TSLA","exchange":"NASDAQ","sector":"Automotive","marketCap":802000000000,"peRatio":70.4,"dividendYield":0,"open":257.02,"dayHigh":258.69,"dayLow":250.12,"prevClose":256.77,"rangeHigh":349.24,"rangeLow":251.3,"avgVolume":98637201}
+]

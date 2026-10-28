@@ -1,0 +1,872 @@
+diff --git a/README.md b/README.md
+index 344f452..0584954 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,8 @@
+ # Pulse
+ 
+-Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications in the top bar; and user settings (theme and notifications) saved in the browser.
++Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter (with venue and UTC times) and a detail drawer; a compare page that puts two instruments side by side; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications and a search box (instruments, clients and pages) in the top bar; and user settings (theme and notifications) saved in the browser.
+ 
+-Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
++Routes: `/` dashboard, `/portfolio`, `/trades`, `/compare?a=AAPL&b=MSFT`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
+ 
+ All data is mocked: typed fetchers in `src/api` read JSON files in `src/data` after a short artificial delay.
+ 
+@@ -22,7 +22,9 @@ npm run build      # type check, then production build into dist/
+ ## Layout
+ 
+ - `src/components` shared UI pieces (Table, Drawer, Tabs, Pagination, AsyncContent and more), with tests beside them
+-- `src/components/<feature>` pieces used by one area: `trades`, `portfolio`, `instrument`, `notifications`, `clients`, `dashboard`
++- `src/components/<feature>` pieces used by one area: `trades`, `portfolio`, `instrument`, `notifications`, `clients`, `dashboard`, `search`
++
++Price moves show ▲ or ▼ in front. The trade date filter includes the whole To day. `/clients?client=c-001` opens that client's drawer.
+ - `src/pages` one component per route
+ - `src/hooks` data loading (`useAsync`), `useDebounce`, `useLocalStorage`, and the settings and notifications contexts
+ - `src/api` mock fetchers; `src/data` JSON fixtures
+diff --git a/src/App.tsx b/src/App.tsx
+index cbe0cf5..62daa21 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,6 +1,7 @@
+ import { Route, Routes } from "react-router-dom";
+ import { Shell } from "./components/Shell";
+ import { Clients } from "./pages/Clients";
++import { Compare } from "./pages/Compare";
+ import { Dashboard } from "./pages/Dashboard";
+ import { InstrumentDetail } from "./pages/InstrumentDetail";
+ import { Portfolio } from "./pages/Portfolio";
+@@ -16,6 +17,7 @@ export function App() {
+         <Route path="portfolio" element={<Portfolio />} />
+         <Route path="trades" element={<Trades />} />
+         <Route path="instruments/:symbol" element={<InstrumentDetail />} />
++        <Route path="compare" element={<Compare />} />
+         <Route path="clients" element={<Clients />} />
+         <Route path="reports" element={<Reports />} />
+         <Route path="settings" element={<Settings />} />
+diff --git a/src/components/InstrumentTable.tsx b/src/components/InstrumentTable.tsx
+index 329284c..79b162b 100644
+--- a/src/components/InstrumentTable.tsx
++++ b/src/components/InstrumentTable.tsx
+@@ -1,71 +1,56 @@
+-import { useMemo, useState } from "react";
+ import { Link } from "react-router-dom";
+ import type { Instrument } from "../types";
+ import { formatCurrency, formatSignedPercent, formatVolume } from "../utils/format";
++import { Table, type Column } from "./Table";
+ 
+-type SortKey = "symbol" | "price" | "changePct" | "volume";
++const columns: Column<Instrument>[] = [
++  {
++    key: "symbol",
++    header: "Instrument",
++    rowHeader: true,
++    render: (row) => (
++      <>
++        <Link to={`/instruments/${row.symbol}`} className="table__symbol table__link">
++          {row.symbol}
++        </Link>
++        <span className="table__name">{row.name}</span>
++      </>
++    ),
++    sortValue: (row) => row.symbol,
++  },
++  {
++    key: "price",
++    header: "Price",
++    align: "right",
++    render: (row) => formatCurrency(row.price, row.currency),
++    sortValue: (row) => row.price,
++  },
++  {
++    key: "changePct",
++    header: "Change",
++    align: "right",
++    render: (row) => formatSignedPercent(row.changePct),
++    sortValue: (row) => row.changePct,
++    cellClassName: (row) => (row.changePct >= 0 ? "text-up" : "text-down"),
++  },
++  {
++    key: "volume",
++    header: "Volume",
++    align: "right",
++    render: (row) => formatVolume(row.volume),
++    sortValue: (row) => row.volume,
++  },
++];
+ 
++/** Instruments on the dashboard, sorted by the shared table (A to Z by symbol to start). */
+ export function InstrumentTable({ instruments }: { instruments: Instrument[] }) {
+-  const [sortKey, setSortKey] = useState<SortKey>("symbol");
+-  const [descending, setDescending] = useState(false);
+-
+-  const rows = useMemo(() => {
+-    const sorted = [...instruments].sort((a, b) => {
+-      const left = a[sortKey];
+-      const right = b[sortKey];
+-      if (typeof left === "number" && typeof right === "number") return left - right;
+-      return String(left).localeCompare(String(right));
+-    });
+-    return descending ? sorted.reverse() : sorted;
+-  }, [instruments, sortKey, descending]);
+-
+-  function toggleSort(key: SortKey) {
+-    if (key === sortKey) {
+-      setDescending((prev) => !prev);
+-    } else {
+-      setSortKey(key);
+-      setDescending(false);
+-    }
+-  }
+-
+-  function header(key: SortKey, label: string) {
+-    const active = key === sortKey;
+-    return (
+-      <th scope="col" aria-sort={active ? (descending ? "descending" : "ascending") : "none"}>
+-        <button type="button" className="table__sort" onClick={() => toggleSort(key)}>
+-          {label}
+-        </button>
+-      </th>
+-    );
+-  }
+-
+   return (
+-    <table className="table">
+-      <thead>
+-        <tr>
+-          {header("symbol", "Instrument")}
+-          {header("price", "Price")}
+-          {header("changePct", "Change")}
+-          {header("volume", "Volume")}
+-        </tr>
+-      </thead>
+-      <tbody>
+-        {rows.map((row) => (
+-          <tr key={row.symbol}>
+-            <th scope="row">
+-              <Link to={`/instruments/${row.symbol}`} className="table__symbol table__link">
+-                {row.symbol}
+-              </Link>
+-              <span className="table__name">{row.name}</span>
+-            </th>
+-            <td className="table__num">{formatCurrency(row.price, row.currency)}</td>
+-            <td className={`table__num ${row.changePct >= 0 ? "text-up" : "text-down"}`}>
+-              {formatSignedPercent(row.changePct)}
+-            </td>
+-            <td className="table__num">{formatVolume(row.volume)}</td>
+-          </tr>
+-        ))}
+-      </tbody>
+-    </table>
++    <Table
++      columns={columns}
++      rows={instruments}
++      rowKey={(row) => row.symbol}
++      initialSort={{ key: "symbol", direction: "asc" }}
++      emptyMessage="No instruments in this asset class."
++    />
+   );
+ }
+diff --git a/src/components/PriceChange.tsx b/src/components/PriceChange.tsx
+index 3a532aa..d697abe 100644
+--- a/src/components/PriceChange.tsx
++++ b/src/components/PriceChange.tsx
+@@ -10,12 +10,18 @@ interface PriceChangeProps {
+   className?: string;
+ }
+ 
+-/** A signed change colored by direction: green up, red down, muted when flat. */
++/** A signed change colored by direction, with an arrow: green ▲ up, red ▼ down, muted and no arrow when flat. */
+ export function PriceChange({ pct, amount, currency = "USD", className }: PriceChangeProps) {
+   const basis = pct ?? amount ?? 0;
+   const tone = toneOf(basis);
+   const parts: string[] = [];
+   if (amount !== undefined) parts.push(formatSignedCurrency(amount, currency));
+   if (pct !== undefined) parts.push(amount !== undefined ? `(${formatSignedPercent(pct)})` : formatSignedPercent(pct));
+-  return <span className={`price-change price-change--${tone}${className ? ` ${className}` : ""}`}>{parts.join(" ")}</span>;
++  const arrow = tone === "up" ? "▲" : tone === "down" ? "▼" : null;
++  return (
++    <span className={`price-change price-change--${tone}${className ? ` ${className}` : ""}`}>
++      {arrow ? <span aria-hidden="true">{arrow} </span> : null}
++      {parts.join(" ")}
++    </span>
++  );
+ }
+diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx
+index 450347b..f98a51a 100644
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -1,12 +1,24 @@
+ import { NavLink } from "react-router-dom";
+ 
+-const links = [
+-  { to: "/", label: "Dashboard", end: true },
+-  { to: "/portfolio", label: "Portfolio", end: false },
+-  { to: "/trades", label: "Trades", end: false },
+-  { to: "/clients", label: "Clients", end: false },
+-  { to: "/reports", label: "Reports", end: false },
+-  { to: "/settings", label: "Settings", end: false },
++// 24x24 outline icons, drawn with the current text color.
++const icons: Record<string, string> = {
++  dashboard: "M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z",
++  portfolio: "M4 8h16v11H4zM9 8V5h6v3",
++  trades: "M4 7h13l-3-3M20 17H7l3 3",
++  compare: "M8 4v16M16 4v16M4 9h8M12 15h8",
++  clients: "M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 20c0-3 3-5 6-5s6 2 6 5M17 11a3 3 0 0 0 0-6M21 20c0-2.5-1.5-4.2-4-4.8",
++  reports: "M6 3h9l4 4v14H6zM9 12h7M9 16h7",
++  settings: "M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM4 12h2M18 12h2M12 4v2M12 18v2M6.3 6.3l1.4 1.4M16.3 16.3l1.4 1.4M6.3 17.7l1.4-1.4M16.3 7.7l1.4-1.4",
++};
++
++export const navLinks = [
++  { to: "/", label: "Dashboard", icon: "dashboard", end: true },
++  { to: "/portfolio", label: "Portfolio", icon: "portfolio", end: false },
++  { to: "/trades", label: "Trades", icon: "trades", end: false },
++  { to: "/compare", label: "Compare", icon: "compare", end: false },
++  { to: "/clients", label: "Clients", icon: "clients", end: false },
++  { to: "/reports", label: "Reports", icon: "reports", end: false },
++  { to: "/settings", label: "Settings", icon: "settings", end: false },
+ ];
+ 
+ export function Sidebar() {
+@@ -14,13 +26,16 @@ export function Sidebar() {
+     <nav className="sidebar" aria-label="Primary">
+       <div className="sidebar__brand">Pulse</div>
+       <ul className="sidebar__list">
+-        {links.map((link) => (
++        {navLinks.map((link) => (
+           <li key={link.to}>
+             <NavLink
+               to={link.to}
+               end={link.end}
+               className={({ isActive }) => `sidebar__link${isActive ? " sidebar__link--active" : ""}`}
+             >
++              <svg className="sidebar__icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
++                <path d={icons[link.icon]} />
++              </svg>
+               {link.label}
+             </NavLink>
+           </li>
+diff --git a/src/components/TopBar.tsx b/src/components/TopBar.tsx
+index 6fe578a..ae03bf9 100644
+--- a/src/components/TopBar.tsx
++++ b/src/components/TopBar.tsx
+@@ -1,11 +1,13 @@
+ import { useLocation } from "react-router-dom";
+ import { NotificationBell } from "./notifications/NotificationBell";
++import { GlobalSearch } from "./search/GlobalSearch";
+ import { UserMenu } from "./UserMenu";
+ 
+ const titles: Record<string, string> = {
+   "/": "Dashboard",
+   "/portfolio": "Portfolio",
+   "/trades": "Trades",
++  "/compare": "Compare",
+   "/clients": "Clients",
+   "/reports": "Reports",
+   "/settings": "Settings",
+@@ -22,6 +24,7 @@ export function TopBar() {
+     <header className="topbar">
+       <h1 className="topbar__title">{pageTitle(pathname)}</h1>
+       <div className="topbar__actions">
++        <GlobalSearch />
+         <NotificationBell />
+         <UserMenu name="Dana Whitaker" />
+       </div>
+diff --git a/src/components/instrument/InstrumentHeader.tsx b/src/components/instrument/InstrumentHeader.tsx
+index 61a5fa3..57b2d8c 100644
+--- a/src/components/instrument/InstrumentHeader.tsx
++++ b/src/components/instrument/InstrumentHeader.tsx
+@@ -2,6 +2,7 @@ import type { Instrument } from "../../types";
+ import { formatVolume } from "../../utils/format";
+ import { formatPrice } from "../../utils/numbers";
+ import { assetClassLabels } from "../../utils/portfolio";
++import { Link } from "react-router-dom";
+ import { PriceChange } from "../PriceChange";
+ import { WatchButton } from "./WatchButton";
+ 
+@@ -16,7 +17,12 @@ export function InstrumentHeader({ instrument }: { instrument: Instrument }) {
+           <span className="chip">{assetClassLabels[instrument.assetClass]}</span>
+         </p>
+         <h2 className="instrument-header__name">{instrument.name}</h2>
+-        <WatchButton symbol={instrument.symbol} />
++        <div className="instrument-header__actions">
++          <WatchButton symbol={instrument.symbol} />
++          <Link to={`/compare?a=${encodeURIComponent(instrument.symbol)}`} className="button button--small">
++            Compare with another instrument
++          </Link>
++        </div>
+       </div>
+       <div className="instrument-header__quote">
+         <p className="instrument-header__price" aria-label="Last price">
+diff --git a/src/components/search/GlobalSearch.tsx b/src/components/search/GlobalSearch.tsx
+new file mode 100644
+index 0000000..4667630
+--- /dev/null
++++ b/src/components/search/GlobalSearch.tsx
+@@ -0,0 +1,67 @@
++import { useMemo, useState, type KeyboardEvent } from "react";
++import { Link, useNavigate } from "react-router-dom";
++import { fetchClients, fetchInstruments } from "../../api";
++import { useAsync } from "../../hooks/useAsync";
++import { navLinks } from "../Sidebar";
++import { searchAll } from "./searchResults";
++
++async function loadSources() {
++  const [instruments, clients] = await Promise.all([fetchInstruments(), fetchClients()]);
++  return { instruments, clients, pages: navLinks };
++}
++
++/** Top bar search over instruments, clients and pages. Enter opens the first result, Escape closes. */
++export function GlobalSearch() {
++  const [query, setQuery] = useState("");
++  const navigate = useNavigate();
++  const sources = useAsync(loadSources, []);
++  const groups = useMemo(() => (sources.data ? searchAll(query, sources.data) : []), [query, sources.data]);
++  const open = query.trim() !== "";
++
++  function onKeyDown(event: KeyboardEvent<HTMLInputElement>) {
++    if (event.key === "Escape") {
++      setQuery("");
++    } else if (event.key === "Enter") {
++      const first = groups[0]?.hits[0];
++      if (first) {
++        event.preventDefault();
++        setQuery("");
++        navigate(first.to);
++      }
++    }
++  }
++
++  return (
++    <div className="search">
++      <input
++        type="search"
++        className="input search__input"
++        aria-label="Search Pulse"
++        placeholder="Search instruments, clients and pages"
++        value={query}
++        onChange={(event) => setQuery(event.target.value)}
++        onKeyDown={onKeyDown}
++      />
++      {open ? (
++        <div className="search__results" role="region" aria-label="Search results">
++          {sources.loading && !sources.data ? <p className="search__empty">Searching...</p> : null}
++          {sources.data && groups.length === 0 ? <p className="search__empty">No matches</p> : null}
++          {groups.map((group) => (
++            <div key={group.title} className="search__group">
++              <p className="search__group-title">{group.title}</p>
++              <ul className="search__list">
++                {group.hits.map((hit) => (
++                  <li key={hit.id}>
++                    <Link to={hit.to} className="search__hit" onClick={() => setQuery("")}>
++                      {hit.label}
++                    </Link>
++                  </li>
++                ))}
++              </ul>
++            </div>
++          ))}
++        </div>
++      ) : null}
++    </div>
++  );
++}
+diff --git a/src/components/search/searchResults.test.ts b/src/components/search/searchResults.test.ts
+new file mode 100644
+index 0000000..eb77ac6
+--- /dev/null
++++ b/src/components/search/searchResults.test.ts
+@@ -0,0 +1,26 @@
++import { describe, expect, it } from "vitest";
++import clients from "../../data/clients.json";
++import instruments from "../../data/instruments.json";
++import type { Client, Instrument } from "../../types";
++import { searchAll } from "./searchResults";
++
++const sources = {
++  instruments: instruments as Instrument[],
++  clients: clients as Client[],
++  pages: [
++    { label: "Portfolio", to: "/portfolio" },
++    { label: "Reports", to: "/reports" },
++  ],
++};
++
++describe("searchAll", () => {
++  it("groups matches by kind and skips empty groups", () => {
++    expect(searchAll("  ", sources)).toEqual([]);
++    expect(searchAll("port", sources).map((g) => [g.title, g.hits.map((h) => h.label)])).toEqual([
++      ["Pages", ["Portfolio", "Reports"]],
++    ]);
++    const [group] = searchAll("ines", sources);
++    expect(group).toMatchObject({ title: "Clients", hits: [{ label: "Northwind Capital", to: "/clients?client=c-001" }] });
++    expect(searchAll("aapl", sources)[0]?.hits[0]).toMatchObject({ label: "AAPL Apple Inc.", to: "/instruments/AAPL" });
++  });
++});
+diff --git a/src/components/search/searchResults.ts b/src/components/search/searchResults.ts
+new file mode 100644
+index 0000000..3db0bca
+--- /dev/null
++++ b/src/components/search/searchResults.ts
+@@ -0,0 +1,47 @@
++import type { Client, Instrument } from "../../types";
++import { matchesQuery } from "../../utils/search";
++
++export interface SearchHit {
++  id: string;
++  label: string;
++  to: string;
++}
++
++export interface SearchGroup {
++  title: "Instruments" | "Clients" | "Pages";
++  hits: SearchHit[];
++}
++
++export interface SearchSources {
++  instruments: readonly Instrument[];
++  clients: readonly Client[];
++  pages: readonly { label: string; to: string }[];
++}
++
++const PER_GROUP = 5;
++
++/** Matches grouped as Instruments, Clients, Pages; empty groups are left out. */
++export function searchAll(query: string, sources: SearchSources): SearchGroup[] {
++  if (query.trim() === "") return [];
++  const groups: SearchGroup[] = [
++    {
++      title: "Instruments",
++      hits: sources.instruments
++        .filter((i) => matchesQuery(query, i.symbol, i.name))
++        .map((i) => ({ id: `i-${i.symbol}`, label: `${i.symbol} ${i.name}`, to: `/instruments/${i.symbol}` })),
++    },
++    {
++      title: "Clients",
++      hits: sources.clients
++        .filter((c) => matchesQuery(query, c.name, c.contact))
++        .map((c) => ({ id: `c-${c.id}`, label: c.name, to: `/clients?client=${encodeURIComponent(c.id)}` })),
++    },
++    {
++      title: "Pages",
++      hits: sources.pages
++        .filter((p) => matchesQuery(query, p.label))
++        .map((p) => ({ id: `p-${p.to}`, label: p.label, to: p.to })),
++    },
++  ];
++  return groups.map((g) => ({ ...g, hits: g.hits.slice(0, PER_GROUP) })).filter((g) => g.hits.length > 0);
++}
+diff --git a/src/components/trades/TradeFilters.tsx b/src/components/trades/TradeFilters.tsx
+index aa05581..c08db32 100644
+--- a/src/components/trades/TradeFilters.tsx
++++ b/src/components/trades/TradeFilters.tsx
+@@ -101,7 +101,7 @@ export function TradeFilters({ value, onChange, onReset }: TradeFiltersProps) {
+       </div>
+       <div className="filters__actions">
+         <button type="button" className="button button--ghost" onClick={onReset} disabled={!isFiltered(value)}>
+-          Reset filters
++          Clear filters
+         </button>
+       </div>
+       {inverted ? (
+diff --git a/src/components/trades/tradeColumns.test.ts b/src/components/trades/tradeColumns.test.ts
+new file mode 100644
+index 0000000..08dffaf
+--- /dev/null
++++ b/src/components/trades/tradeColumns.test.ts
+@@ -0,0 +1,13 @@
++import { describe, expect, it } from "vitest";
++import data from "../../data/trades.json";
++import type { Trade } from "../../types";
++import { sortRows } from "../Table";
++import { blotterColumns } from "./tradeColumns";
++
++describe("blotter Time column", () => {
++  it("sorts chronologically across days, not alphabetically", () => {
++    const sorted = sortRows(data as Trade[], blotterColumns, { key: "executedAt", direction: "asc" });
++    const times = sorted.map((trade) => trade.executedAt);
++    expect(times).toEqual([...times].sort());
++  });
++});
+diff --git a/src/components/trades/tradeColumns.tsx b/src/components/trades/tradeColumns.tsx
+index 8ab2680..d4cdc06 100644
+--- a/src/components/trades/tradeColumns.tsx
++++ b/src/components/trades/tradeColumns.tsx
+@@ -13,8 +13,9 @@ export function tradeNotional(trade: Trade): number {
+ const executed: Column<Trade> = {
+   key: "executedAt",
+   header: "Time",
+-  render: (trade) => <time dateTime={trade.executedAt}>{formatDateTime(trade.executedAt)}</time>,
+-  sortValue: (trade) => formatDateTime(trade.executedAt),
++  render: (trade) => <time dateTime={trade.executedAt}>{formatDateTime(trade.executedAt)} UTC</time>,
++  // ISO timestamps sort chronologically; the formatted text would sort alphabetically.
++  sortValue: (trade) => trade.executedAt,
+ };
+ 
+ const id: Column<Trade> = {
+@@ -74,6 +75,13 @@ const client: Column<Trade> = {
+   sortValue: (trade) => clientName(trade.clientId),
+ };
+ 
++const venue: Column<Trade> = {
++  key: "venue",
++  header: "Venue",
++  render: (trade) => trade.venue,
++  sortValue: (trade) => trade.venue,
++};
++
+ const status: Column<Trade> = {
+   key: "status",
+   header: "Status",
+@@ -82,7 +90,7 @@ const status: Column<Trade> = {
+ };
+ 
+ /** Columns of the full trade blotter. */
+-export const blotterColumns: Column<Trade>[] = [id, executed, symbol, side, quantity, price, notional, client, status];
++export const blotterColumns: Column<Trade>[] = [id, executed, symbol, side, quantity, price, notional, client, venue, status];
+ 
+ /** Columns for a trade list already scoped to one instrument. */
+ export const instrumentTradeColumns: Column<Trade>[] = [id, executed, side, quantity, price, client, status];
+diff --git a/src/pages/Clients.tsx b/src/pages/Clients.tsx
+index cf4a047..827c91f 100644
+--- a/src/pages/Clients.tsx
++++ b/src/pages/Clients.tsx
+@@ -1,4 +1,5 @@
+ import { useCallback, useEffect, useState } from "react";
++import { useSearchParams } from "react-router-dom";
+ import { fetchClients } from "../api";
+ import { AsyncContent } from "../components/AsyncContent";
+ import { ClientDrawer } from "../components/ClientDrawer";
+@@ -13,10 +14,20 @@ export const SEARCH_DEBOUNCE_MS = 150;
+ export function Clients() {
+   useDocumentTitle("Clients");
+   const [query, setQuery] = useState("");
+-  const [selectedId, setSelectedId] = useState<string | null>(null);
++  const [params, setParams] = useSearchParams();
++  const linkedId = params.get("client");
++  const [selectedId, setSelectedId] = useState<string | null>(linkedId);
+   const [results, setResults] = useState<AsyncState<Client[]>>({ data: null, loading: true, error: null });
+   const debouncedQuery = useDebounce(query, SEARCH_DEBOUNCE_MS);
+-  const close = useCallback(() => setSelectedId(null), []);
++  const close = useCallback(() => {
++    setSelectedId(null);
++    setParams({}, { replace: true });
++  }, [setParams]);
++
++  // A link such as /clients?client=c-001 (from the top bar search) opens that client's drawer.
++  useEffect(() => {
++    if (linkedId) setSelectedId(linkedId);
++  }, [linkedId]);
+ 
+   // The previous results stay on screen while the next search is in flight.
+   useEffect(() => {
+diff --git a/src/pages/Compare.tsx b/src/pages/Compare.tsx
+new file mode 100644
+index 0000000..706de9d
+--- /dev/null
++++ b/src/pages/Compare.tsx
+@@ -0,0 +1,116 @@
++import type { ReactNode } from "react";
++import { useSearchParams } from "react-router-dom";
++import { fetchInstrument, fetchInstrumentStats, fetchInstruments, fetchPriceHistory } from "../api";
++import { AsyncContent } from "../components/AsyncContent";
++import { PriceChange } from "../components/PriceChange";
++import { useAsync } from "../hooks/useAsync";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import type { Instrument, InstrumentStats } from "../types";
++import { periodChange } from "../utils/compare";
++import { formatPrice } from "../utils/numbers";
++
++export const DEFAULT_PAIR = { a: "AAPL", b: "MSFT" };
++
++interface Side {
++  instrument: Instrument;
++  stats: InstrumentStats;
++  change3m: number | null;
++}
++
++async function loadSide(symbol: string): Promise<Side> {
++  const [instrument, stats, history] = await Promise.all([
++    fetchInstrument(symbol),
++    fetchInstrumentStats(symbol),
++    fetchPriceHistory(symbol, "3M"),
++  ]);
++  return { instrument, stats, change3m: periodChange(history) };
++}
++
++const rows: { label: string; value: (side: Side) => ReactNode }[] = [
++  { label: "Last price", value: (s) => formatPrice(s.instrument.price, s.instrument.currency) },
++  { label: "Day change", value: (s) => <PriceChange pct={s.instrument.changePct} /> },
++  { label: "3 month change", value: (s) => (s.change3m === null ? "n/a" : <PriceChange pct={s.change3m} />) },
++  { label: "3 month high", value: (s) => formatPrice(s.stats.rangeHigh, s.instrument.currency) },
++  { label: "3 month low", value: (s) => formatPrice(s.stats.rangeLow, s.instrument.currency) },
++  { label: "Exchange", value: (s) => s.stats.exchange },
++  { label: "Sector", value: (s) => s.stats.sector },
++];
++
++function ComparisonTable({ left, right }: { left: Side; right: Side }) {
++  return (
++    <div className="table-wrap">
++      <table className="table compare-table">
++        <caption className="visually-hidden">Comparison</caption>
++        <thead>
++          <tr>
++            <th scope="col">Measure</th>
++            <th scope="col" className="table__num">{left.instrument.symbol}</th>
++            <th scope="col" className="table__num">{right.instrument.symbol}</th>
++          </tr>
++        </thead>
++        <tbody>
++          {rows.map((row) => (
++            <tr key={row.label}>
++              <th scope="row">{row.label}</th>
++              <td className="table__num">{row.value(left)}</td>
++              <td className="table__num">{row.value(right)}</td>
++            </tr>
++          ))}
++        </tbody>
++      </table>
++    </div>
++  );
++}
++
++function Pair({ a, b }: { a: string; b: string }) {
++  const state = useAsync(() => Promise.all([loadSide(a), loadSide(b)]), [a, b]);
++  return (
++    <AsyncContent state={state} loadingLabel="Loading comparison">
++      {([left, right]) => <ComparisonTable left={left} right={right} />}
++    </AsyncContent>
++  );
++}
++
++export function Compare() {
++  useDocumentTitle("Compare");
++  const [params, setParams] = useSearchParams();
++  const a = (params.get("a") ?? DEFAULT_PAIR.a).toUpperCase();
++  const b = (params.get("b") ?? DEFAULT_PAIR.b).toUpperCase();
++  const instruments = useAsync(() => fetchInstruments(), []);
++
++  function choose(key: "a" | "b", symbol: string) {
++    const next = { a, b, [key]: symbol };
++    setParams({ a: next.a, b: next.b }, { replace: true });
++  }
++
++  return (
++    <div className="page">
++      <section className="panel" aria-label="Compare instruments">
++        <div className="panel__header">
++          <h2 className="panel__title">
++            {a} vs {b}
++          </h2>
++        </div>
++        <AsyncContent state={instruments} loadingLabel="Loading instruments">
++          {(list) => (
++            <div className="compare__pickers">
++              {(["a", "b"] as const).map((key) => (
++                <label key={key} className="filters__field">
++                  <span className="filters__label">{key === "a" ? "First instrument" : "Second instrument"}</span>
++                  <select className="input" value={key === "a" ? a : b} onChange={(event) => choose(key, event.target.value)}>
++                    {list.map((instrument) => (
++                      <option key={instrument.symbol} value={instrument.symbol}>
++                        {instrument.symbol} {instrument.name}
++                      </option>
++                    ))}
++                  </select>
++                </label>
++              ))}
++            </div>
++          )}
++        </AsyncContent>
++        {a === b ? <p className="feedback feedback--empty">Pick two different instruments.</p> : <Pair a={a} b={b} />}
++      </section>
++    </div>
++  );
++}
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 3f94e98..8cc7104 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -87,13 +87,24 @@ p {
+ }
+ 
+ .sidebar__link {
+-  display: block;
++  display: flex;
++  align-items: center;
++  gap: var(--space-2);
+   padding: var(--space-2) var(--space-3);
+   border-radius: var(--radius);
+   color: var(--color-text-muted);
+   text-decoration: none;
+ }
+ 
++.sidebar__icon {
++  flex: none;
++  fill: none;
++  stroke: currentColor;
++  stroke-width: 1.8;
++  stroke-linecap: round;
++  stroke-linejoin: round;
++}
++
+ .sidebar__link:hover {
+   background: var(--color-surface-alt);
+ }
+@@ -1408,3 +1419,69 @@ p {
+   font-size: var(--font-size-sm);
+   color: var(--color-text-muted);
+ }
++
++/* Compare */
++.compare__pickers {
++  display: flex;
++  flex-wrap: wrap;
++  gap: var(--space-4);
++  margin-bottom: var(--space-4);
++}
++
++.instrument-header__actions {
++  display: flex;
++  gap: var(--space-2);
++  align-items: center;
++}
++
++/* Top bar search */
++.search {
++  position: relative;
++}
++
++.search__input {
++  width: 260px;
++}
++
++.search__results {
++  position: absolute;
++  top: calc(100% + var(--space-1));
++  left: 0;
++  right: 0;
++  z-index: var(--z-popover);
++  background: var(--color-surface);
++  border: 1px solid var(--color-border);
++  border-radius: var(--radius);
++  box-shadow: var(--shadow);
++  padding: var(--space-2);
++}
++
++.search__group-title {
++  margin: var(--space-2) var(--space-2) var(--space-1);
++  font-size: var(--font-size-xs);
++  color: var(--color-text-muted);
++  text-transform: uppercase;
++}
++
++.search__list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++
++.search__hit {
++  display: block;
++  padding: var(--space-1) var(--space-2);
++  border-radius: var(--radius);
++  color: var(--color-text);
++  text-decoration: none;
++}
++
++.search__hit:hover {
++  background: var(--color-surface-alt);
++}
++
++.search__empty {
++  margin: var(--space-2);
++  color: var(--color-text-muted);
++}
+diff --git a/src/styles/theme.css b/src/styles/theme.css
+index 5ddf04a..b16dbc1 100644
+--- a/src/styles/theme.css
++++ b/src/styles/theme.css
+@@ -10,8 +10,8 @@
+   --color-text-muted: #5d6779;
+   --color-accent: #2f5bea;
+   --color-accent-contrast: #ffffff;
+-  --color-up: #0f8a5f;
+-  --color-down: #c8372d;
++  --color-up: #15803d;
++  --color-down: #b91c1c;
+   --color-warning: #b7791f;
+   --color-neutral: #6b7385;
+ 
+@@ -58,8 +58,8 @@
+   --color-text-muted: #9aa4b8;
+   --color-accent: #6b8cff;
+   --color-accent-contrast: #0f131b;
+-  --color-up: #3ec790;
+-  --color-down: #ff6b61;
++  --color-up: #4ade80;
++  --color-down: #f87171;
+   --color-warning: #e3a84a;
+   --color-neutral: #8590a6;
+   --color-chart-equity: #6b8cff;
+diff --git a/src/utils/compare.test.ts b/src/utils/compare.test.ts
+new file mode 100644
+index 0000000..5c93b9e
+--- /dev/null
++++ b/src/utils/compare.test.ts
+@@ -0,0 +1,9 @@
++import { describe, expect, it } from "vitest";
++import { periodChange } from "./compare";
++
++describe("periodChange", () => {
++  it("measures first to last close and needs two points", () => {
++    expect(periodChange([{ date: "a", close: 100 }, { date: "b", close: 90 }, { date: "c", close: 125 }])).toBeCloseTo(0.25);
++    expect(periodChange([{ date: "a", close: 100 }])).toBeNull();
++  });
++});
+diff --git a/src/utils/compare.ts b/src/utils/compare.ts
+new file mode 100644
+index 0000000..bc84453
+--- /dev/null
++++ b/src/utils/compare.ts
+@@ -0,0 +1,9 @@
++import type { PricePoint } from "../types";
++
++/** Change from the first to the last close, as a fraction; null without two points. */
++export function periodChange(points: readonly PricePoint[]): number | null {
++  const first = points[0];
++  const last = points[points.length - 1];
++  if (!first || !last || points.length < 2 || first.close === 0) return null;
++  return (last.close - first.close) / first.close;
++}
+diff --git a/src/utils/dates.test.ts b/src/utils/dates.test.ts
+index 29b0c34..e4ea83e 100644
+--- a/src/utils/dates.test.ts
++++ b/src/utils/dates.test.ts
+@@ -48,3 +48,10 @@ describe("formatting", () => {
+     expect(formatRelative("2026-10-27T19:59:40Z", now)).toBe("just now");
+   });
+ });
++
++describe("isWithinRange end day", () => {
++  it("includes the whole end day, so a one-day range keeps that day", () => {
++    expect(isWithinRange("2026-10-27T18:31:00Z", "2026-10-27", "2026-10-27")).toBe(true);
++    expect(isWithinRange("2026-10-28T00:00:00Z", "", "2026-10-27")).toBe(false);
++  });
++});
+diff --git a/src/utils/dates.ts b/src/utils/dates.ts
+index f40bb8a..cad5dcf 100644
+--- a/src/utils/dates.ts
++++ b/src/utils/dates.ts
+@@ -50,9 +50,10 @@ export function isWithinRange(iso: string, from: string, to: string): boolean {
+   const time = new Date(iso).getTime();
+   if (Number.isNaN(time)) return false;
+   const start = from ? parseIsoDay(from) : null;
+-  const end = to ? parseIsoDay(to) : null;
++  // The end day is included: the range stops at midnight at the start of the next day.
++  const end = to ? parseIsoDay(addDays(to, 1)) : null;
+   if (start && time < start.getTime()) return false;
+-  if (end && time > end.getTime()) return false;
++  if (end && time >= end.getTime()) return false;
+   return true;
+ }
+ 

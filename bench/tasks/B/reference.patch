@@ -1,0 +1,1092 @@
+diff --git a/README.md b/README.md
+index 344f452..99916cd 100644
+--- a/README.md
++++ b/README.md
+@@ -1,8 +1,8 @@
+ # Pulse
+ 
+-Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications in the top bar; and user settings (theme and notifications) saved in the browser.
++Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart, day change per holding and a rebalancing calculator (target weights per asset class and the trades to reach them); a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and a full client page (trades and notes); a list of daily reports with status badges and per-status counts; notifications in the top bar; and user settings (theme and notifications) saved in the browser.
+ 
+-Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
++Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/clients`, `/clients/:id`, `/reports`, `/settings`.
+ 
+ All data is mocked: typed fetchers in `src/api` read JSON files in `src/data` after a short artificial delay.
+ 
+@@ -23,6 +23,7 @@ npm run build      # type check, then production build into dist/
+ 
+ - `src/components` shared UI pieces (Table, Drawer, Tabs, Pagination, AsyncContent and more), with tests beside them
+ - `src/components/<feature>` pieces used by one area: `trades`, `portfolio`, `instrument`, `notifications`, `clients`, `dashboard`
++- `src/routes.ts` the page list and names; the sidebar, the top bar title and the browser tab title all read it
+ - `src/pages` one component per route
+ - `src/hooks` data loading (`useAsync`), `useDebounce`, `useLocalStorage`, and the settings and notifications contexts
+ - `src/api` mock fetchers; `src/data` JSON fixtures
+diff --git a/src/App.tsx b/src/App.tsx
+index cbe0cf5..f3dd1bc 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,5 +1,6 @@
+ import { Route, Routes } from "react-router-dom";
+ import { Shell } from "./components/Shell";
++import { ClientPage } from "./pages/ClientPage";
+ import { Clients } from "./pages/Clients";
+ import { Dashboard } from "./pages/Dashboard";
+ import { InstrumentDetail } from "./pages/InstrumentDetail";
+@@ -17,6 +18,7 @@ export function App() {
+         <Route path="trades" element={<Trades />} />
+         <Route path="instruments/:symbol" element={<InstrumentDetail />} />
+         <Route path="clients" element={<Clients />} />
++        <Route path="clients/:id" element={<ClientPage />} />
+         <Route path="reports" element={<Reports />} />
+         <Route path="settings" element={<Settings />} />
+         <Route path="*" element={<p className="feedback feedback--empty">Page not found.</p>} />
+diff --git a/src/api/index.ts b/src/api/index.ts
+index 41b6cdc..0f12c5d 100644
+--- a/src/api/index.ts
++++ b/src/api/index.ts
+@@ -3,7 +3,7 @@ export { fetchClients, fetchClient, clientName } from "./clients";
+ export { fetchReports } from "./reports";
+ export { fetchKpis } from "./kpis";
+ export { fetchHoldings, fetchFxRates, fetchPositions } from "./holdings";
+-export { fetchTrades, fetchTrade, fetchRecentTrades, emptyTradeFilters, matchesTradeFilters } from "./trades";
++export { fetchTrades, fetchTrade, fetchRecentTrades, fetchClientTrades, emptyTradeFilters, matchesTradeFilters } from "./trades";
+ export { fetchPriceHistory, type HistoryRange } from "./history";
+ export { fetchNotifications } from "./notifications";
+ export { latency, NotFoundError, ValidationError } from "./client";
+diff --git a/src/api/trades.test.ts b/src/api/trades.test.ts
+index 91c3338..a6f8368 100644
+--- a/src/api/trades.test.ts
++++ b/src/api/trades.test.ts
+@@ -1,5 +1,5 @@
+ import { beforeAll, describe, expect, it } from "vitest";
+-import { fetchRecentTrades, fetchTrade, fetchTrades, latency, NotFoundError, ValidationError } from "./index";
++import { fetchClientTrades, fetchRecentTrades, fetchTrade, fetchTrades, latency, NotFoundError, ValidationError } from "./index";
+ 
+ beforeAll(() => {
+   latency.ms = 0;
+@@ -36,6 +36,13 @@ describe("single trades", () => {
+     await expect(fetchTrade("T-1")).rejects.toBeInstanceOf(NotFoundError);
+   });
+ 
++  it("lists one client's trades newest first", async () => {
++    const trades = await fetchClientTrades("c-002");
++    expect(trades).toHaveLength(17);
++    expect(trades[0]?.id).toBe("T-10150");
++    expect(trades.every((t) => t.clientId === "c-002")).toBe(true);
++  });
++
+   it("lists recent trades for one instrument", async () => {
+     const trades = await fetchRecentTrades("AAPL", 5);
+     expect(trades).toHaveLength(5);
+diff --git a/src/api/trades.ts b/src/api/trades.ts
+index da8d697..e1dc8a6 100644
+--- a/src/api/trades.ts
++++ b/src/api/trades.ts
+@@ -38,6 +38,14 @@ export async function fetchTrade(id: string): Promise<Trade> {
+   return delay({ ...found });
+ }
+ 
++/** Every trade for one client, newest first. */
++export async function fetchClientTrades(clientId: string): Promise<Trade[]> {
++  const rows = trades
++    .filter((trade) => trade.clientId === clientId)
++    .sort((a, b) => b.executedAt.localeCompare(a.executedAt));
++  return delay(rows.map((row) => ({ ...row })));
++}
++
+ /** The most recent trades in one instrument. */
+ export async function fetchRecentTrades(symbol: string, limit = 10): Promise<Trade[]> {
+   const rows = trades
+diff --git a/src/components/ClientDrawer.test.tsx b/src/components/ClientDrawer.test.tsx
+index c8329fa..a89d498 100644
+--- a/src/components/ClientDrawer.test.tsx
++++ b/src/components/ClientDrawer.test.tsx
+@@ -1,4 +1,5 @@
+ import { render, screen } from "@testing-library/react";
++import { MemoryRouter } from "react-router-dom";
+ import { beforeAll, describe, expect, it } from "vitest";
+ import { latency } from "../api";
+ import { ClientDrawer } from "./ClientDrawer";
+@@ -9,9 +10,14 @@ beforeAll(() => {
+ 
+ describe("ClientDrawer", () => {
+   it("loads and shows the client", async () => {
+-    render(<ClientDrawer clientId="c-001" onClose={() => undefined} />);
++    render(
++      <MemoryRouter>
++        <ClientDrawer clientId="c-001" onClose={() => undefined} />
++      </MemoryRouter>,
++    );
+     expect(await screen.findByRole("heading", { name: "Northwind Capital" })).toBeInTheDocument();
+     expect(screen.getByText("Ines Vogel", { exact: false })).toBeInTheDocument();
++    expect(screen.getByRole("link", { name: "Open client page" })).toHaveAttribute("href", "/clients/c-001");
+   });
+ 
+ 
+diff --git a/src/components/ClientDrawer.tsx b/src/components/ClientDrawer.tsx
+index 97a7dcc..c37f442 100644
+--- a/src/components/ClientDrawer.tsx
++++ b/src/components/ClientDrawer.tsx
+@@ -1,6 +1,8 @@
++import { Link } from "react-router-dom";
+ import type { Client } from "../types";
+ import { fetchClient } from "../api";
+ import { useAsync } from "../hooks/useAsync";
++import { tierLabels } from "../utils/clients";
+ import { formatCurrency, formatDateTime } from "../utils/format";
+ import { AsyncContent } from "./AsyncContent";
+ import { ClientNotes } from "./clients/ClientNotes";
+@@ -16,7 +18,7 @@ function Details({ client }: { client: Client }) {
+   return (
+     <dl className="details">
+       <dt>Tier</dt>
+-      <dd>{client.tier}</dd>
++      <dd>{tierLabels[client.tier]}</dd>
+       <dt>Region</dt>
+       <dd>{client.region}</dd>
+       <dt>Contact</dt>
+@@ -38,7 +40,13 @@ export function ClientDrawer({ clientId, onClose }: ClientDrawerProps) {
+   const { data } = state;
+ 
+   return (
+-    <Drawer label="Client details" title={data ? data.name : "Client"} onClose={onClose} closeLabel="Close details">
++    <Drawer
++      label="Client details"
++      title={data ? data.name : "Client"}
++      onClose={onClose}
++      closeLabel="Close details"
++      footer={<Link to={`/clients/${encodeURIComponent(clientId)}`}>Open client page</Link>}
++    >
+       <AsyncContent state={state} loadingLabel="Loading client">
+         {(client) => (
+           <Tabs
+diff --git a/src/components/ClientList.tsx b/src/components/ClientList.tsx
+index 890eade..231d27b 100644
+--- a/src/components/ClientList.tsx
++++ b/src/components/ClientList.tsx
+@@ -1,4 +1,5 @@
+ import type { Client } from "../types";
++import { clientMeta } from "../utils/clients";
+ import { formatCompactCurrency } from "../utils/format";
+ 
+ interface ClientListProps {
+@@ -18,10 +19,8 @@ export function ClientList({ clients, selectedId, onSelect }: ClientListProps) {
+             onClick={() => onSelect(client.id)}
+           >
+             <span className="client-list__name">{client.name}</span>
+-            <span className="client-list__meta">
+-              {client.region} / {client.tier}
+-            </span>
+-            <span className="client-list__aum">{formatCompactCurrency(client.aum)}</span>
++            <span className="client-list__meta">{clientMeta(client)}</span>
++            <span className="client-list__aum">AUM {formatCompactCurrency(client.aum, "USD", 2)}</span>
+           </button>
+         </li>
+       ))}
+diff --git a/src/components/KpiCard.test.tsx b/src/components/KpiCard.test.tsx
+index e65aa33..d01659a 100644
+--- a/src/components/KpiCard.test.tsx
++++ b/src/components/KpiCard.test.tsx
+@@ -13,13 +13,9 @@ describe("KpiCard", () => {
+     expect(screen.getByText("-3.11%")).toHaveClass("kpi-card__delta--down");
+   });
+ 
+-  it("matches the recorded markup", () => {
+-    const { container } = render(<KpiCard kpi={kpi} />);
+-    expect(container.innerHTML).toMatchSnapshot();
+-  });
+-
+-  it.skip("renders a sparkline (blocked on charting library upgrade to v2)", () => {
+-    render(<KpiCard kpi={kpi} />);
+-    expect(screen.getByTestId("sparkline")).toBeInTheDocument();
++  it("names the card after its figure and formats currency compactly", () => {
++    render(<KpiCard kpi={{ ...kpi, id: "aum", label: "Assets under management", value: 48210000000, format: "currency", deltaPct: 0.0142 }} />);
++    expect(screen.getByRole("article", { name: "Assets under management" })).toHaveTextContent("$48.2B+1.42%");
++    expect(screen.getByText("+1.42%")).toHaveClass("kpi-card__delta--up");
+   });
+ });
+diff --git a/src/components/Shell.tsx b/src/components/Shell.tsx
+index 5ac5aa8..cd24af1 100644
+--- a/src/components/Shell.tsx
++++ b/src/components/Shell.tsx
+@@ -1,8 +1,13 @@
+-import { Outlet } from "react-router-dom";
++import { Outlet, useLocation } from "react-router-dom";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import { routeTitle } from "../routes";
+ import { Sidebar } from "./Sidebar";
+ import { TopBar } from "./TopBar";
+ 
+ export function Shell() {
++  const { pathname } = useLocation();
++  const title = routeTitle(pathname);
++  useDocumentTitle(title === "Pulse" ? "" : title);
+   return (
+     <div className="shell">
+       <Sidebar />
+diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx
+index 450347b..9075b10 100644
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -1,27 +1,19 @@
+ import { NavLink } from "react-router-dom";
+-
+-const links = [
+-  { to: "/", label: "Dashboard", end: true },
+-  { to: "/portfolio", label: "Portfolio", end: false },
+-  { to: "/trades", label: "Trades", end: false },
+-  { to: "/clients", label: "Clients", end: false },
+-  { to: "/reports", label: "Reports", end: false },
+-  { to: "/settings", label: "Settings", end: false },
+-];
++import { pages } from "../routes";
+ 
+ export function Sidebar() {
+   return (
+     <nav className="sidebar" aria-label="Primary">
+       <div className="sidebar__brand">Pulse</div>
+       <ul className="sidebar__list">
+-        {links.map((link) => (
+-          <li key={link.to}>
++        {pages.map((page) => (
++          <li key={page.path}>
+             <NavLink
+-              to={link.to}
+-              end={link.end}
++              to={page.path}
++              end={page.end}
+               className={({ isActive }) => `sidebar__link${isActive ? " sidebar__link--active" : ""}`}
+             >
+-              {link.label}
++              {page.label}
+             </NavLink>
+           </li>
+         ))}
+diff --git a/src/components/StatusBadge.test.tsx b/src/components/StatusBadge.test.tsx
+index b0b399c..ae87639 100644
+--- a/src/components/StatusBadge.test.tsx
++++ b/src/components/StatusBadge.test.tsx
+@@ -12,9 +12,4 @@ describe("StatusBadge", () => {
+     render(<StatusBadge status="failed" />);
+     expect(screen.getByText("Failed")).toHaveClass("badge--failed");
+   });
+-
+-  it("shows a failed report distinctly", () => {
+-    render(<StatusBadge status="failed" />);
+-    expect(screen.getByText("Failed")).toHaveClass("badge--failed");
+-  });
+ });
+diff --git a/src/components/TopBar.tsx b/src/components/TopBar.tsx
+index 6fe578a..1b21dcc 100644
+--- a/src/components/TopBar.tsx
++++ b/src/components/TopBar.tsx
+@@ -1,26 +1,13 @@
+ import { useLocation } from "react-router-dom";
++import { routeTitle } from "../routes";
+ import { NotificationBell } from "./notifications/NotificationBell";
+ import { UserMenu } from "./UserMenu";
+ 
+-const titles: Record<string, string> = {
+-  "/": "Dashboard",
+-  "/portfolio": "Portfolio",
+-  "/trades": "Trades",
+-  "/clients": "Clients",
+-  "/reports": "Reports",
+-  "/settings": "Settings",
+-};
+-
+-export function pageTitle(pathname: string): string {
+-  if (pathname.startsWith("/instruments/")) return "Instrument";
+-  return titles[pathname] ?? "Pulse";
+-}
+-
+ export function TopBar() {
+   const { pathname } = useLocation();
+   return (
+     <header className="topbar">
+-      <h1 className="topbar__title">{pageTitle(pathname)}</h1>
++      <h1 className="topbar__title">{routeTitle(pathname)}</h1>
+       <div className="topbar__actions">
+         <NotificationBell />
+         <UserMenu name="Dana Whitaker" />
+diff --git a/src/components/__snapshots__/KpiCard.test.tsx.snap b/src/components/__snapshots__/KpiCard.test.tsx.snap
+deleted file mode 100644
+index 1bb9296..0000000
+--- a/src/components/__snapshots__/KpiCard.test.tsx.snap
++++ /dev/null
+@@ -1,3 +0,0 @@
+-// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+-
+-exports[`KpiCard > matches the recorded markup 1`] = `"<article class="kpi-card" aria-label="Trades today"><h3 class="kpi-card__label">Trades today</h3><p class="kpi-card__value">18,342</p><p class="kpi-card__delta kpi-card__delta--down">-3.11%</p></article>"`;
+diff --git a/src/components/portfolio/HoldingsTable.tsx b/src/components/portfolio/HoldingsTable.tsx
+index 9bbceff..90797c2 100644
+--- a/src/components/portfolio/HoldingsTable.tsx
++++ b/src/components/portfolio/HoldingsTable.tsx
+@@ -59,6 +59,14 @@ const columns: Column<Position>[] = [
+     ),
+     sortValue: (p) => p.price,
+   },
++  {
++    key: "dayChangeUsd",
++    header: "Day change",
++    align: "right",
++    render: (p) => formatSignedCurrency(p.dayChangeUsd),
++    sortValue: (p) => p.dayChangeUsd,
++    cellClassName: (p) => `text-${toneOf(p.dayChangeUsd)}`,
++  },
+   {
+     key: "marketValueUsd",
+     header: "Market value (USD)",
+@@ -68,7 +76,7 @@ const columns: Column<Position>[] = [
+   },
+   {
+     key: "unrealizedPnlUsd",
+-    header: "Unrealized P&L",
++    header: "Open P&L",
+     align: "right",
+     render: (p) => formatSignedCurrency(p.unrealizedPnlUsd),
+     sortValue: (p) => p.unrealizedPnlUsd,
+@@ -89,6 +97,7 @@ function TotalsRow({ totals }: { totals: PortfolioTotals }) {
+       <th scope="row" colSpan={6}>
+         Total ({totals.positions} positions)
+       </th>
++      <td className={`table__num text-${toneOf(totals.dayChangeUsd)}`}>{formatSignedCurrency(totals.dayChangeUsd)}</td>
+       <td className="table__num" data-testid="total-market-value">
+         {formatCurrency(totals.marketValueUsd)}
+       </td>
+diff --git a/src/components/portfolio/PortfolioSummary.tsx b/src/components/portfolio/PortfolioSummary.tsx
+index d616da2..b7cb2b4 100644
+--- a/src/components/portfolio/PortfolioSummary.tsx
++++ b/src/components/portfolio/PortfolioSummary.tsx
+@@ -13,8 +13,8 @@ export function PortfolioSummary({ totals }: { totals: PortfolioTotals }) {
+         <p className="kpi-card__value">{formatCompactCurrency(totals.marketValueUsd)}</p>
+         <p className="kpi-card__note">{formatNumber(totals.positions)} positions</p>
+       </article>
+-      <article className="kpi-card" aria-label="Unrealized P&L">
+-        <h3 className="kpi-card__label">Unrealized P&amp;L</h3>
++      <article className="kpi-card" aria-label="Open P&L">
++        <h3 className="kpi-card__label">Open P&amp;L</h3>
+         <p className="kpi-card__value">{formatCompactCurrency(totals.unrealizedPnlUsd)}</p>
+         <PriceChange pct={totals.unrealizedPnlPct} className="kpi-card__note" />
+       </article>
+diff --git a/src/components/portfolio/Rebalance.tsx b/src/components/portfolio/Rebalance.tsx
+new file mode 100644
+index 0000000..b07037e
+--- /dev/null
++++ b/src/components/portfolio/Rebalance.tsx
+@@ -0,0 +1,79 @@
++import { useId, useState } from "react";
++import type { AllocationSlice, AssetClass } from "../../types";
++import { assetClassLabels } from "../../utils/portfolio";
++import { defaultTargets, REBALANCE_CLASSES, rebalanceTrades, targetTotal, type Targets } from "../../utils/rebalance";
++
++const usd = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
++
++function tradeLabel(tradeUsd: number): string {
++  const rounded = Math.round(tradeUsd);
++  if (rounded === 0) return "No change";
++  return `${rounded > 0 ? "Buy" : "Sell"} ${usd.format(Math.abs(rounded))}`;
++}
++
++/** Target weights per asset class and the trades that would reach them. */
++export function Rebalance({ slices }: { slices: readonly AllocationSlice[] }) {
++  const id = useId();
++  const [targets, setTargets] = useState<Targets>(() => defaultTargets(slices));
++  const total = targetTotal(targets);
++
++  function setTarget(assetClass: AssetClass, value: string) {
++    const next = Number(value);
++    setTargets((prev) => ({ ...prev, [assetClass]: Number.isFinite(next) ? next : 0 }));
++  }
++
++  return (
++    <div className="rebalance">
++      <div className="rebalance__inputs">
++        {REBALANCE_CLASSES.map((assetClass) => (
++          <div key={assetClass} className="filters__field">
++            <label className="filters__label" htmlFor={`${id}-${assetClass}`}>
++              {assetClassLabels[assetClass]} target %
++            </label>
++            <input
++              id={`${id}-${assetClass}`}
++              type="number"
++              min={0}
++              max={100}
++              className="input input--compact"
++              value={targets[assetClass]}
++              onChange={(event) => setTarget(assetClass, event.target.value)}
++            />
++          </div>
++        ))}
++        <button type="button" className="button button--ghost" onClick={() => setTargets(defaultTargets(slices))}>
++          Reset to current
++        </button>
++      </div>
++      {total !== 100 ? (
++        <p className="filters__error" role="alert">
++          Targets must add up to 100% (now {total}%)
++        </p>
++      ) : (
++        <div className="table-wrap">
++          <table className="table">
++            <caption className="visually-hidden">Rebalancing trades</caption>
++            <thead>
++              <tr>
++                <th scope="col">Asset class</th>
++                <th scope="col" className="table__num">Current value</th>
++                <th scope="col" className="table__num">Target value</th>
++                <th scope="col" className="table__num">Trade</th>
++              </tr>
++            </thead>
++            <tbody>
++              {rebalanceTrades(slices, targets).map((row) => (
++                <tr key={row.assetClass}>
++                  <th scope="row">{assetClassLabels[row.assetClass]}</th>
++                  <td className="table__num">{usd.format(Math.round(row.currentUsd))}</td>
++                  <td className="table__num">{usd.format(Math.round(row.targetUsd))}</td>
++                  <td className="table__num">{tradeLabel(row.tradeUsd)}</td>
++                </tr>
++              ))}
++            </tbody>
++          </table>
++        </div>
++      )}
++    </div>
++  );
++}
+diff --git a/src/components/trades/tradeColumns.tsx b/src/components/trades/tradeColumns.tsx
+index 8ab2680..28d5676 100644
+--- a/src/components/trades/tradeColumns.tsx
++++ b/src/components/trades/tradeColumns.tsx
+@@ -84,5 +84,8 @@ const status: Column<Trade> = {
+ /** Columns of the full trade blotter. */
+ export const blotterColumns: Column<Trade>[] = [id, executed, symbol, side, quantity, price, notional, client, status];
+ 
++/** Columns for a trade list already scoped to one client. */
++export const clientTradeColumns: Column<Trade>[] = blotterColumns.filter((column) => column.key !== "client");
++
+ /** Columns for a trade list already scoped to one instrument. */
+ export const instrumentTradeColumns: Column<Trade>[] = [id, executed, side, quantity, price, client, status];
+diff --git a/src/hooks/useAsync.ts b/src/hooks/useAsync.ts
+index 7f3973d..106d4d9 100644
+--- a/src/hooks/useAsync.ts
++++ b/src/hooks/useAsync.ts
+@@ -1,4 +1,4 @@
+-import { useCallback, useEffect, useState } from "react";
++import { useCallback, useEffect, useRef, useState } from "react";
+ 
+ export interface AsyncState<T> {
+   data: T | null;
+@@ -18,11 +18,15 @@ export function toError(error: unknown): Error {
+ export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[]): AsyncResult<T> {
+   const [state, setState] = useState<AsyncState<T>>({ data: null, loading: true, error: null });
+   const [attempt, setAttempt] = useState(0);
++  // The loader is usually an inline closure; keep the latest one and rerun only when `deps` change.
++  const loadRef = useRef(load);
++  loadRef.current = load;
++  const depsKey = JSON.stringify(deps);
+ 
+   useEffect(() => {
+     let cancelled = false;
+     setState((prev) => ({ ...prev, loading: true, error: null }));
+-    load().then(
++    loadRef.current().then(
+       (data) => {
+         if (!cancelled) setState({ data, loading: false, error: null });
+       },
+@@ -35,8 +39,7 @@ export function useAsync<T>(load: () => Promise<T>, deps: readonly unknown[]): A
+     return () => {
+       cancelled = true;
+     };
+-    // eslint-disable-next-line react-hooks/exhaustive-deps
+-  }, [...deps, attempt]);
++  }, [depsKey, attempt]);
+ 
+   const reload = useCallback(() => setAttempt((prev) => prev + 1), []);
+ 
+diff --git a/src/pages/ClientPage.test.tsx b/src/pages/ClientPage.test.tsx
+new file mode 100644
+index 0000000..77dac88
+--- /dev/null
++++ b/src/pages/ClientPage.test.tsx
+@@ -0,0 +1,34 @@
++import { render, screen, within } from "@testing-library/react";
++import { MemoryRouter, Route, Routes } from "react-router-dom";
++import { beforeAll, describe, expect, it } from "vitest";
++import { latency } from "../api";
++import { ClientPage } from "./ClientPage";
++
++beforeAll(() => {
++  latency.ms = 0;
++});
++
++function renderAt(path: string) {
++  return render(
++    <MemoryRouter initialEntries={[path]}>
++      <Routes>
++        <Route path="/clients/:id" element={<ClientPage />} />
++      </Routes>
++    </MemoryRouter>,
++  );
++}
++
++describe("Client page", () => {
++  it("shows the client's trades without a client column", async () => {
++    renderAt("/clients/c-002");
++    const table = await screen.findByRole("table", { name: "Trades for Harbor Pension Trust" });
++    expect(within(table).getAllByRole("row")).toHaveLength(18);
++    expect(within(table).queryByRole("columnheader", { name: "Client" })).not.toBeInTheDocument();
++    expect(screen.getByText("AMER · Institutional")).toBeInTheDocument();
++  });
++
++  it("explains an unknown client", async () => {
++    renderAt("/clients/c-999");
++    expect(await screen.findByRole("alert")).toHaveTextContent("Client c-999 not found");
++  });
++});
+diff --git a/src/pages/ClientPage.tsx b/src/pages/ClientPage.tsx
+new file mode 100644
+index 0000000..b67545d
+--- /dev/null
++++ b/src/pages/ClientPage.tsx
+@@ -0,0 +1,94 @@
++import { useState } from "react";
++import { Link, useParams } from "react-router-dom";
++import { fetchClient, fetchClientTrades } from "../api";
++import { AsyncContent } from "../components/AsyncContent";
++import { ClientNotes } from "../components/clients/ClientNotes";
++import { Pagination } from "../components/Pagination";
++import { StatList } from "../components/StatList";
++import { Table } from "../components/Table";
++import { TradeDetail } from "../components/trades/TradeDetail";
++import { clientTradeColumns } from "../components/trades/tradeColumns";
++import { useAsync } from "../hooks/useAsync";
++import type { Client, Trade } from "../types";
++import { clientMeta } from "../utils/clients";
++import { formatCompactCurrency, formatDateTime, formatNumber } from "../utils/format";
++import { DEFAULT_PAGE_SIZE, paginate } from "../utils/pagination";
++
++interface ClientBundle {
++  client: Client;
++  trades: Trade[];
++}
++
++async function loadClient(id: string): Promise<ClientBundle> {
++  const [client, trades] = await Promise.all([fetchClient(id), fetchClientTrades(id)]);
++  return { client, trades };
++}
++
++function ClientTrades({ client, trades }: ClientBundle) {
++  const [page, setPage] = useState(1);
++  const [openId, setOpenId] = useState<string | null>(null);
++  return (
++    <>
++      <Table
++        caption={`Trades for ${client.name}`}
++        columns={clientTradeColumns}
++        rows={paginate(trades, page, DEFAULT_PAGE_SIZE)}
++        rowKey={(trade) => trade.id}
++        emptyMessage="This client has no trades."
++        onRowClick={(trade) => setOpenId(trade.id)}
++        rowLabel={(trade) => `Trade ${trade.id}`}
++        selectedKey={openId}
++      />
++      <Pagination total={trades.length} page={page} pageSize={DEFAULT_PAGE_SIZE} onPageChange={setPage} noun="trades" />
++      {openId ? <TradeDetail tradeId={openId} onClose={() => setOpenId(null)} /> : null}
++    </>
++  );
++}
++
++function ClientView({ client, trades }: ClientBundle) {
++  return (
++    <>
++      <section className="panel" aria-label="Client">
++        <h2 className="client-page__name">{client.name}</h2>
++        <p className="client-page__meta">{clientMeta(client)}</p>
++        <StatList
++          columns={4}
++          stats={[
++            { label: "Assets under management", value: formatCompactCurrency(client.aum, "USD", 2) },
++            { label: "Contact", value: <a href={`mailto:${client.email}`}>{client.contact}</a> },
++            { label: "Trades", value: formatNumber(trades.length) },
++            { label: "Last activity", value: `${formatDateTime(client.lastActivity)} UTC` },
++          ]}
++        />
++      </section>
++      <section className="panel" aria-label="Trades">
++        <div className="panel__header">
++          <h2 className="panel__title">Trades</h2>
++        </div>
++        <ClientTrades client={client} trades={trades} />
++      </section>
++      <section className="panel" aria-label="Notes">
++        <div className="panel__header">
++          <h2 className="panel__title">Notes</h2>
++        </div>
++        <ClientNotes key={client.id} clientId={client.id} />
++      </section>
++    </>
++  );
++}
++
++/** A full page for one client: key facts, every trade and the notes. */
++export function ClientPage() {
++  const { id = "" } = useParams();
++  const state = useAsync(() => loadClient(id), [id]);
++  return (
++    <div className="page">
++      <nav className="breadcrumbs" aria-label="Breadcrumb">
++        <Link to="/clients">All clients</Link>
++      </nav>
++      <AsyncContent state={state} loadingLabel="Loading client">
++        {(bundle) => <ClientView client={bundle.client} trades={bundle.trades} />}
++      </AsyncContent>
++    </div>
++  );
++}
+diff --git a/src/pages/Clients.test.tsx b/src/pages/Clients.test.tsx
+index 5a207a0..1f8ae42 100644
+--- a/src/pages/Clients.test.tsx
++++ b/src/pages/Clients.test.tsx
+@@ -31,3 +31,24 @@ describe("Clients page", () => {
+     expect(await screen.findByRole("dialog", { name: "Client details" })).toBeInTheDocument();
+   });
+ });
++
++describe("Clients page search order", () => {
++  it("keeps the newest query's results when an older, broader search answers last", async () => {
++    latency.ms = 40;
++    render(
++      <MemoryRouter>
++        <Clients />
++      </MemoryRouter>,
++    );
++    await screen.findByText("Northwind Capital");
++    const box = screen.getByLabelText("Search clients");
++    fireEvent.change(box, { target: { value: "h" } });
++    await new Promise((resolve) => setTimeout(resolve, 170));
++    fireEvent.change(box, { target: { value: "harbor" } });
++    await waitFor(() => expect(screen.queryByText("Northwind Capital")).not.toBeInTheDocument());
++    await new Promise((resolve) => setTimeout(resolve, 300));
++    expect(screen.queryByText("Northwind Capital")).not.toBeInTheDocument();
++    expect(screen.getByText("Harbor Pension Trust")).toBeInTheDocument();
++    latency.ms = 0;
++  });
++});
+diff --git a/src/pages/Clients.tsx b/src/pages/Clients.tsx
+index cf4a047..5219bf1 100644
+--- a/src/pages/Clients.tsx
++++ b/src/pages/Clients.tsx
+@@ -1,31 +1,22 @@
+-import { useCallback, useEffect, useState } from "react";
++import { useCallback, useState } from "react";
+ import { fetchClients } from "../api";
+ import { AsyncContent } from "../components/AsyncContent";
+ import { ClientDrawer } from "../components/ClientDrawer";
+ import { ClientList } from "../components/ClientList";
+-import { toError, type AsyncState } from "../hooks/useAsync";
++import { useAsync } from "../hooks/useAsync";
+ import { useDebounce } from "../hooks/useDebounce";
+-import { useDocumentTitle } from "../hooks/useDocumentTitle";
+-import type { Client } from "../types";
+ 
+ export const SEARCH_DEBOUNCE_MS = 150;
+ 
+ export function Clients() {
+-  useDocumentTitle("Clients");
+   const [query, setQuery] = useState("");
+   const [selectedId, setSelectedId] = useState<string | null>(null);
+-  const [results, setResults] = useState<AsyncState<Client[]>>({ data: null, loading: true, error: null });
+   const debouncedQuery = useDebounce(query, SEARCH_DEBOUNCE_MS);
+   const close = useCallback(() => setSelectedId(null), []);
+ 
+-  // The previous results stay on screen while the next search is in flight.
+-  useEffect(() => {
+-    setResults((prev) => ({ ...prev, loading: true, error: null }));
+-    fetchClients(debouncedQuery).then(
+-      (data) => setResults({ data, loading: false, error: null }),
+-      (error: unknown) => setResults({ data: null, loading: false, error: toError(error) }),
+-    );
+-  }, [debouncedQuery]);
++  // useAsync keeps the previous results on screen while the next search is in flight and
++  // ignores responses for superseded queries: broad searches answer slower than narrow ones.
++  const results = useAsync(() => fetchClients(debouncedQuery), [debouncedQuery]);
+ 
+   return (
+     <div className="page">
+diff --git a/src/pages/Dashboard.tsx b/src/pages/Dashboard.tsx
+index bd578cd..08f076e 100644
+--- a/src/pages/Dashboard.tsx
++++ b/src/pages/Dashboard.tsx
+@@ -7,7 +7,6 @@ import { InstrumentTable } from "../components/InstrumentTable";
+ import { KpiCard } from "../components/KpiCard";
+ import { SegmentedControl } from "../components/SegmentedControl";
+ import { useAsync } from "../hooks/useAsync";
+-import { useDocumentTitle } from "../hooks/useDocumentTitle";
+ import type { AssetClass } from "../types";
+ import { useState } from "react";
+ 
+@@ -20,7 +19,6 @@ const filters: { value: AssetClass | "all"; label: string }[] = [
+ ];
+ 
+ export function Dashboard() {
+-  useDocumentTitle("Dashboard");
+   const [filter, setFilter] = useState<AssetClass | "all">("all");
+   const kpis = useAsync(fetchKpis, []);
+   const instruments = useAsync(() => fetchInstruments(filter === "all" ? undefined : filter), [filter]);
+diff --git a/src/pages/InstrumentDetail.tsx b/src/pages/InstrumentDetail.tsx
+index 9cc312d..0de3708 100644
+--- a/src/pages/InstrumentDetail.tsx
++++ b/src/pages/InstrumentDetail.tsx
+@@ -6,7 +6,6 @@ import { KeyStats } from "../components/instrument/KeyStats";
+ import { PriceHistory } from "../components/instrument/PriceHistory";
+ import { RecentTrades } from "../components/instrument/RecentTrades";
+ import { useAsync } from "../hooks/useAsync";
+-import { useDocumentTitle } from "../hooks/useDocumentTitle";
+ import type { Instrument, InstrumentStats } from "../types";
+ 
+ interface InstrumentBundle {
+@@ -52,7 +51,6 @@ function InstrumentView({ instrument, stats }: InstrumentBundle) {
+ export function InstrumentDetail() {
+   const { symbol = "" } = useParams();
+   const upper = symbol.toUpperCase();
+-  useDocumentTitle(upper);
+   const state = useAsync(() => loadInstrument(upper), [upper]);
+   return (
+     <div className="page">
+diff --git a/src/pages/Portfolio.tsx b/src/pages/Portfolio.tsx
+index 0d10092..594a3d6 100644
+--- a/src/pages/Portfolio.tsx
++++ b/src/pages/Portfolio.tsx
+@@ -4,8 +4,8 @@ import { AsyncContent } from "../components/AsyncContent";
+ import { AllocationChart } from "../components/portfolio/AllocationChart";
+ import { HoldingsTable } from "../components/portfolio/HoldingsTable";
+ import { PortfolioSummary } from "../components/portfolio/PortfolioSummary";
++import { Rebalance } from "../components/portfolio/Rebalance";
+ import { useAsync } from "../hooks/useAsync";
+-import { useDocumentTitle } from "../hooks/useDocumentTitle";
+ import type { Position } from "../types";
+ import { allocationByClass, portfolioTotals } from "../utils/portfolio";
+ 
+@@ -30,12 +30,18 @@ function PortfolioView({ positions }: { positions: Position[] }) {
+           <AllocationChart slices={allocation} />
+         </section>
+       </div>
++      <section className="panel" aria-label="Rebalance">
++        <div className="panel__header">
++          <h2 className="panel__title">Rebalance</h2>
++          <p className="panel__hint">Target weights by asset class, trades in USD at today's prices</p>
++        </div>
++        <Rebalance slices={allocation} />
++      </section>
+     </>
+   );
+ }
+ 
+ export function Portfolio() {
+-  useDocumentTitle("Portfolio");
+   const state = useAsync(fetchPositions, []);
+   return (
+     <div className="page">
+diff --git a/src/pages/Reports.tsx b/src/pages/Reports.tsx
+index 8b630fa..0aba534 100644
+--- a/src/pages/Reports.tsx
++++ b/src/pages/Reports.tsx
+@@ -4,7 +4,6 @@ import { AsyncContent } from "../components/AsyncContent";
+ import { StatusBadge } from "../components/StatusBadge";
+ import { Tabs } from "../components/Tabs";
+ import { useAsync } from "../hooks/useAsync";
+-import { useDocumentTitle } from "../hooks/useDocumentTitle";
+ import type { Report, ReportStatus } from "../types";
+ import { formatDate } from "../utils/format";
+ 
+@@ -52,8 +51,10 @@ function FilteredReports({ filter }: { filter: ReportFilter }) {
+ }
+ 
+ export function Reports() {
+-  useDocumentTitle("Reports");
+   const [filter, setFilter] = useState<ReportFilter>("all");
++  const all = useAsync(() => fetchReports(), []);
++  const countFor = (id: ReportFilter) =>
++    all.data ? all.data.filter((report) => id === "all" || report.status === id).length : undefined;
+ 
+   return (
+     <div className="page">
+@@ -68,6 +69,7 @@ export function Reports() {
+           tabs={filters.map((item) => ({
+             id: item.id,
+             label: item.label,
++            badge: countFor(item.id),
+             render: () => <FilteredReports filter={item.id} />,
+           }))}
+         />
+diff --git a/src/pages/Trades.tsx b/src/pages/Trades.tsx
+index d51b2ca..ee9e0f4 100644
+--- a/src/pages/Trades.tsx
++++ b/src/pages/Trades.tsx
+@@ -9,7 +9,6 @@ import { TradeDetail } from "../components/trades/TradeDetail";
+ import { TradeFilters } from "../components/trades/TradeFilters";
+ import { useAsync } from "../hooks/useAsync";
+ import { useDebounce } from "../hooks/useDebounce";
+-import { useDocumentTitle } from "../hooks/useDocumentTitle";
+ import type { SortState, Trade, TradeFilters as Filters } from "../types";
+ import { toCsv, downloadCsv, type CsvColumn } from "../utils/csv";
+ import { DEFAULT_PAGE_SIZE, paginate } from "../utils/pagination";
+@@ -67,7 +66,6 @@ function Blotter({ trades, sort, onSortChange, page, onPageChange, selectedId, o
+ }
+ 
+ export function Trades() {
+-  useDocumentTitle("Trades");
+   const [params] = useSearchParams();
+   const [filters, setFilters] = useState<Filters>(() => initialFilters(params));
+   const [sort, setSort] = useState<SortState | null>(null);
+diff --git a/src/routes.test.ts b/src/routes.test.ts
+new file mode 100644
+index 0000000..a8fa924
+--- /dev/null
++++ b/src/routes.test.ts
+@@ -0,0 +1,12 @@
++import { describe, expect, it } from "vitest";
++import { routeTitle } from "./routes";
++
++describe("routeTitle", () => {
++  it("names sidebar pages, instrument symbols and client pages", () => {
++    expect(routeTitle("/")).toBe("Dashboard");
++    expect(routeTitle("/settings")).toBe("Settings");
++    expect(routeTitle("/instruments/aapl")).toBe("AAPL");
++    expect(routeTitle("/clients/c-002")).toBe("Clients");
++    expect(routeTitle("/nope")).toBe("Pulse");
++  });
++});
+diff --git a/src/routes.ts b/src/routes.ts
+new file mode 100644
+index 0000000..a1b2a8c
+--- /dev/null
++++ b/src/routes.ts
+@@ -0,0 +1,17 @@
++/** Every page in the sidebar, in order. The one place that names a route. */
++export const pages = [
++  { path: "/", label: "Dashboard", end: true },
++  { path: "/portfolio", label: "Portfolio", end: false },
++  { path: "/trades", label: "Trades", end: false },
++  { path: "/clients", label: "Clients", end: false },
++  { path: "/reports", label: "Reports", end: false },
++  { path: "/settings", label: "Settings", end: false },
++] as const;
++
++/** The name shown in the top bar and the browser tab for a path. */
++export function routeTitle(pathname: string): string {
++  const instrument = /^\/instruments\/([^/]+)/.exec(pathname);
++  if (instrument?.[1]) return decodeURIComponent(instrument[1]).toUpperCase();
++  if (pathname.startsWith("/clients/")) return "Clients";
++  return pages.find((page) => page.path === pathname)?.label ?? "Pulse";
++}
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 3f94e98..34a0c1d 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -1408,3 +1408,23 @@ p {
+   font-size: var(--font-size-sm);
+   color: var(--color-text-muted);
+ }
++
++/* Client page */
++.client-page__name {
++  margin: 0;
++  font-size: var(--font-size-xl);
++}
++
++.client-page__meta {
++  margin: var(--space-1) 0 var(--space-4);
++  color: var(--color-text-muted);
++}
++
++/* Rebalance */
++.rebalance__inputs {
++  display: flex;
++  flex-wrap: wrap;
++  align-items: flex-end;
++  gap: var(--space-3);
++  margin-bottom: var(--space-4);
++}
+diff --git a/src/styles/theme.css b/src/styles/theme.css
+index 5ddf04a..a20a557 100644
+--- a/src/styles/theme.css
++++ b/src/styles/theme.css
+@@ -38,12 +38,12 @@
+   --font-size-xl: 22px;
+   --font-size-2xl: 30px;
+ 
+-  --radius: 8px;
++  --radius: 6px;
+   --radius-pill: 999px;
+   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.06);
+   --sidebar-width: 220px;
+   --topbar-height: 56px;
+-  --drawer-width: 420px;
++  --drawer-width: 480px;
+   --popover-width: 360px;
+   --z-popover: 15;
+   --z-drawer: 20;
+diff --git a/src/utils/clients.test.ts b/src/utils/clients.test.ts
+new file mode 100644
+index 0000000..5c22b86
+--- /dev/null
++++ b/src/utils/clients.test.ts
+@@ -0,0 +1,9 @@
++import { describe, expect, it } from "vitest";
++import { clientMeta, tierLabels } from "./clients";
++
++describe("client labels", () => {
++  it("capitalizes the tier and joins region and tier with a middle dot", () => {
++    expect(tierLabels.private).toBe("Private");
++    expect(clientMeta({ region: "EMEA", tier: "institutional" })).toBe("EMEA · Institutional");
++  });
++});
+diff --git a/src/utils/clients.ts b/src/utils/clients.ts
+new file mode 100644
+index 0000000..fef25a3
+--- /dev/null
++++ b/src/utils/clients.ts
+@@ -0,0 +1,12 @@
++import type { Client, ClientTier } from "../types";
++
++export const tierLabels: Record<ClientTier, string> = {
++  institutional: "Institutional",
++  corporate: "Corporate",
++  private: "Private",
++};
++
++/** "EMEA · Institutional": region, a middle dot, then the capitalized tier. */
++export function clientMeta(client: Pick<Client, "region" | "tier">): string {
++  return `${client.region} · ${tierLabels[client.tier]}`;
++}
+diff --git a/src/utils/format.test.ts b/src/utils/format.test.ts
+index 774d082..64933e7 100644
+--- a/src/utils/format.test.ts
++++ b/src/utils/format.test.ts
+@@ -11,11 +11,6 @@ describe("formatCurrency", () => {
+   it("formats US dollars", () => {
+     expect(formatCurrency(1234.5)).toBe("$1,234.50");
+   });
+-
+-
+-  it("formats US dollars with grouping", () => {
+-    expect(formatCurrency(1234.5)).toBe("$1,234.50");
+-  });
+ });
+ 
+ describe("formatPercent", () => {
+diff --git a/src/utils/format.ts b/src/utils/format.ts
+index 47a0af8..7364504 100644
+--- a/src/utils/format.ts
++++ b/src/utils/format.ts
+@@ -23,12 +23,12 @@ export function formatCurrency(value: number, currency = "USD"): string {
+   }).format(value);
+ }
+ 
+-export function formatCompactCurrency(value: number, currency = "USD"): string {
++export function formatCompactCurrency(value: number, currency = "USD", digits = 1): string {
+   return new Intl.NumberFormat("en-US", {
+     style: "currency",
+     currency,
+     notation: "compact",
+-    maximumFractionDigits: 1,
++    maximumFractionDigits: digits,
+   }).format(value);
+ }
+ 
+diff --git a/src/utils/pagination.test.ts b/src/utils/pagination.test.ts
+index 71d968d..ea34950 100644
+--- a/src/utils/pagination.test.ts
++++ b/src/utils/pagination.test.ts
+@@ -8,6 +8,7 @@ describe("pagination", () => {
+     expect(pageCount(60, 25)).toBe(3);
+     expect(pageCount(10, 25)).toBe(1);
+     expect(pageCount(0, 25)).toBe(1);
++    expect(pageCount(150, 25)).toBe(6);
+     expect(paginate(rows, 1, 25)).toHaveLength(25);
+     expect(paginate(rows, 3, 25)).toEqual([51, 52, 53, 54, 55, 56, 57, 58, 59, 60]);
+   });
+diff --git a/src/utils/pagination.ts b/src/utils/pagination.ts
+index c8db2ed..4872928 100644
+--- a/src/utils/pagination.ts
++++ b/src/utils/pagination.ts
+@@ -10,7 +10,7 @@ export interface PageInfo {
+ 
+ export function pageCount(total: number, pageSize = DEFAULT_PAGE_SIZE): number {
+   if (pageSize <= 0) throw new Error("Page size must be positive");
+-  return Math.floor(total / pageSize) + 1;
++  return Math.max(1, Math.ceil(total / pageSize));
+ }
+ 
+ /** Returns the rows for a 1-based page. Pages past the end are empty. */
+diff --git a/src/utils/rebalance.test.ts b/src/utils/rebalance.test.ts
+new file mode 100644
+index 0000000..7c3eb48
+--- /dev/null
++++ b/src/utils/rebalance.test.ts
+@@ -0,0 +1,20 @@
++import { describe, expect, it } from "vitest";
++import { defaultTargets, rebalanceTrades, targetTotal } from "./rebalance";
++
++const slices = [
++  { assetClass: "equity" as const, valueUsd: 605, weight: 0.605 },
++  { assetClass: "bond" as const, valueUsd: 395, weight: 0.395 },
++];
++
++describe("rebalance", () => {
++  it("starts from rounded weights that total 100", () => {
++    const targets = defaultTargets(slices);
++    expect(targets).toEqual({ equity: 60, bond: 40, commodity: 0, fx: 0 });
++    expect(targetTotal(targets)).toBe(100);
++  });
++
++  it("buys and sells the difference to the target value", () => {
++    const rows = rebalanceTrades(slices, { equity: 50, bond: 30, commodity: 20, fx: 0 });
++    expect(rows.map((row) => Math.round(row.tradeUsd))).toEqual([-105, -95, 200, 0]);
++  });
++});
+diff --git a/src/utils/rebalance.ts b/src/utils/rebalance.ts
+new file mode 100644
+index 0000000..45469a3
+--- /dev/null
++++ b/src/utils/rebalance.ts
+@@ -0,0 +1,37 @@
++import type { AllocationSlice, AssetClass } from "../types";
++
++export const REBALANCE_CLASSES: AssetClass[] = ["equity", "bond", "commodity", "fx"];
++
++export type Targets = Record<AssetClass, number>;
++
++/** Current weights as whole percents; any rounding gap goes to the largest class so they total 100. */
++export function defaultTargets(slices: readonly AllocationSlice[]): Targets {
++  const targets: Targets = { equity: 0, bond: 0, commodity: 0, fx: 0 };
++  for (const slice of slices) targets[slice.assetClass] = Math.round(slice.weight * 100);
++  const gap = 100 - REBALANCE_CLASSES.reduce((sum, key) => sum + targets[key], 0);
++  const largest = [...slices].sort((a, b) => b.valueUsd - a.valueUsd)[0];
++  if (gap !== 0 && largest) targets[largest.assetClass] += gap;
++  return targets;
++}
++
++export function targetTotal(targets: Targets): number {
++  return REBALANCE_CLASSES.reduce((sum, key) => sum + targets[key], 0);
++}
++
++export interface RebalanceRow {
++  assetClass: AssetClass;
++  currentUsd: number;
++  targetUsd: number;
++  /** Positive to buy, negative to sell. */
++  tradeUsd: number;
++}
++
++/** What to buy or sell per asset class to move the book to `targets` (percent of today's value). */
++export function rebalanceTrades(slices: readonly AllocationSlice[], targets: Targets): RebalanceRow[] {
++  const total = slices.reduce((sum, slice) => sum + slice.valueUsd, 0);
++  return REBALANCE_CLASSES.map((assetClass) => {
++    const currentUsd = slices.find((slice) => slice.assetClass === assetClass)?.valueUsd ?? 0;
++    const targetUsd = (total * targets[assetClass]) / 100;
++    return { assetClass, currentUsd, targetUsd, tradeUsd: targetUsd - currentUsd };
++  });
++}

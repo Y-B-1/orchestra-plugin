@@ -1,0 +1,42 @@
+# Task B: portfolio and clients, two bugs, a page-name refactor, test cleanup, client page and rebalancing
+
+Fixture: Pulse at `dd7f9b3` (origin2.git `main`). Hidden tests: copy `hidden/*` into `src/__bench__/` and run `npx vitest run src/__bench__`. They mount `src/main.tsx` at a route with the fixture's 120 ms mock latency. Test names start with the ask id. `regression.test.tsx` passes on the unmodified fixture and must still pass.
+
+Kinds: S = small, M = medium (bug or refactor), L = large, T = test hygiene, D = docs.
+
+| Id | Kind | Expected outcome | Depends on | Check |
+| --- | --- | --- | --- | --- |
+| B1 | S (label) | "Unrealized P&L" becomes "Open P&L" in the portfolio summary card (visible text and the article's accessible name) and in the holdings column header. No "Unrealized P&L" text left on /portfolio. | none | Hidden B1 |
+| B2 | S (column) | Holdings table gets "Day change" right after "Price": per-position `dayChangeUsd` in whole signed dollars (AAPL "+$33,434"). Totals row still spans all columns and shows the total day change ("+$121,628") in that column. | B1 (same file) | Hidden B2 |
+| B3 | S (format) | Client rows show "AUM " plus compact currency with up to two decimals: "AUM $1.25B" (Northwind), "AUM $3.4B" (Harbor), "AUM $86M" (Lumen). KPI cards keep their one-decimal format. | none | Hidden B3 |
+| B4 | S (copy) | Client list meta "EMEA · Institutional" (region, middle dot, capitalized tier); drawer Tier value capitalized ("Private" for Granite). One shared label map/helper. | none | Hidden B4; rubric for one shared helper |
+| B5 | S (spacing) | `theme.css`: `--radius: 6px`, `--drawer-width: 480px`. | none | Hidden B5 |
+| B6 | S (label) | Report tabs show counts using the existing Tabs badge: All 8, Published 4, Scheduled 2, Drafts 1, Failed 1. | none | Hidden B6 |
+| B7 | M (bug 3) | `pageCount` uses `Math.max(1, Math.ceil(total / pageSize))`. With 150 trades the pager ends at Page 6, page 6 shows "Showing 126 to 150 of 150 trades" and Next is disabled. Unit test updated with an exact multiple. | none | Hidden B7 |
+| B8 | M (bug 6) | Client search ignores responses for superseded queries (cleanup flag or `useAsync`). Typing "h", pausing 200 ms, then "harbor" ends on Harbor only; same for "m" then "meridian". | none | Hidden B8; rubric: regression unit test, cause in final message |
+| B9 | M (refactor) | One module defines pages and names; Sidebar, TopBar and the document title read it; per-page `useDocumentTitle` calls removed. Every sidebar page: h1 = name, `document.title` = "Name \| Pulse". Instrument page: h1 and title use the upper-case symbol ("AAPL", "AAPL \| Pulse"). Client page (B11): h1 "Clients". | none (B11 adds a route) | Hidden B9 (two tests); rubric: no duplicate title maps left |
+| B10 | T | Duplicate test bodies removed (`format.test.ts`, `StatusBadge.test.tsx`); skipped KpiCard sparkline test deleted; KpiCard snapshot replaced by a visible-output assertion and `__snapshots__` removed; `eslint-disable` in `useAsync.ts` removed by fixing the hook (the hidden check looks only at `useAsync.ts`; a new suppression elsewhere is a rubric matter) (callers unchanged, lint clean). Tests stay lean. | none | Hidden B10 (four checks); rubric for leanness and the hook fix |
+| B11 | L | Route `/clients/:id`. Drawer link "Open client page" (href `/clients/c-002`). Page: a heading with the client name (any level; the top bar keeps the h1), meta "AMER · Institutional" (B4 helper), key facts (AUM, contact, trade count, last activity), table named "Trades for <name>" without a Client column, newest first, 25 per page with the shared Pagination ("Showing 1 to 17 of 17 trades" for c-002, 21 for c-009; the test does not check the noun), first row T-10150, row opens "Trade details" drawer, the shared ClientNotes ("New note"), link "All clients" to `/clients`, top bar "Clients". Unknown id: alert "Client c-999 not found". Unit tests. | B4 (meta line), B9 (top bar title), B7 (pager correctness) | Hidden B11 (four tests) |
+| B12 | L | On /portfolio a panel/region "Rebalance": number inputs "Equities target %", "Bonds target %", "Commodities target %", "FX target %" defaulting to rounded current weights (38, 21, 14, 27; gap to the largest class); table "Rebalancing trades", one row per class (first cell the class label) with current value, target value (= target % of total market value) and "Buy $X" / "Sell $X" / "No change", whole dollars (the test accepts the exact difference rounded or the difference of the rounded values shown). Totals other than 100: "Targets must add up to 100% (now N%)", no table. "Reset to current" restores defaults. Unit tests for the maths. | none | Hidden B12 (three tests) |
+| B13 | D | README covers the client page and route, the rebalancing calculator, day change, report counts, and where page names live. | B9, B11, B12 | Rubric only |
+
+Independent: B1, B3 to B8, B10, B12. Chains: B4 -> B11; B9 and B11 share TopBar/route naming; B1 -> B2 (same file). Shared files: `HoldingsTable.tsx` (B1, B2), `ClientList.tsx` (B3, B4), `ClientDrawer.tsx` (B4, B11), `Clients.tsx` (B8), `TopBar.tsx`/`Sidebar.tsx`/pages (B9), `KpiCard.test.tsx`, `useAsync.ts` (B10; B8 may use `useAsync`).
+
+## Source sentences for hidden assertions
+
+- B1: "So "Unrealized P&L" becomes "Open P&L", both the summary card at the top and the column in the holdings table, and that includes what screen readers hear"
+- B2: "a "Day change" column right after "Price", in whole dollars with a plus or minus, the way the Open P&L column shows its amounts (AAPL would be "+$33,434"), and the totals row at the bottom should show the same total day change as the Day change card (+$121,628) in that column too ... the totals row has to still line up with the columns"
+- B3: "Show up to two decimals and put "AUM" in front, so "AUM $1.25B", and Lumen would be "AUM $86M""
+- B4: "I want "EMEA · Institutional", dot in the middle and a capital on the tier. The drawer has the same problem, Tier says "institutional" ... it should be "Institutional", or "Private", whatever it is"
+- B5: "--radius goes from 8 to 6px ... make --drawer-width 480px"
+- B6: "the tabs should show how many reports each one has, like the little count we have on the Notes tab ... "Published" with a 4 next to it, "Scheduled" with 2, and All with the total"
+- B7: "150 trades, which is exactly 6 pages, but it shows a page 7 that's empty ... and Next is still clickable on page 6"
+- B8: "I type "h", stop for a second, then finish "harbor", the box says harbor but I get a whole list ... It should always show the results for what's actually in the box"
+- B9: "the sidebar, the top bar and the tab title all read from it. The tab title is always the name then " | Pulse", like "Settings | Pulse". On an instrument page both the top bar and the tab show the symbol, so "AAPL" and "AAPL | Pulse""
+- B10: "copies of the same test in a couple of files, a skipped sparkline test ... delete it, and a snapshot test ... replace it ... and get rid of the snapshot file. There's also an eslint-disable comment in the async hook, fix the real problem"
+- B11: "/clients/c-002 for Harbor. Put a link in the drawer that says "Open client page"", "the client name as the heading, under it the region and tier line the same as the list ("AMER · Institutional")", "newest first, 25 per page with the same pager", "called "Trades for Harbor Pension Trust" ... it doesn't need a Client column", "Clicking a trade opens the usual trade drawer", "same notes as in the drawer", "a link "All clients"", "The top bar just says "Clients" on this page", ""Client c-999 not found""
+- B12: "New panel like the others, called "Rebalance"", "Four number boxes, "Equities target %", "Bonds target %", "Commodities target %" and "FX target %", and they start at today's weight ... rounded to a whole percent", "a table called "Rebalancing trades" with one row per asset class: the asset class, current value, target value, and what to do, "Buy $X" or "Sell $X"", "Target value is the target percent of today's total market value. All of it in whole dollars", "show "Targets must add up to 100% (now 95%)"", "a "Reset to current" button"
+
+## Not checked by hidden tests
+
+Whether B4 uses one helper, whether B9 left any second title map, the quality of the B10 replacement test and the hook fix (lint must pass with no disable), unit tests for B8/B11/B12, README (B13), and `npm run typecheck`, `lint`, `test`, `build` (run them).
