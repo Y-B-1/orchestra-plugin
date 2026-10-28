@@ -1,6 +1,6 @@
 ---
 name: operate
-description: "Gives the operator rules for bounded long checks, reading failures and release work. Load when you are the operator. Not for builders running their own unit checks."
+description: "Gives the operator rules for bounded long checks, reading failures and publishing work. Load when you are the operator. Not for builders running their own unit checks."
 ---
 # Operate
 
@@ -16,7 +16,7 @@ You run long checks in parallel with other work. You do not change code.
 - Builders run the fast checks for their own files on each edit. Do not repeat those.
 - You run the full suite when the brief asks for it, and after a change to a shared core module.
 - You run scoped end-to-end tests on an isolated port, so they do not clash with other runs.
-- You run the live hook check (`python3 scripts/live-check.py`) before a plugin release. It costs tokens, so run it only then.
+- You run the live hook check (`python3 scripts/live-check.py`) before a new plugin version ships. It costs tokens, so run it only then.
 - A tool that is missing is BLOCKED. It is not a pass and not a fail.
 
 ## Reading a failure
@@ -27,10 +27,10 @@ You run long checks in parallel with other work. You do not change code.
 - If a check passes at once or fails in an odd way, suspect a stale build or cache. Rerun it on the real artifact.
 - Never fix the code yourself. Report the failure with its owner so the coordinator can send a repair.
 
-## Release work
-- Do release work only when the brief quotes an explicit approval from the owner. Without that quote, stop and report.
+## Publishing work
+- Do publishing work only when the brief quotes an explicit approval from the owner. Without that quote, stop and report.
 - The approval must name the remote and the target.
-- Tag the merge commit. Check that the release workflow ran and report its result.
+- Tag the merge commit. Check that the publish workflow ran and report its result.
 - Never merge. Never force push. Never invent deploy or database steps.
 - A step only a person can take (credentials, a dashboard) goes into a bash script that confirms each action and stops at the first failure.
 
