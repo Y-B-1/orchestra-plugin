@@ -11,7 +11,7 @@ description: "Rules for the planner: a short spec, a product options note, a typ
 - Name shared resources beyond files: port, database, fixture, lockfile, build output. Units that share one run in order.
 - Check each producer and consumer pair: unit B that reads unit A's output needs the same shape. Check the graph for cycles.
 - Put the thinnest end-to-end slice first. Do prefactoring and removals before the slices that build on them.
-- Choose test seams. Prefer an existing seam, the highest that works, and few of them. Give each one line on what it catches. A new seam is an open decision.
+- Choose test seams. Prefer an existing seam, the highest that works, and few of them. Give each one line on what it catches. A new seam is an open decision. Confirm the chosen seams with the owner (or list them under Decisions in a /goal run) before any test is written.
 - Write acceptance criteria as numbered pass or fail checks, each run by a command or an observation. Never "works correctly".
 
 ## Product mode

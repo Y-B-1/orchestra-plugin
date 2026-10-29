@@ -25,7 +25,7 @@ description: "Gives a way to size, split, hand off and prove work too big for on
 - Before state is shared between units or actors, ask what happens if another one changes it at the same time. If the answer is not "nothing", isolate it.
 
 ## Specs that can be checked
-- A spec states who is affected, what happens now, what must happen instead, and how "done" is checked.
+- A spec states who is affected, what happens now, what must happen instead, and how "done" is checked. A spec that outlives the run (tracker issue, PRD) adds user stories and an Out of scope section, and names no file paths.
 - Acceptance items are pass or fail, checked by a command or by looking. Never write "works correctly" or "handles edge cases". Give a number for "fast".
 - List what must not change, with paths. A unit that removes or replaces code gets a Keep list and a Remove list, and its report says which items still hold.
 

@@ -33,7 +33,7 @@ description: "Settles a choice the ask leaves open, interviews the owner, keeps 
 
 ## Compare shapes
 - For an interface other code uses, a data model, a state flow or anything persisted: write two or three structurally different shapes in one line each, pick one, and put the reason in the plan.
-- When the feel of an interaction decides it and logic cannot, build two or three throwaway prototypes and compare them side by side.
+- When the feel of an interaction decides it and logic cannot, build two or three throwaway prototypes and compare them side by side. Read `large-work/references/spikes.md`.
 - When a new requirement lands on an existing design, redesign as if it had been there from the start. Read `references/shapes.md` for the domain model, first-principles and experience checks.
 
 ## Untrusted text

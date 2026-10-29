@@ -29,3 +29,5 @@ Columns: ts (ISO 8601), phase, decision (one line), why (plain words), evidence 
 - Cells stay single-line; prefix a cell starting with `=`, `+`, `-` or `@` with a quote.
 - Before handing back, check each row maps to a real action and its evidence resolves. Add a row for any unlogged fork.
 - End the reply with the verdicts, the log path, what is verified and what is open.
+- Before you hand back a logged run, a reviewer on another model family reads the log and the transcript. It flags weak evidence, claimed but unrun checks and risky calls. The final message ends with those flags and the reviewer's model.
+- A verification or measurement unit's brief names the exact SHAs and the method. A result that does not record them is respawned once, then reported as a gap, never a pass. For a race, declare first-pass, rank-all or best-of before starting.

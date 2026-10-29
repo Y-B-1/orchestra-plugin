@@ -27,4 +27,6 @@ Check in this order:
 4. Artifacts: `git log`, `git status`, each report against its logs.
 5. Re-dispatch by ledger line. A unit with a completion line is never dispatched again. A unit whose last line is a repair resumes at the fix re-review. A held unit waits for the owner.
 
+Before you report that something was never recorded, search every place the project's rules name (memory file, decision logs, ledgers, handoffs) and this project's own session transcripts.
+
 Re-inspect the artifact before accepting a report from before the interruption.
