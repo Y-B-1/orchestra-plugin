@@ -743,3 +743,12 @@ Source: the Lean design that won the speed benchmark (`docs/BENCHMARK.md`). Buil
 - Claude Code 2.1.306 emits no `hook_response` event for the Stop hook in headless runs; the goal scenario reads the `Stop hook feedback` message instead.
 - `examples/global-CLAUDE.md` and `examples/project-AGENTS.md` still describe the 2.x engine.
 - The guard reads command text only; aliases, variables and scripts are not followed.
+
+## 3.2.0 (2026-10-30)
+
+- **Built:** eleven agents (six restored from 2.15.3 with pinned models), six role skills and five shared situation skills loaded by situation, the routing table and the pre-PR review loop in the main skill, and `lean.py check` in `scripts/check.py`.
+- **Not shipped:** 3.1.0, which loaded every lesson into every agent. Split runs showed builder rules and review rules each cost about 35% more time with no quality gain.
+- **Benchmark-found fix:** `frontend-proof` now says a submit never fails silently. Without it, every 3.2 build failed the task-E booking validation trap; with it, all 4 task-E runs passed it.
+- **Final review:** 9 blocking findings (4 scan bugs, a test gap, 4 cross-skill contradictions), all fixed with tests; scoped re-review CLEAN.
+- **Checks:** `scripts/check.sh` exit 0 (Python 3.11 and 3.13); `scripts/live-check.py` PASS for init, guard and goal.
+- **Benchmark:** 9.5 minutes per task against 11.8 for 3.0.0 and 12.4 for plain; hidden tests 98.8%; repair 4.3; cost +12% against 3.0.0. See `docs/BENCHMARK.md`.

@@ -1,4 +1,43 @@
-# Benchmark: Orchestra 3.0.0 against plain Claude Code and other skill packs
+# Benchmark: Orchestra against plain Claude Code and other skill packs
+
+## Orchestra 3.2.0 (2026-10-30)
+
+**Result:** on five long multi-request prompts (tasks A to E), Orchestra 3.2.0 delivered a pushed branch in **9.5 minutes per task on average, against 11.8 for 3.0.0 and 12.4 for plain Claude Code**. It passed **98.8%** of the hidden tests (3.0.0: 98.4%, plain: 98.7%), and the blind judge found the least remaining repair work of the three (**4.3 points**, against 5.1 and 4.7). It cost **$3.53 per task**, 12% more than 3.0.0 ($3.16) and plain ($3.18). Every 3.2.0 run pushed its branch and passed all four project checks.
+
+3.2.0 brings back the eleven agents and the role and situation skills of 2.15 (see `CHANGELOG.md`). The owner's keep rule for any change: keep it when the quality gain in percent minus half the time increase in percent is above zero. 3.2.0 is faster and slightly better than 3.0.0, so it passes.
+
+### Tasks D and E
+
+Tasks A to C are described below under 3.0.0. Tasks D and E are longer: 18 asks each, 30 and 31 hidden tests, and reference diffs of about 1,650 lines. Each holds traps for the situations the 2.15 lessons cover: a misleading bug report, two conflicting asks, a data migration, unsafe HTML in user text, a race between requests, a new status that must show everywhere, a midnight boundary, keyboard access in a new dialog, and an owner suggestion that would break something. Both reference solutions pass every hidden test and all four checks.
+
+### Results (mean per task)
+
+| Task | Plain: time / hidden | 3.0.0: time / hidden | 3.2.0: time / hidden |
+|---|---|---|---|
+| A | 13.1 min / 52 of 52 (n=2) | 9.8 min / 76 of 78 (n=3) | 8.4 min / 26 of 26 (n=1) |
+| B | 14.4 min / 56 of 56 (n=2) | 11.4 min / 84 of 84 (n=3) | 9.5 min / 28 of 28 (n=1) |
+| C | 10.4 min / 60 of 60 (n=2) | 9.2 min / 90 of 90 (n=3) | 9.9 min / 60 of 60 (n=2) |
+| D | 9.4 min / 29 of 30 (n=1) | 15.4 min / 58 of 60 (n=2) | 7.3 min / 29 of 30 (n=1) |
+| E | 14.7 min / 30 of 31 (n=1) | 13.0 min / 91 of 93 (n=3) | 12.5 min / 121 of 124 (n=4) |
+| **Mean** | **12.4 min, $3.18, repair 4.7** | **11.8 min, $3.16, repair 5.1** | **9.5 min, $3.53, repair 4.3** |
+
+The 3.0.0 column now includes newer runs on a busier machine, so its time is higher than the 7.4 minutes reported for three tasks below. All three columns in this table ran in the same period.
+
+### What the versions in between taught
+
+- **3.1.0 (not released)** put every lesson into every builder and reviewer. It was 36% slower than 3.0.0 with no quality gain. Two split runs showed both halves cost time: builder rules alone and review rules alone were each about 35% slower on tasks C and E, and reviewers ran the diff scan 2 or 3 times each.
+- **3.2.0 first build** loaded lessons only by situation and matched 3.0.0's time, but all three runs on task E failed the booking-dialog validation trap. The builder that loaded `frontend-proof` disabled the submit button until data loaded, so a click showed no error. A first rule ("never disable a submit for empty or loading fields") passed the trap in 2 of 3 runs; the third returned early from the submit handler instead. The final rule, "a submit never fails silently", covers both forms, and the trap passed in all 4 task-E runs with it.
+- **Final review** found 9 defects in the diff scan and in rules that contradicted each other across skills (three different review-round caps). All were fixed with a test each and passed a scoped re-review.
+
+### Limits of this round
+
+- **Few runs:** 1 to 4 runs per task for 3.2.0. Run-to-run spread on one task is up to 2.5 times (3.0.0 on task B: 6.6 to 20.6 minutes), so differences under about 20% are within noise.
+- **Cost:** 3.2.0 costs about 12% more per task. Most of it comes from task E, whose 1,900-line diffs draw long Opus reviews.
+- **One session ended early:** one 3.2.0 run on task D ended while its builders were still running (the headless session exited after its turn), and it is excluded. The plugin cannot prevent this in `-p` mode; `/orchestra:goal` keeps an interactive session going.
+
+---
+
+# Orchestra 3.0.0 (2026-10-28)
 
 **Result:** on three long multi-request engineering prompts, Orchestra 3.0.0 delivered a pushed branch in **7.4 minutes per task on average, against 12.7 for plain Claude Code** (42% less time), at the same cost (**$2.76 against $2.77**). It passed **167 of 168** hidden tests, and the blind judge's remaining repair work was close to plain Claude Code's (4.7 against 4.2 points). Orchestra 2.15.3 took **21.4 minutes and $8.03** per task, about three times the time and the cost of 3.0.0.
 

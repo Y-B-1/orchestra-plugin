@@ -45,3 +45,7 @@ Where the time went:
 - Builders loaded `frontend.md` and `tests.md` in most units; builder times look similar on task D.
 
 Next: two ablation arms (builder-side changes only; review-side changes only) on tasks C, D and E, plus a second 3.0 and 3.1 run on task E to measure run-to-run noise.
+
+## Final result (2026-10-30)
+
+The final 3.2.0 code (9 runs over tasks A to E) against 3.0.0 (14 runs): 9.5 against 11.8 minutes per task (19% less time), 98.8% against 98.4% hidden tests, judge repair 4.3 against 5.1, cost $3.53 against $3.16 (+12%). Keep rule: quality gain is positive and time fell, so 3.2.0 is kept. Details in `docs/BENCHMARK.md`.
