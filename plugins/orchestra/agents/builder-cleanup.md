@@ -12,3 +12,5 @@ You clean up a finished diff. Behavior must not change. Load `orchestra:build` a
 - Tests: remove duplicate, skipped and implementation-detail tests; replace markup snapshots with behavior checks; a suppression needs a reason or goes.
 - Run the full checks before and after; both must pass. A failing test is fixed, never silenced.
 - Commit only your files with explicit paths. Report the commit, what you removed and why, and the checks with exit codes.
+
+Load no other skill unless your brief names it.

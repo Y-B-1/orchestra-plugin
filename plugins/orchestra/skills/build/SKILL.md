@@ -29,7 +29,7 @@ Use after review, to remove what the diff made dead, duplicated or over-abstract
 - Remove a wrapper only when it just passes the call through.
 - Extract a helper only when two real callers exist.
 - Handle at most five candidates in one pass.
-- Never delete a test, a validation, a security check or an accessibility check.
+- Never delete a test that is the only guard of a behavior, a validation, a security check or an accessibility check.
 - Report each change as one of: delete, use the standard library, use the native feature, remove speculative code, shrink.
 
 ## Repair mode

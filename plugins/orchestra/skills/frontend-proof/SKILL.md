@@ -24,7 +24,7 @@ description: "Gives the proof and accessibility rules for interactive UI. Load w
 ## Consistency
 - A value shown in several places uses one formatter or component. Follow the existing pattern for tables, dialogs, badges, dates and money.
 - A rule the owner states for "every" or "all" places also applies to new screens.
-- Split a page that grows past about 300 lines by responsibility before you add more.
+- Split a page that grows past 500 lines by responsibility before you add more.
 
 ## Design alternatives
 - When the owner asks for alternatives, build them behind one switch on the real route, structurally different. Keep the chosen one. Delete the rest and the switch.

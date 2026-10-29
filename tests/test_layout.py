@@ -105,6 +105,24 @@ class SkillTest(unittest.TestCase):
                     self.assertTrue((PLUGIN / 'skills' / name / 'SKILL.md').exists())
                     self.assertIn('Skill', frontmatter(path).get('tools', ''))
 
+class ReviewLoopTest(unittest.TestCase):
+    def test_every_agent_loads_no_other_skill_unless_named(self):
+        for path in sorted((PLUGIN / 'agents').glob('*.md')):
+            self.assertIn('Load no other skill', path.read_text(), path.name)
+
+    def test_no_file_states_a_review_round_cap_other_than_three(self):
+        files = list((PLUGIN / 'skills').rglob('*.md')) + list((PLUGIN / 'agents').glob('*.md'))
+        words = {'one': 1, 'two': 2, 'three': 3, 'four': 4, 'a third': 3, 'third': 3}
+        for path in files:
+            text = path.read_text().lower()
+            for m in re.finditer(r'(?:at most |up to |after |never )?(\d+|one|two|three|four|a third|third) (?:repair )?rounds?', text):
+                n = m.group(1)
+                n = int(n) if n.isdigit() else words[n]
+                if 'review' in text[max(0, m.start() - 200):m.end() + 200] or 'repair' in text[max(0, m.start() - 200):m.end() + 200]:
+                    self.assertEqual(n, 3, f'{path.name}: {m.group(0)}')
+            self.assertNotIn('review ends there', text, path.name)
+
+
 class PrivacyTest(unittest.TestCase):
     def test_no_shipped_file_holds_a_personal_path_or_name(self):
         words = private_words()

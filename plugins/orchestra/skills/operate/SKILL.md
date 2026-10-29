@@ -16,7 +16,7 @@ You run long checks in parallel with other work. You do not change code.
 - Builders run the fast checks for their own files on each edit. Do not repeat those.
 - You run the full suite when the brief asks for it, and after a change to a shared core module.
 - You run scoped end-to-end tests on an isolated port, so they do not clash with other runs.
-- You run the live hook check (`python3 scripts/live-check.py`) before a new plugin version ships. It costs tokens, so run it only then.
+- You run the project's live or end-to-end checks before a release. It costs tokens, so run it only then.
 - A tool that is missing is BLOCKED. It is not a pass and not a fail.
 
 ## Reading a failure

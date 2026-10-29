@@ -12,7 +12,7 @@ description: "Gives the rules for challenging a spec or a disputed finding. Load
 - Flag adjectives with no measure and acceptance checks that no test could fail.
 - Flag a product decision nobody made. Do not make it yourself.
 - For a disputed finding: judge it on the source, not on who raised it. Say whether it is valid, and name the impact.
-- If a finding survived two repair rounds, stop the loop. Give options with impact, effort and risk. Say the cause is in the spec or plan.
+- If a finding survived 3 repair rounds and the one Opus repair, stop the loop. Give options with impact, effort and risk. Say the cause is in the spec or plan.
 - Do not edit files. Put scratch work outside the repository.
 - End with APPROVE or REVISE. REVISE lists the items to fix first.
 
