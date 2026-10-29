@@ -15,6 +15,8 @@ Goal: one command that starts the real app, exercises a flow the way a user does
 5. Isolate: if two instances cannot run side by side (shared port or data dir), say so in the driver and refuse to drive a shared instance.
 6. A missing asset that blocks startup and is irrelevant to the flow may be created, marked as verification scaffolding, and removed in cleanup.
 7. Run it end to end once. After cleanup, confirm the evidence still exists. Run cleanup after every failed attempt so no process or port is stranded.
+8. Seed a feature map, one file per user-facing feature: how to reach it, how to drive it, the end state that proves it, and gotchas. A proof that drives one entry point is incomplete when the map lists others.
+9. A proof run in a stand-in (container, local stack) lists each setup step the real target will not get.
 
 ## Maintain
 Do this when a change touches a flow the driver covers, and on a stale driver you meet.
@@ -22,3 +24,4 @@ Do this when a change touches a flow the driver covers, and on a stale driver yo
 2. Run the driver live, once per flow. Source that looks clean does not replace a live run.
 3. Sort each finding: wrong or missing description or step is drift, fix the driver. Working behavior the driver cannot reach is a harness gap, fix the driver. Behavior that is actually broken is a product bug: report it, do not hide it in the driver.
 4. Edit only the driver and its docs in this pass. Report one of: clean (nothing to change), changed (what you fixed, with the run output), blocked (what stopped you).
+5. Run doctor again after any failed drive. Report a feature as unreachable only with its concrete prerequisite and the route you tried.

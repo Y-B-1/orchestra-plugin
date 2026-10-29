@@ -17,6 +17,7 @@ Redact every secret in commands, output and artifacts as `<REDACTED>`; quote onl
 ## Find the cause
 - A report names a symptom, not a cause. Trace back to where the bad value is first made. A wrong value on one page often comes from a shared helper, hook or data layer. After a regression, read the diff of the affected paths.
 - Write 3 to 5 ranked hypotheses, each with a prediction: "if X is the cause, changing Y removes the bug". Discard any without a prediction. Change one variable per probe.
+- When the owner is present, show the ranked list before probing so they can re-rank; do not wait if they are away.
 - Prefer a debugger over logs; never "log everything". Tag debug output `[DEBUG-a1]` and remove every tagged line before you commit.
 - Performance bug: take a baseline measurement first, then bisect. Measure before you fix.
 - Flaky or order-dependent failure is a bug. Raise its rate: repeat, shuffle, run alone and with others. Name the cause before any retry, longer timeout or skip.

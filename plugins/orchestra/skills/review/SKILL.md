@@ -34,7 +34,7 @@ Apply only the lenses your brief names. Then apply "Every review".
 ## Standards
 - Cite the rule text for each finding. Skip what the linter already enforces.
 - A rule breach on an untouched line is a backlog note, not a blocker.
-- Check names against the project style.
+- Check names against the project style. Baseline smells (judgement calls): `references/cleanliness.md`.
 - File budget: a source file that grew past about 500 lines in this diff is a finding. Use the size output of `lean.py check`. The fix is a split by responsibility.
 
 ## Tests

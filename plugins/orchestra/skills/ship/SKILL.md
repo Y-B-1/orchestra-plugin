@@ -1,6 +1,6 @@
 ---
 name: ship
-description: "Load when opening, updating or fixing a pull request: red CI, review comments, merge conflicts, or a PR that must be easy to review. Not for the final message of a run with no PR."
+description: "Load when opening, updating or fixing a pull request: red CI, review comments, merge conflicts, or a PR that must be easy to review. Also load when the owner asks to set up pre-commit hooks or git guardrails. Not for the final message of a run with no PR."
 ---
 # Ship a pull request
 
@@ -38,5 +38,8 @@ Only when the owner asks. Do one bounded check, not a loop: `timeout 600 gh pr c
 
 ## Pre-commit hooks
 Only when the owner asks. Read `references/pre-commit.md`.
+
+## Git guardrails
+When the owner asks for git guardrails, read `references/guardrails.md`.
 
 Sources: mattpocock/skills@59db609 engineering/pr, misc/setup-pre-commit; pstack@47c6f80 make-pr-easy-to-review, get-pr-comments, fix-ci, fix-merge-conflicts, babysit; Orchestra 2.15.3 finishing.

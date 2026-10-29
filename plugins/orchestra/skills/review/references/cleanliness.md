@@ -36,6 +36,9 @@ Tag each finding: delete, stdlib, native, speculative, shrink, slop, comment, gr
 ## Code judo
 Once per diff, ask: is there a reframe that deletes whole branches, helpers or layers while behavior stays? Prefer deleting complexity over moving it. Name the reframe in one sentence. It is a note unless it removes real risk.
 
+## Baseline smells
+Always a labelled judgement call, overridden by a repo rule: mysterious name, duplicated code, feature envy, data clumps, primitive obsession, repeated switches, shotgun surgery, divergent change, speculative generality, message chains, middle man, refused bequest.
+
 ## Efficiency
 Trace hot or repeated work, unbounded loops, missing timeouts. Skip cost that does not matter at the real input size.
 

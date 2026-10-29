@@ -21,9 +21,14 @@ Read-only. Pick the mode the brief asks for. If a question mixes modes, answer e
 - Build the anchor first: file and line range, `git blame -L`, `git log --follow -p -- <file>`, the PR numbers in commit subjects `(#123)`, then `gh pr view <n> --json title,body,comments,reviews,closingIssuesReferences` for each substantive commit.
 - Trace the full history, not the latest commit. The current shape is usually several decisions stacked.
 - Query every other evidence source the session has (tracker, docs, chat, error tracking, metrics). One check per source. Record empty results and skipped sources with the reason; "none found" is a finding.
+- A cause the question assumes ("I guess it's for performance") is one hypothesis to test, never to confirm. When sources disagree, report both with citations and list competing hypotheses.
 - When the target is defensive code (null guard, retry, timeout, flag), look for the incident that caused it.
 - Separate "found" (quote the commit, PR or doc) from "inferred" and from "unknown". Never present an inferred motive as found.
 - When the user wants to change the code, end with Preserve, Change, Avoid and Risk lists.
+
+## Survey mode (architecture opportunities, no diff)
+- Weigh hot spots from `git log`, apply the deletion test (`review/references/architecture-depth.md`), and return candidates: files, problem, solution, benefit in locality and leverage, strength (Strong, Worth exploring, Speculative), and a top pick.
+- Hand the chosen one to `orchestra:decide`.
 
 ## Research mode (library, API or service facts)
 - Check the version in the lockfile or manifest first, then read the docs for that version.
