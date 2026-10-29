@@ -171,6 +171,23 @@ class StopTest(Repo):
         self.assertIsNone(self.hook('stop', {}))
         self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['state'], 'done')
 
+    def test_a_goal_on_github_needs_an_open_pr_with_the_current_head(self):
+        """2.15 rule: a run is complete only once an open pull request holds the current head."""
+        self.goal()
+        self.ledger('- [x] A1: done\n')
+        self.feature(pushed=True)
+        head = lean.git('rev-parse', 'HEAD', cwd=self.cwd)
+        with mock.patch.object(lean, 'pr_head', return_value=None):
+            self.assertIn('no open pull request', self.hook('stop', {})['reason'])
+        with mock.patch.object(lean, 'pr_head', return_value='0' * 40):
+            self.assertIn('does not hold the current head', self.hook('stop', {})['reason'])
+        with mock.patch.object(lean, 'pr_head', return_value=head):
+            self.assertIsNone(self.hook('stop', {}))
+        self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['state'], 'done')
+
+    def test_pr_head_is_unknown_off_github_so_the_push_alone_finishes(self):
+        self.assertEqual(lean.pr_head(self.cwd, 'feature'), lean.UNKNOWN)
+
     def test_a_goal_on_the_default_branch_asks_for_a_feature_branch(self):
         self.goal()
         self.ledger('- [x] A1: done\n')
@@ -222,6 +239,66 @@ class StopTest(Repo):
         git(self.repo, 'worktree', 'add', '-q', '-b', 'other', str(wt))
         self.assertIsNone(self.hook('stop', {'session_id': 's-two', 'cwd': str(wt)}))
 
+
+    def transcript(self, worker_age=None):
+        """A session transcript path; with worker_age, one subagent transcript last written that many seconds ago."""
+        path = Path(self.tmp.name) / 'session.jsonl'
+        path.write_text('')
+        if worker_age is not None:
+            sub = Path(self.tmp.name) / 'session' / 'subagents' / 'workflows' / 'w1'
+            sub.mkdir(parents=True, exist_ok=True)
+            f = sub / 'agent-a1.jsonl'
+            f.write_text('{}\n')
+            when = time.time() - worker_age
+            os.utime(f, (when, when))
+        return str(path)
+
+    def test_a_goal_stays_quiet_while_a_background_worker_runs(self):
+        """2.15 rule: running workers end the turn quietly; the app wakes the session when one finishes."""
+        self.goal()
+        self.ledger('- [>] A1: running in a worker\n')
+        self.assertIsNone(self.hook('stop', {'transcript_path': self.transcript(worker_age=5)}))
+        goal = json.loads(lean.goal_file(self.cwd).read_text())
+        self.assertEqual((goal['state'], goal['continues']), ('active', 0))
+
+    def test_a_worker_transcript_not_written_for_minutes_does_not_hold_the_goal(self):
+        self.goal()
+        self.ledger('- [>] A1: running in a worker\n')
+        out = self.hook('stop', {'transcript_path': self.transcript(worker_age=lean.LIVE_WORKER_SECONDS + 60)})
+        self.assertEqual(out['decision'], 'block')
+
+    def test_a_goal_never_sends_the_same_reprompt_twice_for_unchanged_work(self):
+        """2.15 rule: a turn that changed nothing since the last continuation ends; it is not prompted again."""
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        self.assertEqual(self.hook('stop', {})['decision'], 'block')
+        out = self.hook('stop', {'stop_hook_active': True})
+        self.assertNotEqual((out or {}).get('decision'), 'block')
+        self.assertIn('nothing changed', out['systemMessage'])
+        self.assertIsNone(self.hook('stop', {'stop_hook_active': True}))  # quiet from then on, no message spam
+        self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['state'], 'active')
+
+    def test_a_goal_prompts_again_once_the_work_changed(self):
+        self.goal()
+        self.ledger('- [ ] A1: open\n- [ ] A2: open\n')
+        self.hook('stop', {})
+        self.hook('stop', {'stop_hook_active': True})  # unchanged: quiet
+        self.ledger('- [x] A1: done\n- [ ] A2: open\n')
+        out = self.hook('stop', {})
+        self.assertEqual(out['decision'], 'block')
+        self.assertIn('in the ledger: A2.', out['reason'])
+
+    def test_a_goal_turn_that_ends_with_a_question_is_told_to_decide(self):
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        out = self.hook('stop', {'last_assistant_message': 'Should I use option A or option B?'})
+        self.assertIn('Do not wait for an answer', out['reason'])
+
+    def test_the_open_ask_reminder_stays_quiet_while_a_worker_runs_and_is_not_repeated(self):
+        self.ledger('- [ ] A1: open\n')
+        self.assertIsNone(self.hook('stop', {'transcript_path': self.transcript(worker_age=5)}))
+        self.assertEqual(self.hook('stop', {})['decision'], 'block')
+        self.assertIsNone(self.hook('stop', {}))  # a later turn, same ledger: no second reminder
 
 class CliTest(Repo):
     def test_goal_set_status_and_stop(self):

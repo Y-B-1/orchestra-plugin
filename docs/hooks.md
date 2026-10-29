@@ -6,7 +6,7 @@ Orchestra registers three hooks in `plugins/orchestra/hooks/hooks.json`. Each ru
 | --- | --- | --- |
 | SessionStart | all | Tells the main session that Orchestra is on, prints the ask ledger path and the `lean.py` path, and says to load the `orchestra` skill for a prompt with more than one ask |
 | PreToolUse | `Bash` | Denies a command that merges into the default branch. Allows everything else by printing nothing |
-| Stop | all | Under an active goal, blocks stopping until the goal is done. When no goal was set, reminds once about open asks |
+| Stop | all | Under an active goal, blocks stopping until the goal is done, but stays quiet while a worker runs and never repeats a prompt for unchanged work. When no goal was set, reminds once per ledger state about open asks |
 
 ## The ledger and goal files
 
@@ -42,11 +42,19 @@ The deny reason tells the agent to push its branch and open a pull request; merg
 - the ledger has open asks (the reason names them);
 - the working tree has uncommitted changes to tracked files;
 - the repository has a remote and the current branch has no upstream, or is ahead of it;
-- the repository has a remote and the work is on the default branch or a detached HEAD: the reason says to create a feature branch, push it and open a PR, since pushing the default branch is denied.
+- the repository has a remote and the work is on the default branch or a detached HEAD: the reason says to create a feature branch, push it and open a PR, since pushing the default branch is denied;
+- the remote is on GitHub and no open pull request holds the current head (read with `gh pr view`; when `gh` is missing, not signed in or slow, this check is skipped rather than holding the goal open).
+
+Two rules keep the hook from looping, both carried over from 2.15:
+
+- **A running worker keeps it quiet.** When a subagent or Workflow agent of the session wrote its transcript in the last 2 minutes, the hook lets the turn end without a prompt or a counted continuation. The app wakes the session when the worker finishes.
+- **No prompt twice for the same state.** The hook keeps a fingerprint of what is missing, HEAD, the working tree and the ledger. When a stop finds the same fingerprint as the last prompt, it does not block: it shows the owner one line saying nothing changed, then stays quiet until the work changes.
+
+When the last message ends with a question, the prompt adds: do not wait for an answer; decide, log the decision in the ledger and continue.
 
 When none holds, the goal state becomes `done` and the session stops. After 60 continuations the state becomes `capped` and the hook stops blocking. `lean.py goal stop REASON` sets the state to `stopped` for a blocker only the owner can clear. `lean.py goal status` prints the goal and the open asks.
 
-When no goal file exists, the Stop hook blocks once when this session's ledger has open asks, and stays quiet when the stop is already a continuation (`stop_hook_active`), so it never loops.
+When no goal file exists, the Stop hook blocks once when this session's ledger has open asks, and stays quiet when the stop is already a continuation (`stop_hook_active`), while a worker runs, or when it already reminded about the same ledger state, so it never loops.
 
 ## Bounded commands
 
