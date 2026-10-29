@@ -2,6 +2,20 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.2.0 — 2026-10-30
+
+Brings back every capability of 2.15 that 3.0 dropped, without slowing 3.0's fast path. Version 3.1.0 was built and benchmarked but not released: it loaded its lessons into every builder and reviewer, which cost about 36% more time with no quality gain. 3.2 keeps 3.0's agent text on the fast path and loads each lesson only when its situation applies.
+
+- **Added: eleven agents.** Back from 2.15.3, each with its model and effort pinned: `builder-mechanical`, `builder-cleanup` and `operator` (Haiku 5.5 high); `reviewer-light`, `reviewer-standards` and `investigator-research` (Sonnet 5.5 medium). Kept: `builder`, `reviewer`, `planner`, `critic`, `investigator`.
+- **Added: role skills.** `build`, `review`, `plan`, `critique`, `investigate` and `operate` hold each role's deeper rules from 2.15.3, updated with the newest mattpocock/skills and pstack ideas. An agent loads its role skill only in the cases its file names (a repair, a named review lens, a twice-failed check).
+- **Added: shared situation skills.** `diagnose`, `decide`, `test-quality`, `frontend-proof` and `large-work`, open to every agent and the main session. The main skill names the situation for each and writes "Load `orchestra:<skill>` first" only into the briefs it applies to.
+- **Added: `lean.py check`** (code in `scripts/check.py`): a pre-PR diff scan for files that grew past 500 lines, weakened tests and gates, mocks of in-repo modules, debug leftovers, rule-file and security-relevant changes, and secrets (value never shown). The main session runs it once and gives the output to the reviewers. It never blocks. See `docs/check.md`.
+- **Changed: routing.** The main skill picks the agent by unit kind (Haiku for uniform changes across many files and code lookups, Sonnet for normal builds and research) and the reviewer by diff size (`reviewer-light` under about 300 lines; 2 or 3 Opus reviewers by area above; `reviewer-standards` when the scan flags size, tests or rules).
+- **Changed: the pre-PR review loop.** Review runs once, after all units land. Each repair is re-reviewed on the files it touched and the findings it answers only, until clean, at most 3 rounds; a finding that survives goes to one Opus repair.
+- **Changed: `frontend-proof`.** A submit never fails silently: never disable a submit button for empty, invalid or loading fields, and never return early from a submit before showing an error; disable only while a submit is in flight. Every 3.2 build without this rule failed the booking-dialog validation trap on task E.
+- **Fixed: `lean.py check`.** The scan reads non-UTF-8 content and quoted or spaced paths, runs from any subdirectory, treats a rename as a rename (not growth), and flags plural and camelCase security paths (`payments/`, `permissions/`, `authMiddleware`, `oauth`). A missing merge base exits 2.
+- **Benchmark:** two longer tasks (D and E, 18 asks each) with hidden traps (a misleading bug report, conflicting asks, a data migration, unsafe HTML, a race, a new status that must show everywhere, a midnight boundary, a harmful owner suggestion). The scorer records the largest changed file. Results in `docs/BENCHMARK.md`.
+
 ## 3.0.0 — 2026-10-28
 
 A rewrite. Orchestra is now a small plugin for fast delivery of multi-request prompts: every independent ask runs in parallel, one independent review follows, `/orchestra:goal` keeps a session going, and one guard blocks only merging into the default branch. A benchmark showed this design delivers about the same quality in about 40% less time than plain Claude Code (7.4 against 12.7 minutes per task, at the same cost), and in about a third of the time and cost of 2.15.3 (see `docs/BENCHMARK.md`).

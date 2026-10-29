@@ -12,6 +12,7 @@ CLI:
   lean.py goal set TEXT        starts a goal
   lean.py goal stop REASON     ends a goal that only a human can unblock
   lean.py goal status
+  lean.py check [--base REF] [--max-lines N] [--json]   scans the branch diff; findings never block (docs/check.md)
 
 State is per session: <git common dir>/orchestra/sessions/<session id>/ holds asks.md and goal.json.
 The session id comes from the hook event, or from CLAUDE_CODE_SESSION_ID in a Bash command.
@@ -383,6 +384,9 @@ def main():
         if isinstance(event, dict):
             handlers[args[1]](event)
         return 0
+    if args[:1] == ['check']:
+        from check import run_check  # loaded only for this command
+        return run_check(args[1:])
     if args[:1] == ['ledger']:
         print(ledger())
         return 0

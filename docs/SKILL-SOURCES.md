@@ -19,6 +19,9 @@ Skill curation is a synthesis. Each row takes a base text, merges in the stronge
 | Claude Code simplify | Claude Code built-in skill `simplify` | none (no published text at a SHA) | `ideas: Claude Code simplify (idea level)` | No published license: idea level only |
 | mattpocock/skills pr | the `skills/engineering/pr/` skill of mattpocock/skills | d81f3a183412e71a5b1e84ca21bc1a35eea03a60 (located only; no text used) | `ideas: mattpocock/skills pr (idea level)` | Idea level only: its CREDITS.md attributes part of its method to a third party |
 | pstack | `pstack/` of cursor/plugins (poteto) | 88d47514b82e7c44f00f2b2a72ff6dd12158038c (the last commit touching `pstack/` when read; the head of `main` was not confirmed) | `ideas: pstack (idea level)` | MIT, ideas only |
+| Pocock (3.1 pin) | mattpocock/skills | 59db609eb1e18aaf59b63284d0e52255aff0c63c | `mattpocock/skills@59db609eb1e1:<path>` | MIT (Matt Pocock) |
+| pstack-claude (3.1 pin) | michael-denyer/pstack-claude | 47c6f8020ad3a4dc533f220eb362a144bfac2153 | `michael-denyer/pstack-claude@47c6f8020ad3:<path>` | MIT |
+| pstack (3.1 pin) | `pstack/` of cursor/plugins | c742dd61706fbacc1b95f1a20b7b988cf096ce6c | `cursor/plugins@c742dd61706f:pstack/<path>` | MIT (pstack/LICENSE) |
 | dzhng/skills ratchet-files | `skills/engineering/ratchet-files/` of dzhng/skills | dc8f546c3adaa615ab86e8328449ae6efe23aca4 (head of `main` per its commit feed; not cross-checked) | `ideas: dzhng/skills ratchet-files (idea level)` | MIT, ideas only |
 | Claude Code Review documentation | code.claude.com/docs/en/code-review and the Anthropic Code Review posts | none (web pages) | `ideas: Claude Code Review documentation (idea level)` | No published license: idea level only |
 

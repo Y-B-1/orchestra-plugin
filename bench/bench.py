@@ -194,6 +194,10 @@ def score(run):
     sh(['git', 'clone', '-q', '-b', ref, str(org), str(sc)])
     _, diffstat = sh(['git', '-C', str(sc), 'diff', '--shortstat', 'origin/main...HEAD'] if branches else ['true'])
     s['diffstat'] = diffstat.strip()
+    _, names = sh(['git', '-C', str(sc), 'diff', '--name-only', '--diff-filter=AM', 'origin/main...HEAD'] if branches else ['true'])
+    sizes = {n: len((sc / n).read_text(errors='replace').splitlines()) for n in names.split()
+             if n.startswith('src/') and n.endswith(('.ts', '.tsx')) and (sc / n).is_file()}
+    s['largest_changed_file'] = max(sizes.items(), key=lambda kv: kv[1]) if sizes else None
     _, n = sh(['git', '-C', str(sc), 'rev-list', '--count', 'origin/main..HEAD'] if branches else ['echo', '0'])
     s['commits'] = int(n.strip() or 0)
     sh(['cp', '-c', '-R', str(FIXTURE / 'node_modules'), str(sc / 'node_modules')])
@@ -303,7 +307,8 @@ def report():
                          hidden=f"{s['hidden']['passed']}/{s['hidden']['total']}",
                          rubric=f"{sum(a.get('score', 0) for a in asks)}/{2 * len(asks)}",
                          checks=''.join('ok'[0] if v == 0 else 'x' for v in s['checks'].values()),
-                         repair=repair_work(s, j), pushed=bool(s['pushed_branch'])))
+                         repair=repair_work(s, j), pushed=bool(s['pushed_branch']),
+                         largest=(s.get('largest_changed_file') or [None, 0])[1]))
     print(json.dumps(rows, indent=1))
     return rows
 
