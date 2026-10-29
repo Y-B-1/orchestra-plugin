@@ -297,7 +297,7 @@ def progress(cwd, session, missing):
     lf = ledger(cwd, session)
     root = git('rev-parse', '--show-toplevel', cwd=cwd)
     untracked = []
-    for name in git('ls-files', '--others', '--exclude-standard', cwd=cwd).splitlines()[:500]:
+    for name in git('ls-files', '--others', '--exclude-standard', cwd=root or cwd).splitlines()[:500]:
         try:
             st = (Path(root) / name).stat()
             untracked.append(f'{name} {st.st_size} {st.st_mtime_ns}')

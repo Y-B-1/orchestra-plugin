@@ -281,6 +281,16 @@ class StopTest(Repo):
         (self.repo / 'new.txt').write_text('a longer edit')
         self.assertEqual(self.hook('stop', {})['decision'], 'block')
 
+    def test_editing_an_untracked_file_counts_from_a_subfolder_too(self):
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        sub = str(self.repo / 'sub')
+        (self.repo / 'new.txt').write_text('a')
+        self.hook('stop', {'cwd': sub})
+        self.hook('stop', {'cwd': sub, 'stop_hook_active': True})  # unchanged: quiet
+        (self.repo / 'new.txt').write_text('a longer edit')
+        self.assertEqual(self.hook('stop', {'cwd': sub})['decision'], 'block')
+
     def test_a_worker_transcript_not_written_for_minutes_does_not_hold_the_goal(self):
         self.goal()
         self.ledger('- [>] A1: running in a worker\n')
