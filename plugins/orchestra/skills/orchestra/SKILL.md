@@ -35,14 +35,16 @@ Orchestra's skills hold the lessons of earlier versions. Each loads only in its 
 | A bug whose cause is not known yet, or a fix that did not hold | `orchestra:diagnose` |
 | Two asks contradict, an ask has two valid product shapes, a suggestion would break existing behavior, the owner asks to be grilled or interviewed, wants a prototype, a term defined or renamed, a decision recorded as an ADR, or a questionnaire for someone else | `orchestra:decide` |
 | A new interactive component (dialog, menu, drawer, form, keyboard flow) or an accessibility ask | `orchestra:frontend-proof` |
-| An ask too big for one builder in about 20 minutes, with unknowns, an interface other units use, a long or overnight run, a context near its limit, or the owner asks to triage issues or PRs (read its `references/triage.md`) | `orchestra:large-work` |
+| An ask too big for one builder in about 20 minutes, with unknowns, an interface other units use, a long or overnight run, a context near its limit, the owner asks for a handoff document or to hand the work to a fresh background agent (read its `references/handoff.md`), or the owner asks to triage issues or PRs (read its `references/triage.md`) | `orchestra:large-work` |
 | Tests that keep failing for unclear reasons, or the test hygiene pass on a large diff | `orchestra:test-quality` |
 | Opening, updating or fixing a pull request: red CI, review comments, merge conflicts, a PR that must be easy to review, or the owner asks to set up pre-commit hooks or git guardrails | `orchestra:ship` |
 | A flow with many states and events (booking, payments, sync, multi-step forms), no way to run and drive the real app, or a unit changes a flow, route, command or UI that the repo's existing driver covers | `orchestra:verify` |
 | The owner corrects a mistake, or asks how something works, where new code belongs or why code is the way it is | `orchestra:diagnose` (correct mode) or `orchestra:investigate` |
 | The owner asks for architecture or refactor opportunities with no diff | `orchestra:investigate` (survey mode), then `orchestra:decide` for the chosen one |
 | The owner asks to review a branch or PR since a ref | `git rev-parse` the ref, make sure the diff is not empty, take the spec from issue refs in commit messages or ask, then run the §5 review with it |
-| The owner asks for a deep, adversarial, thermo or "challenge this" review | two or three `orchestra:reviewer` in parallel, one with `model: "sonnet"`, with the red-team and cleanliness lenses; keep only findings a run proves, merged by root cause |
+| The owner asks for a deep, adversarial, thermo or "challenge this" review | two or three `orchestra:reviewer` in parallel, one with `model: "sonnet"`, with the red-team and cleanliness lenses; give each a scratch folder outside the repo for repro scripts, rerun each finding's command yourself, and keep only findings a run proves, merged by root cause |
+| The owner asks for an arena or several candidate designs, or one attempt at a hard-to-reverse artifact would lock in its shape | `orchestra:large-work` `references/spikes.md`, Candidate designs |
+| The owner asks what a change could break, or an ask asserts a fact about existing code ("make X public", "X already handles Y") | read `orchestra:review` `references/blast-radius.md` and prove the fact before planning |
 | The owner asks for a spec, PRD or tickets | `orchestra:planner` (product or ticket mode) |
 | You or a builder measure a speed, size or score, or report a speedup | read `orchestra:review` `references/measurement.md` before reporting the number |
 | The owner asks for a retro, or a step only a person can take (credentials, CI secrets, a dashboard, a cutover) | `references/finish.md` (beside this skill), its retro or wizard section |
@@ -65,6 +67,8 @@ Pick the agent for each unit by its kind:
 |---|---|
 | A normal build | `orchestra:builder` (Sonnet) |
 | One uniform change across many files: a rename, an import or token swap, one pattern applied everywhere | `orchestra:builder-mechanical` (Haiku) |
+| A refactor that reshapes types, interfaces or module boundaries | `orchestra:planner` in sketch mode, then a builder against the sketch |
+| Enforce module boundaries or set up an import-boundary lint | `orchestra:builder` with "Lever mode" in the brief |
 | A new internal API replaces an old one | `orchestra:builder` with "Migrate mode" in the brief: the new form, every caller, and the old form deleted in the same unit |
 | A new feature whose shape is a real choice | `orchestra:planner` first (and `orchestra:critic` only when large or risky), then a builder |
 | You cannot tell from a quick grep which files an ask touches | `orchestra:investigator` (Haiku) |
