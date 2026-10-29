@@ -17,6 +17,8 @@ A unit that dies or hits its cap gets one retry with a smaller scope and the ori
 Before you remove a worktree, look inside it: `git -C <path> status --porcelain`. Uncommitted or untracked work is committed to a named branch first, never left on a detached HEAD, never stashed. Then remove the worktrees and branches this run created.
 
 ## PR body
+To open or update a PR, fix red CI, answer review comments, resolve merge conflicts or make a PR easy to review, load the `ship` skill; it holds the body template.
+
 What changed per ask, the decisions you made, the check results, and a short "merge risk" line: reversible or not, what it touches (data, auth, public API), and files a human should read.
 
 ## Steps only a person can take
