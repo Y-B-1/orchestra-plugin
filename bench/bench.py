@@ -20,6 +20,7 @@ ARMS = {
     'orchestra-2.15.3': B / 'arms/orchestra-2.15.3',
     'pocock': B / 'arms/pocock',
     'pstack': B / 'arms/pstack-src/plugins/pstack',
+    'pstack47': B / 'arms/pstack47',
 }
 MODEL, TIMEOUT, BUDGET, MIN_FREE_GB = 'claude-opus-5-5', 110 * 60, '80', 4.0
 CLAUDE = shutil.which('claude')
