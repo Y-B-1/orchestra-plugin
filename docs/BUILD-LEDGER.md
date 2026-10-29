@@ -752,3 +752,12 @@ Source: the Lean design that won the speed benchmark (`docs/BENCHMARK.md`). Buil
 - **Final review:** 9 blocking findings (4 scan bugs, a test gap, 4 cross-skill contradictions), all fixed with tests; scoped re-review CLEAN.
 - **Checks:** `scripts/check.sh` exit 0 (Python 3.11 and 3.13); `scripts/live-check.py` PASS for init, guard and goal.
 - **Benchmark:** 9.5 minutes per task against 11.8 for 3.0.0 and 12.4 for plain; hidden tests 98.8%; repair 4.3; cost +12% against 3.0.0. See `docs/BENCHMARK.md`.
+
+## 3.3.0 (2026-10-30)
+
+- **Built:** every in-scope capability of mattpocock/skills@59db609 and pstack@47c6f80, folded into agent files, role skills, two new situation skills (`ship`, `verify`) and 31 reference files that load only when a routing row, agent file or skill names them. `docs/COVERAGE.md` lists all 105 source skills with their class, home and loading rule.
+- **Coverage checks:** a first audit found 25 covered, 36 partial and 20 missing; two independent audits and a third check after the fixes found all 80 in-scope skills better or equal, none worse or unreachable; 25 are out of scope (prose style, video, personal recaps, a pack's own setup).
+- **Owner rework patterns:** a read-only scan of the owner's past sessions found 16 patterns (done claims with open items, one-place fixes for "all" asks, out-of-bound metrics, partial multi-rule flows, and more). They became first-time-right checks in the main skill and the traps of benchmark tasks F and G.
+- **Final review:** 7 blocking findings (a guardrails hook that blocked plain pushes, two waits that stalled an unattended run, a non-Claude model reference, a cleanup rule that deleted needed comments, pointer paths that did not resolve), all fixed; a new layout test checks every reference path resolves.
+- **Checks:** `scripts/check.sh` exit 0 (Python 3.11 and 3.13); `scripts/live-check.py` PASS for init, guard and goal.
+- **Benchmark:** tasks F and G, five arms, two runs each: 3.3.0 ties 3.2.0 on time (12.1 against 11.9 minutes), cost and hidden tests (99.3% against 99.4%) and has the highest rubric score (96.0%); plain, Pocock and pstack 0.9.108 are slower and score lower. See `docs/BENCHMARK.md`.

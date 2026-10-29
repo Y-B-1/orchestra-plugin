@@ -27,7 +27,7 @@ Read-only: change no repo file. Pick the mode the brief asks for. If a question 
 - When the user wants to change the code, end with Preserve, Change, Avoid and Risk lists.
 
 ## Survey mode (architecture opportunities, no diff)
-- Weigh hot spots from `git log`, apply the deletion test (`plugins/orchestra/skills/review/references/architecture-depth.md`), and return candidates: files, problem, solution, benefit in locality and leverage, strength (Strong, Worth exploring, Speculative), and a top pick.
+- Weigh hot spots from `git log`, apply the deletion test (`<plugin>/skills/review/references/architecture-depth.md`), and return candidates: files, problem, solution, benefit in locality and leverage, strength (Strong, Worth exploring, Speculative), and a top pick.
 - Read the glossary and the decision records in the area first. Drop a candidate an ADR rules out unless the friction warrants reopening it, and mark that on the card.
 - When the owner rejects a candidate for a reason a future survey would need, offer an ADR so it is not suggested again.
 - Hand the chosen one to `orchestra:decide`.
