@@ -27,7 +27,7 @@ Owner decisions (2026-10-29), in the owner's terms:
 ## Open questions
 - The design of the progress view.
 
-## Benchmark result: 3.1.0 against 3.0.0 (one run each, 2026-10-30)
+## Benchmark result: 3.1.0 against 3.0.0 (one run each, 2026-10-29)
 
 | Task | 3.0 time | 3.1 time | 3.0 hidden | 3.1 hidden | 3.0 repair | 3.1 repair |
 |---|---|---|---|---|---|---|
@@ -46,6 +46,6 @@ Where the time went:
 
 Next: two ablation arms (builder-side changes only; review-side changes only) on tasks C, D and E, plus a second 3.0 and 3.1 run on task E to measure run-to-run noise.
 
-## Final result (2026-10-30)
+## Final result (2026-10-29)
 
 The final 3.2.0 code (9 runs over tasks A to E) against 3.0.0 (14 runs): 9.5 against 11.8 minutes per task (19% less time), 98.8% against 98.4% hidden tests, judge repair 4.3 against 5.1, cost $3.53 against $3.16 (+12%). Keep rule: quality gain is positive and time fell, so 3.2.0 is kept. Details in `docs/BENCHMARK.md`.

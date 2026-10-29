@@ -1,6 +1,6 @@
 # Orchestra 3.3 plan: capability parity with mattpocock/skills and pstack, or better
 
-Owner standard (2026-10-30): every engineering capability in mattpocock/skills (38 skills) and pstack (67 skills) is available in Orchestra, as good or better, and no 2.15.3 capability is lost. Capabilities may be grouped into fewer skills, built into agent profiles, or put in the main skill. Each one loads by a fixed rule, so a routine unit still loads nothing.
+Owner standard (2026-10-29): every engineering capability in mattpocock/skills (38 skills) and pstack (67 skills) is available in Orchestra, as good or better, and no 2.15.3 capability is lost. Capabilities may be grouped into fewer skills, built into agent profiles, or put in the main skill. Each one loads by a fixed rule, so a routine unit still loads nothing.
 
 ## Coverage audit of 3.2.0 (105 source skills)
 
