@@ -16,7 +16,7 @@ Use before you build or test a flow with many states and events. Failure it prev
    - Two rows with the same state and event have guards that cannot both be true, and together cover every case.
    - Every end state is reachable, and no state is reachable that the owner did not name.
 5. Write each rule the owner agrees to as an invariant ("a paid order never returns to cart", "one booking per slot") and check it holds on every row. Never weaken a rule to make it hold.
-6. Show the table to the owner when a gap needs a product decision. Ask all gaps in one round, each with your recommended answer.
+6. Show the table to the owner when a gap needs a product decision. Ask all gaps in one round, each with your recommended answer. In a /goal session, decide, log it, proceed.
 7. Derive tests: one per transition that matters (money moves, data is written or lost, the user sees a new screen), one per gap decision, one per invariant. Name each test by state, event and expected next state. Skip transitions that only repeat another.
 8. Build from the table. Make the code's state a single value or an enum, and make an illegal event a visible, tested outcome, not a silent return.
 9. Keep the table in the repo next to the code. Update it in the same change as the flow.

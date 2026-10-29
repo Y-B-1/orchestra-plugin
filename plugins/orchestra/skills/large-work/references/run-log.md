@@ -5,7 +5,7 @@ State before any code:
 - Done as a falsifiable predicate (a command and its expected result).
 - Scope with numbers: units, effort, the blockers found while reading.
 - Rigor, biased high. One-way doors and wide blast radius get more gates and artifacts; reversible low-stakes steps get fewer.
-Show the framing once and get one checkpoint before a multi-hour run. Reversible work proceeds.
+Show the framing once and get one checkpoint before a multi-hour run. In a /goal session or with the owner away, log the framing as a decision and proceed without waiting. Reversible work proceeds.
 
 ## Design the run
 - Split into atomic units that land on their own. Order the riskiest unknown first.
@@ -29,5 +29,5 @@ Columns: ts (ISO 8601), phase, decision (one line), why (plain words), evidence 
 - Cells stay single-line; prefix a cell starting with `=`, `+`, `-` or `@` with a quote.
 - Before handing back, check each row maps to a real action and its evidence resolves. Add a row for any unlogged fork.
 - End the reply with the verdicts, the log path, what is verified and what is open.
-- Before you hand back a logged run, a reviewer on another model family reads the log and the transcript. It flags weak evidence, claimed but unrun checks and risky calls. The final message ends with those flags and the reviewer's model.
+- Before you hand back a logged run, a reviewer on a different model than the author (for example Sonnet when Opus built it, via the Agent tool's model option) reads the log and the transcript. It flags weak evidence, claimed but unrun checks and risky calls. The final message ends with those flags and the reviewer's model.
 - A verification or measurement unit's brief names the exact SHAs and the method. A result that does not record them is respawned once, then reported as a gap, never a pass. For a race, declare first-pass, rank-all or best-of before starting.

@@ -22,7 +22,7 @@ Fold the validated decision into the real code. Commit the prototype to a throwa
 Use when one attempt at a hard-to-reverse artifact would lock in the wrong shape. Skip it for mechanical work whose shape is already concrete, and never run a second round over a settled design.
 1. Write the rubric first: 3 to 6 gradeable criteria. Candidates see only the task, not the rubric.
 2. Run N builders at once, each with the same task but a different constraint (smallest interface, most flexible, trivial common case, ports and adapters) so the shapes differ radically, its own worktree or output folder, and a short rationale of alternatives rejected. If one returns nothing, go on with N-1.
-3. A judge from another model family scores them against the rubric. Read every candidate end to end and score criterion by criterion, not by feel. If you and the judge disagree, read both rationales.
+3. A judge on a different model than the author (for example Sonnet when Opus built it, via the Agent tool's model option) scores them against the rubric. Read every candidate end to end and score criterion by criterion, not by feel. If you and the judge disagree, read both rationales.
 4. Pick the base a later maintainer can extend most easily: cleaner boundary, smaller API.
 5. Graft one or two strongest parts from each loser, by hand, so the result holds one model. If all converge, ship the consensus. If they diverge wildly, the task was under-specified: reframe and rerun, do not average.
 6. Verify the result like any output. Write a note: the base and why, each graft and its source, what was rejected.

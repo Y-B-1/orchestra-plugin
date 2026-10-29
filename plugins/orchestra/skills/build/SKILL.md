@@ -29,7 +29,7 @@ Use when the brief names it, or when one change repeats across more than about f
 - Do the first site by hand to learn the recipe. Then write the smallest script or codemod that does it. Rerun it on that site and diff against your hand edit.
 - Make the lever safe to rerun. Run it yourself in one pass; do not fan out hand edits a script can do.
 - A comparison or check tool must refuse or report "inconclusive" when its input is missing. Seed one known-bad input per claim and confirm the tool reports it.
-- Commit the lever only if the brief says the work outlives the session; otherwise name its path in the report. A test-typing migration is one example: replacing `as` casts with a partial-data helper across test files. Partial-data helpers (shoehorn `fromPartial` for `as T`, `fromAny` for `as unknown as T`) belong in test files only; run the type check after.
+- Commit the lever only if the brief says the work outlives the session; otherwise name its path in the report. An uncommitted lever script lives outside the repo's write scope (the OS temp folder). A test-typing migration is one example: replacing `as` casts with a partial-data helper across test files. Partial-data helpers (shoehorn `fromPartial` for `as T`, `fromAny` for `as unknown as T`) belong in test files only; run the type check after.
 - To enforce module boundaries on request, add an import-boundary lint (outsiders import only a package's root files, tests go through entry points, no cycles) to the command that runs typecheck. Prove it: pass, then fail on a planted deep import, then pass. Merge into an existing boundary config and never overwrite it. Document the rule in a README beside the packages, with a one-line pointer from AGENTS.md.
 
 ## Migrate mode

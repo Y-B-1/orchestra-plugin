@@ -13,7 +13,7 @@ Use after review, to remove what the diff made dead, duplicated, over-abstracted
 
 ## Slop to remove from the diff
 - Comments that restate the code, narrate the change or cite the task. Keep a comment only when it states a constraint of something we cannot change (a platform, vendor or protocol rule) or a reason the code cannot show.
-- A comment that claims "do not remove" or a constraint: offer the cheapest type, test or lint that enforces it, then delete the comment. If no enforcement is in scope, report the constraint as open. Before you delete a "do not remove" or IMPORTANT comment, run investigate why mode on its symbol. If the reason is still unclear, keep the comment and report it open.
+- A comment that claims "do not remove" (or is marked IMPORTANT) about the repo's own code: offer the cheapest type, test or lint that enforces it, then delete the comment. If no enforcement is in scope, report the constraint as open. A comment that states a platform, vendor or protocol constraint stays. Before you delete a "do not remove" or IMPORTANT comment, run investigate why mode on its symbol. If the reason is still unclear, keep the comment and report it open.
 - Defensive checks or try/catch on trusted paths, `any` casts used only to silence types, deep nesting that early returns flatten, patterns foreign to the file.
 - A suppression of lint or types without a reason. A suppression that hides a correctness or safety fault is a finding, not a keep.
 - Prefer root-cause fixes over a guard that hides a symptom.

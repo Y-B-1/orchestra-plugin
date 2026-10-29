@@ -12,3 +12,4 @@ Use when the diff changes a stored shape, a schema or a backfill.
 - Old readers: stored data in the old shape is read by new code, or migrated first. Every other reader of that data (jobs, exports, other services) is named.
 - Destructive step (drop, truncate, delete): a separate later step after the new path is proven.
 - Test with old-shape data, not only empty fixtures.
+- Access and data: a new table or column gets the access rules the old data had (grants, row-level policies). Never copy personal data into backfill logs or dumps. Build SQL with parameters, never from row values.

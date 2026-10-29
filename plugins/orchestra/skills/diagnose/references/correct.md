@@ -13,7 +13,7 @@ Trigger: the owner corrects one instance of a mistake. The failure to prevent: f
    - A behavior test (fix or delete any test that still passes when the behavior breaks).
    - Docs or an agent rule last, only for judgment calls nothing can check.
    - An exception to the new check sits on the offending line with a reason, an expiry and the owner's approval.
-5. Prove the check: run it against a real past instance and see it fail, then pass after the fix. Run the same command locally and in CI.
+5. Prove the check: run it against a real past instance and see it fail, then pass after the fix. Run the same command locally, and in CI when CI runs on push (in a repo where CI runs only by hand, run it locally).
 6. If the repo keeps a rule table, add a row pairing the rule with its check. If the rule already existed and nothing enforced it, that is a repeat: enforce it at a higher level now.
 
 ## Report
