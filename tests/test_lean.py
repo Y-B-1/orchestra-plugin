@@ -240,15 +240,18 @@ class StopTest(Repo):
         self.assertIsNone(self.hook('stop', {'session_id': 's-two', 'cwd': str(wt)}))
 
 
-    def transcript(self, worker_age=None):
-        """A session transcript path; with worker_age, one subagent transcript last written that many seconds ago."""
+    def transcript(self, worker_age=None, finished=False):
+        """A session transcript path; with worker_age, one subagent transcript last written that many seconds ago,
+        whose last assistant turn is finished (end_turn) or still in a tool call."""
         path = Path(self.tmp.name) / 'session.jsonl'
         path.write_text('')
         if worker_age is not None:
             sub = Path(self.tmp.name) / 'session' / 'subagents' / 'workflows' / 'w1'
             sub.mkdir(parents=True, exist_ok=True)
             f = sub / 'agent-a1.jsonl'
-            f.write_text('{}\n')
+            stop = 'end_turn' if finished else 'tool_use'
+            f.write_text(json.dumps({'type': 'assistant', 'message': {'role': 'assistant', 'stop_reason': stop}}) + '\n'
+                         + json.dumps({'type': 'attachment'}) + '\n')
             when = time.time() - worker_age
             os.utime(f, (when, when))
         return str(path)
@@ -260,6 +263,23 @@ class StopTest(Repo):
         self.assertIsNone(self.hook('stop', {'transcript_path': self.transcript(worker_age=5)}))
         goal = json.loads(lean.goal_file(self.cwd).read_text())
         self.assertEqual((goal['state'], goal['continues']), ('active', 0))
+
+    def test_a_worker_that_just_finished_does_not_hold_the_goal(self):
+        """Review finding: a transcript written seconds ago by a worker whose turn ended means nothing will wake the
+        session, so the hook must still prompt."""
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        out = self.hook('stop', {'transcript_path': self.transcript(worker_age=5, finished=True)})
+        self.assertEqual(out['decision'], 'block')
+
+    def test_editing_an_untracked_file_counts_as_progress(self):
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        (self.repo / 'new.txt').write_text('a')
+        self.hook('stop', {})
+        self.hook('stop', {'stop_hook_active': True})  # unchanged: quiet
+        (self.repo / 'new.txt').write_text('a longer edit')
+        self.assertEqual(self.hook('stop', {})['decision'], 'block')
 
     def test_a_worker_transcript_not_written_for_minutes_does_not_hold_the_goal(self):
         self.goal()

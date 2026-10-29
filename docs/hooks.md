@@ -47,8 +47,8 @@ The deny reason tells the agent to push its branch and open a pull request; merg
 
 Two rules keep the hook from looping, both carried over from 2.15:
 
-- **A running worker keeps it quiet.** When a subagent or Workflow agent of the session wrote its transcript in the last 2 minutes, the hook lets the turn end without a prompt or a counted continuation. The app wakes the session when the worker finishes.
-- **No prompt twice for the same state.** The hook keeps a fingerprint of what is missing, HEAD, the working tree and the ledger. When a stop finds the same fingerprint as the last prompt, it does not block: it shows the owner one line saying nothing changed, then stays quiet until the work changes.
+- **A running worker keeps it quiet.** When a subagent or Workflow agent of the session is mid-turn (its last assistant record stopped for a tool call, not `end_turn`) and wrote its transcript in the last 10 minutes, the hook lets the turn end without a prompt or a counted continuation. The app wakes the session when the worker finishes. A worker that just finished does not count, since nothing would wake the session.
+- **No prompt twice for the same state.** The hook keeps a fingerprint of what is missing, HEAD, the working tree (tracked changes, and the size and time of untracked files) and the ledger. When a stop finds the same fingerprint as the last prompt, it does not block: it shows the owner one line saying nothing changed, then stays quiet until the work changes.
 
 When the last message ends with a question, the prompt adds: do not wait for an answer; decide, log the decision in the ledger and continue.
 

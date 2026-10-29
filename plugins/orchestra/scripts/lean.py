@@ -21,7 +21,7 @@ import hashlib, json, os, re, shlex, subprocess, sys, time
 from pathlib import Path
 
 MAX_CONTINUES = 60
-LIVE_WORKER_SECONDS = 120  # a subagent transcript written this recently means a worker is still running
+LIVE_WORKER_SECONDS = 600  # an unfinished worker turn with no transcript write for this long counts as gone
 OPEN = re.compile(r'^\s*- \[( |>)\] +([^\s:]+)', re.M)
 SESSION_ENV = 'CLAUDE_CODE_SESSION_ID'
 
@@ -258,24 +258,53 @@ def goal_file(cwd=None, session=None):
     return state_dir(cwd, session) / 'goal.json'
 
 
+def turn_open(f):
+    """True when the last assistant record of a transcript did not end its turn (it stopped for a tool call)."""
+    with open(f, 'rb') as fh:
+        fh.seek(0, os.SEEK_END)
+        fh.seek(max(0, fh.tell() - 65536))
+        lines = fh.read().decode(errors='replace').splitlines()
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        message = row.get('message') if isinstance(row, dict) else None
+        if row.get('type') == 'assistant' and isinstance(message, dict):
+            return message.get('stop_reason') != 'end_turn'
+    return True  # started, no assistant turn yet
+
+
 def worker_running(event):
-    """True when a subagent or Workflow agent of this session wrote its transcript in the last LIVE_WORKER_SECONDS.
-    The app wakes the session when a background worker finishes, so a Stop while one runs needs no prompt."""
+    """True when a subagent or Workflow agent of this session is mid-turn: its last assistant record did not end the
+    turn and it wrote its transcript in the last LIVE_WORKER_SECONDS. The app wakes the session when a background
+    worker finishes, so a Stop while one runs needs no prompt. A worker that just finished does not count."""
     path = event.get('transcript_path')
     if not isinstance(path, str) or not path.endswith('.jsonl'):
         return False
+    cutoff = time.time() - LIVE_WORKER_SECONDS
     try:
-        cutoff = time.time() - LIVE_WORKER_SECONDS
-        return any(f.stat().st_mtime >= cutoff for f in (Path(path[:-len('.jsonl')]) / 'subagents').rglob('*.jsonl'))
+        for f in (Path(path[:-len('.jsonl')]) / 'subagents').rglob('*.jsonl'):
+            if f.stat().st_mtime >= cutoff and turn_open(f):
+                return True
     except OSError:
         return False
+    return False
 
 
 def progress(cwd, session, missing):
     """A fingerprint of the work: what is missing, HEAD, the working tree and the ledger. Equal means nothing moved."""
     lf = ledger(cwd, session)
+    root = git('rev-parse', '--show-toplevel', cwd=cwd)
+    untracked = []
+    for name in git('ls-files', '--others', '--exclude-standard', cwd=cwd).splitlines()[:500]:
+        try:
+            st = (Path(root) / name).stat()
+            untracked.append(f'{name} {st.st_size} {st.st_mtime_ns}')
+        except OSError:
+            pass
     parts = [repr(missing), git('rev-parse', 'HEAD', cwd=cwd), git('status', '--porcelain', cwd=cwd),
-             git('diff', 'HEAD', cwd=cwd), lf.read_text() if lf.exists() else '']
+             git('diff', 'HEAD', cwd=cwd), '\n'.join(untracked), lf.read_text() if lf.exists() else '']
     return hashlib.sha256('\0'.join(parts).encode()).hexdigest()
 
 
