@@ -72,13 +72,13 @@ class SkillTest(unittest.TestCase):
         self.assertLess(len(path.read_text().splitlines()), 200)
 
 
-    def test_every_reference_is_named_by_the_skill_and_stays_short(self):
-        skill = (PLUGIN / 'skills/orchestra/SKILL.md').read_text()
-        files = {f.name for f in (PLUGIN / 'skills/orchestra/references').glob('*.md')}
-        for name in files:
-            with self.subTest(name):
-                self.assertTrue(name in skill, 'a reference file the skill never names')
-                self.assertLessEqual(len((PLUGIN / 'skills/orchestra/references' / name).read_text().splitlines()), 60)
+    def test_every_reference_is_named_by_its_skill_and_stays_short(self):
+        """A reference loads only when its SKILL.md names it with a condition; an unnamed one is never read."""
+        for ref in sorted((PLUGIN / 'skills').glob('*/references/*.md')):
+            skill = (ref.parent.parent / 'SKILL.md').read_text()
+            with self.subTest(str(ref.relative_to(PLUGIN))):
+                self.assertTrue(f'references/{ref.name}' in skill, 'a reference file its skill never names')
+                self.assertLessEqual(len(ref.read_text().splitlines()), 60)
 
     def test_every_skill_is_reachable_short_and_well_formed(self):
         """A skill no agent file or the main skill names is dead weight; one over 70 lines costs every load."""

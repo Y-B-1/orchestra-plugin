@@ -33,10 +33,15 @@ Orchestra's skills hold the lessons of earlier versions. Each loads only in its 
 | Situation | Skill |
 |---|---|
 | A bug whose cause is not known yet, or a fix that did not hold | `orchestra:diagnose` |
-| Two asks contradict, an ask has two valid product shapes, or a suggestion would break existing behavior | `orchestra:decide` |
+| Two asks contradict, an ask has two valid product shapes, a suggestion would break existing behavior, or the owner asks to be grilled or interviewed | `orchestra:decide` |
 | A new interactive component (dialog, menu, drawer, form, keyboard flow) or an accessibility ask | `orchestra:frontend-proof` |
-| An ask too big for one builder in about 20 minutes, with unknowns, or an interface other units use | `orchestra:large-work` |
+| An ask too big for one builder in about 20 minutes, with unknowns, an interface other units use, a long or overnight run, or a context near its limit | `orchestra:large-work` |
 | Tests that keep failing for unclear reasons, or the test hygiene pass on a large diff | `orchestra:test-quality` |
+| Opening, updating or fixing a pull request: red CI, review comments, merge conflicts, or a PR that must be easy to review | `orchestra:ship` |
+| A flow with many states and events (booking, payments, sync, multi-step forms), or no way to run and drive the real app | `orchestra:verify` |
+| The owner corrects a mistake, or asks how something works, where new code belongs or why code is the way it is | `orchestra:diagnose` (correct mode) or `orchestra:investigate` |
+
+Retro: after a bug fix or an owner correction, name the check that would have caught it (a test, a lint rule, a scan rule) and add it in the same change.
 
 Each agent also has its own role skill (`orchestra:build`, `review`, `plan`, `critique`, `investigate`, `operate`) and loads it only in the cases its agent file names.
 
