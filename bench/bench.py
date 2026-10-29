@@ -296,6 +296,31 @@ def cleanup(run):
             shutil.rmtree(Path(line[9:]) / 'node_modules', ignore_errors=True)
 
 
+def rubric_rows(task, asks):
+    """Fold the judge's ask scores onto the rubric table rows, so a judge that splits one row ("F12 to F17") into
+    six scores, or merges six into one, gives the same weight. Returns (points, max)."""
+    rows = []
+    for line in (TASKS / task / 'rubric.md').read_text().splitlines():
+        m = re.match(r'\|\s*([A-Z])(\d+)(?:\s*(?:to|-)\s*[A-Z]?(\d+))?\b', line)
+        if m:
+            lo = int(m.group(2)); hi = int(m.group(3) or lo)
+            rows.append((m.group(1), lo, hi))
+    if not rows:
+        return sum(a.get('score', 0) for a in asks), 2 * len(asks)
+    got = {r: [] for r in rows}
+    for a in asks:
+        m = re.match(r'([A-Z])(\d+)(?:\s*(?:to|-)\s*[A-Z]?(\d+))?', str(a.get('id', '')))
+        if not m:
+            continue
+        lo = int(m.group(2)); hi = int(m.group(3) or lo)
+        for r in rows:
+            if r[0] == m.group(1) and r[1] <= lo and hi <= r[2]:
+                got[r].append(a.get('score', 0))
+                break
+    pts = sum(sum(v) / len(v) for v in got.values() if v)
+    return round(pts, 1), 2 * len(rows)
+
+
 def report():
     rows = []
     for run in sorted(RUNS.iterdir()) if RUNS.exists() else []:
@@ -306,7 +331,7 @@ def report():
         rows.append(dict(run=run.name, done_min=round(s['stream']['done_s'] / 60, 1), wall_min=round(s['stream']['wall_s'] / 60, 1), cost=s['stream']['cost_usd'],
                          par=s['stream']['parallelism'], peak=s['stream']['peak_agents'],
                          hidden=f"{s['hidden']['passed']}/{s['hidden']['total']}",
-                         rubric=f"{sum(a.get('score', 0) for a in asks)}/{2 * len(asks)}",
+                         rubric='%s/%s' % rubric_rows(run.name.rsplit('-', 2)[1], asks),
                          checks=''.join('ok'[0] if v == 0 else 'x' for v in s['checks'].values()),
                          repair=repair_work(s, j), pushed=bool(s['pushed_branch']),
                          largest=(s.get('largest_changed_file') or [None, 0])[1]))
