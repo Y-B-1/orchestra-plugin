@@ -1,0 +1,1159 @@
+diff --git a/README.md b/README.md
+index 344f452..5be06c9 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,16 @@
+ 
+ Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications in the top bar; and user settings (theme and notifications) saved in the browser.
+ 
+-Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
++Routes: `/` dashboard, `/portfolio`, `/portfolio/print` (the printable statement, outside the app shell), `/trades`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
++
++Reports and money: report-style figures are whole dollars with a thousands separator (`$1,234,568`), through `formatWholeDollars`: the holdings table and its Total row, the client details drawer, the AUM in "Trades by client", the portfolio CSV and the print view. Compact amounts (`$31.2M`) stay in cards and lists.
++
++What is new:
++
++- Portfolio: a health score (0 to 100; up to 60 points for diversification plus 200 times the return on cost, each part rounded, the sum held to 0..100), "Top contributors" (top 10 by unrealized P&L in whole dollars, ties by name), "Export portfolio CSV" and a "Print view" link.
++- Dashboard: "Trades by client" (one aggregated row per client) and "New clients this month". A client can have several accounts (a closed one and its replacement); the name is the identity, and the data is frozen at 27 Oct 2026, so "this month" is October 2026.
++- Instrument page: "Daily trend", at most the latest 30 days, with optional From and To days.
++- Clients: closed accounts carry a "Closed" badge. Settings: switches use `--color-switch-on` in both themes.
+ 
+ All data is mocked: typed fetchers in `src/api` read JSON files in `src/data` after a short artificial delay.
+ 
+diff --git a/src/App.tsx b/src/App.tsx
+index cbe0cf5..b0e4169 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -4,6 +4,7 @@ import { Clients } from "./pages/Clients";
+ import { Dashboard } from "./pages/Dashboard";
+ import { InstrumentDetail } from "./pages/InstrumentDetail";
+ import { Portfolio } from "./pages/Portfolio";
++import { PortfolioPrint } from "./pages/PortfolioPrint";
+ import { Reports } from "./pages/Reports";
+ import { Settings } from "./pages/Settings";
+ import { Trades } from "./pages/Trades";
+@@ -11,6 +12,7 @@ import { Trades } from "./pages/Trades";
+ export function App() {
+   return (
+     <Routes>
++      <Route path="portfolio/print" element={<PortfolioPrint />} />
+       <Route element={<Shell />}>
+         <Route index element={<Dashboard />} />
+         <Route path="portfolio" element={<Portfolio />} />
+diff --git a/src/api/history.ts b/src/api/history.ts
+index 30310ff..13da339 100644
+--- a/src/api/history.ts
++++ b/src/api/history.ts
+@@ -19,3 +19,10 @@ export async function fetchPriceHistory(symbol: string, range: HistoryRange = "3
+   if (count === undefined) throw new ValidationError(`Unknown range ${range}`);
+   return delay(points.slice(-count).map((point) => ({ ...point })));
+ }
++
++/** Every daily close we hold for `symbol` (about 90 trading days), oldest first. */
++export async function fetchDailyCloses(symbol: string): Promise<PricePoint[]> {
++  const points = history[symbol];
++  if (!points) throw new NotFoundError("Price history for", symbol);
++  return delay(points.map((point) => ({ ...point })));
++}
+diff --git a/src/api/index.ts b/src/api/index.ts
+index 41b6cdc..e794858 100644
+--- a/src/api/index.ts
++++ b/src/api/index.ts
+@@ -4,6 +4,6 @@ export { fetchReports } from "./reports";
+ export { fetchKpis } from "./kpis";
+ export { fetchHoldings, fetchFxRates, fetchPositions } from "./holdings";
+ export { fetchTrades, fetchTrade, fetchRecentTrades, emptyTradeFilters, matchesTradeFilters } from "./trades";
+-export { fetchPriceHistory, type HistoryRange } from "./history";
++export { fetchPriceHistory, fetchDailyCloses, type HistoryRange } from "./history";
+ export { fetchNotifications } from "./notifications";
+ export { latency, NotFoundError, ValidationError } from "./client";
+diff --git a/src/components/ClientDrawer.tsx b/src/components/ClientDrawer.tsx
+index 97a7dcc..da1dc15 100644
+--- a/src/components/ClientDrawer.tsx
++++ b/src/components/ClientDrawer.tsx
+@@ -1,7 +1,7 @@
+ import type { Client } from "../types";
+ import { fetchClient } from "../api";
+ import { useAsync } from "../hooks/useAsync";
+-import { formatCurrency, formatDateTime } from "../utils/format";
++import { formatDateTime, formatWholeDollars } from "../utils/format";
+ import { AsyncContent } from "./AsyncContent";
+ import { ClientNotes } from "./clients/ClientNotes";
+ import { Drawer } from "./Drawer";
+@@ -17,14 +17,16 @@ function Details({ client }: { client: Client }) {
+     <dl className="details">
+       <dt>Tier</dt>
+       <dd>{client.tier}</dd>
++      <dt>Status</dt>
++      <dd>{client.status === "closed" ? "Closed" : "Active"}</dd>
+       <dt>Region</dt>
+       <dd>{client.region}</dd>
+       <dt>Contact</dt>
+       <dd>
+         {client.contact} (<a href={`mailto:${client.email}`}>{client.email}</a>)
+       </dd>
+-      <dt>Assets under management</dt>
+-      <dd>{formatCurrency(client.aum)}</dd>
++      <dt>Assets under management (USD)</dt>
++      <dd>{formatWholeDollars(client.aum)}</dd>
+       <dt>Last activity</dt>
+       <dd>{formatDateTime(client.lastActivity)} UTC</dd>
+       <dt>Notes</dt>
+diff --git a/src/components/ClientList.tsx b/src/components/ClientList.tsx
+index 890eade..c32fb2d 100644
+--- a/src/components/ClientList.tsx
++++ b/src/components/ClientList.tsx
+@@ -17,7 +17,10 @@ export function ClientList({ clients, selectedId, onSelect }: ClientListProps) {
+             className={`client-list__item${client.id === selectedId ? " client-list__item--active" : ""}`}
+             onClick={() => onSelect(client.id)}
+           >
+-            <span className="client-list__name">{client.name}</span>
++            <span className="client-list__name">
++              {client.name}
++              {client.status === "closed" ? <span className="badge badge--closed">Closed</span> : null}
++            </span>
+             <span className="client-list__meta">
+               {client.region} / {client.tier}
+             </span>
+diff --git a/src/components/Toggle.test.tsx b/src/components/Toggle.test.tsx
+index 34426d7..2246d6d 100644
+--- a/src/components/Toggle.test.tsx
++++ b/src/components/Toggle.test.tsx
+@@ -10,4 +10,11 @@ describe("Toggle", () => {
+     expect(onChange).toHaveBeenCalledWith(true);
+   });
+ 
++  it("marks its wrapper only while it is on", () => {
++    const { rerender } = render(<Toggle label="Alerts" checked={false} onChange={vi.fn()} />);
++    const input = screen.getByRole("switch", { name: "Alerts" });
++    expect(input.closest(".toggle--on")).toBeNull();
++    rerender(<Toggle label="Alerts" checked onChange={vi.fn()} />);
++    expect(input.closest(".toggle--on")).not.toBeNull();
++  });
+ });
+diff --git a/src/components/Toggle.tsx b/src/components/Toggle.tsx
+index eac6719..3f4f1ee 100644
+--- a/src/components/Toggle.tsx
++++ b/src/components/Toggle.tsx
+@@ -10,7 +10,7 @@ interface ToggleProps {
+ export function Toggle({ label, description, checked, onChange }: ToggleProps) {
+   const id = useId();
+   return (
+-    <div className="toggle">
++    <div className={`toggle${checked ? " toggle--on" : ""}`}>
+       <div className="toggle__text">
+         <label htmlFor={id} className="toggle__label">
+           {label}
+diff --git a/src/components/dashboard/NewClients.tsx b/src/components/dashboard/NewClients.tsx
+new file mode 100644
+index 0000000..93dd13c
+--- /dev/null
++++ b/src/components/dashboard/NewClients.tsx
+@@ -0,0 +1,24 @@
++import { fetchClients } from "../../api";
++import { useAsync } from "../../hooks/useAsync";
++import { AS_OF_DAY } from "../../utils/dates";
++import { newClientsInMonth } from "../../utils/clients";
++import { AsyncContent } from "../AsyncContent";
++
++export function NewClients() {
++  const state = useAsync(() => fetchClients(), []);
++  return (
++    <AsyncContent state={state} loadingLabel="Loading new clients">
++      {(clients) => {
++        const names = newClientsInMonth(clients, AS_OF_DAY);
++        if (names.length === 0) return <p className="feedback feedback--empty">No new clients this month.</p>;
++        return (
++          <ul className="simple-list">
++            {names.map((name) => (
++              <li key={name}>{name}</li>
++            ))}
++          </ul>
++        );
++      }}
++    </AsyncContent>
++  );
++}
+diff --git a/src/components/dashboard/TradesByClient.tsx b/src/components/dashboard/TradesByClient.tsx
+new file mode 100644
+index 0000000..63532cb
+--- /dev/null
++++ b/src/components/dashboard/TradesByClient.tsx
+@@ -0,0 +1,29 @@
++import { fetchClients, fetchTrades } from "../../api";
++import { useAsync } from "../../hooks/useAsync";
++import { totalsByClient } from "../../utils/clients";
++import { formatWholeDollars } from "../../utils/format";
++import { AsyncContent } from "../AsyncContent";
++
++async function load() {
++  const [clients, trades] = await Promise.all([fetchClients(), fetchTrades()]);
++  return totalsByClient(clients, trades);
++}
++
++export function TradesByClient() {
++  const state = useAsync(load, []);
++  return (
++    <AsyncContent state={state} loadingLabel="Loading trades by client">
++      {(rows) => (
++        <ul className="simple-list">
++          {rows.map((row) => (
++            <li key={row.name} className="simple-list__row">
++              <span className="simple-list__name">{row.name}</span>
++              <span>{row.trades} trades</span>
++              <span className="simple-list__aum">{formatWholeDollars(row.aumUsd)}</span>
++            </li>
++          ))}
++        </ul>
++      )}
++    </AsyncContent>
++  );
++}
+diff --git a/src/components/instrument/DailyTrend.tsx b/src/components/instrument/DailyTrend.tsx
+new file mode 100644
+index 0000000..794966b
+--- /dev/null
++++ b/src/components/instrument/DailyTrend.tsx
+@@ -0,0 +1,44 @@
++import { useState } from "react";
++import { fetchDailyCloses } from "../../api";
++import { useAsync } from "../../hooks/useAsync";
++import { formatDate } from "../../utils/format";
++import { formatPrice } from "../../utils/numbers";
++import { trendWindow } from "../../utils/trend";
++import { AsyncContent } from "../AsyncContent";
++import { Table, type Column } from "../Table";
++import type { PricePoint } from "../../types";
++
++export function DailyTrend({ symbol, currency }: { symbol: string; currency: string }) {
++  const [from, setFrom] = useState("");
++  const [to, setTo] = useState("");
++  const state = useAsync(() => fetchDailyCloses(symbol), [symbol]);
++  const columns: Column<PricePoint>[] = [
++    { key: "date", header: "Date", rowHeader: true, render: (p) => formatDate(p.date) },
++    { key: "close", header: "Close", align: "right", render: (p) => formatPrice(p.close, currency) },
++  ];
++  return (
++    <>
++      <div className="filters">
++        <label className="filters__field">
++          From
++          <input type="date" className="input" value={from} onChange={(event) => setFrom(event.target.value)} />
++        </label>
++        <label className="filters__field">
++          To
++          <input type="date" className="input" value={to} onChange={(event) => setTo(event.target.value)} />
++        </label>
++      </div>
++      <AsyncContent state={state} loadingLabel="Loading daily trend">
++        {(points) => (
++          <Table
++            caption="Daily trend"
++            columns={columns}
++            rows={trendWindow(points, from, to)}
++            rowKey={(p) => p.date}
++            emptyMessage="No daily data in this range."
++          />
++        )}
++      </AsyncContent>
++    </>
++  );
++}
+diff --git a/src/components/portfolio/HoldingsTable.tsx b/src/components/portfolio/HoldingsTable.tsx
+index 9bbceff..ca5c157 100644
+--- a/src/components/portfolio/HoldingsTable.tsx
++++ b/src/components/portfolio/HoldingsTable.tsx
+@@ -1,6 +1,6 @@
+ import { Link } from "react-router-dom";
+ import type { PortfolioTotals, Position } from "../../types";
+-import { formatCurrency, formatPercent } from "../../utils/format";
++import { formatPercent, formatWholeDollars } from "../../utils/format";
+ import { formatPrice, formatQuantity, formatSignedCurrency, toneOf } from "../../utils/numbers";
+ import { assetClassLabels } from "../../utils/portfolio";
+ import { PriceChange } from "../PriceChange";
+@@ -63,7 +63,7 @@ const columns: Column<Position>[] = [
+     key: "marketValueUsd",
+     header: "Market value (USD)",
+     align: "right",
+-    render: (p) => formatCurrency(p.marketValueUsd),
++    render: (p) => formatWholeDollars(p.marketValueUsd),
+     sortValue: (p) => p.marketValueUsd,
+   },
+   {
+@@ -90,7 +90,7 @@ function TotalsRow({ totals }: { totals: PortfolioTotals }) {
+         Total ({totals.positions} positions)
+       </th>
+       <td className="table__num" data-testid="total-market-value">
+-        {formatCurrency(totals.marketValueUsd)}
++        {formatWholeDollars(totals.marketValueUsd)}
+       </td>
+       <td className={`table__num text-${toneOf(totals.unrealizedPnlUsd)}`}>{formatSignedCurrency(totals.unrealizedPnlUsd)}</td>
+       <td className="table__num">{formatPercent(totals.positions > 0 ? 1 : 0, 1)}</td>
+diff --git a/src/components/portfolio/PortfolioHealth.tsx b/src/components/portfolio/PortfolioHealth.tsx
+new file mode 100644
+index 0000000..65276f5
+--- /dev/null
++++ b/src/components/portfolio/PortfolioHealth.tsx
+@@ -0,0 +1,27 @@
++import type { Position } from "../../types";
++import { healthScore } from "../../utils/portfolio";
++
++export function PortfolioHealth({ positions }: { positions: Position[] }) {
++  const { score } = healthScore(positions);
++  return (
++    <div className="health">
++      <p className="health__label">Health score: {score} / 100</p>
++      <svg className="health__chart" width="100%" height="12">
++        <rect className="health__track" x="0" y="0" width="100%" height="12" rx="6" />
++        <rect
++          className="health__bar"
++          role="progressbar"
++          aria-label="Health score"
++          aria-valuemin={0}
++          aria-valuemax={100}
++          aria-valuenow={score}
++          x="0"
++          y="0"
++          width={`${score}%`}
++          height="12"
++          rx="6"
++        />
++      </svg>
++    </div>
++  );
++}
+diff --git a/src/components/portfolio/TopContributors.tsx b/src/components/portfolio/TopContributors.tsx
+new file mode 100644
+index 0000000..2a80779
+--- /dev/null
++++ b/src/components/portfolio/TopContributors.tsx
+@@ -0,0 +1,17 @@
++import type { Position } from "../../types";
++import { topContributors } from "../../utils/portfolio";
++import { formatSignedCurrency, toneOf } from "../../utils/numbers";
++
++export function TopContributors({ positions }: { positions: Position[] }) {
++  return (
++    <ol className="simple-list contributors" aria-label="Top contributors">
++      {topContributors(positions).map((p) => (
++        <li key={p.id} className="simple-list__row">
++          <span className="simple-list__name">{p.name}</span>
++          <span />
++          <span className={`simple-list__aum text-${toneOf(p.unrealizedPnlUsd)}`}>{formatSignedCurrency(p.unrealizedPnlUsd)}</span>
++        </li>
++      ))}
++    </ol>
++  );
++}
+diff --git a/src/components/portfolio/portfolioCsv.test.ts b/src/components/portfolio/portfolioCsv.test.ts
+new file mode 100644
+index 0000000..92c394a
+--- /dev/null
++++ b/src/components/portfolio/portfolioCsv.test.ts
+@@ -0,0 +1,17 @@
++import { describe, expect, it } from "vitest";
++import type { Position } from "../../types";
++import { holdingsCsv } from "./portfolioCsv";
++
++describe("holdingsCsv", () => {
++  it("writes money as whole dollars with separators, largest value first", () => {
++    const rows = [
++      { symbol: "B", name: "Beta", book: "X", marketValueUsd: 10, unrealizedPnlUsd: -5.4, weight: 0.1 },
++      { symbol: "A", name: "Alpha", book: "X", marketValueUsd: 1234567.89, unrealizedPnlUsd: 1000.2, weight: 0.9 },
++    ] as Position[];
++    expect(holdingsCsv(rows).split("\r\n")).toEqual([
++      "Instrument,Name,Book,Market value (USD),Unrealized P&L (USD),Weight",
++      'A,Alpha,X,"$1,234,568","+$1,000",90.0%',
++      "B,Beta,X,$10,-$5,10.0%",
++    ]);
++  });
++});
+diff --git a/src/components/portfolio/portfolioCsv.ts b/src/components/portfolio/portfolioCsv.ts
+new file mode 100644
+index 0000000..ba5685d
+--- /dev/null
++++ b/src/components/portfolio/portfolioCsv.ts
+@@ -0,0 +1,19 @@
++import type { Position } from "../../types";
++import { toCsv, type CsvColumn } from "../../utils/csv";
++import { formatPercent, formatWholeDollars } from "../../utils/format";
++import { formatSignedCurrency } from "../../utils/numbers";
++import { sortBy } from "../../utils/sort";
++
++const columns: CsvColumn<Position>[] = [
++  { header: "Instrument", value: (p) => p.symbol },
++  { header: "Name", value: (p) => p.name },
++  { header: "Book", value: (p) => p.book },
++  { header: "Market value (USD)", value: (p) => formatWholeDollars(p.marketValueUsd) },
++  { header: "Unrealized P&L (USD)", value: (p) => formatSignedCurrency(p.unrealizedPnlUsd) },
++  { header: "Weight", value: (p) => formatPercent(p.weight, 1) },
++];
++
++/** The holdings as CSV text, largest market value first, money written as it appears on screen. */
++export function holdingsCsv(positions: readonly Position[]): string {
++  return toCsv(sortBy(positions, (p) => p.marketValueUsd, "desc"), columns);
++}
+diff --git a/src/data/clients.json b/src/data/clients.json
+index c9d4e86..f777c82 100644
+--- a/src/data/clients.json
++++ b/src/data/clients.json
+@@ -1,12 +1,14 @@
+ [
+-  { "id": "c-001", "name": "Northwind Capital", "tier": "institutional", "region": "EMEA", "contact": "Ines Vogel", "email": "ines.vogel@northwind.example", "aum": 1250000000, "lastActivity": "2026-10-21T09:12:00Z", "notes": "Quarterly review scheduled. Interested in FX overlay products." },
+-  { "id": "c-002", "name": "Harbor Pension Trust", "tier": "institutional", "region": "AMER", "contact": "Marcus Bell", "email": "mbell@harborpension.example", "aum": 3400000000, "lastActivity": "2026-10-24T15:40:00Z", "notes": "Long-duration bond mandate. Prefers written updates." },
+-  { "id": "c-003", "name": "Lumen Robotics", "tier": "corporate", "region": "APAC", "contact": "Aiko Tanaka", "email": "aiko@lumenrobotics.example", "aum": 86000000, "lastActivity": "2026-10-19T03:05:00Z", "notes": "Treasury hedges yen exposure monthly." },
+-  { "id": "c-004", "name": "Granite Family Office", "tier": "private", "region": "AMER", "contact": "Rosa Granite", "email": "rosa@granitefo.example", "aum": 212000000, "lastActivity": "2026-10-25T11:20:00Z", "notes": "Asked about commodity exposure after the gold rally." },
+-  { "id": "c-005", "name": "Sable Insurance", "tier": "institutional", "region": "EMEA", "contact": "Tomas Reyes", "email": "treyes@sableins.example", "aum": 2100000000, "lastActivity": "2026-10-22T08:30:00Z", "notes": "Solvency reporting due at quarter end." },
+-  { "id": "c-006", "name": "Pinecrest Logistics", "tier": "corporate", "region": "AMER", "contact": "Dale Whitfield", "email": "dale@pinecrest.example", "aum": 54000000, "lastActivity": "2026-10-12T17:45:00Z", "notes": "Fuel hedging program under review." },
+-  { "id": "c-007", "name": "Orchid Wealth", "tier": "private", "region": "APAC", "contact": "Mei Lin", "email": "mei.lin@orchidwealth.example", "aum": 145000000, "lastActivity": "2026-10-26T02:10:00Z", "notes": "Growing allocation to US large caps." },
+-  { "id": "c-008", "name": "Baltic Shipping Fund", "tier": "institutional", "region": "EMEA", "contact": "Jonas Berg", "email": "jberg@balticfund.example", "aum": 780000000, "lastActivity": "2026-10-17T13:00:00Z", "notes": "Requests daily FX exposure report." },
+-  { "id": "c-009", "name": "Quill Software", "tier": "corporate", "region": "AMER", "contact": "Priya Nair", "email": "priya@quill.example", "aum": 38000000, "lastActivity": "2026-10-23T19:25:00Z", "notes": "New client, onboarding in progress." },
+-  { "id": "c-010", "name": "Meridian Endowment", "tier": "institutional", "region": "AMER", "contact": "Helen Okafor", "email": "hokafor@meridian.example", "aum": 960000000, "lastActivity": "2026-10-20T10:50:00Z", "notes": "Board meeting next month, needs performance pack." }
++  { "id": "c-001", "name": "Northwind Capital", "status": "active", "openedAt": "2025-01-15", "tier": "institutional", "region": "EMEA", "contact": "Ines Vogel", "email": "ines.vogel@northwind.example", "aum": 1250000000, "lastActivity": "2026-10-21T09:12:00Z", "notes": "Quarterly review scheduled. Interested in FX overlay products." },
++  { "id": "c-002", "name": "Harbor Pension Trust", "status": "active", "openedAt": "2025-01-15", "tier": "institutional", "region": "AMER", "contact": "Marcus Bell", "email": "mbell@harborpension.example", "aum": 3400000000, "lastActivity": "2026-10-24T15:40:00Z", "notes": "Long-duration bond mandate. Prefers written updates." },
++  { "id": "c-003", "name": "Lumen Robotics", "status": "active", "openedAt": "2025-01-15", "tier": "corporate", "region": "APAC", "contact": "Aiko Tanaka", "email": "aiko@lumenrobotics.example", "aum": 86000000, "lastActivity": "2026-10-19T03:05:00Z", "notes": "Treasury hedges yen exposure monthly." },
++  { "id": "c-004", "name": "Granite Family Office", "status": "active", "openedAt": "2025-01-15", "tier": "private", "region": "AMER", "contact": "Rosa Granite", "email": "rosa@granitefo.example", "aum": 212000000, "lastActivity": "2026-10-25T11:20:00Z", "notes": "Asked about commodity exposure after the gold rally." },
++  { "id": "c-005", "name": "Sable Insurance", "status": "active", "openedAt": "2025-01-15", "tier": "institutional", "region": "EMEA", "contact": "Tomas Reyes", "email": "treyes@sableins.example", "aum": 2100000000, "lastActivity": "2026-10-22T08:30:00Z", "notes": "Solvency reporting due at quarter end." },
++  { "id": "c-006", "name": "Pinecrest Logistics", "status": "active", "openedAt": "2025-01-15", "tier": "corporate", "region": "AMER", "contact": "Dale Whitfield", "email": "dale@pinecrest.example", "aum": 54000000, "lastActivity": "2026-10-12T17:45:00Z", "notes": "Fuel hedging program under review." },
++  { "id": "c-007", "name": "Orchid Wealth", "status": "active", "openedAt": "2025-01-15", "tier": "private", "region": "APAC", "contact": "Mei Lin", "email": "mei.lin@orchidwealth.example", "aum": 145000000, "lastActivity": "2026-10-26T02:10:00Z", "notes": "Growing allocation to US large caps." },
++  { "id": "c-008", "name": "Baltic Shipping Fund", "status": "active", "openedAt": "2025-01-15", "tier": "institutional", "region": "EMEA", "contact": "Jonas Berg", "email": "jberg@balticfund.example", "aum": 780000000, "lastActivity": "2026-10-17T13:00:00Z", "notes": "Requests daily FX exposure report." },
++  { "id": "c-009", "name": "Quill Software", "status": "closed", "openedAt": "2025-11-03", "tier": "corporate", "region": "AMER", "contact": "Priya Nair", "email": "priya@quill.example", "aum": 38000000, "lastActivity": "2026-10-14T16:00:00Z", "notes": "Account closed on 14 Oct 2026; the new account is c-011." },
++  { "id": "c-010", "name": "Meridian Endowment", "status": "active", "openedAt": "2025-01-15", "tier": "institutional", "region": "AMER", "contact": "Helen Okafor", "email": "hokafor@meridian.example", "aum": 960000000, "lastActivity": "2026-10-20T10:50:00Z", "notes": "Board meeting next month, needs performance pack." },
++  { "id": "c-011", "name": "Quill Software", "status": "active", "openedAt": "2026-10-15", "tier": "corporate", "region": "AMER", "contact": "Priya Nair", "email": "priya@quill.example", "aum": 41000000, "lastActivity": "2026-10-27T11:05:00Z", "notes": "Replaces the closed account c-009." },
++  { "id": "c-012", "name": "Tidewater Metals", "status": "active", "openedAt": "2026-10-08", "tier": "corporate", "region": "AMER", "contact": "Grace Holloway", "email": "grace@tidewater.example", "aum": 67000000, "lastActivity": "2026-10-22T14:00:00Z", "notes": "New client, onboarding in progress." }
+ ]
+diff --git a/src/data/trades.json b/src/data/trades.json
+index 75e1b89..852a5e3 100644
+--- a/src/data/trades.json
++++ b/src/data/trades.json
+@@ -73,7 +73,7 @@
+   {"id":"T-10072","symbol":"UST10","assetClass":"bond","side":"buy","quantity":7000,"filledQuantity":7000,"price":98.25,"currency":"USD","executedAt":"2026-10-14T19:47:04Z","clientId":"c-004","trader":"L. Duarte","venue":"Tradeweb","status":"filled","fees":275.1},
+   {"id":"T-10073","symbol":"GBPUSD","assetClass":"fx","side":"sell","quantity":14000000,"filledQuantity":14000000,"price":1.29187,"currency":"USD","executedAt":"2026-10-15T07:02:04Z","clientId":"c-007","trader":"D. Whitaker","venue":"Refinitiv Matching","status":"filled","fees":361.72},
+   {"id":"T-10074","symbol":"SAP","assetClass":"equity","side":"sell","quantity":1100,"filledQuantity":1100,"price":210.82,"currency":"EUR","executedAt":"2026-10-15T09:45:15Z","clientId":"c-010","trader":"L. Duarte","venue":"XETRA","status":"filled","fees":92.76},
+-  {"id":"T-10075","symbol":"SAP","assetClass":"equity","side":"sell","quantity":2200,"filledQuantity":2200,"price":210.31,"currency":"EUR","executedAt":"2026-10-15T10:35:21Z","clientId":"c-009","trader":"A. Moreau","venue":"NASDAQ","status":"filled","fees":185.07},
++  {"id":"T-10075","symbol":"SAP","assetClass":"equity","side":"sell","quantity":2200,"filledQuantity":2200,"price":210.31,"currency":"EUR","executedAt":"2026-10-15T10:35:21Z","clientId":"c-011","trader":"A. Moreau","venue":"NASDAQ","status":"filled","fees":185.07},
+   {"id":"T-10076","symbol":"XAU","assetClass":"commodity","side":"sell","quantity":299,"filledQuantity":299,"price":2661.98,"currency":"USD","executedAt":"2026-10-15T11:06:26Z","clientId":"c-003","trader":"S. Kim","venue":"ICE","status":"filled","fees":318.37},
+   {"id":"T-10077","symbol":"WTI","assetClass":"commodity","side":"buy","quantity":350,"filledQuantity":350,"price":73.33,"currency":"USD","executedAt":"2026-10-15T12:39:40Z","clientId":"c-004","trader":"A. Moreau","venue":"ICE","status":"filled","fees":10.27},
+   {"id":"T-10078","symbol":"TSLA","assetClass":"equity","side":"sell","quantity":450,"filledQuantity":450,"price":259.97,"currency":"USD","executedAt":"2026-10-15T13:17:20Z","clientId":"c-003","trader":"S. Kim","venue":"XETRA","status":"filled","fees":46.79},
+@@ -87,22 +87,22 @@
+   {"id":"T-10086","symbol":"AAPL","assetClass":"equity","side":"sell","quantity":2750,"filledQuantity":2750,"price":215.89,"currency":"USD","executedAt":"2026-10-16T10:01:21Z","clientId":"c-003","trader":"D. Whitaker","venue":"NYSE","status":"filled","fees":237.48},
+   {"id":"T-10087","symbol":"AAPL","assetClass":"equity","side":"sell","quantity":2050,"filledQuantity":2050,"price":216.22,"currency":"USD","executedAt":"2026-10-16T11:42:42Z","clientId":"c-010","trader":"J. Ortiz","venue":"NYSE","status":"filled","fees":177.3},
+   {"id":"T-10088","symbol":"EURUSD","assetClass":"fx","side":"sell","quantity":19000000,"filledQuantity":19000000,"price":1.08915,"currency":"USD","executedAt":"2026-10-16T13:00:44Z","clientId":"c-001","trader":"S. Kim","venue":"EBS","status":"filled","fees":413.88},
+-  {"id":"T-10089","symbol":"BUND10","assetClass":"bond","side":"buy","quantity":12000,"filledQuantity":12000,"price":100.99,"currency":"EUR","executedAt":"2026-10-16T13:59:47Z","clientId":"c-009","trader":"L. Duarte","venue":"Tradeweb","status":"filled","fees":484.75},
++  {"id":"T-10089","symbol":"BUND10","assetClass":"bond","side":"buy","quantity":12000,"filledQuantity":12000,"price":100.99,"currency":"EUR","executedAt":"2026-10-16T13:59:47Z","clientId":"c-011","trader":"L. Duarte","venue":"Tradeweb","status":"filled","fees":484.75},
+   {"id":"T-10090","symbol":"USDJPY","assetClass":"fx","side":"sell","quantity":16500000,"filledQuantity":16500000,"price":148.661,"currency":"JPY","executedAt":"2026-10-16T14:31:57Z","clientId":"c-008","trader":"A. Moreau","venue":"Currenex","status":"filled","fees":49058.13},
+   {"id":"T-10091","symbol":"SAP","assetClass":"equity","side":"sell","quantity":4450,"filledQuantity":4450,"price":211.01,"currency":"EUR","executedAt":"2026-10-16T16:11:53Z","clientId":"c-001","trader":"S. Kim","venue":"NASDAQ","status":"filled","fees":375.6},
+   {"id":"T-10092","symbol":"TSLA","assetClass":"equity","side":"buy","quantity":3250,"filledQuantity":3250,"price":256.52,"currency":"USD","executedAt":"2026-10-16T18:31:36Z","clientId":"c-004","trader":"D. Whitaker","venue":"NASDAQ","status":"filled","fees":333.48},
+   {"id":"T-10093","symbol":"USDJPY","assetClass":"fx","side":"buy","quantity":10500000,"filledQuantity":10500000,"price":148.164,"currency":"JPY","executedAt":"2026-10-16T19:24:46Z","clientId":"c-003","trader":"S. Kim","venue":"EBS","status":"filled","fees":31114.44},
+   {"id":"T-10094","symbol":"TSLA","assetClass":"equity","side":"sell","quantity":950,"filledQuantity":950,"price":256.27,"currency":"USD","executedAt":"2026-10-16T19:58:03Z","clientId":"c-005","trader":"L. Duarte","venue":"NYSE","status":"filled","fees":97.38},
+   {"id":"T-10095","symbol":"AAPL","assetClass":"equity","side":"sell","quantity":1500,"filledQuantity":0,"price":218.65,"currency":"USD","executedAt":"2026-10-19T07:20:12Z","clientId":"c-005","trader":"S. Kim","venue":"NYSE","status":"cancelled","fees":131.19},
+-  {"id":"T-10096","symbol":"USDJPY","assetClass":"fx","side":"buy","quantity":15500000,"filledQuantity":15500000,"price":148.338,"currency":"JPY","executedAt":"2026-10-19T07:44:12Z","clientId":"c-009","trader":"L. Duarte","venue":"Refinitiv Matching","status":"filled","fees":45984.78},
+-  {"id":"T-10097","symbol":"TSLA","assetClass":"equity","side":"sell","quantity":4500,"filledQuantity":4500,"price":254.8,"currency":"USD","executedAt":"2026-10-19T08:04:33Z","clientId":"c-009","trader":"L. Duarte","venue":"XETRA","status":"filled","fees":458.64},
++  {"id":"T-10096","symbol":"USDJPY","assetClass":"fx","side":"buy","quantity":15500000,"filledQuantity":15500000,"price":148.338,"currency":"JPY","executedAt":"2026-10-19T07:44:12Z","clientId":"c-011","trader":"L. Duarte","venue":"Refinitiv Matching","status":"filled","fees":45984.78},
++  {"id":"T-10097","symbol":"TSLA","assetClass":"equity","side":"sell","quantity":4500,"filledQuantity":4500,"price":254.8,"currency":"USD","executedAt":"2026-10-19T08:04:33Z","clientId":"c-011","trader":"L. Duarte","venue":"XETRA","status":"filled","fees":458.64},
+   {"id":"T-10098","symbol":"BUND10","assetClass":"bond","side":"sell","quantity":16000,"filledQuantity":7620,"price":100.95,"currency":"EUR","executedAt":"2026-10-19T09:09:20Z","clientId":"c-002","trader":"S. Kim","venue":"Tradeweb","status":"partial","fees":646.08},
+   {"id":"T-10099","symbol":"USDJPY","assetClass":"fx","side":"sell","quantity":18000000,"filledQuantity":18000000,"price":148.058,"currency":"JPY","executedAt":"2026-10-19T15:00:54Z","clientId":"c-010","trader":"L. Duarte","venue":"Currenex","status":"filled","fees":53300.88},
+   {"id":"T-10100","symbol":"NVDA","assetClass":"equity","side":"buy","quantity":4750,"filledQuantity":4750,"price":130.63,"currency":"USD","executedAt":"2026-10-19T18:02:46Z","clientId":"c-005","trader":"D. Whitaker","venue":"NASDAQ","status":"filled","fees":248.2},
+   {"id":"T-10101","symbol":"GBPUSD","assetClass":"fx","side":"sell","quantity":24500000,"filledQuantity":24500000,"price":1.28879,"currency":"USD","executedAt":"2026-10-19T19:10:10Z","clientId":"c-004","trader":"J. Ortiz","venue":"Refinitiv Matching","status":"filled","fees":631.51},
+   {"id":"T-10102","symbol":"GBPUSD","assetClass":"fx","side":"sell","quantity":3500000,"filledQuantity":1625247,"price":1.28968,"currency":"USD","executedAt":"2026-10-19T19:39:51Z","clientId":"c-007","trader":"S. Kim","venue":"Currenex","status":"partial","fees":90.28},
+   {"id":"T-10103","symbol":"SAP","assetClass":"equity","side":"sell","quantity":1250,"filledQuantity":1250,"price":213.06,"currency":"EUR","executedAt":"2026-10-20T08:40:29Z","clientId":"c-008","trader":"D. Whitaker","venue":"NYSE","status":"filled","fees":106.53},
+-  {"id":"T-10104","symbol":"BUND10","assetClass":"bond","side":"buy","quantity":15000,"filledQuantity":15000,"price":100.99,"currency":"EUR","executedAt":"2026-10-20T09:17:10Z","clientId":"c-009","trader":"D. Whitaker","venue":"Tradeweb","status":"filled","fees":605.94},
++  {"id":"T-10104","symbol":"BUND10","assetClass":"bond","side":"buy","quantity":15000,"filledQuantity":15000,"price":100.99,"currency":"EUR","executedAt":"2026-10-20T09:17:10Z","clientId":"c-011","trader":"D. Whitaker","venue":"Tradeweb","status":"filled","fees":605.94},
+   {"id":"T-10105","symbol":"BUND10","assetClass":"bond","side":"buy","quantity":19000,"filledQuantity":19000,"price":100.88,"currency":"EUR","executedAt":"2026-10-20T09:55:39Z","clientId":"c-002","trader":"A. Moreau","venue":"Tradeweb","status":"filled","fees":766.69},
+   {"id":"T-10106","symbol":"TSLA","assetClass":"equity","side":"buy","quantity":1600,"filledQuantity":1600,"price":255.97,"currency":"USD","executedAt":"2026-10-20T11:03:17Z","clientId":"c-008","trader":"J. Ortiz","venue":"NYSE","status":"filled","fees":163.82},
+   {"id":"T-10107","symbol":"MSFT","assetClass":"equity","side":"sell","quantity":4350,"filledQuantity":4350,"price":432.01,"currency":"USD","executedAt":"2026-10-20T12:12:42Z","clientId":"c-001","trader":"L. Duarte","venue":"NYSE","status":"filled","fees":751.7},
+@@ -124,11 +124,11 @@
+   {"id":"T-10123","symbol":"USDJPY","assetClass":"fx","side":"sell","quantity":13500000,"filledQuantity":13500000,"price":149.058,"currency":"JPY","executedAt":"2026-10-23T19:44:16Z","clientId":"c-006","trader":"L. Duarte","venue":"Currenex","status":"filled","fees":40245.66},
+   {"id":"T-10124","symbol":"BUND10","assetClass":"bond","side":"sell","quantity":13000,"filledQuantity":13000,"price":100.96,"currency":"EUR","executedAt":"2026-10-23T19:59:55Z","clientId":"c-010","trader":"S. Kim","venue":"Tradeweb","status":"filled","fees":524.99},
+   {"id":"T-10125","symbol":"BUND10","assetClass":"bond","side":"sell","quantity":1000,"filledQuantity":1000,"price":100.94,"currency":"EUR","executedAt":"2026-10-26T07:19:14Z","clientId":"c-005","trader":"S. Kim","venue":"MarketAxess","status":"filled","fees":40.38},
+-  {"id":"T-10126","symbol":"MSFT","assetClass":"equity","side":"buy","quantity":850,"filledQuantity":850,"price":433.61,"currency":"USD","executedAt":"2026-10-26T08:22:26Z","clientId":"c-009","trader":"S. Kim","venue":"XETRA","status":"filled","fees":147.43},
++  {"id":"T-10126","symbol":"MSFT","assetClass":"equity","side":"buy","quantity":850,"filledQuantity":850,"price":433.61,"currency":"USD","executedAt":"2026-10-26T08:22:26Z","clientId":"c-011","trader":"S. Kim","venue":"XETRA","status":"filled","fees":147.43},
+   {"id":"T-10127","symbol":"XAU","assetClass":"commodity","side":"buy","quantity":363,"filledQuantity":363,"price":2621.44,"currency":"USD","executedAt":"2026-10-26T11:37:41Z","clientId":"c-005","trader":"A. Moreau","venue":"CME Globex","status":"filled","fees":380.63},
+   {"id":"T-10128","symbol":"TSLA","assetClass":"equity","side":"buy","quantity":1750,"filledQuantity":1750,"price":256.28,"currency":"USD","executedAt":"2026-10-26T12:26:55Z","clientId":"c-001","trader":"J. Ortiz","venue":"NYSE","status":"filled","fees":179.4},
+   {"id":"T-10129","symbol":"EURUSD","assetClass":"fx","side":"buy","quantity":12500000,"filledQuantity":12500000,"price":1.08346,"currency":"USD","executedAt":"2026-10-26T13:55:04Z","clientId":"c-003","trader":"L. Duarte","venue":"Refinitiv Matching","status":"filled","fees":270.87},
+-  {"id":"T-10130","symbol":"EURUSD","assetClass":"fx","side":"sell","quantity":7500000,"filledQuantity":7500000,"price":1.08673,"currency":"USD","executedAt":"2026-10-26T15:39:55Z","clientId":"c-009","trader":"D. Whitaker","venue":"EBS","status":"filled","fees":163.01},
++  {"id":"T-10130","symbol":"EURUSD","assetClass":"fx","side":"sell","quantity":7500000,"filledQuantity":7500000,"price":1.08673,"currency":"USD","executedAt":"2026-10-26T15:39:55Z","clientId":"c-011","trader":"D. Whitaker","venue":"EBS","status":"filled","fees":163.01},
+   {"id":"T-10131","symbol":"WTI","assetClass":"commodity","side":"sell","quantity":96,"filledQuantity":96,"price":73.09,"currency":"USD","executedAt":"2026-10-26T18:43:06Z","clientId":"c-002","trader":"A. Moreau","venue":"CME Globex","status":"filled","fees":2.81},
+   {"id":"T-10132","symbol":"MSFT","assetClass":"equity","side":"sell","quantity":1750,"filledQuantity":1750,"price":432.68,"currency":"USD","executedAt":"2026-10-26T18:48:13Z","clientId":"c-003","trader":"S. Kim","venue":"XETRA","status":"filled","fees":302.88},
+   {"id":"T-10133","symbol":"EURUSD","assetClass":"fx","side":"sell","quantity":9000000,"filledQuantity":9000000,"price":1.08632,"currency":"USD","executedAt":"2026-10-26T18:53:52Z","clientId":"c-004","trader":"S. Kim","venue":"Currenex","status":"filled","fees":195.54},
+@@ -137,7 +137,7 @@
+   {"id":"T-10136","symbol":"AAPL","assetClass":"equity","side":"buy","quantity":2400,"filledQuantity":2400,"price":227.18,"currency":"USD","executedAt":"2026-10-27T10:27:18Z","clientId":"c-001","trader":"S. Kim","venue":"NASDAQ","status":"filled","fees":218.09},
+   {"id":"T-10137","symbol":"BUND10","assetClass":"bond","side":"sell","quantity":12000,"filledQuantity":12000,"price":101.27,"currency":"EUR","executedAt":"2026-10-27T10:27:34Z","clientId":"c-004","trader":"S. Kim","venue":"Tradeweb","status":"filled","fees":486.1},
+   {"id":"T-10138","symbol":"NVDA","assetClass":"equity","side":"buy","quantity":1800,"filledQuantity":1800,"price":137.97,"currency":"USD","executedAt":"2026-10-27T11:01:15Z","clientId":"c-002","trader":"D. Whitaker","venue":"NYSE","status":"filled","fees":99.34},
+-  {"id":"T-10139","symbol":"AAPL","assetClass":"equity","side":"sell","quantity":1700,"filledQuantity":1700,"price":227.79,"currency":"USD","executedAt":"2026-10-27T11:14:09Z","clientId":"c-009","trader":"S. Kim","venue":"NASDAQ","status":"filled","fees":154.9},
++  {"id":"T-10139","symbol":"AAPL","assetClass":"equity","side":"sell","quantity":1700,"filledQuantity":1700,"price":227.79,"currency":"USD","executedAt":"2026-10-27T11:14:09Z","clientId":"c-011","trader":"S. Kim","venue":"NASDAQ","status":"filled","fees":154.9},
+   {"id":"T-10140","symbol":"AAPL","assetClass":"equity","side":"sell","quantity":1500,"filledQuantity":1500,"price":227.83,"currency":"USD","executedAt":"2026-10-27T11:27:48Z","clientId":"c-003","trader":"L. Duarte","venue":"NYSE","status":"filled","fees":136.7},
+   {"id":"T-10141","symbol":"AAPL","assetClass":"equity","side":"sell","quantity":4300,"filledQuantity":4300,"price":227.91,"currency":"USD","executedAt":"2026-10-27T12:52:48Z","clientId":"c-008","trader":"A. Moreau","venue":"NASDAQ","status":"filled","fees":392.01},
+   {"id":"T-10142","symbol":"MSFT","assetClass":"equity","side":"buy","quantity":2400,"filledQuantity":2400,"price":431.56,"currency":"USD","executedAt":"2026-10-27T13:01:01Z","clientId":"c-008","trader":"L. Duarte","venue":"NASDAQ","status":"filled","fees":414.3},
+diff --git a/src/pages/Clients.test.tsx b/src/pages/Clients.test.tsx
+index 5a207a0..1d9f418 100644
+--- a/src/pages/Clients.test.tsx
++++ b/src/pages/Clients.test.tsx
+@@ -18,7 +18,7 @@ describe("Clients page", () => {
+     await screen.findByText("Northwind Capital");
+     fireEvent.change(screen.getByLabelText("Search clients"), { target: { value: "quill" } });
+     await waitFor(() => expect(screen.queryByText("Northwind Capital")).not.toBeInTheDocument());
+-    expect(screen.getByText("Quill Software")).toBeInTheDocument();
++    expect(screen.getAllByText(/Quill Software/)).toHaveLength(2);
+   });
+ 
+   it("opens the detail drawer for a client", async () => {
+diff --git a/src/pages/Clients.tsx b/src/pages/Clients.tsx
+index cf4a047..f9a3579 100644
+--- a/src/pages/Clients.tsx
++++ b/src/pages/Clients.tsx
+@@ -35,7 +35,7 @@ export function Clients() {
+           <input
+             type="search"
+             className="input"
+-            placeholder="Search clients"
++            placeholder="Search clients or contacts"
+             aria-label="Search clients"
+             value={query}
+             onChange={(event) => setQuery(event.target.value)}
+diff --git a/src/pages/Dashboard.tsx b/src/pages/Dashboard.tsx
+index bd578cd..80c5f8a 100644
+--- a/src/pages/Dashboard.tsx
++++ b/src/pages/Dashboard.tsx
+@@ -1,7 +1,9 @@
+ import { fetchInstruments, fetchKpis } from "../api";
+ import { AsyncContent } from "../components/AsyncContent";
++import { NewClients } from "../components/dashboard/NewClients";
+ import { RecentActivity } from "../components/dashboard/RecentActivity";
+ import { TopMovers } from "../components/dashboard/TopMovers";
++import { TradesByClient } from "../components/dashboard/TradesByClient";
+ import { Watchlist } from "../components/dashboard/Watchlist";
+ import { InstrumentTable } from "../components/InstrumentTable";
+ import { KpiCard } from "../components/KpiCard";
+@@ -62,6 +64,20 @@ export function Dashboard() {
+           </section>
+         </div>
+       </div>
++      <div className="page__columns">
++        <section className="panel" aria-label="Trades by client">
++          <div className="panel__header">
++            <h2 className="panel__title">Trades by client</h2>
++          </div>
++          <TradesByClient />
++        </section>
++        <section className="panel" aria-label="New clients this month">
++          <div className="panel__header">
++            <h2 className="panel__title">New clients this month</h2>
++          </div>
++          <NewClients />
++        </section>
++      </div>
+       <section className="panel" aria-label="Recent activity">
+         <div className="panel__header">
+           <h2 className="panel__title">Recent activity</h2>
+diff --git a/src/pages/InstrumentDetail.tsx b/src/pages/InstrumentDetail.tsx
+index 9cc312d..f7a918c 100644
+--- a/src/pages/InstrumentDetail.tsx
++++ b/src/pages/InstrumentDetail.tsx
+@@ -2,6 +2,7 @@ import { Link, useParams } from "react-router-dom";
+ import { fetchInstrument, fetchInstrumentStats } from "../api";
+ import { AsyncContent } from "../components/AsyncContent";
+ import { InstrumentHeader } from "../components/instrument/InstrumentHeader";
++import { DailyTrend } from "../components/instrument/DailyTrend";
+ import { KeyStats } from "../components/instrument/KeyStats";
+ import { PriceHistory } from "../components/instrument/PriceHistory";
+ import { RecentTrades } from "../components/instrument/RecentTrades";
+@@ -39,6 +40,12 @@ function InstrumentView({ instrument, stats }: InstrumentBundle) {
+           <KeyStats instrument={instrument} stats={stats} />
+         </section>
+       </div>
++      <section className="panel" aria-label="Daily trend">
++        <div className="panel__header">
++          <h2 className="panel__title">Daily trend</h2>
++        </div>
++        <DailyTrend symbol={instrument.symbol} currency={instrument.currency} />
++      </section>
+       <section className="panel" aria-label="Recent trades">
+         <div className="panel__header">
+           <h2 className="panel__title">Recent trades</h2>
+diff --git a/src/pages/Portfolio.test.tsx b/src/pages/Portfolio.test.tsx
+index 8affe68..24b478d 100644
+--- a/src/pages/Portfolio.test.tsx
++++ b/src/pages/Portfolio.test.tsx
+@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
+ import { MemoryRouter } from "react-router-dom";
+ import { beforeAll, describe, expect, it } from "vitest";
+ import { fetchPositions, latency } from "../api";
+-import { formatCurrency } from "../utils/format";
++import { formatWholeDollars } from "../utils/format";
+ import { Portfolio } from "./Portfolio";
+ 
+ beforeAll(() => {
+@@ -26,7 +26,7 @@ describe("Portfolio page", () => {
+     expect(rowHeaders[rowHeaders.length - 1]).toHaveTextContent("Total (11 positions)");
+     const positions = await fetchPositions();
+     const total = positions.reduce((sum, p) => sum + p.marketValueUsd, 0);
+-    expect(screen.getByTestId("total-market-value")).toHaveTextContent(formatCurrency(total));
++    expect(screen.getByTestId("total-market-value")).toHaveTextContent(formatWholeDollars(total));
+   });
+ 
+   it("re-sorts holdings and charts the allocation", async () => {
+diff --git a/src/pages/Portfolio.tsx b/src/pages/Portfolio.tsx
+index 0d10092..6838599 100644
+--- a/src/pages/Portfolio.tsx
++++ b/src/pages/Portfolio.tsx
+@@ -1,12 +1,17 @@
+ import { useMemo } from "react";
++import { Link } from "react-router-dom";
+ import { fetchPositions } from "../api";
+ import { AsyncContent } from "../components/AsyncContent";
+ import { AllocationChart } from "../components/portfolio/AllocationChart";
+ import { HoldingsTable } from "../components/portfolio/HoldingsTable";
++import { PortfolioHealth } from "../components/portfolio/PortfolioHealth";
++import { holdingsCsv } from "../components/portfolio/portfolioCsv";
+ import { PortfolioSummary } from "../components/portfolio/PortfolioSummary";
++import { TopContributors } from "../components/portfolio/TopContributors";
+ import { useAsync } from "../hooks/useAsync";
+ import { useDocumentTitle } from "../hooks/useDocumentTitle";
+ import type { Position } from "../types";
++import { downloadCsv } from "../utils/csv";
+ import { allocationByClass, portfolioTotals } from "../utils/portfolio";
+ 
+ function PortfolioView({ positions }: { positions: Position[] }) {
+@@ -15,11 +20,27 @@ function PortfolioView({ positions }: { positions: Position[] }) {
+   return (
+     <>
+       <PortfolioSummary totals={totals} />
++      <section className="panel" aria-label="Portfolio health">
++        <div className="panel__header">
++          <h2 className="panel__title">Portfolio health</h2>
++        </div>
++        <PortfolioHealth positions={positions} />
++      </section>
+       <div className="page__columns">
+         <section className="panel" aria-label="Holdings">
+           <div className="panel__header">
+             <h2 className="panel__title">Holdings</h2>
+-            <p className="panel__hint">Values in USD at today's FX rates</p>
++            <p className="panel__hint">Values in whole USD at today's FX rates</p>
++            <div className="panel__actions">
++              <Link to="/portfolio/print">Print view</Link>
++              <button
++                type="button"
++                className="button"
++                onClick={() => downloadCsv("pulse-portfolio.csv", holdingsCsv(positions))}
++              >
++                Export portfolio CSV
++              </button>
++            </div>
+           </div>
+           <HoldingsTable positions={positions} totals={totals} />
+         </section>
+@@ -30,6 +51,12 @@ function PortfolioView({ positions }: { positions: Position[] }) {
+           <AllocationChart slices={allocation} />
+         </section>
+       </div>
++      <section className="panel" aria-label="Top contributors">
++        <div className="panel__header">
++          <h2 className="panel__title">Top contributors</h2>
++        </div>
++        <TopContributors positions={positions} />
++      </section>
+     </>
+   );
+ }
+diff --git a/src/pages/PortfolioPrint.tsx b/src/pages/PortfolioPrint.tsx
+new file mode 100644
+index 0000000..459d291
+--- /dev/null
++++ b/src/pages/PortfolioPrint.tsx
+@@ -0,0 +1,51 @@
++import { Link } from "react-router-dom";
++import { fetchPositions } from "../api";
++import { AsyncContent } from "../components/AsyncContent";
++import { useAsync } from "../hooks/useAsync";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import { formatWholeDollars } from "../utils/format";
++import { portfolioTotals } from "../utils/portfolio";
++
++/** A plain statement of the holdings for printing, outside the app shell. */
++export function PortfolioPrint() {
++  useDocumentTitle("Portfolio statement");
++  const state = useAsync(fetchPositions, []);
++  return (
++    <main className="print-view">
++      <h1>Portfolio statement</h1>
++      <p className="print-view__back">
++        <Link to="/portfolio">Back to portfolio</Link>
++      </p>
++      <AsyncContent state={state} loadingLabel="Loading statement">
++        {(positions) => (
++          <table className="table">
++            <thead>
++              <tr>
++                <th scope="col">Instrument</th>
++                <th scope="col" className="table__num">
++                  Market value (USD)
++                </th>
++              </tr>
++            </thead>
++            <tbody>
++              {[...positions]
++                .sort((a, b) => b.marketValueUsd - a.marketValueUsd)
++                .map((p) => (
++                  <tr key={p.id}>
++                    <th scope="row">{p.symbol}</th>
++                    <td className="table__num">{formatWholeDollars(p.marketValueUsd)}</td>
++                  </tr>
++                ))}
++            </tbody>
++            <tfoot>
++              <tr className="table__totals">
++                <th scope="row">Total</th>
++                <td className="table__num">{formatWholeDollars(portfolioTotals(positions).marketValueUsd)}</td>
++              </tr>
++            </tfoot>
++          </table>
++        )}
++      </AsyncContent>
++    </main>
++  );
++}
+diff --git a/src/pages/Reports.tsx b/src/pages/Reports.tsx
+index 8b630fa..d2a2a40 100644
+--- a/src/pages/Reports.tsx
++++ b/src/pages/Reports.tsx
+@@ -14,7 +14,7 @@ const filters: { id: ReportFilter; label: string }[] = [
+   { id: "all", label: "All" },
+   { id: "published", label: "Published" },
+   { id: "scheduled", label: "Scheduled" },
+-  { id: "draft", label: "Drafts" },
++  { id: "draft", label: "Draft" },
+   { id: "failed", label: "Failed" },
+ ];
+ 
+diff --git a/src/pages/Settings.tsx b/src/pages/Settings.tsx
+index 139ca21..84de9b2 100644
+--- a/src/pages/Settings.tsx
++++ b/src/pages/Settings.tsx
+@@ -11,7 +11,7 @@ export function Settings() {
+         </div>
+         <Toggle
+           label="Dark theme"
+-          description="Use the dark color scheme."
++          description="Use the dark color scheme everywhere."
+           checked={settings.theme === "dark"}
+           onChange={(on) => update("theme", on ? "dark" : "light")}
+         />
+diff --git a/src/pages/Trades.tsx b/src/pages/Trades.tsx
+index d51b2ca..866a9c5 100644
+--- a/src/pages/Trades.tsx
++++ b/src/pages/Trades.tsx
+@@ -104,7 +104,7 @@ export function Trades() {
+         <div className="panel__header">
+           <h2 className="panel__title">Trade blotter</h2>
+           <button type="button" className="button" onClick={exportCsv} disabled={!state.data || state.data.length === 0}>
+-            Export CSV
++            Export trades CSV
+           </button>
+         </div>
+         <TradeFilters value={filters} onChange={changeFilters} onReset={() => changeFilters(emptyTradeFilters)} />
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 3f94e98..79604a4 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -1408,3 +1408,79 @@ p {
+   font-size: var(--font-size-sm);
+   color: var(--color-text-muted);
+ }
++
++/* Simple lists (dashboard client panels) */
++.simple-list {
++  list-style: none;
++  margin: 0;
++  padding: 0;
++}
++
++.simple-list li {
++  padding: var(--space-2) 0;
++  border-bottom: 1px solid var(--color-border);
++}
++
++.simple-list__row {
++  display: grid;
++  grid-template-columns: minmax(0, 1fr) auto auto;
++  gap: var(--space-4);
++}
++
++.simple-list__name {
++  font-weight: 600;
++}
++
++.simple-list__aum {
++  min-width: 110px;
++  text-align: right;
++  font-variant-numeric: tabular-nums;
++}
++
++.badge--closed {
++  margin-left: var(--space-2);
++  color: var(--color-down);
++}
++
++/* Settings switches */
++.toggle--on .toggle__input {
++  accent-color: var(--color-switch-on);
++}
++
++/* Portfolio health, holdings actions and the print view */
++.health__label {
++  margin-bottom: var(--space-2);
++  font-weight: 600;
++}
++
++.health__track {
++  fill: var(--color-chart-track);
++}
++
++.health__bar {
++  fill: var(--color-accent);
++}
++
++.panel__actions {
++  display: flex;
++  align-items: center;
++  gap: var(--space-4);
++}
++
++.print-view {
++  max-width: 720px;
++  margin: 0 auto;
++  padding: var(--space-5);
++  background: var(--color-surface);
++  color: var(--color-text);
++}
++
++.print-view__back {
++  margin-bottom: var(--space-4);
++}
++
++@media print {
++  .print-view__back {
++    display: none;
++  }
++}
+diff --git a/src/styles/theme.css b/src/styles/theme.css
+index 5ddf04a..1a5b5bc 100644
+--- a/src/styles/theme.css
++++ b/src/styles/theme.css
+@@ -14,6 +14,7 @@
+   --color-down: #c8372d;
+   --color-warning: #b7791f;
+   --color-neutral: #6b7385;
++  --color-switch-on: #2f5bea;
+ 
+   --space-1: 4px;
+   --space-2: 8px;
+@@ -62,6 +63,7 @@
+   --color-down: #ff6b61;
+   --color-warning: #e3a84a;
+   --color-neutral: #8590a6;
++  --color-switch-on: #8fa8ff;
+   --color-chart-equity: #6b8cff;
+   --color-chart-bond: #3ec790;
+   --color-chart-commodity: #e3a84a;
+diff --git a/src/types.ts b/src/types.ts
+index cbc9d94..35d11ed 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -20,9 +20,14 @@ export interface Kpi {
+ 
+ export type ClientTier = "institutional" | "corporate" | "private";
+ 
++export type ClientStatus = "active" | "closed";
++
+ export interface Client {
+   id: string;
+   name: string;
++  status: ClientStatus;
++  /** Day the account was opened, `YYYY-MM-DD`. */
++  openedAt: string;
+   tier: ClientTier;
+   region: string;
+   contact: string;
+diff --git a/src/utils/clients.test.ts b/src/utils/clients.test.ts
+new file mode 100644
+index 0000000..85ffcb2
+--- /dev/null
++++ b/src/utils/clients.test.ts
+@@ -0,0 +1,32 @@
++import { describe, expect, it } from "vitest";
++import type { Client, Trade } from "../types";
++import { newClientsInMonth, totalsByClient } from "./clients";
++
++const client = (id: string, name: string, status: Client["status"], openedAt: string, aum: number) =>
++  ({ id, name, status, openedAt, aum }) as Client;
++const trade = (clientId: string) => ({ clientId }) as Trade;
++
++const clients = [
++  client("1", "Quill Software", "closed", "2025-11-03", 38),
++  client("2", "quill software ", "active", "2026-10-15", 41),
++  client("3", "Tidewater", "active", "2026-10-08", 67),
++  client("4", "Aardvark", "active", "2025-01-01", 5),
++];
++
++describe("totalsByClient", () => {
++  it("sums trades over every account of a client, counts only open accounts' AUM and orders ties by name", () => {
++    const rows = totalsByClient(clients, [trade("1"), trade("1"), trade("2"), trade("3"), trade("4")]);
++    expect(rows).toEqual([
++      { name: "Quill Software", trades: 3, aumUsd: 41 },
++      { name: "Aardvark", trades: 1, aumUsd: 5 },
++      { name: "Tidewater", trades: 1, aumUsd: 67 },
++    ]);
++  });
++});
++
++describe("newClientsInMonth", () => {
++  it("does not treat a replacement account as a new client", () => {
++    expect(newClientsInMonth(clients, "2026-10-27")).toEqual(["Tidewater"]);
++    expect(newClientsInMonth(clients, "2026-11-02")).toEqual([]);
++  });
++});
+diff --git a/src/utils/clients.ts b/src/utils/clients.ts
+new file mode 100644
+index 0000000..14e49f8
+--- /dev/null
++++ b/src/utils/clients.ts
+@@ -0,0 +1,45 @@
++import type { Client, Trade } from "../types";
++
++/** One client can hold several accounts (a closed one and its replacement); the name is the identity. */
++export function clientKey(name: string): string {
++  return name.trim().toLowerCase();
++}
++
++export interface ClientTotals {
++  name: string;
++  trades: number;
++  /** Assets under management across the client's open accounts. */
++  aumUsd: number;
++}
++
++/** One row per client: trades and open-account AUM summed over all of its accounts. */
++export function totalsByClient(clients: readonly Client[], trades: readonly Trade[]): ClientTotals[] {
++  const idToKey = new Map(clients.map((client) => [client.id, clientKey(client.name)]));
++  const rows = new Map<string, ClientTotals>();
++  for (const client of clients) {
++    const key = clientKey(client.name);
++    const row = rows.get(key) ?? { name: client.name, trades: 0, aumUsd: 0 };
++    if (client.status === "active") row.aumUsd += client.aum;
++    rows.set(key, row);
++  }
++  for (const trade of trades) {
++    const row = rows.get(idToKey.get(trade.clientId) ?? "");
++    if (row) row.trades += 1;
++  }
++  return [...rows.values()].sort((a, b) => b.trades - a.trades || a.name.localeCompare(b.name, "en-US"));
++}
++
++/** Clients whose first account was opened in the same month as `today`; a replacement account does not make a client new. */
++export function newClientsInMonth(clients: readonly Client[], today: string): string[] {
++  const month = today.slice(0, 7);
++  const firstOpened = new Map<string, { name: string; openedAt: string }>();
++  for (const client of clients) {
++    const key = clientKey(client.name);
++    const known = firstOpened.get(key);
++    if (!known || client.openedAt < known.openedAt) firstOpened.set(key, { name: client.name, openedAt: client.openedAt });
++  }
++  return [...firstOpened.values()]
++    .filter((entry) => entry.openedAt.slice(0, 7) === month)
++    .map((entry) => entry.name)
++    .sort((a, b) => a.localeCompare(b, "en-US"));
++}
+diff --git a/src/utils/dates.ts b/src/utils/dates.ts
+index f40bb8a..ff89e1f 100644
+--- a/src/utils/dates.ts
++++ b/src/utils/dates.ts
+@@ -1,5 +1,8 @@
+ export const DAY_MS = 24 * 60 * 60 * 1000;
+ 
++/** The data is frozen at this day; "today" and "this month" are read from it, not from the clock. */
++export const AS_OF_DAY = "2026-10-27";
++
+ const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+ 
+ const shortDateFormatter = new Intl.DateTimeFormat("en-US", {
+diff --git a/src/utils/format.test.ts b/src/utils/format.test.ts
+index 774d082..34e1fdf 100644
+--- a/src/utils/format.test.ts
++++ b/src/utils/format.test.ts
+@@ -5,6 +5,7 @@ import {
+   formatPercent,
+   formatSignedPercent,
+   formatVolume,
++  formatWholeDollars,
+ } from "./format";
+ 
+ describe("formatCurrency", () => {
+@@ -46,3 +47,11 @@ describe("formatDate", () => {
+   });
+ });
+ 
++
++describe("formatWholeDollars", () => {
++  it("rounds to whole dollars with a thousands separator", () => {
++    expect(formatWholeDollars(1234567.89)).toBe("$1,234,568");
++    expect(formatWholeDollars(-1234.4)).toBe("-$1,234");
++    expect(formatWholeDollars(0)).toBe("$0");
++  });
++});
+diff --git a/src/utils/format.ts b/src/utils/format.ts
+index 47a0af8..fb90daf 100644
+--- a/src/utils/format.ts
++++ b/src/utils/format.ts
+@@ -23,6 +23,15 @@ export function formatCurrency(value: number, currency = "USD"): string {
+   }).format(value);
+ }
+ 
++/** Whole dollars with a thousands separator, the house format for reports: $1,234,568. */
++export function formatWholeDollars(value: number): string {
++  return new Intl.NumberFormat("en-US", {
++    style: "currency",
++    currency: "USD",
++    maximumFractionDigits: 0,
++  }).format(value);
++}
++
+ export function formatCompactCurrency(value: number, currency = "USD"): string {
+   return new Intl.NumberFormat("en-US", {
+     style: "currency",
+diff --git a/src/utils/portfolio.test.ts b/src/utils/portfolio.test.ts
+index 89cbe24..df60030 100644
+--- a/src/utils/portfolio.test.ts
++++ b/src/utils/portfolio.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it } from "vitest";
+-import type { Holding, Instrument } from "../types";
+-import { allocationByClass, buildPositions, portfolioTotals } from "./portfolio";
++import type { Holding, Instrument, Position } from "../types";
++import { allocationByClass, buildPositions, healthScore, portfolioTotals, topContributors } from "./portfolio";
+ 
+ const instruments: Instrument[] = [
+   { symbol: "AAA", name: "Alpha", assetClass: "equity", price: 110, changePct: 0.1, volume: 1, currency: "USD" },
+@@ -36,3 +36,31 @@ describe("portfolioTotals and allocationByClass", () => {
+     expect(slices[0]?.weight).toBeCloseTo(2000 / 3100);
+   });
+ });
++
++describe("healthScore", () => {
++  const position = (id: string, name: string, marketValueUsd: number, costBasisUsd: number) =>
++    ({ id, name, marketValueUsd, costBasisUsd, unrealizedPnlUsd: marketValueUsd - costBasisUsd, unrealizedPnlPct: (marketValueUsd - costBasisUsd) / costBasisUsd }) as Position;
++  const weigh = (rows: Position[]) => {
++    const total = rows.reduce((sum, p) => sum + p.marketValueUsd, 0);
++    return rows.map((p) => ({ ...p, weight: p.marketValueUsd / total }));
++  };
++
++  it("rounds each part, adds them and holds the score to 0..100", () => {
++    const mixed = healthScore(weigh([position("a", "A", 600, 500), position("b", "B", 400, 400)]));
++    expect(mixed).toMatchObject({ diversification: 24, performance: 22, raw: 46, score: 46 });
++    const high = healthScore(weigh([position("a", "A", 500, 100), position("b", "B", 500, 100)]));
++    expect(high.raw).toBeGreaterThan(100);
++    expect(high.score).toBe(100);
++    const low = healthScore(weigh([position("a", "A", 100, 400)]));
++    expect(low.raw).toBeLessThan(0);
++    expect(low.score).toBe(0);
++  });
++});
++
++describe("topContributors", () => {
++  it("ranks by whole-dollar P&L, biggest first, then by name, and cuts to the limit", () => {
++    const row = (name: string, pnl: number) => ({ id: name, name, unrealizedPnlUsd: pnl }) as Position;
++    const ranked = topContributors([row("Zed", 1000.2), row("Big", 5000), row("Alpha", 999.9), row("Loss", -50), row("Small", 3)], 4);
++    expect(ranked.map((p) => p.name)).toEqual(["Big", "Alpha", "Zed", "Small"]);
++  });
++});
+diff --git a/src/utils/portfolio.ts b/src/utils/portfolio.ts
+index 69737e2..f43aced 100644
+--- a/src/utils/portfolio.ts
++++ b/src/utils/portfolio.ts
+@@ -1,5 +1,5 @@
+ import type { AllocationSlice, AssetClass, FxRates, Holding, Instrument, PortfolioTotals, Position } from "../types";
+-import { percentOf, sum, toUsd } from "./numbers";
++import { clamp, percentOf, sum, toUsd } from "./numbers";
+ 
+ export const assetClassLabels: Record<AssetClass, string> = {
+   equity: "Equities",
+@@ -63,3 +63,35 @@ export function allocationByClass(positions: readonly Position[]): AllocationSli
+   });
+   return slices.filter((slice) => slice.valueUsd > 0).sort((a, b) => b.valueUsd - a.valueUsd);
+ }
++
++export interface HealthScore {
++  diversification: number;
++  performance: number;
++  /** The two parts added up, before it is held to 0..100. */
++  raw: number;
++  score: number;
++}
++
++/**
++ * Portfolio health from 0 to 100: up to 60 points for spreading risk (one minus the biggest position's
++ * weight) plus 200 times the unrealized return on cost. Each part is rounded to a whole number first, then
++ * the sum is held to 0..100, so the label and the bar always agree.
++ */
++export function healthScore(positions: readonly Position[]): HealthScore {
++  const totals = portfolioTotals(positions);
++  const largest = Math.max(0, ...positions.map((p) => p.weight));
++  const diversification = Math.round(60 * (1 - largest));
++  const performance = Math.round(200 * totals.unrealizedPnlPct);
++  const raw = diversification + performance;
++  return { diversification, performance, raw, score: clamp(raw, 0, 100) };
++}
++
++/** Positions by unrealized P&L in whole dollars, biggest first; equal amounts are ordered by name. */
++export function topContributors(positions: readonly Position[], limit = 10): Position[] {
++  return [...positions]
++    .sort(
++      (a, b) =>
++        Math.round(b.unrealizedPnlUsd) - Math.round(a.unrealizedPnlUsd) || a.name.localeCompare(b.name, "en-US"),
++    )
++    .slice(0, limit);
++}
+diff --git a/src/utils/trend.test.ts b/src/utils/trend.test.ts
+new file mode 100644
+index 0000000..71455c0
+--- /dev/null
++++ b/src/utils/trend.test.ts
+@@ -0,0 +1,18 @@
++import { describe, expect, it } from "vitest";
++import type { PricePoint } from "../types";
++import { trendWindow } from "./trend";
++
++const days: PricePoint[] = Array.from({ length: 90 }, (_, i) => ({
++  date: new Date(Date.UTC(2026, 6, 1) + i * 86400000).toISOString().slice(0, 10),
++  close: 100 + i,
++}));
++
++describe("trendWindow", () => {
++  it("shows at most the latest 30 days, fewer for a short range, none for an empty one", () => {
++    expect(trendWindow(days, "", "")).toHaveLength(30);
++    expect(trendWindow(days, "", "")[29]?.close).toBe(189);
++    expect(trendWindow(days, "2026-07-01", "")).toHaveLength(30);
++    expect(trendWindow(days, "2026-07-03", "2026-07-05").map((p) => p.date)).toEqual(["2026-07-03", "2026-07-04", "2026-07-05"]);
++    expect(trendWindow(days, "2027-01-01", "")).toEqual([]);
++  });
++});
+diff --git a/src/utils/trend.ts b/src/utils/trend.ts
+new file mode 100644
+index 0000000..392fd3a
+--- /dev/null
++++ b/src/utils/trend.ts
+@@ -0,0 +1,13 @@
++import type { PricePoint } from "../types";
++
++/** The most days the daily trend ever shows. */
++export const TREND_MAX_DAYS = 30;
++
++/**
++ * The days of `points` (oldest first) between `from` and `to`, both days included and either one optional,
++ * cut to the latest `TREND_MAX_DAYS`.
++ */
++export function trendWindow(points: readonly PricePoint[], from: string, to: string): PricePoint[] {
++  const inRange = points.filter((point) => (!from || point.date >= from) && (!to || point.date <= to));
++  return inRange.slice(-TREND_MAX_DAYS);
++}

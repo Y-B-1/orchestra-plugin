@@ -2,7 +2,19 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
-## 3.2.0 — 2026-10-30
+## 3.3.0 — 2026-10-29
+
+Every engineering capability of mattpocock/skills and pstack is now in Orchestra, as good as or better than the source, without slowing the fast path. `docs/COVERAGE.md` lists all 105 source skills, where Orchestra covers each one and what loads it: all 80 in-scope skills are better or equal; 25 are out of scope (prose style, video, personal recaps, a pack's own setup and help menus).
+
+- **Added: `ship` and `verify` situation skills.** `ship` opens, updates and fixes pull requests (red CI, review comments, conflicts, a reviewable body, pre-commit hooks, git guardrails on request). `verify` drives the real app and models flows with many states.
+- **Changed: every skill folded with its sources.** Each role and situation skill now holds the steps of the matching mattpocock and pstack skills that prevent a real failure, with detail in 30 reference files read only when a routing row or skill names them.
+- **Added: routing rows** for architecture surveys, branch review since a ref, deep adversarial review, specs, PRDs and tickets, measured numbers, retros, steps only a person can take, handoffs, arenas, blast-radius questions, type-reshaping refactors, boundary lints and migrations of an old API.
+- **Changed: builders** write the failing test first, take expected values from the spec, mock only system boundaries, name the data shape, and read the types lens in typed code. Mechanical builders script edits that repeat across many files.
+- **Added: first-time-right checks from the owner's rework patterns.** The main skill writes them into each brief they apply to: "all" or "every" asks land in every sibling place, UI fixes hold in every theme, computed values stay in bounds and agree with their labels, lists respect their window with one row per entity, a multi-rule flow gets one check per rule, a later correction in the prompt wins, approved work runs without asking, and no done claim while an ask is open.
+- **Changed: review briefs** name every lens the diff shows a risk for, and a run with no independent reviewer reports BLOCKED instead of passing.
+- **Benchmark:** two new tasks, F and G, built from the owner's real rework patterns (35 and 40 hidden tests), run against plain Claude Code, mattpocock/skills and pstack 0.9.108 (47c6f80). The report now scores each rubric row once.
+
+## 3.2.0 — 2026-10-29
 
 Brings back every capability of 2.15 that 3.0 dropped, without slowing 3.0's fast path. Version 3.1.0 was built and benchmarked but not released: it loaded its lessons into every builder and reviewer, which cost about 36% more time with no quality gain. 3.2 keeps 3.0's agent text on the fast path and loads each lesson only when its situation applies.
 

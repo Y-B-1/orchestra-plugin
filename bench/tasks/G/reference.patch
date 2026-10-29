@@ -1,0 +1,1156 @@
+diff --git a/README.md b/README.md
+index 344f452..cd4a0b2 100644
+--- a/README.md
++++ b/README.md
+@@ -2,7 +2,24 @@
+ 
+ Pulse is an internal market-insights dashboard. It shows key figures, a sortable table of instruments, a watchlist, top movers and recent activity; the house portfolio with an allocation chart; a filterable, paginated trade blotter with a detail drawer; an instrument page with price history, key stats and recent trades; a searchable client list with a detail drawer and client notes; a list of daily reports with status badges; notifications in the top bar; and user settings (theme and notifications) saved in the browser.
+ 
+-Routes: `/` dashboard, `/portfolio`, `/trades`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`.
++Routes: `/sign-in`, `/` dashboard, `/portfolio`, `/trades`, `/venues`, `/instruments/:symbol`, `/clients`, `/reports`, `/settings`. Every route except `/sign-in` needs a signed-in user.
++
++## Sign-in
++
++Pulse asks for an email and a password at `/sign-in`. The mock accounts are in `src/data/users.json`: `dana@pulse.test` and `owen@pulse.test` (admins), `marc@pulse.test` (trader) and `ines@pulse.test` (analyst).
++
++- There is no shared or demo password and no passwordless "claim" page; one password only works for its own account.
++- Every sign-in failure shows the same message, "Wrong email or password.", and nothing ever locks an account.
++- The session is the user's email, saved as a JSON string under `pulse.session`. A reload keeps you signed in, and "Sign out" in the user menu removes it. People who already have that key stay signed in.
++- Every user except the admins must choose a new password the first time they sign in (at least 10 characters, typed twice). Chosen passwords are kept in this browser under `pulse.passwords`; after that the old password stops working and nobody is asked again.
++
++## Settings and navigation
++
++Preferences are saved under `pulse.settings` as `{ "theme", "alerts": { "email", "digest" }, "navbar" }`. A value in the old flat shape (`emailAlerts`, `pushAlerts`, `weeklyDigest`) is converted when Pulse loads and written back; push alerts were never used and are gone. The conversion lives in `src/utils/settings.ts`.
++
++The navigation has three variants, chosen in Settings under Appearance as "Navigation style": `sidebar` (the default), `compact` (a narrow sidebar with the first letter of each page and the full name as tooltip) and `top` (the links in the top bar). The variant name is on the `Primary` navigation as `data-variant`. The links and the top bar titles come from one list in `src/components/pages.ts`.
++
++The Venues page (`/venues`) counts the trades, and how many ended filled, partially filled and cancelled, for each venue. It is laid out like the Trades page.
+ 
+ All data is mocked: typed fetchers in `src/api` read JSON files in `src/data` after a short artificial delay.
+ 
+@@ -23,8 +40,8 @@ npm run build      # type check, then production build into dist/
+ 
+ - `src/components` shared UI pieces (Table, Drawer, Tabs, Pagination, AsyncContent and more), with tests beside them
+ - `src/components/<feature>` pieces used by one area: `trades`, `portfolio`, `instrument`, `notifications`, `clients`, `dashboard`
+-- `src/pages` one component per route
+-- `src/hooks` data loading (`useAsync`), `useDebounce`, `useLocalStorage`, and the settings and notifications contexts
++- `src/pages` one component per route (including `SignIn` and `ChangePassword`)
++- `src/hooks` data loading (`useAsync`), `useDebounce`, `useLocalStorage`, and the auth, settings and notifications contexts
+ - `src/api` mock fetchers; `src/data` JSON fixtures
+ - `src/utils` formatting (`format`, `numbers`, `dates`), sorting, pagination, CSV, portfolio maths, storage and search helpers
+ - `src/styles/theme.css` theme variables; `global.css` styles
+diff --git a/src/App.tsx b/src/App.tsx
+index cbe0cf5..5ac593f 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -1,20 +1,32 @@
+-import { Route, Routes } from "react-router-dom";
++import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+ import { Shell } from "./components/Shell";
++import { useAuth } from "./hooks/useAuth";
++import { ChangePassword } from "./pages/ChangePassword";
+ import { Clients } from "./pages/Clients";
+ import { Dashboard } from "./pages/Dashboard";
+ import { InstrumentDetail } from "./pages/InstrumentDetail";
+ import { Portfolio } from "./pages/Portfolio";
+ import { Reports } from "./pages/Reports";
+ import { Settings } from "./pages/Settings";
++import { SignIn } from "./pages/SignIn";
+ import { Trades } from "./pages/Trades";
++import { Venues } from "./pages/Venues";
+ 
+ export function App() {
++  const { user, pending } = useAuth();
++  const { pathname } = useLocation();
++
++  if (pending) return <ChangePassword />;
++  if (!user) return pathname === "/sign-in" ? <SignIn /> : <Navigate to="/sign-in" replace />;
++
+   return (
+     <Routes>
++      <Route path="sign-in" element={<Navigate to="/" replace />} />
+       <Route element={<Shell />}>
+         <Route index element={<Dashboard />} />
+         <Route path="portfolio" element={<Portfolio />} />
+         <Route path="trades" element={<Trades />} />
++        <Route path="venues" element={<Venues />} />
+         <Route path="instruments/:symbol" element={<InstrumentDetail />} />
+         <Route path="clients" element={<Clients />} />
+         <Route path="reports" element={<Reports />} />
+diff --git a/src/api/auth.test.ts b/src/api/auth.test.ts
+new file mode 100644
+index 0000000..78d0e1b
+--- /dev/null
++++ b/src/api/auth.test.ts
+@@ -0,0 +1,32 @@
++import { beforeEach, describe, expect, it } from "vitest";
++import { authenticate, AuthError, savePassword } from "./auth";
++import { latency } from "./client";
++
++beforeEach(() => {
++  latency.ms = 0;
++  localStorage.clear();
++});
++
++describe("authenticate", () => {
++  it("accepts the right password and flags non-admins for a change", async () => {
++    expect((await authenticate("dana@pulse.test", "Harbor-4471")).mustChangePassword).toBe(false);
++    expect((await authenticate("marc@pulse.test", "Quartz-2208")).mustChangePassword).toBe(true);
++  });
++
++  it("rejects the shared demo password and other people's passwords with one error", async () => {
++    await expect(authenticate("dana@pulse.test", "demo")).rejects.toBeInstanceOf(AuthError);
++    await expect(authenticate("dana@pulse.test", "Quartz-2208")).rejects.toThrow("Wrong email or password.");
++    await expect(authenticate("nobody@pulse.test", "Harbor-4471")).rejects.toThrow("Wrong email or password.");
++  });
++
++  it("never locks an account after repeated failures", async () => {
++    for (let i = 0; i < 20; i += 1) await expect(authenticate("ines@pulse.test", "nope")).rejects.toBeInstanceOf(AuthError);
++    await expect(authenticate("ines@pulse.test", "Birch-9315")).resolves.toMatchObject({ mustChangePassword: true });
++  });
++
++  it("uses a chosen password from then on and stops asking for a change", async () => {
++    await savePassword("marc@pulse.test", "a-brand-new-one");
++    await expect(authenticate("marc@pulse.test", "Quartz-2208")).rejects.toBeInstanceOf(AuthError);
++    await expect(authenticate("marc@pulse.test", "a-brand-new-one")).resolves.toMatchObject({ mustChangePassword: false });
++  });
++});
+diff --git a/src/api/auth.ts b/src/api/auth.ts
+new file mode 100644
+index 0000000..0c27ae8
+--- /dev/null
++++ b/src/api/auth.ts
+@@ -0,0 +1,63 @@
++import data from "../data/users.json";
++import type { User } from "../types";
++import { delay } from "./client";
++
++interface Account extends User {
++  password: string;
++}
++
++const accounts = data as Account[];
++
++export const PASSWORDS_KEY = "pulse.passwords";
++export const SIGN_IN_ERROR = "Wrong email or password.";
++
++export class AuthError extends Error {
++  constructor() {
++    super(SIGN_IN_ERROR);
++    this.name = "AuthError";
++  }
++}
++
++export interface SignInResult {
++  user: User;
++  /** True until the person has chosen their own password; admins are exempt. */
++  mustChangePassword: boolean;
++}
++
++function toUser({ email, name, role }: Account): User {
++  return { email, name, role };
++}
++
++/** Passwords people chose themselves, kept in this browser because the mock API has no server. */
++function chosenPasswords(): Record<string, string> {
++  try {
++    const parsed: unknown = JSON.parse(localStorage.getItem(PASSWORDS_KEY) ?? "{}");
++    return typeof parsed === "object" && parsed !== null ? (parsed as Record<string, string>) : {};
++  } catch {
++    return {};
++  }
++}
++
++export function findUser(email: string): User | undefined {
++  const account = accounts.find((a) => a.email === email);
++  return account ? toUser(account) : undefined;
++}
++
++/** Checks an email and password. Every failure is the same error, and nothing ever locks an account. */
++export async function authenticate(email: string, password: string): Promise<SignInResult> {
++  const account = accounts.find((a) => a.email === email.trim().toLowerCase());
++  const chosen = account ? chosenPasswords()[account.email] : undefined;
++  const ok = account !== undefined && password === (chosen ?? account.password);
++  await delay(null);
++  if (!account || !ok) throw new AuthError();
++  return { user: toUser(account), mustChangePassword: account.role !== "admin" && chosen === undefined };
++}
++
++export async function savePassword(email: string, password: string): Promise<void> {
++  try {
++    localStorage.setItem(PASSWORDS_KEY, JSON.stringify({ ...chosenPasswords(), [email]: password }));
++  } catch {
++    // Storage can be full or blocked; the new password then lasts for this session only.
++  }
++  await delay(undefined);
++}
+diff --git a/src/api/index.ts b/src/api/index.ts
+index 41b6cdc..8000226 100644
+--- a/src/api/index.ts
++++ b/src/api/index.ts
+@@ -6,4 +6,6 @@ export { fetchHoldings, fetchFxRates, fetchPositions } from "./holdings";
+ export { fetchTrades, fetchTrade, fetchRecentTrades, emptyTradeFilters, matchesTradeFilters } from "./trades";
+ export { fetchPriceHistory, type HistoryRange } from "./history";
+ export { fetchNotifications } from "./notifications";
++export { authenticate, savePassword, findUser, AuthError } from "./auth";
++export { fetchVenueSummary } from "./venues";
+ export { latency, NotFoundError, ValidationError } from "./client";
+diff --git a/src/api/venues.ts b/src/api/venues.ts
+new file mode 100644
+index 0000000..732cfa5
+--- /dev/null
++++ b/src/api/venues.ts
+@@ -0,0 +1,8 @@
++import data from "../data/trades.json";
++import type { Trade } from "../types";
++import { summarizeVenues, type VenueSummary } from "../utils/venues";
++import { delay } from "./client";
++
++export async function fetchVenueSummary(): Promise<VenueSummary[]> {
++  return delay(summarizeVenues(data as Trade[]));
++}
+diff --git a/src/components/Shell.tsx b/src/components/Shell.tsx
+index 5ac5aa8..aaee2b4 100644
+--- a/src/components/Shell.tsx
++++ b/src/components/Shell.tsx
+@@ -1,13 +1,16 @@
+ import { Outlet } from "react-router-dom";
++import { useSettings } from "../hooks/useSettings";
+ import { Sidebar } from "./Sidebar";
+ import { TopBar } from "./TopBar";
+ 
+ export function Shell() {
++  const { navbar } = useSettings().settings;
++  const top = navbar === "top";
+   return (
+-    <div className="shell">
+-      <Sidebar />
++    <div className={`shell shell--${navbar}`}>
++      {top ? null : <Sidebar variant={navbar} />}
+       <div className="shell__main">
+-        <TopBar />
++        <TopBar navigation={top ? <Sidebar variant="top" /> : undefined} />
+         <main className="shell__content">
+           <Outlet />
+         </main>
+diff --git a/src/components/Sidebar.tsx b/src/components/Sidebar.tsx
+index 450347b..b00bf8b 100644
+--- a/src/components/Sidebar.tsx
++++ b/src/components/Sidebar.tsx
+@@ -1,27 +1,30 @@
+ import { NavLink } from "react-router-dom";
++import type { NavbarVariant } from "../types";
++import { pages } from "./pages";
+ 
+-const links = [
+-  { to: "/", label: "Dashboard", end: true },
+-  { to: "/portfolio", label: "Portfolio", end: false },
+-  { to: "/trades", label: "Trades", end: false },
+-  { to: "/clients", label: "Clients", end: false },
+-  { to: "/reports", label: "Reports", end: false },
+-  { to: "/settings", label: "Settings", end: false },
+-];
+-
+-export function Sidebar() {
++/** The "Primary" navigation in one of three layouts: sidebar, compact sidebar or links in the top bar. */
++export function Sidebar({ variant }: { variant: NavbarVariant }) {
++  const compact = variant === "compact";
+   return (
+-    <nav className="sidebar" aria-label="Primary">
+-      <div className="sidebar__brand">Pulse</div>
++    <nav className={`sidebar sidebar--${variant}`} aria-label="Primary" data-variant={variant}>
++      {variant === "top" ? null : <div className="sidebar__brand">{compact ? "P" : "Pulse"}</div>}
+       <ul className="sidebar__list">
+-        {links.map((link) => (
+-          <li key={link.to}>
++        {pages.map((page) => (
++          <li key={page.to}>
+             <NavLink
+-              to={link.to}
+-              end={link.end}
++              to={page.to}
++              end={page.end}
++              title={compact ? page.label : undefined}
+               className={({ isActive }) => `sidebar__link${isActive ? " sidebar__link--active" : ""}`}
+             >
+-              {link.label}
++              {compact ? (
++                <>
++                  <span aria-hidden="true">{page.label.charAt(0)}</span>
++                  <span className="visually-hidden">{page.label}</span>
++                </>
++              ) : (
++                page.label
++              )}
+             </NavLink>
+           </li>
+         ))}
+diff --git a/src/components/TopBar.tsx b/src/components/TopBar.tsx
+index 6fe578a..d39161d 100644
+--- a/src/components/TopBar.tsx
++++ b/src/components/TopBar.tsx
+@@ -1,29 +1,21 @@
++import type { ReactNode } from "react";
+ import { useLocation } from "react-router-dom";
++import { useAuth } from "../hooks/useAuth";
+ import { NotificationBell } from "./notifications/NotificationBell";
++import { pageTitle } from "./pages";
+ import { UserMenu } from "./UserMenu";
+ 
+-const titles: Record<string, string> = {
+-  "/": "Dashboard",
+-  "/portfolio": "Portfolio",
+-  "/trades": "Trades",
+-  "/clients": "Clients",
+-  "/reports": "Reports",
+-  "/settings": "Settings",
+-};
+-
+-export function pageTitle(pathname: string): string {
+-  if (pathname.startsWith("/instruments/")) return "Instrument";
+-  return titles[pathname] ?? "Pulse";
+-}
+-
+-export function TopBar() {
++/** `navigation` is the Primary nav when it lives in the top bar. */
++export function TopBar({ navigation }: { navigation?: ReactNode }) {
+   const { pathname } = useLocation();
++  const { user } = useAuth();
+   return (
+     <header className="topbar">
+       <h1 className="topbar__title">{pageTitle(pathname)}</h1>
++      {navigation}
+       <div className="topbar__actions">
+         <NotificationBell />
+-        <UserMenu name="Dana Whitaker" />
++        {user ? <UserMenu name={user.name} /> : null}
+       </div>
+     </header>
+   );
+diff --git a/src/components/UserMenu.tsx b/src/components/UserMenu.tsx
+index 0e2a0d1..1cfb04e 100644
+--- a/src/components/UserMenu.tsx
++++ b/src/components/UserMenu.tsx
+@@ -1,9 +1,11 @@
+ import { useState } from "react";
+ import { Link } from "react-router-dom";
++import { useAuth } from "../hooks/useAuth";
+ import { initials } from "../utils/format";
+ 
+ export function UserMenu({ name }: { name: string }) {
+   const [open, setOpen] = useState(false);
++  const { signOut } = useAuth();
+   return (
+     <div className="user-menu">
+       <button
+@@ -26,7 +28,7 @@ export function UserMenu({ name }: { name: string }) {
+             </Link>
+           </li>
+           <li role="none">
+-            <button type="button" role="menuitem" onClick={() => setOpen(false)}>
++            <button type="button" role="menuitem" onClick={signOut}>
+               Sign out
+             </button>
+           </li>
+diff --git a/src/components/pages.test.ts b/src/components/pages.test.ts
+new file mode 100644
+index 0000000..320231e
+--- /dev/null
++++ b/src/components/pages.test.ts
+@@ -0,0 +1,13 @@
++import { describe, expect, it } from "vitest";
++import { pages, pageTitle } from "./pages";
++
++describe("pageTitle", () => {
++  it("uses the navigation label for every page", () => {
++    for (const page of pages) expect(pageTitle(page.to)).toBe(page.label);
++  });
++
++  it("names instrument pages and falls back to Pulse", () => {
++    expect(pageTitle("/instruments/AAPL")).toBe("Instrument");
++    expect(pageTitle("/elsewhere")).toBe("Pulse");
++  });
++});
+diff --git a/src/components/pages.ts b/src/components/pages.ts
+new file mode 100644
+index 0000000..72416c2
+--- /dev/null
++++ b/src/components/pages.ts
+@@ -0,0 +1,15 @@
++/** Every page in the navigation. The links and the top bar title both read this one list. */
++export const pages = [
++  { to: "/", label: "Dashboard", end: true },
++  { to: "/portfolio", label: "Portfolio", end: false },
++  { to: "/trades", label: "Trades", end: false },
++  { to: "/venues", label: "Venues", end: false },
++  { to: "/clients", label: "Clients", end: false },
++  { to: "/reports", label: "Reports", end: false },
++  { to: "/settings", label: "Settings", end: false },
++] as const;
++
++export function pageTitle(pathname: string): string {
++  if (pathname.startsWith("/instruments/")) return "Instrument";
++  return pages.find((page) => page.to === pathname)?.label ?? "Pulse";
++}
+diff --git a/src/data/users.json b/src/data/users.json
+new file mode 100644
+index 0000000..c443071
+--- /dev/null
++++ b/src/data/users.json
+@@ -0,0 +1,6 @@
++[
++  {"email":"dana@pulse.test","name":"Dana Whitaker","role":"admin","password":"Harbor-4471"},
++  {"email":"owen@pulse.test","name":"Owen Hart","role":"admin","password":"Granite-6082"},
++  {"email":"marc@pulse.test","name":"Marc Ellery","role":"trader","password":"Quartz-2208"},
++  {"email":"ines@pulse.test","name":"Ines Duarte","role":"analyst","password":"Birch-9315"}
++]
+diff --git a/src/hooks/useAuth.tsx b/src/hooks/useAuth.tsx
+new file mode 100644
+index 0000000..3791f1b
+--- /dev/null
++++ b/src/hooks/useAuth.tsx
+@@ -0,0 +1,78 @@
++import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from "react";
++import { authenticate, findUser, savePassword } from "../api";
++import type { User } from "../types";
++
++export const SESSION_KEY = "pulse.session";
++
++interface AuthContextValue {
++  /** The signed-in user, or null. */
++  user: User | null;
++  /** Someone who signed in correctly but has to choose a new password before anything else. */
++  pending: User | null;
++  signIn: (email: string, password: string) => Promise<void>;
++  changePassword: (password: string) => Promise<void>;
++  signOut: () => void;
++}
++
++const AuthContext = createContext<AuthContextValue | null>(null);
++
++function loadSession(): User | null {
++  try {
++    const raw = localStorage.getItem(SESSION_KEY);
++    const email: unknown = raw === null ? null : JSON.parse(raw);
++    return typeof email === "string" ? (findUser(email) ?? null) : null;
++  } catch {
++    return null;
++  }
++}
++
++function storeSession(user: User | null): void {
++  try {
++    if (user) localStorage.setItem(SESSION_KEY, JSON.stringify(user.email));
++    else localStorage.removeItem(SESSION_KEY);
++  } catch {
++    // Storage can be blocked; the session then lasts until the page reloads.
++  }
++}
++
++export function AuthProvider({ children }: { children: ReactNode }) {
++  const [user, setUser] = useState<User | null>(loadSession);
++  const [pending, setPending] = useState<User | null>(null);
++
++  const open = useCallback((next: User) => {
++    storeSession(next);
++    setPending(null);
++    setUser(next);
++  }, []);
++
++  const value = useMemo<AuthContextValue>(
++    () => ({
++      user,
++      pending,
++      signIn: async (email, password) => {
++        const result = await authenticate(email, password);
++        if (result.mustChangePassword) setPending(result.user);
++        else open(result.user);
++      },
++      changePassword: async (password) => {
++        if (!pending) return;
++        await savePassword(pending.email, password);
++        open(pending);
++      },
++      signOut: () => {
++        storeSession(null);
++        setUser(null);
++        setPending(null);
++      },
++    }),
++    [user, pending, open],
++  );
++
++  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
++}
++
++export function useAuth(): AuthContextValue {
++  const ctx = useContext(AuthContext);
++  if (!ctx) throw new Error("useAuth must be used inside AuthProvider");
++  return ctx;
++}
+diff --git a/src/hooks/useSettings.tsx b/src/hooks/useSettings.tsx
+index aeed2d4..faa9d52 100644
+--- a/src/hooks/useSettings.tsx
++++ b/src/hooks/useSettings.tsx
+@@ -1,16 +1,10 @@
+ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+ import type { Settings } from "../types";
+-import { readJson, writeJson } from "../utils/storage";
++import { defaultSettings, migrateSettings } from "../utils/settings";
++import { writeJson } from "../utils/storage";
+ 
+ export const SETTINGS_KEY = "pulse.settings";
+ 
+-export const defaultSettings: Settings = {
+-  theme: "light",
+-  emailAlerts: true,
+-  pushAlerts: false,
+-  weeklyDigest: true,
+-};
+-
+ interface SettingsContextValue {
+   settings: Settings;
+   update: <K extends keyof Settings>(key: K, value: Settings[K]) => void;
+@@ -18,9 +12,19 @@ interface SettingsContextValue {
+ 
+ const SettingsContext = createContext<SettingsContextValue | null>(null);
+ 
++function loadSettings(): Settings {
++  try {
++    const raw = localStorage.getItem(SETTINGS_KEY);
++    return raw === null ? defaultSettings : migrateSettings(JSON.parse(raw));
++  } catch {
++    return defaultSettings;
++  }
++}
++
+ export function SettingsProvider({ children }: { children: ReactNode }) {
+-  const [settings, setSettings] = useState<Settings>(() => readJson(SETTINGS_KEY, defaultSettings));
++  const [settings, setSettings] = useState<Settings>(loadSettings);
+ 
++  // Runs on load too, so an old stored shape is rewritten as the new one right away.
+   useEffect(() => {
+     writeJson(SETTINGS_KEY, settings);
+     document.documentElement.dataset.theme = settings.theme;
+diff --git a/src/main.tsx b/src/main.tsx
+index 0f190b5..ca98596 100644
+--- a/src/main.tsx
++++ b/src/main.tsx
+@@ -2,6 +2,7 @@ import { StrictMode } from "react";
+ import { createRoot } from "react-dom/client";
+ import { BrowserRouter } from "react-router-dom";
+ import { App } from "./App";
++import { AuthProvider } from "./hooks/useAuth";
+ import { NotificationsProvider } from "./hooks/useNotifications";
+ import { SettingsProvider } from "./hooks/useSettings";
+ import "./styles/theme.css";
+@@ -10,11 +11,13 @@ import "./styles/global.css";
+ createRoot(document.getElementById("root")!).render(
+   <StrictMode>
+     <BrowserRouter>
+-      <SettingsProvider>
+-        <NotificationsProvider>
+-          <App />
+-        </NotificationsProvider>
+-      </SettingsProvider>
++      <AuthProvider>
++        <SettingsProvider>
++          <NotificationsProvider>
++            <App />
++          </NotificationsProvider>
++        </SettingsProvider>
++      </AuthProvider>
+     </BrowserRouter>
+   </StrictMode>,
+ );
+diff --git a/src/pages/ChangePassword.tsx b/src/pages/ChangePassword.tsx
+new file mode 100644
+index 0000000..02c57de
+--- /dev/null
++++ b/src/pages/ChangePassword.tsx
+@@ -0,0 +1,53 @@
++import { useState, type FormEvent } from "react";
++import { useAuth } from "../hooks/useAuth";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import { validateNewPassword } from "../utils/passwords";
++
++export function ChangePassword() {
++  useDocumentTitle("Choose a new password");
++  const { changePassword } = useAuth();
++  const [password, setPassword] = useState("");
++  const [confirmation, setConfirmation] = useState("");
++  const [error, setError] = useState<string | null>(null);
++  const [busy, setBusy] = useState(false);
++
++  async function submit(event: FormEvent) {
++    event.preventDefault();
++    if (busy) return;
++    const problem = validateNewPassword(password, confirmation);
++    setError(problem);
++    if (problem) return;
++    setBusy(true);
++    await changePassword(password);
++  }
++
++  return (
++    <main className="auth">
++      <form className="panel auth__card" onSubmit={submit}>
++        <h1 className="auth__title">Choose a new password</h1>
++        <label className="field">
++          <span className="field__label">New password</span>
++          <input className="input" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
++        </label>
++        <label className="field">
++          <span className="field__label">Confirm new password</span>
++          <input
++            className="input"
++            type="password"
++            autoComplete="new-password"
++            value={confirmation}
++            onChange={(e) => setConfirmation(e.target.value)}
++          />
++        </label>
++        {error ? (
++          <p className="feedback feedback--error" role="alert">
++            {error}
++          </p>
++        ) : null}
++        <button type="submit" className="button" disabled={busy}>
++          Save password
++        </button>
++      </form>
++    </main>
++  );
++}
+diff --git a/src/pages/Settings.test.tsx b/src/pages/Settings.test.tsx
+index 5025615..43bf062 100644
+--- a/src/pages/Settings.test.tsx
++++ b/src/pages/Settings.test.tsx
+@@ -1,13 +1,16 @@
+ import { fireEvent, render, screen } from "@testing-library/react";
+ import { describe, expect, it } from "vitest";
++import { AuthProvider } from "../hooks/useAuth";
+ import { SETTINGS_KEY, SettingsProvider } from "../hooks/useSettings";
+ import { Settings } from "./Settings";
+ 
+ function renderSettings() {
+   return render(
+-    <SettingsProvider>
+-      <Settings />
+-    </SettingsProvider>,
++    <AuthProvider>
++      <SettingsProvider>
++        <Settings />
++      </SettingsProvider>
++    </AuthProvider>,
+   );
+ }
+ 
+@@ -15,8 +18,8 @@ describe("Settings page", () => {
+ 
+   it("persists a change to localStorage", () => {
+     renderSettings();
+-    fireEvent.click(screen.getByRole("switch", { name: "Push alerts" }));
+-    expect(JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}").pushAlerts).toBe(true);
++    fireEvent.click(screen.getByRole("switch", { name: "Email alerts" }));
++    expect(JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}").alerts.email).toBe(false);
+   });
+ 
+   it("applies the dark theme to the document", () => {
+diff --git a/src/pages/Settings.tsx b/src/pages/Settings.tsx
+index 139ca21..84438c1 100644
+--- a/src/pages/Settings.tsx
++++ b/src/pages/Settings.tsx
+@@ -1,10 +1,26 @@
++import { SegmentedControl } from "../components/SegmentedControl";
+ import { Toggle } from "../components/Toggle";
++import { useAuth } from "../hooks/useAuth";
+ import { useSettings } from "../hooks/useSettings";
++import type { NavbarVariant } from "../types";
++
++const navbarOptions: { value: NavbarVariant; label: string }[] = [
++  { value: "sidebar", label: "Sidebar" },
++  { value: "compact", label: "Compact" },
++  { value: "top", label: "Top bar" },
++];
+ 
+ export function Settings() {
+   const { settings, update } = useSettings();
++  const { user } = useAuth();
+   return (
+     <div className="page">
++      <section className="panel" aria-label="Account">
++        <div className="panel__header">
++          <h2 className="panel__title">Account</h2>
++        </div>
++        <p>Signed in as {user?.email}</p>
++      </section>
+       <section className="panel" aria-label="Appearance">
+         <div className="panel__header">
+           <h2 className="panel__title">Appearance</h2>
+@@ -15,6 +31,12 @@ export function Settings() {
+           checked={settings.theme === "dark"}
+           onChange={(on) => update("theme", on ? "dark" : "light")}
+         />
++        <SegmentedControl
++          label="Navigation style"
++          options={navbarOptions}
++          value={settings.navbar}
++          onChange={(next) => update("navbar", next)}
++        />
+       </section>
+       <section className="panel" aria-label="Notifications">
+         <div className="panel__header">
+@@ -23,20 +45,14 @@ export function Settings() {
+         <Toggle
+           label="Email alerts"
+           description="Price moves above your thresholds."
+-          checked={settings.emailAlerts}
+-          onChange={(on) => update("emailAlerts", on)}
+-        />
+-        <Toggle
+-          label="Push alerts"
+-          description="Browser notifications while Pulse is open."
+-          checked={settings.pushAlerts}
+-          onChange={(on) => update("pushAlerts", on)}
++          checked={settings.alerts.email}
++          onChange={(on) => update("alerts", { ...settings.alerts, email: on })}
+         />
+         <Toggle
+           label="Weekly digest"
+           description="A summary email every Monday."
+-          checked={settings.weeklyDigest}
+-          onChange={(on) => update("weeklyDigest", on)}
++          checked={settings.alerts.digest}
++          onChange={(on) => update("alerts", { ...settings.alerts, digest: on })}
+         />
+       </section>
+     </div>
+diff --git a/src/pages/SignIn.tsx b/src/pages/SignIn.tsx
+new file mode 100644
+index 0000000..ff7cf31
+--- /dev/null
++++ b/src/pages/SignIn.tsx
+@@ -0,0 +1,56 @@
++import { useState, type FormEvent } from "react";
++import { useAuth } from "../hooks/useAuth";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import { toError } from "../hooks/useAsync";
++
++export function SignIn() {
++  useDocumentTitle("Sign in");
++  const { signIn } = useAuth();
++  const [email, setEmail] = useState("");
++  const [password, setPassword] = useState("");
++  const [busy, setBusy] = useState(false);
++  const [error, setError] = useState<string | null>(null);
++
++  async function submit(event: FormEvent) {
++    event.preventDefault();
++    if (busy) return;
++    setBusy(true);
++    setError(null);
++    try {
++      await signIn(email, password);
++    } catch (failure) {
++      setError(toError(failure).message);
++      setBusy(false);
++    }
++  }
++
++  return (
++    <main className="auth">
++      <form className="panel auth__card" onSubmit={submit}>
++        <h1 className="auth__title">Sign in</h1>
++        <label className="field">
++          <span className="field__label">Email</span>
++          <input className="input" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
++        </label>
++        <label className="field">
++          <span className="field__label">Password</span>
++          <input
++            className="input"
++            type="password"
++            autoComplete="current-password"
++            value={password}
++            onChange={(e) => setPassword(e.target.value)}
++          />
++        </label>
++        {error ? (
++          <p className="feedback feedback--error" role="alert">
++            {error}
++          </p>
++        ) : null}
++        <button type="submit" className="button" disabled={busy}>
++          {busy ? "Signing in..." : "Sign in"}
++        </button>
++      </form>
++    </main>
++  );
++}
+diff --git a/src/pages/Venues.tsx b/src/pages/Venues.tsx
+new file mode 100644
+index 0000000..3e4c164
+--- /dev/null
++++ b/src/pages/Venues.tsx
+@@ -0,0 +1,40 @@
++import { fetchVenueSummary } from "../api";
++import { AsyncContent } from "../components/AsyncContent";
++import { Table, type Column } from "../components/Table";
++import { useAsync } from "../hooks/useAsync";
++import { useDocumentTitle } from "../hooks/useDocumentTitle";
++import type { VenueSummary } from "../utils/venues";
++
++const columns: Column<VenueSummary>[] = [
++  { key: "venue", header: "Venue", rowHeader: true, render: (row) => row.venue, sortValue: (row) => row.venue },
++  { key: "trades", header: "Trades", align: "right", render: (row) => row.trades, sortValue: (row) => row.trades },
++  { key: "filled", header: "Filled", align: "right", render: (row) => row.filled, sortValue: (row) => row.filled },
++  { key: "partial", header: "Partially filled", align: "right", render: (row) => row.partial, sortValue: (row) => row.partial },
++  { key: "cancelled", header: "Cancelled", align: "right", render: (row) => row.cancelled, sortValue: (row) => row.cancelled },
++];
++
++export function Venues() {
++  useDocumentTitle("Venues");
++  const state = useAsync(fetchVenueSummary, []);
++  return (
++    <div className="page">
++      <section className="panel" aria-label="Venues">
++        <div className="panel__header">
++          <h2 className="panel__title">Venue summary</h2>
++        </div>
++        <AsyncContent state={state} loadingLabel="Loading venues">
++          {(rows) => (
++            <Table
++              caption="Venue summary"
++              columns={columns}
++              rows={rows}
++              rowKey={(row) => row.venue}
++              initialSort={{ key: "trades", direction: "desc" }}
++              emptyMessage="No venues yet."
++            />
++          )}
++        </AsyncContent>
++      </section>
++    </div>
++  );
++}
+diff --git a/src/styles/global.css b/src/styles/global.css
+index 3f94e98..b2b67bc 100644
+--- a/src/styles/global.css
++++ b/src/styles/global.css
+@@ -104,6 +104,75 @@ p {
+   font-weight: 600;
+ }
+ 
++/* Navigation variants: compact sidebar and links in the top bar */
++.shell--compact {
++  grid-template-columns: var(--sidebar-width-compact) 1fr;
++}
++
++.shell--top {
++  grid-template-columns: 1fr;
++}
++
++.sidebar--compact {
++  padding: var(--space-4) var(--space-2);
++  text-align: center;
++}
++
++.sidebar--compact .sidebar__brand {
++  padding: var(--space-2) 0 var(--space-5);
++}
++
++.sidebar--compact .sidebar__link {
++  padding: var(--space-2) 0;
++  font-weight: 600;
++}
++
++.sidebar--top {
++  flex: 1;
++  background: none;
++  border-right: 0;
++  padding: 0 var(--space-5);
++}
++
++.sidebar--top .sidebar__list {
++  flex-direction: row;
++}
++
++/* Sign-in and password pages */
++.auth {
++  min-height: 100%;
++  display: flex;
++  align-items: center;
++  justify-content: center;
++  padding: var(--space-5);
++}
++
++.auth__card {
++  width: min(100%, var(--auth-card-width));
++  display: flex;
++  flex-direction: column;
++  gap: var(--space-4);
++}
++
++.auth__title {
++  font-size: 18px;
++  font-weight: 600;
++}
++
++.field {
++  display: flex;
++  flex-direction: column;
++  gap: var(--space-1);
++}
++
++.field__label {
++  color: var(--color-text-muted);
++}
++
++.auth__card .input {
++  min-width: 0;
++}
++
+ /* Top bar */
+ .topbar {
+   height: var(--topbar-height);
+@@ -1301,7 +1370,7 @@ p {
+     grid-template-columns: 1fr;
+   }
+ 
+-  .sidebar {
++  .sidebar:not(.sidebar--top) {
+     display: none;
+   }
+ 
+diff --git a/src/styles/theme.css b/src/styles/theme.css
+index 5ddf04a..8ca8b59 100644
+--- a/src/styles/theme.css
++++ b/src/styles/theme.css
+@@ -42,6 +42,8 @@
+   --radius-pill: 999px;
+   --shadow: 0 1px 2px rgba(16, 24, 40, 0.06), 0 4px 12px rgba(16, 24, 40, 0.06);
+   --sidebar-width: 220px;
++  --sidebar-width-compact: 64px;
++  --auth-card-width: 360px;
+   --topbar-height: 56px;
+   --drawer-width: 420px;
+   --popover-width: 360px;
+diff --git a/src/types.ts b/src/types.ts
+index cbc9d94..0abc4cb 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -47,9 +47,8 @@ export type Theme = "light" | "dark";
+ 
+ export interface Settings {
+   theme: Theme;
+-  emailAlerts: boolean;
+-  pushAlerts: boolean;
+-  weeklyDigest: boolean;
++  alerts: { email: boolean; digest: boolean };
++  navbar: NavbarVariant;
+ }
+ 
+ export type TradeSide = "buy" | "sell";
+@@ -167,3 +166,13 @@ export interface SortState {
+   key: string;
+   direction: SortDirection;
+ }
++
++export type UserRole = "admin" | "trader" | "analyst";
++
++export interface User {
++  email: string;
++  name: string;
++  role: UserRole;
++}
++
++export type NavbarVariant = "sidebar" | "compact" | "top";
+diff --git a/src/utils/passwords.test.ts b/src/utils/passwords.test.ts
+new file mode 100644
+index 0000000..31ce50d
+--- /dev/null
++++ b/src/utils/passwords.test.ts
+@@ -0,0 +1,16 @@
++import { describe, expect, it } from "vitest";
++import { validateNewPassword } from "./passwords";
++
++describe("validateNewPassword", () => {
++  it("asks for at least 10 characters first", () => {
++    expect(validateNewPassword("short", "short")).toBe("Use at least 10 characters.");
++  });
++
++  it("asks for matching fields", () => {
++    expect(validateNewPassword("long-enough-1", "long-enough-2")).toBe("Passwords do not match.");
++  });
++
++  it("accepts a long password that matches", () => {
++    expect(validateNewPassword("exactly-10", "exactly-10")).toBeNull();
++  });
++});
+diff --git a/src/utils/passwords.ts b/src/utils/passwords.ts
+new file mode 100644
+index 0000000..4bda3ee
+--- /dev/null
++++ b/src/utils/passwords.ts
+@@ -0,0 +1,10 @@
++export const MIN_PASSWORD_LENGTH = 10;
++export const SHORT_PASSWORD_MESSAGE = "Use at least 10 characters.";
++export const MISMATCH_MESSAGE = "Passwords do not match.";
++
++/** The message to show for a new password and its confirmation, or null when both are fine. */
++export function validateNewPassword(password: string, confirmation: string): string | null {
++  if (password.length < MIN_PASSWORD_LENGTH) return SHORT_PASSWORD_MESSAGE;
++  if (password !== confirmation) return MISMATCH_MESSAGE;
++  return null;
++}
+diff --git a/src/utils/settings.test.ts b/src/utils/settings.test.ts
+new file mode 100644
+index 0000000..459ff9e
+--- /dev/null
++++ b/src/utils/settings.test.ts
+@@ -0,0 +1,30 @@
++import { describe, expect, it } from "vitest";
++import { defaultSettings, migrateSettings } from "./settings";
++
++describe("migrateSettings", () => {
++  it("converts the old flat shape and drops push alerts", () => {
++    expect(migrateSettings({ theme: "dark", emailAlerts: false, pushAlerts: true, weeklyDigest: false })).toEqual({
++      theme: "dark",
++      alerts: { email: false, digest: false },
++      navbar: "sidebar",
++    });
++  });
++
++  it("fills missing old values with defaults", () => {
++    expect(migrateSettings({ theme: "dark", emailAlerts: false })).toEqual({
++      theme: "dark",
++      alerts: { email: false, digest: true },
++      navbar: "sidebar",
++    });
++  });
++
++  it("leaves the new shape alone", () => {
++    const current = { theme: "light", alerts: { email: false, digest: true }, navbar: "top" };
++    expect(migrateSettings(current)).toEqual(current);
++  });
++
++  it("falls back to defaults for junk", () => {
++    expect(migrateSettings(null)).toEqual(defaultSettings);
++    expect(migrateSettings({ theme: "neon", navbar: "left" })).toEqual(defaultSettings);
++  });
++});
+diff --git a/src/utils/settings.ts b/src/utils/settings.ts
+new file mode 100644
+index 0000000..d0effd0
+--- /dev/null
++++ b/src/utils/settings.ts
+@@ -0,0 +1,37 @@
++import type { NavbarVariant, Settings, Theme } from "../types";
++
++export const defaultSettings: Settings = {
++  theme: "light",
++  alerts: { email: true, digest: true },
++  navbar: "sidebar",
++};
++
++const themes: readonly Theme[] = ["light", "dark"];
++const navbars: readonly NavbarVariant[] = ["sidebar", "compact", "top"];
++
++function isRecord(value: unknown): value is Record<string, unknown> {
++  return typeof value === "object" && value !== null && !Array.isArray(value);
++}
++
++function bool(value: unknown, fallback: boolean): boolean {
++  return typeof value === "boolean" ? value : fallback;
++}
++
++/**
++ * Turns whatever is stored into the current settings shape. The old flat shape
++ * (emailAlerts, pushAlerts, weeklyDigest) is converted; push alerts are dropped.
++ */
++export function migrateSettings(stored: unknown): Settings {
++  if (!isRecord(stored)) return defaultSettings;
++  const alerts = isRecord(stored.alerts) ? stored.alerts : {};
++  const email = "email" in alerts ? alerts.email : stored.emailAlerts;
++  const digest = "digest" in alerts ? alerts.digest : stored.weeklyDigest;
++  return {
++    theme: themes.find((t) => t === stored.theme) ?? defaultSettings.theme,
++    alerts: {
++      email: bool(email, defaultSettings.alerts.email),
++      digest: bool(digest, defaultSettings.alerts.digest),
++    },
++    navbar: navbars.find((n) => n === stored.navbar) ?? defaultSettings.navbar,
++  };
++}
+diff --git a/src/utils/venues.test.ts b/src/utils/venues.test.ts
+new file mode 100644
+index 0000000..2adb05a
+--- /dev/null
++++ b/src/utils/venues.test.ts
+@@ -0,0 +1,38 @@
++import { describe, expect, it } from "vitest";
++import type { Trade } from "../types";
++import { summarizeVenues } from "./venues";
++
++const base: Trade = {
++  id: "T-1",
++  symbol: "AAPL",
++  assetClass: "equity",
++  side: "buy",
++  quantity: 10,
++  filledQuantity: 10,
++  price: 1,
++  currency: "USD",
++  executedAt: "2026-10-01T10:00:00Z",
++  clientId: "c-001",
++  trader: "A. Trader",
++  venue: "NYSE",
++  status: "filled",
++  fees: 0,
++};
++
++describe("summarizeVenues", () => {
++  it("counts trades and statuses per venue", () => {
++    const rows = summarizeVenues([
++      base,
++      { ...base, id: "T-2", status: "partial" },
++      { ...base, id: "T-3", venue: "ICE", status: "cancelled" },
++    ]);
++    expect(rows).toEqual([
++      { venue: "NYSE", trades: 2, filled: 1, partial: 1, cancelled: 0 },
++      { venue: "ICE", trades: 1, filled: 0, partial: 0, cancelled: 1 },
++    ]);
++  });
++
++  it("returns nothing for no trades", () => {
++    expect(summarizeVenues([])).toEqual([]);
++  });
++});
+diff --git a/src/utils/venues.ts b/src/utils/venues.ts
+new file mode 100644
+index 0000000..5bef119
+--- /dev/null
++++ b/src/utils/venues.ts
+@@ -0,0 +1,21 @@
++import type { Trade } from "../types";
++
++export interface VenueSummary {
++  venue: string;
++  trades: number;
++  filled: number;
++  partial: number;
++  cancelled: number;
++}
++
++/** One row per venue with how many trades it took and how many ended in each status. */
++export function summarizeVenues(trades: readonly Trade[]): VenueSummary[] {
++  const byVenue = new Map<string, VenueSummary>();
++  for (const trade of trades) {
++    const row = byVenue.get(trade.venue) ?? { venue: trade.venue, trades: 0, filled: 0, partial: 0, cancelled: 0 };
++    row.trades += 1;
++    row[trade.status] += 1;
++    byVenue.set(trade.venue, row);
++  }
++  return [...byVenue.values()];
++}

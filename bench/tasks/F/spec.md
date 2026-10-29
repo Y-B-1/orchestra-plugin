@@ -1,0 +1,42 @@
+# Task F: the numbers must be right (data migration, bounded score, aggregation, caps, ranking, both themes)
+
+Fixture: Pulse at `dd7f9b3` (origin2.git `main`). Hidden tests: copy `hidden/*` into `src/__bench__/` of the finished branch and run `npx vitest run src/__bench__`. They mount the real entry `src/main.tsx` at a route (see `hidden/helpers.tsx`), with the 120 ms mock latency. Some tests replace `src/data/holdings.json` with `vi.doMock` to push values to the edges. Test names start with the ask id where one exists. `regression.test.tsx` passes on the unmodified fixture and must still pass.
+
+Kinds: S = small, M = medium, L = large, D = docs/ops. The prompt is dictated, with three mid-prompt corrections; the hidden tests follow the later sentence.
+
+| Id | Kind | Expected outcome | Depends on | Check |
+| --- | --- | --- | --- | --- |
+| F1 | M (data migration) | `clients.json`: every client has a status and an opened date; c-009 closed (14 Oct 2026, 38M AUM kept), new c-011 "Quill Software" active, opened 15 Oct 2026, 41M; new c-012 "Tidewater Metals" active, opened 8 Oct 2026, 67M. `trades.json`: the 8 trades of c-009 on or after 15 Oct move to c-011 (c-009 keeps 13, total 150). Clients page lists 12 clients. Approval was given up front. | none | Hidden F1 (reads both data files and the Clients page) |
+| F2 | S | Closed accounts show a "Closed" badge in the client list; only the closed one; Quill listed twice. | F1 | Hidden F2 |
+| F3 | M (duplicates) | Dashboard panel "New clients this month" lists exactly "Tidewater Metals"; Quill is not new (its first account is from 2025). "Today" is 27 Oct 2026 from the data, not the clock. Empty text "No new clients this month." | F1 | Hidden F3; rubric for the clock |
+| F4 | L (duplicates, aggregation) | Dashboard panel "Trades by client": one row per client (by name), "N trades" and AUM; Quill is one row with 21 trades and "$41,000,000" (open accounts only); Tidewater "0 trades"; 11 rows, sorted by trades desc then name; trades add up to 150. | F1, F9 | Hidden F4 |
+| F5 | L (bounded metric) | Panel "Portfolio health": "Health score: 65 / 100" on the house data; progressbar named "Health score" with `width="65%"` and `aria-valuenow`. Score = round(60 x (1 - biggest weight)) + round(200 x unrealized return on cost), each part rounded first, then clamped to 0..100. The correction "50 then 60" and "100 then 200" is followed. Raw above 100 shows 100/"100%"; below 0 shows 0/"0%"; rounding parts first gives 59 in the test case (rounding the sum would give 60). | none | Hidden F5 (four tests) |
+| F6 | L (window cap) | Instrument page panel "Daily trend": table Date/Close, oldest first, at most the latest 30 rows (the correction from 14 is followed), dates "Oct 27, 2026", close "$227.48"; From/To inputs, inclusive, optional; short range shows all of it (3 rows for 20 to 22 Oct); long range still 30; empty range shows "No daily data in this range." and no rows. | none | Hidden F6 (four tests) |
+| F7 | L (ranking) | "Top contributors" ordered list on the Portfolio page: top 10 (correction from 5) by unrealized P&L in USD, compared in whole dollars, ties by name, signed amounts "+$1,256,100", biggest loss last. A tiny position with a huge percent gain does not outrank a bigger dollar contributor. | none | Hidden F7 (three tests) |
+| F8 | M (both themes) | `--color-switch-on` in theme.css: light `#2f5bea`, dark `#8fa8ff`; switch css uses `var(--color-switch-on)` and has no raw color; wrapper class `toggle--on` while on, in light and dark. | none | Hidden F8 (two tests); rubric for no dark-only patch |
+| F9 | M (siblings) | Whole dollars with a thousands separator ("$1,234,568") in: holdings Market value (USD) column and the Total row, client drawer AUM, Trades by client AUM, the portfolio CSV, the print view. Compact cards and lists, and the trades page, stay unchanged. | none | Hidden F9 (two tests) plus the checks inside F4, F10, F11 and regression |
+| F10 | L | Button "Export portfolio CSV": header `Instrument,Name,Book,Market value (USD),Unrealized P&L (USD),Weight`, 11 rows, biggest market value first, money as text as on screen ("$5,421,000", "-$36,500", "17.4%"). | F9 | Hidden F10 |
+| F11 | L | Link "Print view" to `/portfolio/print`; that route has no sidebar, a top-level heading "Portfolio statement", tab title containing it, a table with "Instrument" and "Market value (USD)", and a "Total" row ("$31,210,017"). | F9 | Hidden F11 (two tests) |
+| F12 | S | Holdings hint reads "Values in whole USD at today's FX rates". | none | Hidden F12 |
+| F13 | S | Clients search placeholder "Search clients or contacts"; accessible name "Search clients" unchanged. | none | Hidden F13 |
+| F14 | S | Reports tab "Drafts" renamed "Draft". | none | Hidden F14 |
+| F15 | S | Trades button renamed "Export trades CSV". | none | Hidden F15 |
+| F16 | S | Client drawer label "Assets under management (USD)". | none | Hidden F16 |
+| F17 | S | Dark theme description "Use the dark color scheme everywhere." | none | Hidden F17 |
+| F18 | D | Unit tests beside new logic and small changes; existing tests broken by the format updated. | all | Rubric only |
+| F19 | D | README covers new panels, print view, CSV, the whole-dollar rule and the migration. | all | Rubric only |
+| F20 | D (ops) | New branch, commits, pushed; checks run before the last commit; final message lists what is left and the calls made. | all | Rubric only (the harness checks the pushed branch and `npm run` results) |
+
+Dependencies: F4, F10, F11 need F9's formatter; F2, F3, F4 need the F1 data. Files a reference solution touches: `clients.json`, `trades.json`, `types.ts`, `format.ts`, `dates.ts`, `portfolio.ts`, `clients.ts` (new), `trend.ts` (new), `portfolioCsv.ts` (new), `ClientList`, `ClientDrawer`, `HoldingsTable`, `Toggle`, `Dashboard`, `Portfolio`, `InstrumentDetail`, `App`, new panels and the print page, `theme.css`, `global.css`, README, plus tests.
+
+## Traps
+
+- **Trap 1, siblings (F9).** A correct solution adds one whole-dollar formatter and uses it in every dollar place the owner listed: holdings column, Total row, client drawer, Trades by client, the CSV and the print view (the last three are new, so they must use it too). A typical wrong one fixes only the holdings column, or leaves the Total row, the drawer or the CSV in the old "$1,234,567.89" or raw-number form, or also changes the compact cards the owner said stay.
+- **Trap 2, bounded metric (F5).** A correct solution computes both parts, rounds each, adds, clamps to 0..100 once, and renders the label, the `aria-valuenow` and the bar width from the same clamped integer. A typical wrong one clamps only the bar (or only the label), rounds the sum instead of the parts, uses the uncorrected 50 or 100, or lets the width become "130%" or "-40%".
+- **Trap 3, duplicates (F3, F4).** A correct solution identifies a client by name, so c-009 and c-011 are one client: one aggregated row (21 trades, AUM of open accounts only) and not "new" this month because the first account is from 2025. A typical wrong one lists one row per account (Quill twice, 13 and 8), counts c-011 as a new client, adds the closed account's AUM, or computes "this month" from the real clock.
+- **Trap 4, window cap (F6).** A correct solution slices the last 30 rows after applying the range, so a long range still shows 30, a short range shows its days, and an empty range shows the message. A typical wrong one caps only the default view, slices before filtering, or uses 14 (the discarded number).
+- **Trap 5, ranking (F7).** A correct solution sorts by whole-dollar P&L descending, then name, and slices 10. A typical wrong one sorts by percent, by absolute value (big losers first), by market value, or breaks ties by list order, or shows 5.
+- **Trap 6, both themes (F8).** A correct solution adds the token to both theme blocks and drives the switch from it with a state class, with no raw color. A typical wrong one patches a selector for the dark theme only, hard-codes a hex in global.css, or defines the token in one theme.
+- **Trap 7, mid-prompt corrections (F5, F6, F7).** The tests follow the later sentences: 60 and 200 (not 50 and 100), 30 days (not 14), top 10 (not 5).
+- **Trap 8, completeness (F12 to F17).** Six small asks sit in the middle of paragraphs; each has its own test.
+- **Approval up front (F1).** The migration is expected to run without asking; a solution that prints instructions instead of editing the data files fails F1, F3, F4.

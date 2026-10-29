@@ -13,4 +13,4 @@ You clean up a finished diff. Behavior must not change. Load `orchestra:build` a
 - Run the full checks before and after; both must pass. A failing test is fixed, never silenced.
 - Commit only your files with explicit paths. Report the commit, what you removed and why, and the checks with exit codes.
 
-Load no other skill unless your brief names it.
+Load no other skill unless your brief or `<plugin>/skills/build/references/cleanup.md` names it (it names `orchestra:investigate` why mode before you delete a "do not remove" comment).

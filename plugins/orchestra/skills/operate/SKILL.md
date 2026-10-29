@@ -28,6 +28,7 @@ You run long checks in parallel with other work. You do not change code.
 - Never fix the code yourself. Report the failure with its owner so the coordinator can send a repair.
 
 ## Publishing work
+- Publishing work means a release or tag. Pushing a branch and opening a PR are never gated.
 - Do publishing work only when the brief quotes an explicit approval from the owner. Without that quote, stop and report.
 - The approval must name the remote and the target.
 - Tag the merge commit. Check that the publish workflow ran and report its result.

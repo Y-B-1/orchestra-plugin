@@ -72,13 +72,37 @@ class SkillTest(unittest.TestCase):
         self.assertLess(len(path.read_text().splitlines()), 200)
 
 
-    def test_every_reference_is_named_by_the_skill_and_stays_short(self):
-        skill = (PLUGIN / 'skills/orchestra/SKILL.md').read_text()
-        files = {f.name for f in (PLUGIN / 'skills/orchestra/references').glob('*.md')}
-        for name in files:
-            with self.subTest(name):
-                self.assertTrue(name in skill, 'a reference file the skill never names')
-                self.assertLessEqual(len((PLUGIN / 'skills/orchestra/references' / name).read_text().splitlines()), 60)
+    def test_every_reference_is_named_by_its_skill_and_stays_short(self):
+        """A reference loads only when its SKILL.md names it with a condition; an unnamed one is never read."""
+        for ref in sorted((PLUGIN / 'skills').glob('*/references/*.md')):
+            skill = (ref.parent.parent / 'SKILL.md').read_text()
+            with self.subTest(str(ref.relative_to(PLUGIN))):
+                self.assertTrue(f'references/{ref.name}' in skill, 'a reference file its skill never names')
+                self.assertLessEqual(len(ref.read_text().splitlines()), 60)
+
+    def test_no_plugin_file_names_a_repo_only_path(self):
+        """An installed plugin has no plugins/orchestra/ folder; pointers use <plugin>/skills/..."""
+        for f in sorted(PLUGIN.rglob('*.md')):
+            for n, line in enumerate(f.read_text().splitlines(), 1):
+                with self.subTest(f'{f.relative_to(PLUGIN)}:{n}'):
+                    self.assertNotIn('plugins/orchestra/', line)
+
+    def test_every_reference_path_resolves(self):
+        """A pointer to a reference file that does not exist sends an agent looking for nothing."""
+        skills = PLUGIN / 'skills'
+        for f in sorted(list(PLUGIN.glob('agents/*.md')) + list(skills.glob('**/*.md'))):
+            own = f.parent.parent if f.parent.name == 'references' else f.parent
+            for n, line in enumerate(f.read_text().splitlines(), 1):
+                for m in re.finditer(r'(?:<plugin>/skills/)?(?:([a-z-]+)/)?references/([a-z0-9-]+\.md)', line):
+                    skill, name = m.group(1), m.group(2)
+                    with self.subTest(f'{f.relative_to(PLUGIN)}:{n} {m.group(0)}'):
+                        if skill:
+                            self.assertTrue((skills / skill / 'references' / name).is_file())
+                        else:
+                            named = set(re.findall(r'orchestra:([a-z-]+)', line))
+                            homes = [own] + [skills / s for s in named]
+                            self.assertTrue(any((h / 'references' / name).is_file() for h in homes),
+                                            'a bare references/ path must exist beside this skill or a skill the line names')
 
     def test_every_skill_is_reachable_short_and_well_formed(self):
         """A skill no agent file or the main skill names is dead weight; one over 70 lines costs every load."""

@@ -2,7 +2,7 @@
 
 Orchestra is a Claude Code plugin for prompts that hold more than one ask. It splits the prompt into asks, runs every independent ask at the same time, reviews the finished work once, and pushes a branch for you to merge. `/orchestra:goal` keeps a session working until every ask is done. One guard blocks merging into the default branch; everything else runs.
 
-Version 3.2.0 keeps 3.0's fast design and brings back every 2.15 capability as an on-demand part: one coordinator skill, eleven agents with pinned models, six role skills and five shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
+Version 3.3.0 keeps 3.0's fast design, brings back every 2.15 capability, and holds every engineering capability of mattpocock/skills and pstack (see `docs/COVERAGE.md`), each as an on-demand part: one coordinator skill, eleven agents with pinned models, six role skills and seven shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
 
 ## Install
 
@@ -50,7 +50,7 @@ Every skill loads only when its situation applies, so a routine task reads none 
 
 - **Main session only:** `orchestra:orchestra`, the coordinator.
 - **Role skills**, loaded by their agent in the cases its file names: `build` (repair, mechanical and cleanup modes), `review` (lenses: correctness, data and contracts, architecture, standards, tests, security, accessibility, performance), `plan`, `critique`, `investigate` (code and research modes), `operate`.
-- **Shared situation skills**, for any agent or the main session: `diagnose` (a bug whose cause is unknown), `decide` (conflicting asks, two valid product shapes, a harmful suggestion), `test-quality`, `frontend-proof` (new interactive components, accessibility), `large-work`.
+- **Shared situation skills**, for any agent or the main session: `diagnose` (a bug whose cause is unknown), `decide` (conflicting asks, two valid product shapes, a harmful suggestion), `test-quality`, `frontend-proof` (new interactive components, accessibility), `large-work`, `ship` (pull requests, CI, review comments, conflicts), `verify` (driving the real app, flows with many states).
 
 The main session runs on the model and effort you pick.
 

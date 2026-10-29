@@ -1,6 +1,6 @@
 ---
 name: review
-description: "Gives review lenses (correctness, data and contracts, architecture, standards, tests, security, accessibility, performance) and the rules every review follows. Load when you are a reviewer and your brief names one or more lenses. Not for a re-review with no lenses named."
+description: "Gives review lenses (correctness, data and contracts, architecture, standards, tests, security, accessibility, performance, and detailed lenses in references) and the rules every review follows. Load when you are a reviewer and your brief names one or more lenses. Not for a re-review with no lenses named."
 ---
 # Review lenses
 
@@ -16,10 +16,7 @@ Apply only the lenses your brief names. Then apply "Every review".
 - A changed file no ask needs is scope drift. A claim in the author's report that the code contradicts is its own finding.
 - Report what you covered and what you did not, per lens. "Could not look" is never "nothing found".
 - Keep the report to about 600 words. End with CLEAN or BLOCKED and the count of blocking findings.
-
-## Scoped re-review
-- Read only the files the repair touched. Check only the findings given.
-- A regression the repair caused counts as a finding.
+- Scoped re-review: read only the files the repair touched and check only the findings given. A regression the repair caused is a finding.
 
 ## Correctness
 - Follow each new value of an enum or status into every switch, filter, label and count that lists the others.
@@ -37,7 +34,7 @@ Apply only the lenses your brief names. Then apply "Every review".
 ## Standards
 - Cite the rule text for each finding. Skip what the linter already enforces.
 - A rule breach on an untouched line is a backlog note, not a blocker.
-- Check names against the project style.
+- Check names against the project style. Baseline smells (judgement calls): `references/cleanliness.md`.
 - File budget: a source file that grew past about 500 lines in this diff is a finding. Use the size output of `lean.py check`. The fix is a split by responsibility.
 
 ## Tests
@@ -54,11 +51,20 @@ Apply only the lenses your brief names. Then apply "Every review".
 - A secret in the diff blocks. It needs rotation, not only deletion. Never repeat its value.
 
 ## Accessibility
-- Every control works by keyboard. Focus moves in a sensible order and returns after a dialog closes.
-- Every control has an accessible name. Focus is visible; color is never the only signal.
+- Every control works by keyboard, has an accessible name and a visible focus. Focus returns after a dialog closes. Color is never the only signal.
 
 ## Performance
-- Check work per render or per row that grows with the data.
-- Flag queries in loops, network calls without timeouts, and lists with no limit.
+- Check work per render or per row that grows with the data. Flag queries in loops, network calls without timeouts, and lists with no limit.
 
-Sources: orchestra v2.15.3, mattpocock/skills@59db609, pstack-claude@47c6f80.
+## Detailed lenses (read a file only when the brief names it or the diff shows the risk)
+- Deep modules, seams, shallow layers: `references/architecture-depth.md`.
+- Slop, dead code, comments, condition growth: `references/cleanliness.md`.
+- Hostile input, leaked gates, run-proven findings: `references/red-team.md`.
+- A speedup, regression or score claimed: `references/measurement.md`.
+- Casts, `any`, branded ids, parsing; name this lens for any diff that adds a type, interface or optional field, not only on `any`, `as` or `!`: `references/types.md`.
+- Validation placement, retries, crash recovery: `references/boundaries.md`.
+- Code others depend on: `references/blast-radius.md`.
+- Stored shape, schema, backfill: `references/data-migration.md`.
+- Public function, endpoint, event, format: `references/api-contract.md`. Anything a user sees: `references/visual.md`.
+
+Sources: orchestra v2.15.3 (orchestra-review references); mattpocock/skills@59db609 (codebase-design, improve-codebase-architecture, code-review); pstack@47c6f80 (thermo-nuclear-review, thermo-nuclear-code-quality-review, deslop, no-comments, interrogate, benchmark-checklist, principle-explain-the-number, principle-type-system-discipline, typescript-best-practices, principle-boundary-discipline, principle-make-operations-idempotent, principle-minimize-reader-load, blast-radius).
