@@ -30,17 +30,17 @@ class Check(unittest.TestCase):
         git(self.repo, 'add', '-A')
         git(self.repo, 'commit', '-q', '-m', msg)
 
-    def run_check(self, *args):
-        p = subprocess.run([sys.executable, str(LEAN), 'check', *args], cwd=self.repo, capture_output=True, text=True)
+    def run_check(self, *args, cwd=None):
+        p = subprocess.run([sys.executable, str(LEAN), 'check', *args], cwd=cwd or self.repo, capture_output=True, text=True)
         return p
 
-    def findings(self, *args):
-        p = self.run_check('--json', *args)
+    def findings(self, *args, cwd=None):
+        p = self.run_check('--json', *args, cwd=cwd)
         self.assertEqual(p.returncode, 0, p.stderr)
         return json.loads(p.stdout)['findings']
 
-    def kinds(self, *args):
-        return {(f['kind'], f['path']) for f in self.findings(*args)}
+    def kinds(self, *args, cwd=None):
+        return {(f['kind'], f['path']) for f in self.findings(*args, cwd=cwd)}
 
     def test_clean_branch_has_no_findings(self):
         p = self.run_check()
@@ -193,6 +193,103 @@ class Check(unittest.TestCase):
         for args in (['--bogus'], ['--max-lines', 'x'], ['--max-lines'], ['--base']):
             self.assertEqual(self.run_check(*args).returncode, 2, args)
         self.assertEqual(self.run_check('--base', 'nope-ref').returncode, 2)
+
+    def test_non_utf8_content_does_not_crash(self):
+        (self.repo / 'latin.js').write_bytes(b'x\n')
+        self.commit()
+        (self.repo / 'latin.js').write_bytes(b'caf\xe9 = 1\ndebugger;\n')
+        (self.repo / 'new.js').write_bytes(b'caf\xe9\ndebugger;\n')
+        k = self.kinds()
+        self.assertIn(('debug', 'latin.js'), k)
+        self.assertIn(('debug', 'new.js'), k)
+
+    def test_path_with_double_quote_staged_and_untracked(self):
+        self.write('a"b.js', 'debugger;\n')
+        git(self.repo, 'add', '-A')
+        self.write('c"d.js', 'debugger;\n')
+        k = self.kinds()
+        self.assertIn(('debug', 'a"b.js'), k)
+        self.assertIn(('debug', 'c"d.js'), k)
+
+    def test_path_with_space(self):
+        self.write('my dir/my file.js', 'debugger;\n')
+        self.commit()
+        self.write('my dir/my file.js', 'debugger;\nconsole.log(1)\n')
+        self.assertIn(('debug', 'my dir/my file.js'), self.kinds())
+
+    def test_run_from_subdirectory_reads_relative_to_root(self):
+        self.write('sub/huge.py', 'x = 1\n' * 700)
+        self.write('sub/small.py', 'x = 1\n' * 600)
+        self.write('.orchestra/budget-waivers', 'sub/small.py legacy\n')
+        k = self.kinds(cwd=self.repo / 'sub')
+        self.assertIn(('size', 'sub/huge.py'), k)
+        self.assertNotIn(('size', 'sub/small.py'), k)
+
+    def test_pure_rename_is_not_growth(self):
+        self.write('old.py', "x = 1\n" * 599 + "print('DEBUG')\n" + 'y = 1  # noqa\n')
+        self.commit()
+        git(self.repo, 'branch', '-f', 'main', 'HEAD')
+        git(self.repo, 'mv', 'old.py', 'moved.py')
+        k = self.kinds()
+        self.assertFalse([x for x in k if x[1] == 'moved.py' and x[0] in ('size', 'debug', 'test-weakened')], k)
+
+    def test_renamed_and_grown_file_compares_with_old_path(self):
+        self.write('old.py', 'x = 1\n' * 600)
+        self.commit()
+        git(self.repo, 'branch', '-f', 'main', 'HEAD')
+        git(self.repo, 'mv', 'old.py', 'moved.py')
+        self.write('moved.py', 'x = 1\n' * 600 + 'debugger;\n')
+        f = [f for f in self.findings() if f['path'] == 'moved.py']
+        self.assertEqual([x['kind'] for x in f if x['kind'] != 'size'], ['debug'])
+        self.assertIn('600 lines at base, 601 now', [x['message'] for x in f if x['kind'] == 'size'][0])
+
+    def test_sensitive_plurals_and_camel_case(self):
+        paths = ('src/payments/charge.ts', 'src/permissions/policy.ts', 'authMiddleware.ts', 'src/oauth.ts', 'a/userSessions.py')
+        for p in paths:
+            self.write(p, 'x\n')
+        self.write('src/author.py', 'x\n')
+        k = {p for kind, p in self.kinds() if kind == 'sensitive'}
+        self.assertEqual(k, set(paths))
+
+    def test_binary_file_is_skipped(self):
+        (self.repo / 'blob.bin').write_bytes(b'\0debugger;\n' * 600)
+        self.commit()
+        (self.repo / 'blob.bin').write_bytes(b'\0debugger;\n' * 700)
+        (self.repo / 'new.bin').write_bytes(b'\0console.log(1)\n' * 600)
+        self.assertFalse([k for k in self.kinds() if k[0] in ('size', 'debug')])
+
+    def test_deleted_file_is_not_scanned(self):
+        self.write('gone.py', 'x = 1\n' * 600)
+        self.commit()
+        git(self.repo, 'branch', '-f', 'main', 'HEAD')
+        (self.repo / 'gone.py').unlink()
+        self.assertFalse([k for k in self.kinds() if k[0] == 'size'])
+
+    def test_no_merge_base_exits_2(self):
+        git(self.repo, 'switch', '-q', '--orphan', 'unrelated')
+        self.write('z.txt', 'z\n')
+        self.commit('orphan')
+        p = self.run_check()
+        self.assertEqual(p.returncode, 2)
+        self.assertIn('no base', p.stderr)
+
+    def test_generated_marker_must_be_a_comment_saying_so(self):
+        self.write('a.py', '# Generated reports are written elsewhere\n' + 'x = 1\n' * 600)
+        self.write('b.py', '# Code generated by protoc. DO NOT EDIT.\n' + 'x = 1\n' * 600)
+        self.write('c.py', 'x = 1\n' * 10 + '# this file is generated\n' + 'x = 1\n' * 600)
+        k = self.kinds()
+        self.assertIn(('size', 'a.py'), k)
+        self.assertNotIn(('size', 'b.py'), k)
+        self.assertIn(('size', 'c.py'), k)
+
+    def test_timeout_compared_only_with_same_test(self):
+        self.write('t.test.js', "it('a', fn, {timeout: 5000})\nit('b', fn, {timeout: 9000})\n")
+        self.commit()
+        git(self.repo, 'branch', '-f', 'main', 'HEAD')
+        self.write('t.test.js', "it('a', fn, {timeout: 4000})\nit('b', fn, {timeout: 9000})\nit('c', fn, {timeout: 7000})\n")
+        self.assertNotIn(('test-weakened', 't.test.js'), self.kinds())
+        self.write('t.test.js', "it('a', fn, {timeout: 6000})\nit('b', fn, {timeout: 9000})\n")
+        self.assertIn(('test-weakened', 't.test.js'), self.kinds())
 
 
 if __name__ == '__main__':
