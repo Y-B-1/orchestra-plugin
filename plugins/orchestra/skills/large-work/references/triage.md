@@ -12,11 +12,15 @@ Use it to size a request before work starts, and for a bug report, finding or fe
 ## Steps for a report
 1. Check redundancy first: search for an existing implementation by domain concept, not only the request's words, and report where you looked. Check the project's out-of-scope notes for a prior rejection.
 2. Reproduce the claim. Run the described path on the current artifact and keep the command and output. For a PR, check it out and run the tests it claims to satisfy. Ask the reporter only what the code cannot answer.
-3. Give a verdict with its reason: valid; likely valid, needs reproduction; invalid (misuse, expected behavior, duplicate, already built, out of scope).
-4. Give a severity (critical, high, medium, low) with a one-line reason.
-5. Name the suspect code paths and why each is suspect.
-6. Route: a valid defect to the bug path, a missing decision to design, an unknown behavior to investigation. Two blockers of the same shape against one spec send the whole spec back to design, not a patch per unit.
-7. Missing information: list what is established and the specific questions still open. Never write "please provide more info".
+3. Read prior triage notes on the item and never re-ask a resolved question.
+4. Give a verdict with its reason: valid; likely valid, needs reproduction; invalid (misuse, expected behavior, duplicate, already built, out of scope).
+5. Give a severity (critical, high, medium, low) with a one-line reason.
+6. Name the suspect code paths and why each is suspect.
+7. Route: a valid defect to the bug path, a missing decision to design, an unknown behavior to investigation. Two blockers of the same shape against one spec send the whole spec back to design, not a patch per unit.
+8. Missing information: list what is established and the specific questions still open. Never write "please provide more info".
+9. Recommend the category and state to the maintainer and wait for direction before you label, comment or close.
+
+With no item named, list unlabeled, needs-triage and needs-info items with reporter replies since the last notes, oldest first (external PRs only).
 
 Done when each report carries a verdict, a severity and a route, and each verdict rests on a command or a file you read. A confirmed reproduction makes a stronger brief.
 

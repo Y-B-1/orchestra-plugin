@@ -34,7 +34,7 @@ Tag each finding: delete, stdlib, native, speculative, shrink, slop, comment, gr
 - Independent work run in sequence for no reason, or two related writes that can leave half state.
 
 ## Code judo
-Once per diff, ask: is there a reframe that deletes whole branches, helpers or layers while behavior stays? Prefer deleting complexity over moving it. Name the reframe in one sentence. It is a note unless it removes real risk.
+Once per diff, ask: is there a reframe that deletes whole branches, helpers or layers while behavior stays? Prefer deleting complexity over moving it. Name the reframe in one sentence. In a deep or thermo review, a reframe that deletes whole branches or layers is a blocking finding unless the author justifies the current shape. Otherwise it is a note.
 
 ## Baseline smells
 Always a labelled judgement call, overridden by a repo rule: mysterious name, duplicated code, feature envy, data clumps, primitive obsession, repeated switches, shotgun surgery, divergent change, speculative generality, message chains, middle man, refused bequest.

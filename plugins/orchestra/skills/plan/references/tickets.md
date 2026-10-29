@@ -13,7 +13,7 @@ Start from the approved spec, the repository facts and the binding project rules
 5. Class each slice: spike (throwaway, answers one question, never merged), bounded (flow exists), architectural (new subsystem or shared interface, ordered first).
 
 ## Each ticket
-Goal, class, role and mode; starting artifact; owned paths and named shared resources; blockers by ticket; acceptance criteria with the scoped commands; what the report must show. Copy each binding rule into the ticket, since a link does not reach an empty context. Give tests a name and assertions and code its exact signature and file; write a body only where signature and tests leave an algorithm open. "Handle edge cases" decides nothing: strike it.
+Goal, class, role and mode; starting artifact; owned paths and named shared resources; blockers by ticket; acceptance criteria with the scoped commands; what the report must show. Copy each binding rule into the ticket, since a link does not reach an empty context. Give tests a name and assertions and code its exact signature and file; write a body only where signature and tests leave an algorithm open. "Handle edge cases" decides nothing: strike it. A ticket that outlives the run names behaviors, interfaces and acceptance checks, not file paths or line numbers.
 
 ## Graph
 - Two tickets editing one resource share an owner or one blocks the other.
@@ -27,4 +27,4 @@ Group tickets into PRs, each one change a reviewer reads alone. Tickets with int
 Name the gate sets and each live check (a human step: write exact steps). One review covers each PR. Say where a blocked finding returns each ticket.
 
 ## Publish
-Write one file per ticket, or one issue per ticket in dependency order, whichever the project uses. Show the owner the breakdown (title, blockers, what it delivers) and ask if granularity and blockers are right before publishing, unless in a goal.
+Write one file per ticket, or one issue per ticket in dependency order, whichever the project uses. Show the owner the breakdown (title, blockers, what it delivers) and ask if granularity and blockers are right before publishing, unless in a goal. On a tracker, publish blockers first, set native blocking links where the platform has them, add each ticket as a sub-issue of the source issue, apply `ready-for-agent`, and never close or edit the parent.

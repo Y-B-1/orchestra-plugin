@@ -24,4 +24,6 @@ Do this when a change touches a flow the driver covers, and on a stale driver yo
 2. Run the driver live, once per flow. Source that looks clean does not replace a live run.
 3. Sort each finding: wrong or missing description or step is drift, fix the driver. Working behavior the driver cannot reach is a harness gap, fix the driver. Behavior that is actually broken is a product bug: report it, do not hide it in the driver.
 4. Edit only the driver and its docs in this pass. Report one of: clean (nothing to change), changed (what you fixed, with the run output), blocked (what stopped you).
-5. Run doctor again after any failed drive. Report a feature as unreachable only with its concrete prerequisite and the route you tried.
+5. Read `git log` since the driver last changed for user-facing routes, commands or screens the map lacks. Add each with a concrete source path.
+6. Re-drive any harness fix live before it ships.
+7. Run doctor again after any failed drive. Report a feature as unreachable only with its concrete prerequisite and the route you tried.

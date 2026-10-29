@@ -34,7 +34,7 @@ Use `gh` for all PR state. Read `references/pr-body.md` before you write or rewr
 4. A grep for `<<<<<<<` and `>>>>>>>` must find nothing. Re-run the checks the PR was green on. Say which choices you made and why.
 
 ## Watch a PR until green
-Only when the owner asks. Do one bounded check, not a loop: `timeout 600 gh pr checks <n> --watch` as a background command. When it exits, handle red CI or new comments as above. No sleep or polling loops in the main session. Report ready only when checks are green, all comments are answered and the branch merges cleanly.
+Only when the owner asks. Do one bounded check, not a loop: `timeout 600 gh pr checks <n> --watch` as a background command. When it exits, handle red CI or new comments as above. No sleep or polling loops in the main session. When the owner asks to keep watching for reviews, schedule a re-check every 20 to 30 minutes with the loop or schedule skill. Stop after three red fix rounds or when a fix needs a design choice. Report ready only when checks are green, all comments are answered and the branch merges cleanly.
 
 ## Pre-commit hooks
 Only when the owner asks. Read `references/pre-commit.md`.

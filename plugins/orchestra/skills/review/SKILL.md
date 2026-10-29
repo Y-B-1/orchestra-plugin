@@ -61,7 +61,7 @@ Apply only the lenses your brief names. Then apply "Every review".
 - Slop, dead code, comments, condition growth: `references/cleanliness.md`.
 - Hostile input, leaked gates, run-proven findings: `references/red-team.md`.
 - A speedup, regression or score claimed: `references/measurement.md`.
-- Casts, `any`, branded ids, parsing: `references/types.md`.
+- Casts, `any`, branded ids, parsing; name this lens for any diff that adds a type, interface or optional field, not only on `any`, `as` or `!`: `references/types.md`.
 - Validation placement, retries, crash recovery: `references/boundaries.md`.
 - Code others depend on: `references/blast-radius.md`.
 - Stored shape, schema, backfill: `references/data-migration.md`.
