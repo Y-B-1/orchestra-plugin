@@ -1,5 +1,36 @@
 # Benchmark: Orchestra against plain Claude Code and other skill packs
 
+## Orchestra 3.3.0 (2026-10-30)
+
+**Result:** on two new tasks built from the owner's real rework patterns, Orchestra 3.3.0 matched 3.2.0 on time, cost and hidden tests and scored highest on the blind rubric. It beat plain Claude Code, mattpocock/skills and pstack 0.9.108 on hidden tests and rubric, and was 18% faster than plain and 30% faster than pstack.
+
+### Tasks F and G
+
+Both come from about 1,580 owner prompts in real projects, mined for the places the owner had to correct or re-ask. Each is about 1,800 words in the owner's dictation style, with corrections in the middle ("wait, no").
+- **F, the numbers must be right (35 hidden tests):** a fix asked for "all" places, bounded scores whose label, bar and value agree, duplicate clients in aggregates, a 30-day window, a ranking that makes sense, a dark-theme-only bug, and an approved data migration.
+- **G, finish the whole flow (40 hidden tests):** a six-rule sign-in change, a page that must match a reference page, three navbar variants, an approved migration, cleanup of dead features, an adjacent bug to report rather than touch, and an honest status at the end.
+
+Both reference solutions pass every hidden test and all four project checks; the untouched app passes only the regression tests.
+
+### Results (mean of F and G, 2 runs per task per arm)
+
+| Arm | Time | Cost | Hidden tests | Rubric | Repair work |
+|---|---|---|---|---|---|
+| Orchestra 3.2.0 | 11.9 min | $3.39 | 99.4% | 94.5% | 4.2 |
+| **Orchestra 3.3.0** | 12.1 min | $3.38 | 99.3% | **96.0%** | 4.5 |
+| mattpocock/skills@59db609 | 13.0 min | $2.87 | 97.3% | 93.7% | 5.5 |
+| Plain Claude Code | 14.7 min | $3.47 | 96.0% | 92.3% | 5.8 |
+| pstack 0.9.108 | 17.2 min | $4.58 | 96.7% | 91.3% | 6.5 |
+
+Every run pushed its branch and passed all four project checks. The keep rule (quality gain in percent minus half the time increase in percent above zero) holds against 3.2.0: rubric +1.6%, hidden tests equal, time +1.7%.
+
+### Limits of this round
+
+- **Few runs:** 2 per task per arm. One 3.3.0 run on F took 19.6 minutes against 8.3 for the other with the same plan shape (same units, same review), so differences under about 20% are within noise.
+- **Rubric scoring:** a judge sometimes split one rubric row into several; the report now folds scores onto the rubric rows, so totals compare.
+
+---
+
 ## Orchestra 3.2.0 (2026-10-30)
 
 **Result:** on five long multi-request prompts (tasks A to E), Orchestra 3.2.0 delivered a pushed branch in **9.5 minutes per task on average, against 11.8 for 3.0.0 and 12.4 for plain Claude Code**. It passed **98.8%** of the hidden tests (3.0.0: 98.4%, plain: 98.7%), and the blind judge found the least remaining repair work of the three (**4.3 points**, against 5.1 and 4.7). It cost **$3.53 per task**, 12% more than 3.0.0 ($3.16) and plain ($3.18). Every 3.2.0 run pushed its branch and passed all four project checks.
