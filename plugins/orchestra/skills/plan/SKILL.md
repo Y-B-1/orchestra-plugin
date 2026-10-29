@@ -27,7 +27,7 @@ When the change adds or reshapes types, interfaces or module boundaries, or the 
 When the spec is approved and the work is more than one slice, or the brief says tickets, read `references/tickets.md`. Cut vertical slices with blocking edges, map the dependencies, group them into PRs and worktrees.
 
 ## PRD mode
-When the owner asks for a spec or PRD that outlives the run, synthesize it from the conversation without interviewing. Sections: Problem, Solution, a long numbered list of user stories, implementation decisions (modules and interfaces, no file paths), testing decisions with prior art, Out of scope. Publish it to the tracker when the project has one.
+When the owner asks for a spec or PRD that outlives the run, synthesize it from the conversation without interviewing. Sections: Problem, Solution, a long numbered list of user stories, implementation decisions (modules and interfaces, no file paths), testing decisions with prior art, Out of scope. Publish it to the tracker when the project has one, with the `ready-for-agent` label.
 
 ## Self-check
 - Every requirement and acceptance criterion maps to a step or ticket.
