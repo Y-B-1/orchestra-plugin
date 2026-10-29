@@ -17,7 +17,7 @@ description: "Gives the proof and accessibility rules for interactive UI. Load w
 - Color is never the only signal.
 
 ## Async UI
-- Never disable a submit button because a field is empty, invalid or still loading. Let the click submit and show each field's error message. Disable it only while a submit is in flight.
+- A submit never fails silently. Do not disable the button, or return early from the handler, because a field is empty, invalid or still loading: validate first and show each field's error message. Block only a second submit while one is in flight.
 - A response that arrives after the user moved on must not overwrite newer state. Ignore stale responses or cancel them.
 - Loading and error states never leave old data under a new title.
 
