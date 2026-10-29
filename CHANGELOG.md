@@ -12,7 +12,7 @@ Every engineering capability of mattpocock/skills and pstack is now in Orchestra
 - **Changed: builders** write the failing test first, take expected values from the spec, mock only system boundaries, name the data shape, and read the types lens in typed code. Mechanical builders script edits that repeat across many files.
 - **Added: first-time-right checks from the owner's rework patterns.** The main skill writes them into each brief they apply to: "all" or "every" asks land in every sibling place, UI fixes hold in every theme, computed values stay in bounds and agree with their labels, lists respect their window with one row per entity, a multi-rule flow gets one check per rule, a later correction in the prompt wins, approved work runs without asking, and no done claim while an ask is open.
 - **Changed: review briefs** name every lens the diff shows a risk for, and a run with no independent reviewer reports BLOCKED instead of passing.
-- **Benchmark:** two new tasks, F and G, built from the owner's real rework patterns (35 and 40 hidden tests), run against plain Claude Code, mattpocock/skills and pstack 0.9.108. The report now scores each rubric row once.
+- **Benchmark:** two new tasks, F and G, built from the owner's real rework patterns (35 and 40 hidden tests), run against plain Claude Code, mattpocock/skills and pstack 0.9.108 (47c6f80). The report now scores each rubric row once.
 
 ## 3.2.0 — 2026-10-29
 

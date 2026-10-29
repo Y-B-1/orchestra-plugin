@@ -2,7 +2,7 @@
 
 ## Orchestra 3.3.0 (2026-10-29)
 
-**Result:** on two new tasks built from the owner's real rework patterns, Orchestra 3.3.0 matched 3.2.0 on time, cost and hidden tests and scored highest on the blind rubric. It beat plain Claude Code, mattpocock/skills and pstack 0.9.108 on hidden tests and rubric, and was 18% faster than plain and 30% faster than pstack.
+**Result:** on two new tasks built from the owner's real rework patterns, Orchestra 3.3.0 matched 3.2.0 on time, cost and hidden tests and scored highest on the blind rubric. It beat plain Claude Code, mattpocock/skills and pstack 0.9.108 (47c6f80) on hidden tests and rubric, and was 18% faster than plain and 30% faster than pstack.
 
 ### Tasks F and G
 

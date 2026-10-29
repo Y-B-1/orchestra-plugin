@@ -37,7 +37,7 @@ for part in re.split(r"&&|\|\||;|\||\n", cmd):
         reason = "clean -f"
     elif "branch" in rest and "-D" in rest:
         reason = "branch -D"
-    elif ("checkout" in rest or "restore" in rest) and "." in rest and "--staged" not in rest:
+    elif ("checkout" in rest or "restore" in rest) and "." in rest and not ({"--staged", "-S"} & set(rest) and not {"--worktree", "-W"} & set(rest)):
         reason = "checkout . or restore ."
     if reason:
         break
