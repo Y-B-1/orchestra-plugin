@@ -17,10 +17,11 @@ CLI:
 State is per session: <git common dir>/orchestra/sessions/<session id>/ holds asks.md and goal.json.
 The session id comes from the hook event, or from CLAUDE_CODE_SESSION_ID in a Bash command.
 """
-import json, os, re, shlex, subprocess, sys
+import hashlib, json, os, re, shlex, subprocess, sys, time
 from pathlib import Path
 
 MAX_CONTINUES = 60
+LIVE_WORKER_SECONDS = 600  # an unfinished worker turn with no transcript write for this long counts as gone
 OPEN = re.compile(r'^\s*- \[( |>)\] +([^\s:]+)', re.M)
 SESSION_ENV = 'CLAUDE_CODE_SESSION_ID'
 
@@ -257,7 +258,88 @@ def goal_file(cwd=None, session=None):
     return state_dir(cwd, session) / 'goal.json'
 
 
+def turn_open(f):
+    """True when the last assistant record of a transcript did not end its turn (it stopped for a tool call)."""
+    with open(f, 'rb') as fh:
+        fh.seek(0, os.SEEK_END)
+        fh.seek(max(0, fh.tell() - 65536))
+        lines = fh.read().decode(errors='replace').splitlines()
+    for line in reversed(lines):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        message = row.get('message') if isinstance(row, dict) else None
+        if row.get('type') == 'assistant' and isinstance(message, dict):
+            return message.get('stop_reason') != 'end_turn'
+    return True  # started, no assistant turn yet
+
+
+def worker_running(event):
+    """True when a subagent or Workflow agent of this session is mid-turn: its last assistant record did not end the
+    turn and it wrote its transcript in the last LIVE_WORKER_SECONDS. The app wakes the session when a background
+    worker finishes, so a Stop while one runs needs no prompt. A worker that just finished does not count."""
+    path = event.get('transcript_path')
+    if not isinstance(path, str) or not path.endswith('.jsonl'):
+        return False
+    cutoff = time.time() - LIVE_WORKER_SECONDS
+    try:
+        for f in (Path(path[:-len('.jsonl')]) / 'subagents').rglob('*.jsonl'):
+            if f.stat().st_mtime >= cutoff and turn_open(f):
+                return True
+    except OSError:
+        return False
+    return False
+
+
+def progress(cwd, session, missing):
+    """A fingerprint of the work: what is missing, HEAD, the working tree and the ledger. Equal means nothing moved."""
+    lf = ledger(cwd, session)
+    root = git('rev-parse', '--show-toplevel', cwd=cwd)
+    untracked = []
+    for name in git('ls-files', '--others', '--exclude-standard', cwd=root or cwd).splitlines()[:500]:
+        try:
+            st = (Path(root) / name).stat()
+            untracked.append(f'{name} {st.st_size} {st.st_mtime_ns}')
+        except OSError:
+            pass
+    parts = [repr(missing), git('rev-parse', 'HEAD', cwd=cwd), git('status', '--porcelain', cwd=cwd),
+             git('diff', 'HEAD', cwd=cwd), '\n'.join(untracked), lf.read_text() if lf.exists() else '']
+    return hashlib.sha256('\0'.join(parts).encode()).hexdigest()
+
+
+UNKNOWN = 'unknown'
+
+
+def pr_head(cwd, branch):
+    """The head commit of the open pull request for BRANCH, None when there is none, or UNKNOWN when it cannot be
+    read: the remote is not GitHub, gh is missing or not signed in, or gh is slow. UNKNOWN never holds a goal open."""
+    if 'github.com' not in git('remote', 'get-url', 'origin', cwd=cwd):
+        return UNKNOWN
+    try:
+        p = subprocess.run(['gh', 'pr', 'view', branch, '--json', 'state,headRefOid'], cwd=cwd, capture_output=True,
+                           text=True, timeout=6)
+    except (OSError, subprocess.TimeoutExpired):
+        return UNKNOWN
+    if p.returncode != 0:
+        return None if 'no pull requests found' in p.stderr.lower() else UNKNOWN
+    try:
+        view = json.loads(p.stdout)
+    except ValueError:
+        return UNKNOWN
+    return view.get('headRefOid') if view.get('state') == 'OPEN' else None
+
+
+def ends_with_question(event):
+    text = event.get('last_assistant_message')
+    return isinstance(text, str) and '?' in text[-600:]
+
+
 def hook_stop(event):
+    """Keep a /goal session going, but never spam: stay quiet while a worker runs (the app wakes the session when it
+    finishes), and never send the same prompt twice for work that has not changed since the last one."""
+    if worker_running(event):
+        return
     cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else None
     session = event.get('session_id') if isinstance(event.get('session_id'), str) else None
     gf = goal_file(cwd, session)
@@ -297,17 +379,42 @@ def hook_stop(event):
                     ahead = git('rev-list', '--count', '@{upstream}..HEAD', cwd=cwd) if upstream else ''
                     if not upstream or ahead not in ('', '0'):
                         missing.append(f'branch {branch} is not pushed')
+                    else:
+                        head = pr_head(cwd, branch)
+                        if head is None:
+                            missing.append(f'no open pull request for {branch}: open one with gh pr create')
+                        elif head != UNKNOWN and head != git('rev-parse', 'HEAD', cwd=cwd):
+                            missing.append(f'the pull request for {branch} does not hold the current head: push it')
         if missing:
+            mark = progress(cwd, session, missing)
+            if mark == goal.get('progress'):
+                # Nothing moved since the last prompt: repeating it only makes the session repeat itself.
+                goal['continues'] -= 1
+                quiet = goal.get('quiet') == mark
+                goal['quiet'] = mark
+                gf.write_text(json.dumps(goal))
+                if not quiet:
+                    print(json.dumps({'systemMessage': 'Orchestra goal: nothing changed since the last prompt (' +
+                                      '; '.join(missing) + '). Orchestra stays quiet until the work changes: a finished background task or your reply wakes the session.'}))
+                return
+            goal['progress'] = mark
             gf.write_text(json.dumps(goal))
-            print(json.dumps({'decision': 'block', 'reason': 'Goal not done: ' + '; '.join(missing) +
-                              '. Keep going: start every remaining independent ask now, in parallel. '
+            ask = (' Do not wait for an answer: decide, write the decision and its reason in the ledger, and continue.'
+                   if ends_with_question(event) else '')
+            print(json.dumps({'decision': 'block', 'reason': 'Goal not done: ' + '; '.join(missing) + '.' + ask +
+                              ' Keep going: start every remaining independent ask now, in parallel. '
                               'If only the owner can unblock it, run: python3 "' + __file__ + '" goal stop REASON'}))
             return
         goal['state'] = 'done'
         gf.write_text(json.dumps(goal))
         return
-    # No goal: remind once per stop chain when this session's asks are still open, never loop.
+    # No goal: remind once per state of the ledger when this session's asks are still open, never loop.
     if asks and not event.get('stop_hook_active'):
+        seen = state_dir(cwd, session) / 'reminded'
+        mark = progress(cwd, session, [a[1] for a in asks])
+        if seen.exists() and seen.read_text() == mark:
+            return
+        seen.write_text(mark)
         print(json.dumps({'decision': 'block', 'reason': 'The ask ledger still has open asks: ' + ', '.join(a[1] for a in asks) +
                           '. Finish them, or mark each [~] with a reason, then stop.'}))
 

@@ -2,6 +2,15 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.3.1 — 2026-10-30
+
+Fixes the `/orchestra:goal` Stop hook re-prompting in a loop, and restores the 2.15 run-loop rules that 3.x had dropped.
+
+- **Fixed: the goal hook spammed the session.** It re-prompted after every turn, up to 60 times, even while the session was only waiting on background workers, so the session repeated itself. The hook now stays quiet while a subagent or Workflow agent is running (the app wakes the session when it finishes), and never sends the same prompt twice for unchanged work: it shows the owner one line and waits until the work changes. The no-goal reminder follows the same rules.
+- **Restored: a goal is done only with an open pull request.** On a GitHub remote, the goal also needs an open PR that holds the current head (the 2.15 completion rule). When `gh` cannot answer, the check is skipped rather than holding the goal open.
+- **Restored: decide, do not ask.** Under a goal, a turn that ends with a question is told to decide, log the decision in the ledger and continue.
+- **Restored: how to wait.** The main skill says to end the turn while workers run, never to poll, not to repeat a status when woken with nothing new, and to check which workers are still running after a resume or compaction before starting a unit again.
+
 ## 3.3.0 — 2026-10-29
 
 Every engineering capability of mattpocock/skills and pstack is now in Orchestra, as good as or better than the source, without slowing the fast path. `docs/COVERAGE.md` lists all 105 source skills, where Orchestra covers each one and what loads it: all 80 in-scope skills are better or equal; 25 are out of scope (prose style, video, personal recaps, a pack's own setup and help menus).

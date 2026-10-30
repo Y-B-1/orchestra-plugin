@@ -761,3 +761,10 @@ Source: the Lean design that won the speed benchmark (`docs/BENCHMARK.md`). Buil
 - **Final review:** 5 blocking findings, 4 distinct (a guardrails hook that blocked plain pushes and pointed at a script that did not ship, a checkpoint wait that stalled an unattended run, a non-Claude model reference, a cleanup rule that deleted needed comments), plus notes including cross-skill pointers that did not resolve in an installed copy. All fixed; the scoped re-review found one new defect (multi-line commands passed the guardrails hook), fixed and probed with 15 commands. Two new layout tests check that every reference path resolves and that no plugin file names a repo-only path.
 - **Checks:** `scripts/check.sh` exit 0 (Python 3.11 and 3.13); `scripts/live-check.py` PASS for init, guard and goal.
 - **Benchmark:** tasks F and G, five arms, two runs each: 3.3.0 ties 3.2.0 on time (12.1 against 11.9 minutes), cost and hidden tests (99.3% against 99.4%) and has the highest rubric score (96.0%); plain, Pocock and pstack 0.9.108 (47c6f80) are slower and score lower. See `docs/BENCHMARK.md`.
+
+## 3.3.1 (2026-10-30)
+
+- **Bug:** the `/orchestra:goal` Stop hook re-prompted after every turn while the session waited on background workers, so the session repeated itself up to the 60-continuation cap.
+- **Cause:** 3.x dropped two 2.15.3 Stop rules (engine `_stop_check`): running workers end the turn quietly, and a prompt is never sent twice for the same progress signature. The 3.2 lesson inventory had excluded hook and engine lessons as engine-only, so the gap went unseen.
+- **Fix:** `worker_running` (a subagent whose last turn is still in a tool call, written in the last 10 minutes; a review found that a write-time window alone counted a just-finished worker as running) and a progress fingerprint (missing items, HEAD, working tree, ledger) in `lean.py`; restored the open-PR completion rule, the decide-not-ask nudge and the waiting rule in the main skill.
+- **Tests:** 8 new Stop tests in `tests/test_lean.py`, written first; 7 of them failed before the fix for the predicted reasons (the eighth guards that changed work is still prompted).
