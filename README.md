@@ -2,7 +2,7 @@
 
 Orchestra is a Claude Code plugin for prompts that hold more than one ask. It splits the prompt into asks, runs every independent ask at the same time, reviews the finished work once, and pushes a branch for you to merge. `/orchestra:goal` keeps a session working until every ask is done. One guard blocks merging into the default branch; everything else runs.
 
-Version 3.3.0 keeps 3.0's fast design, brings back every 2.15 capability, and holds every engineering capability of mattpocock/skills and pstack (see `docs/COVERAGE.md`), each as an on-demand part: one coordinator skill, eleven agents with pinned models, six role skills and seven shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
+Orchestra keeps 3.0's fast design, brings back every 2.15 capability, and holds every engineering capability of mattpocock/skills and pstack (see `docs/COVERAGE.md`), each as an on-demand part: one coordinator skill, eleven agents with pinned models, six role skills and seven shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
 
 ## Install
 
@@ -15,7 +15,7 @@ claude plugin install orchestra@orchestra-distribution
 
 Updates: Claude Code does not auto-update third-party marketplaces unless you turn it on. In a session run `/plugin`, open the Marketplaces tab, select `orchestra-distribution` and choose Enable auto-update. Without it, run `claude plugin marketplace update orchestra-distribution`, then `claude plugin update orchestra@orchestra-distribution`. A new copy arrives only when the version in `plugin.json` changes, which every release does.
 
-Restart the client, then enable the plugin and review its hooks in the native trust interface. Installation does not grant trust.
+Installing enables the plugin, and its three hooks run from the next session or after `/reload-plugins`, on every Bash call and every stop, in every project where it is enabled. Read `plugins/orchestra/hooks/hooks.json` and `plugins/orchestra/scripts/lean.py` before you install. `claude plugin disable orchestra@orchestra-distribution --scope local` turns it off for one repository.
 
 ## How a multi-request prompt runs
 
@@ -56,7 +56,7 @@ The main session runs on the model and effort you pick.
 
 ## /orchestra:goal
 
-`/orchestra:goal TEXT` starts a goal. The main session records it with `lean.py goal set`, writes the ledger and works without stopping to ask; it lists the calls it made at the end. While a goal is active, the Stop hook blocks the session from stopping until every ledger line is `[x]` or `[~]`, the changes are committed and the branch is pushed. It stops blocking after 60 continuations. When only the owner can unblock the work, the session runs `lean.py goal stop REASON`.
+`/orchestra:goal TEXT` starts a goal. The main session records it with `lean.py goal set`, writes the ledger and works without stopping to ask; it lists the calls it made at the end. While a goal is active, the Stop hook blocks the session from stopping until every ledger line is `[x]` or `[~]`, the changes are committed, the branch is pushed and a pull request holding the current head is open (GitHub remote). It stops blocking after 60 continuations. When only the owner can unblock the work, the session runs `lean.py goal stop REASON`.
 
 Without a goal, the Stop hook reminds the session once when the ledger still has open asks, and never loops.
 
@@ -66,7 +66,7 @@ The PreToolUse hook reads every Bash command and denies only the steps that merg
 
 ## What 3.0.0 removed, and why
 
-Versions up to 2.15.3 ran a Python card engine with leases, reservations, receipts, gates and an autonomy mode, a 7,000-line board mod, three guard modes, size tiers, eight role skills and twelve agents. A benchmark on long multi-request prompts showed that this smaller design delivers about the same quality in about 40% less time than plain Claude Code (7.4 against 12.7 minutes per task, at the same cost), and in about a third of the time and cost of 2.15.3: the removed parts cost time without a measured quality gain. The ask ledger and Git now hold all state, `/orchestra:goal` replaces autonomy, and one guard replaces the guard modes. Details: [docs/BENCHMARK.md](docs/BENCHMARK.md).
+Versions up to 2.15.3 ran a Python card engine with leases, reservations, receipts, gates and an autonomy mode, a 7,000-line board mod, three guard modes, size tiers, eight role skills and twelve agents. A benchmark on long multi-request prompts showed that this smaller design delivers about the same quality as plain Claude Code at about the same cost, and in about a third of the time and cost of 2.15.3 (21.4 minutes and $8.03 per task against 7.4 and $2.76, three tasks, 5 to 6 runs per arm). Its first round also showed less time than plain Claude Code (7.4 against 12.7 minutes), but later and larger rounds measured it at 5% to 18% less, which is within the benchmark's noise margin, so no speed gain over plain Claude Code is claimed: the removed parts cost time without a measured quality gain. The ask ledger and Git now hold all state, `/orchestra:goal` replaces autonomy, and one guard replaces the guard modes. Details: [docs/BENCHMARK.md](docs/BENCHMARK.md).
 
 ## Set up your agent session (once)
 
@@ -78,7 +78,7 @@ Context you pay for in every session comes from a short list: the system prompt,
 
 - `/context` shows the breakdown for the current session; `/context all` expands each item. It also warns about context-heavy tools and memory bloat.
 - `/skills` lists skills; press `t` to sort them by token count.
-- `claude plugin details <plugin>` prints a plugin's always-on tokens. Orchestra's always-on cost is twelve skill descriptions, eleven agent descriptions, one command description and a two-line session-start note. Skill bodies load only when a skill runs.
+- `claude plugin details <plugin>` prints a plugin's always-on tokens. Orchestra's always-on cost is fourteen skill descriptions, eleven agent descriptions, one command description and a two-line session-start note. Skill bodies load only when a skill runs.
 - The script below lists the instruction files, skill and agent descriptions and MCP servers on disk, biggest first. It is standard-library Python and runs on Windows too. Run it from a project root: `python scan.py`.
 
 <details>

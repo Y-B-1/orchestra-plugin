@@ -1,3 +1,5 @@
+> Old version, kept as history. It describes the Codex and GPT era of Orchestra; the plugin no longer supports Codex.
+
 # Model selection evidence — 2026-09-30
 
 The Codex matrix prioritizes gpt-6.1-sol. The 1.0.1 update uses Sol high for red team and checked builder repair, with no Astra. Luna performs bounded read-only discovery and hygiene at high. The main client retains control of its own model.

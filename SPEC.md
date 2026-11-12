@@ -1,3 +1,5 @@
+> Old version, kept as history. It describes the Codex and GPT era of Orchestra; the plugin no longer supports Codex.
+
 # Orchestra 1.0 specification
 
 This file is kept as 1.0 history. The 2.0.0 specification is [docs/SPEC-v2.md](docs/SPEC-v2.md).

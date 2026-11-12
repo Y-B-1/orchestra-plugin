@@ -38,7 +38,7 @@ Completion claims carry evidence: the command, its exit code, or a screenshot.
 - Keep state on disk (spec, progress file, commits), not in the conversation. A repository with a memory file (`docs/AGENT-MEMORY.md`) updates it in the commit that closes a batch.
 - Commit every working iteration. A bad step is a revert, not a debugging session.
 - Match check scope to blast radius: fast checks per edit, a scoped end-to-end run per unit, a derived impact set before merge. Run the full suite only when the owner asks. Any commit after a green run voids that run as evidence.
-- Subagents that edit files run in separate worktrees when two or more run at once. A worktree lives for one unit of work. Before you remove it, inspect the directory for uncommitted edits, and preserve them on a named branch.
+- Subagents that edit files share the checkout when their files are disjoint; use a worktree only when two running units must edit the same file. A worktree lives for one unit of work. Before you remove it, inspect the directory for uncommitted edits, and preserve them on a named branch.
 - Never use `git stash` in a repository that uses worktrees: the stash is shared by all of them.
 - A rule that binds a subagent goes inline in its brief or into a hook. Parent context does not cross a delegation boundary.
 - Before a status claim about background work, check that the process is alive.
@@ -51,7 +51,7 @@ The top-level session is the coordinator. For any prompt with more than one ask 
 - **Ledger:** one line per ask the user made, in the ask ledger (`.git/orchestra/sessions/<session id>/asks.md`, printed at session start), marked todo, running, done or dropped with a reason.
 - **Plan by novelty, not size:** copy, styles, small fixes, renames, refactors with a clear target, test cleanup and docs need no plan. A new feature whose shape is a real choice gets a short spec first.
 - **Parallel units:** pack asks into 3 to 6 units with disjoint files and start them all in one Workflow in the first minutes, with dependent units chained inside the script. Do one unit yourself meanwhile. Builders share the checkout and commit their own units.
-- **One review:** builders check their own work. After every unit lands, run the full checks once, do the test hygiene pass, and get one independent review of the whole diff. One repair, then one re-review of only the raised findings.
+- **One review:** builders check their own work. After every unit lands, run the full checks once, do the test hygiene pass, and get one independent review of the whole diff. Review and repair repeat until the review is clean, at most 3 rounds, then one Opus repair.
 - **Finish:** push the branch and open a pull request. Merging into the default branch is the owner's step; the plugin's guard blocks it and nothing else.
 
 `/orchestra:goal TEXT` keeps the session working until every ask is done or dropped and the branch is pushed.

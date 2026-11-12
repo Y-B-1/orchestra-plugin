@@ -2,7 +2,7 @@
 
 ## Orchestra 3.3.0 (2026-10-29)
 
-**Result:** on two new tasks built from the owner's real rework patterns, Orchestra 3.3.0 matched 3.2.0 on time, cost and hidden tests and scored highest on the blind rubric. It beat plain Claude Code, mattpocock/skills and pstack 0.9.108 (47c6f80) on hidden tests and rubric, and was 18% faster than plain and 30% faster than pstack.
+**Result:** on two new tasks built from the owner's real rework patterns (2 runs per task per arm), Orchestra 3.3.0 matched 3.2.0 on time, cost and hidden tests and scored highest on the blind rubric. Its time is 18% below plain Claude Code (12.1 against 14.7 minutes) and 30% below pstack 0.9.108 (47c6f80); the plain gap is inside the roughly 20% noise margin stated below, so only the pstack gap clears it. The hidden-test and rubric gaps are a few points and are not shown to be more than noise either. Raw per-run rows are not committed (`bench/runs/` is ignored), so these tables cannot be recomputed from the repository.
 
 ### Tasks F and G
 
@@ -22,7 +22,7 @@ Both reference solutions pass every hidden test and all four project checks; the
 | Plain Claude Code | 14.7 min | $3.47 | 96.0% | 92.3% | 5.8 |
 | pstack 0.9.108 (47c6f80) | 17.2 min | $4.58 | 96.7% | 91.3% | 6.5 |
 
-Every run pushed its branch and passed all four project checks. The keep rule (quality gain in percent minus half the time increase in percent above zero) holds against 3.2.0: rubric +1.6%, hidden tests equal, time +1.7%.
+Every run pushed its branch and passed all four project checks. The keep rule (quality gain in percent minus half the time increase in percent above zero) gives a small positive number against 3.2.0 (rubric +1.6%, hidden tests equal, time +1.7%), but every one of these differences is inside the noise margin, so the round shows no loss rather than a gain.
 
 ### Limits of this round
 
@@ -33,9 +33,9 @@ Every run pushed its branch and passed all four project checks. The keep rule (q
 
 ## Orchestra 3.2.0 (2026-10-29)
 
-**Result:** on five long multi-request prompts (tasks A to E), Orchestra 3.2.0 delivered a pushed branch in **9.5 minutes per task on average, against 11.8 for 3.0.0 and 12.4 for plain Claude Code**. It passed **98.8%** of the hidden tests (3.0.0: 98.4%, plain: 98.7%), and the blind judge found the least remaining repair work of the three (**4.3 points**, against 5.1 and 4.7). It cost **$3.53 per task**, 12% more than 3.0.0 ($3.16) and plain ($3.18). Every 3.2.0 run pushed its branch and passed all four project checks.
+**Result:** on five long multi-request prompts (tasks A to E), Orchestra 3.2.0 delivered a pushed branch in **9.5 minutes per task on average, against 11.8 for 3.0.0 and 12.4 for plain Claude Code**. It passed **98.8%** of the hidden tests (3.0.0: 98.4%, plain: 98.7%), and the blind judge found the least remaining repair work of the three (**4.3 points**, against 5.1 and 4.7). It cost **$3.53 per task**, 12% more than 3.0.0 ($3.16) and plain ($3.18). Every counted 3.2.0 run pushed its branch and passed all four project checks.
 
-3.2.0 brings back the eleven agents and the role and situation skills of 2.15 (see `CHANGELOG.md`). The owner's keep rule for any change: keep it when the quality gain in percent minus half the time increase in percent is above zero. 3.2.0 is faster and slightly better than 3.0.0, so it passes.
+3.2.0 brings back the eleven agents and the role and situation skills of 2.15 (see `CHANGELOG.md`). The owner's keep rule for any change: keep it when the quality gain in percent minus half the time increase in percent is above zero. 3.2.0 is 19.5% faster than 3.0.0 on the table below, which is just inside the noise margin stated under Limits, so this is a weak pass.
 
 ### Tasks D and E
 
@@ -62,15 +62,15 @@ The 3.0.0 column now includes newer runs on a busier machine, so its time is hig
 
 ### Limits of this round
 
-- **Few runs:** 1 to 4 runs per task for 3.2.0. Run-to-run spread on one task is up to 2.5 times (3.0.0 on task B: 6.6 to 20.6 minutes), so differences under about 20% are within noise.
+- **Few runs:** 1 to 4 runs per task for 3.2.0. Run-to-run spread on one task is up to 3.1 times (3.0.0 on task B: 6.6 to 20.6 minutes), so differences under about 20% are within noise.
 - **Cost:** 3.2.0 costs about 12% more per task. Most of it comes from task E, whose 1,900-line diffs draw long Opus reviews.
-- **One session ended early:** one 3.2.0 run on task D ended while its builders were still running (the headless session exited after its turn), and it is excluded. The plugin cannot prevent this in `-p` mode; `/orchestra:goal` keeps an interactive session going.
+- **One session ended early:** one 3.2.0 run on task D ended while its builders were still running (the headless session exited after its turn), and it is excluded. With that run excluded, task D for 3.2.0 is a single run (7.3 minutes), so that cell carries little weight. The plugin cannot prevent this in `-p` mode; `/orchestra:goal` keeps an interactive session going.
 
 ---
 
 # Orchestra 3.0.0 (2026-10-28)
 
-**Result:** on three long multi-request engineering prompts, Orchestra 3.0.0 delivered a pushed branch in **7.4 minutes per task on average, against 12.7 for plain Claude Code** (42% less time), at the same cost (**$2.76 against $2.77**). It passed **167 of 168** hidden tests, and the blind judge's remaining repair work was close to plain Claude Code's (4.7 against 4.2 points). Orchestra 2.15.3 took **21.4 minutes and $8.03** per task, about three times the time and the cost of 3.0.0.
+**Result:** on three long multi-request engineering prompts, Orchestra 3.0.0 delivered a pushed branch in **7.4 minutes per task on average, against 12.7 for plain Claude Code** (42% less time in this first round; the later, larger 3.2.0 comparison above puts 3.0.0 at 11.8 against 12.4 minutes for plain, so the 40% figure was not repeated), at the same cost (**$2.76 against $2.77**). It passed **167 of 168** hidden tests, and the blind judge's remaining repair work was close to plain Claude Code's (4.7 against 4.2 points). Orchestra 2.15.3 took **21.4 minutes and $8.03** per task, about three times the time and the cost of 3.0.0.
 
 The kit that produced these numbers is in [`bench/`](../bench/README.md): the fixture app, the three tasks with their hidden tests and reference solutions, the runner, the blind judge prompt and pinned versions of the comparison arms.
 
