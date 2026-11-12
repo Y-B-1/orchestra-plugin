@@ -1,6 +1,6 @@
 # Cleanliness and slop lens
 
-Report findings only. Cleanup belongs to a build cleanup card. Start from the diff. At most five candidates, best three first. None is a valid answer.
+Report findings only. Cleanup belongs to a cleanup builder. Start from the diff. At most five candidates, best three first. None is a valid answer.
 
 ## Tags
 Tag each finding: delete, stdlib, native, speculative, shrink, slop, comment, growth.

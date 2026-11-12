@@ -4,20 +4,20 @@ description: "Rules for the planner: a short spec, a product options note, a typ
 ---
 # Plan
 
-- Write the spec in at most 40 lines: what changes, where, data shape, states, and how to check it. Do not write code in it.
+- Write the default spec in at most 40 lines (product, sketch, ticket and PRD modes follow their own output rules, in as many files as they need): what changes, where, data shape, states, and how to check it. Do not write code in it.
 - Read the code first. Use the project's glossary terms and respect decision records in the area.
-- Ask first the questions that change the architecture, all at once, each with your recommended answer. A question that depends on another waits for the first answer. For rounds and recommended answers, load `orchestra:decide`.
+- You have no channel to the owner. Return, in your report, the questions that change the architecture, all at once, each with your recommended answer; a question that depends on another waits. Work on what they do not block.
 - An open decision blocks only the work that depends on it. Say which work.
 - Name shared resources beyond files: port, database, fixture, lockfile, build output. Units that share one run in order.
 - Check each producer and consumer pair: unit B that reads unit A's output needs the same shape. Check the graph for cycles.
 - Put the thinnest end-to-end slice first. Do prefactoring and removals before the slices that build on them.
-- Choose test seams. Prefer an existing seam, the highest that works, and few of them. Give each one line on what it catches. A new seam is an open decision. Confirm the chosen seams with the owner (or list them under Decisions in a /goal run) before any test is written.
+- Choose test seams. Prefer an existing seam, the highest that works, and few of them. Give each one line on what it catches. A new seam is an open decision. List the chosen seams under Decisions in your report; the main session confirms them with the owner (or proceeds in a /goal run) before any test is written.
 - Write acceptance criteria as numbered pass or fail checks, each run by a command or an observation. Never "works correctly".
 
 ## Product mode
 Use it when the shape is a real choice, such as a new screen, a workflow or an interface others depend on.
-- Give two or three options at concept level, one short paragraph each.
-- Pick one and give the reason. Mark what the owner must confirm; a choice that changes behavior, scope, cost or risk is never yours alone.
+- Return two or three options at concept level, one short paragraph each, in your report for the main session to show the owner.
+- Recommend one with the reason. Mark what the owner must confirm; a choice that changes behavior, scope, cost or risk is never yours alone.
 - When the direction itself is unclear or the work is large, read `references/product.md` for the dossier.
 
 ## Sketch mode
@@ -27,7 +27,7 @@ When the change adds or reshapes types, interfaces or module boundaries, or the 
 When the spec is approved and the work is more than one slice, or the brief says tickets, read `references/tickets.md`. Cut vertical slices with blocking edges, map the dependencies, group them into PRs and worktrees.
 
 ## PRD mode
-When the owner asks for a spec or PRD that outlives the run, synthesize it from the conversation without interviewing. Sections: Problem, Solution, a long numbered list of user stories, implementation decisions (modules and interfaces, no file paths), testing decisions with prior art, Out of scope. Publish it to the tracker when the project has one, with the `ready-for-agent` label.
+When the owner asks for a spec or PRD that outlives the run, synthesize it from the conversation text in your brief without interviewing. Sections: Problem, Solution, a long numbered list of user stories, implementation decisions (modules and interfaces, no file paths), testing decisions with prior art, Out of scope. Write it to the path in your brief; the main session publishes it to the tracker, with the `ready-for-agent` label.
 
 ## Self-check
 - Every requirement and acceptance criterion maps to a step or ticket.

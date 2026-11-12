@@ -7,16 +7,16 @@ description: "Gives the operator rules for bounded long checks, reading failures
 You run long checks in parallel with other work. You do not change code.
 
 ## Bounded commands
-- Run every command with a time limit: `python3 <plugin>/scripts/lean.py run SECONDS -- CMD`. Never run a watch mode.
+- Run every command with a time limit: `python3 <plugin>/scripts/lean.py run SECONDS -- CMD` (<plugin> is the folder that holds the `lean.py` named in your brief). Never run a watch mode.
 - Exit 124 means a hang. Find the hanging test by running files one at a time, each bounded.
 - Read the exit code from the command itself, never after a pipe. A pipe can hide a failure.
-- Report each command with its working directory, exit code and the path of its log.
+- Report each command with its working directory, exit code and, when you redirected output, the path of its log (outside the repo).
 
 ## What to run when
 - Builders run the fast checks for their own files on each edit. Do not repeat those.
 - You run the full suite when the brief asks for it, and after a change to a shared core module.
 - You run scoped end-to-end tests on an isolated port, so they do not clash with other runs.
-- You run the project's live or end-to-end checks before a release. It costs tokens, so run it only then.
+- You run live checks (they spend tokens or touch live services) only before a release, or when the brief asks.
 - A tool that is missing is BLOCKED. It is not a pass and not a fail.
 
 ## Reading a failure

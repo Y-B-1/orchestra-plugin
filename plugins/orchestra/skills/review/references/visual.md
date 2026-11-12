@@ -2,7 +2,7 @@
 
 Use when the diff changes what a user sees. Judge from inspected screenshots or a live view, not from the code.
 
-- Evidence: one inspected screenshot per required theme, viewport and state. State each one you did not see. Missing evidence for a required state is a finding.
+- Evidence: one inspected screenshot per required theme, viewport and state. State each one you did not see. If your brief gives no screenshots, report that state as "not checked", never as a finding.
 - States: empty, loading, error, long text, many items, and permission-denied where it applies.
 - Defects: clipped or overflowing text, misalignment, uneven spacing, low contrast, a missing focus ring, broken or janky motion, layout shift.
 - Responsive: the required widths, including the narrowest.
