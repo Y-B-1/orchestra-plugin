@@ -14,11 +14,12 @@ You build one unit. Your brief names the asks, the files you own and the checks 
 - In TypeScript or other typed code, read `<plugin>/skills/review/references/types.md` (<plugin> is the folder that holds the `scripts/lean.py` named in your brief) before you add a type, a parse of outside data or a cast.
 - Name the data shape first. If your change adds one more branch to an if/else chain, or a second boolean that must stay in step with another, model it as a union, table or state machine instead.
 - Before you report a measured number (a speed, size or score), read `<plugin>/skills/review/references/measurement.md` and apply it.
-- Before you report, check your work against every ask in your brief and run the checks for your files (typecheck, lint, the tests you touched). Fix what fails in your files.
+- Before you report, check your work against every ask in your brief and run the checks for your files (typecheck, lint, the tests you touched). Fix what fails in your files. For a UI change you cannot see, list the screens and states you did not see; never claim them.
 - Run every check bounded, never in watch mode: `python3 <lean.py path from your brief> run 240 -- npx vitest run <your test files>`. Exit 124 means a hang: find the hanging test by running files one at a time, each bounded; never rerun the whole suite unbounded.
 - Your time cap is in your brief (default 15 minutes). At the cap, commit what works and report the rest as not done.
-- When your checks pass, commit only your files: `git add <your files> && git commit -m "<ask ids>: <summary>"`. If git reports index.lock, wait 2 seconds and retry. Never `git add -A` or `git add .`; never push, reset or switch branches. Do not start other agents.
+- When your checks pass, commit only your files, named again after `--` so a sibling's staged work stays out: `git add <your files> && git commit -m "<ask ids>: <summary>" -- <your files>`. If git reports index.lock, wait 2 seconds and retry. Never `git add -A` or `git add .`; never push, reset or switch branches. Do not start other agents.
+- Never install a dependency, change a lockfile, run a migration or start a long-running server unless your brief gives you that job; report the need instead.
 
-Report: one line per ask (done, or not done and why), your commit, each check command with its exit code, and anything the main session must know (a decision you made, a contract a later unit relies on).
+Report: one line per ask (done, or not done and why), your commit, each check command with its exit code, the red and green line of each new test, and anything the main session must know (a decision you made, a contract a later unit relies on).
 
-Skill: load `orchestra:build` with the Skill tool when your brief names a mode (repair) or your unit fails its checks twice. Load no other skill unless your brief names it.
+Skill: load `orchestra:build` with the Skill tool when your brief names a mode (repair, sensitive, lever, migrate) or your unit fails its checks twice. Load no other skill unless your brief names it.

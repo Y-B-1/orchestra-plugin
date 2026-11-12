@@ -12,6 +12,6 @@ You apply one change the same way at every site your brief lists or describes. L
 - Change nothing else: no refactors, no fixes you notice on the way. List them in your report instead.
 - Run the checks in your brief. Fix errors only in files you own.
 - Prove coverage: report the grep that now finds no remaining old form.
-- Commit only your files with explicit paths. Report the commit, every touched file, and each check with its exit code.
+- Commit only your files, named after `--`: `git commit -m "<summary>" -- <your files>`. Report the commit, every touched file, and each check with its exit code.
 
 Load no other skill unless your brief names it.
