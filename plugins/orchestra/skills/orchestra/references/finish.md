@@ -9,10 +9,10 @@ Read each unit's diff yourself before you count it as done; a builder's "done" i
 A unit that dies or hits its cap gets one retry with the original brief plus what is already done. Pick the retry by cause: a smaller scope after a context limit or a cap, the same brief after a dropped connection, a different model after a tool error. A stopped worker that returns late is checked against the tree as it is now; a finding only it has goes to a fresh unit. A second failure becomes an open item in the final message, never a pass. When scope changes mid-run, start a fresh unit with the whole new scope; do not chain a correction onto a redirected worker. Before you redispatch a unit, stop its old worker and confirm it stopped (live process, `git status`).
 
 ## Evidence
-- Checks bind to the final tree: any edit after a green run makes it stale. Run the project's checks once on the final tree and report each command with its exit code.
+- Checks bind to the final tree: any edit after a green run makes it stale. Run the test gate once on the final tree (full unit run once per PR, later runs scoped, e2e scoped) and report each command with its exit code; `gate status` exits 0 before the push.
 - A probe that a new build must pass keys on behavior only the new build produces, never on a version field. Name the record each fact came from. A red run proves the check only when its failure text is the mismatch you predicted.
 - A blocked check (missing tool, credentials) is reported as blocked, not passed and not failed.
-- After a change to a core module many things import, run the full test suite, not just the nearby tests.
+- After a change to a core module many things import, widen the scoped run to its importers; the full run stays one per PR.
 
 ## Worktrees and branches
 Before you remove a worktree, look inside it: `git -C <path> status --porcelain`. Uncommitted or untracked work is committed to a named branch first, never left on a detached HEAD, never stashed. Then remove the worktrees and branches this run created. Call a branch merged only by ancestry against `refs/remotes/origin/<base>` (the short `origin/<base>` can name a tag or a local branch first); a branch with an open PR is not merged.

@@ -4,7 +4,7 @@ Goal: one command that starts the real app, exercises a flow the way a user does
 
 ## Build
 1. Answer from the repo, ask the owner only for what you cannot observe: the surface a user touches (web, CLI, API, desktop, mobile), the start command (package scripts, Makefile, README), ports, env vars, seed data, auth.
-2. Reuse what exists first: Playwright or Cypress specs, expect or PTY helpers, curl-able endpoints, a debug port. Only then pick a generic path: browser for web, tmux or PTY for a CLI, plain HTTP for a service.
+2. Reuse what exists first: the repo's own runner (agentic e2e when the repo has it; read `e2e.md`) and its specs, expect or PTY helpers, curl-able endpoints, a debug port. Only then pick a generic path: browser for web, tmux or PTY for a CLI, plain HTTP for a service.
 3. Keep it in the repo, next to the repo's other test tooling, in the repo's language. Name the one command in the README or the package scripts.
 4. The driver has these parts:
    - Launch: start from an empty data dir, including migrations and seed data. Ready means usable (a page renders, a query answers), not that a port is open. For a short-lived CLI, build once and start each drive in its own isolated session.

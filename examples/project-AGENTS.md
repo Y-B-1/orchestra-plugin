@@ -20,6 +20,10 @@ Customer-facing web app: a TypeScript API in `api/` and a React client in `web/`
 
 Each worker that runs end-to-end tests takes its own port from 4100 to 4199.
 
+## Test gate
+
+Unit tests run in full once per pull request (`npm run test:all` through `gate unit --full`); every later run is scoped (`npm run test:changed` through `gate unit --scoped`). End-to-end runs are scoped to the change and write tests from a user's path; a full e2e run only when the owner asks. Whatever our CI runs, we run locally through the gate.
+
 ## Standing orders
 
 These rules bind every agent and every worker, including subagents.
