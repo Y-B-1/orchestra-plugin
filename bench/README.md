@@ -19,7 +19,7 @@ A benchmark kit that compares Orchestra with plain Claude Code and other skill p
 - `fetch-arms.sh`: fetches the comparison arms into `arms/` at pinned versions.
 - `runs/`, `arms/`, `origin.git/`: generated, gitignored.
 
-Arms: `plain` (no plugin), `orchestra` (this checkout's `plugins/orchestra`), `orchestra-2.15.3`, `orchestra-3.0.0` and `orchestra-3.2.0` (the tags' plugins, extracted into `arms/` by `fetch-arms.sh`), `pocock` (mattpocock/skills at 59db609), `pstack` (michael-denyer/pstack-claude at 36885ea, tasks A to C) and `pstack47` (the same repository at 47c6f80, pstack 0.9.108, tasks F and G). `bench.py` must list an arm in its `ARMS` table before it can be queued; the table names `plain`, `orchestra`, `orchestra-2.15.3`, `pocock`, `pstack` and `pstack47`. The 3.0.0 and 3.2.0 folders are fetched but need an `ARMS` entry (`'orchestra-3.0.0': B / 'arms/orchestra-3.0.0'`) to be queued. Tasks A to C belong to the 3.0.0 round, D and E to 3.2.0, F and G to 3.3.0.
+Arms: `plain` (no plugin), `orchestra` (this checkout's `plugins/orchestra`), `orchestra-2.15.3`, `orchestra-3.0.0` and `orchestra-3.2.0` (the tags' plugins, extracted into `arms/` by `fetch-arms.sh`), `pocock` (mattpocock/skills at 59db609), `pstack` (michael-denyer/pstack-claude at 36885ea, tasks A to C) and `pstack47` (the same repository at 47c6f80, pstack 0.9.108, tasks F and G). `bench.py` must list an arm in its `ARMS` table before it can be queued; the table names all eight arms above. Tasks A to C belong to the 3.0.0 round, D and E to 3.2.0, F and G to 3.3.0.
 
 ## Run it
 

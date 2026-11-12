@@ -23,4 +23,4 @@ You build one unit. Your brief names the asks, the files you own and the checks 
 
 Report: one line per ask (done, or not done and why), your commit, each check command with its exit code, the red and green line of each new test, and anything the main session must know (a decision you made, a contract a later unit relies on).
 
-Skill: load `orchestra:build` with the Skill tool when your brief names a mode (repair, sensitive, lever, migrate) or your unit fails its checks twice. Load no other skill unless your brief names it.
+Skill: load `orchestra:build` with the Skill tool when your brief names a mode (repair, sensitive, lever, migrate) or your unit fails its checks twice. Load no other skill unless your brief or `orchestra:build` names it.

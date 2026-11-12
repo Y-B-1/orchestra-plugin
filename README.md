@@ -15,7 +15,7 @@ claude plugin install orchestra@orchestra-distribution
 
 Updates: Claude Code does not auto-update third-party marketplaces unless you turn it on. In a session run `/plugin`, open the Marketplaces tab, select `orchestra-distribution` and choose Enable auto-update. Without it, run `claude plugin marketplace update orchestra-distribution`, then `claude plugin update orchestra@orchestra-distribution`. A new copy arrives only when the version in `plugin.json` changes, which every release does.
 
-Installing enables the plugin, and its three hooks run from the next session or after `/reload-plugins`, on every Bash call and every stop, in every project where it is enabled. Read `plugins/orchestra/hooks/hooks.json` and `plugins/orchestra/scripts/lean.py` before you install. `claude plugin disable orchestra@orchestra-distribution --scope local` turns it off for one repository.
+Installing enables the plugin, and its three hooks run from the next session or after `/reload-plugins`, on every Bash, PowerShell, Agent and Workflow call and every stop, in every project where it is enabled. Read `plugins/orchestra/hooks/hooks.json` and `plugins/orchestra/scripts/lean.py` before you install. `claude plugin disable orchestra@orchestra-distribution --scope local` turns it off for one repository.
 
 ## How a multi-request prompt runs
 
@@ -63,7 +63,7 @@ Without a goal, the Stop hook reminds the session once when the ledger still has
 
 ## The guard
 
-The PreToolUse hook reads every Bash command and denies only the steps that merge into the default branch: `gh pr merge`, a `gh api` merge call, a push to the default branch, and a force push or delete of it. Everything else runs, including pushing other branches, opening pull requests and deleting stale branches and worktrees. Orchestra never asks for permission; Claude Code's permission mode decides everything else. The guard is a safety net for agents, not isolation. See [hooks](docs/hooks.md).
+The PreToolUse hook reads every Bash and PowerShell command (and MCP `merge_pull_request` tools) and denies the steps that merge into the default branch: `gh pr merge`, a `gh api` merge call, a push to the default branch, and a force push or delete of it. On Agent and Workflow calls it denies two more things: a second `orchestra:critic-fable` at the same time, and, during a run, an agent with no Orchestra type, because that agent would inherit the main session's model (`ORCHESTRA_MATRIX=off` turns this one off). Everything else runs, including pushing other branches, opening pull requests and deleting stale branches and worktrees. Orchestra never asks for permission; Claude Code's permission mode decides everything else. The guard is a safety net for agents, not isolation. See [hooks](docs/hooks.md).
 
 ## What 3.0.0 removed, and why
 

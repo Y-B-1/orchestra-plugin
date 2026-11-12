@@ -52,8 +52,8 @@ The top-level session is the coordinator. For any prompt with more than one ask 
 - **Plan by novelty, not size:** copy, styles, small fixes, renames, refactors with a clear target, test cleanup and docs need no plan. A new feature whose shape is a real choice gets a short spec first.
 - **Parallel units:** pack asks into 3 to 6 units with disjoint files and start them all in one Workflow in the first minutes, with dependent units chained inside the script. Do one unit yourself meanwhile. Builders share the checkout and commit their own units.
 - **One review:** builders check their own work. After every unit lands, run the full checks once, do the test hygiene pass, and get one independent review of the whole diff. Review and repair repeat until the review is clean, at most 3 rounds, then one Opus repair.
-- **Finish:** push the branch and open a pull request. Merging into the default branch is the owner's step; the plugin's guard blocks it and nothing else.
+- **Finish:** push the branch and open a pull request. Merging into the default branch is the owner's step; the plugin's guard blocks it. The hook also denies a second Fable critic and, during a run, an agent with no Orchestra type.
 
-`/orchestra:goal TEXT` keeps the session working until every ask is done or dropped and the branch is pushed.
+`/orchestra:goal TEXT` keeps the session working until every ask is done or dropped, the review line is closed, the branch is pushed and a pull request is open (GitHub remote).
 
 **Human-only steps** (credentials, dashboards, one-off cutovers): generate a bash wizard script instead of numbered steps in chat.
