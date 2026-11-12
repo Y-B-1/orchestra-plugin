@@ -2,6 +2,15 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.5.0 — 2026-11-14
+
+A mandatory test gate before every push, leaner unit tests, and agentic e2e only. See `docs/release-notes/v3.5.0.md`.
+
+- **Added: `lean.py gate`.** One full unit run per branch, scoped runs after it, scoped e2e only, `gate skip` for a repo with no runner, and `gate status` as the push condition; the Stop hook enforces it under a goal.
+- **Added: lean-test rules and the `test-count` scan item.** `orchestra:test-quality` "Lean tests"; the scan reports a net growth of more than 5 tests.
+- **Added: `orchestra:verify` e2e rules.** User-path tests, Filters API, never a full run unless asked.
+- **Changed: this repository's tests are leaner and the e2e runner is 0.23.0.**
+
 ## 3.4.0 — 2026-11-13
 
 Fixes from a full audit of the plugin (136 findings, each checked by a second agent), one new optional agent, and a second look at both upstream skill sets. The purpose is unchanged: every independent ask of a prompt runs in parallel, on the cheapest agent that does it well, for the fastest finish at full quality.
