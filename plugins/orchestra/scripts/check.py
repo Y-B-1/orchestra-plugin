@@ -1,5 +1,5 @@
 """Orchestra: `lean.py check`, a pre-PR scan of the branch diff (see docs/check.md)."""
-import fnmatch, json, re, subprocess, sys
+import collections, fnmatch, json, re, subprocess, sys
 from pathlib import Path
 
 from lean import default_branch, git, usage
@@ -29,8 +29,8 @@ SENSITIVE = {'auth', 'oauth', 'login', 'session', 'token', 'secret', 'password',
 SENSITIVE_PREFIX = ('auth', 'polic', 'encrypt', 'credential')
 NOT_AUTH = {'author', 'authored', 'authoring', 'authority'}
 KINDS = ('size', 'test-weakened', 'self-mock', 'debug', 'rules', 'sensitive', 'secret')
-TIMEOUT = re.compile(r'timeout\W{0,4}([\d_]+\d)', re.I)
-IS_TEST = re.compile(r'(^|/)(tests?/|__tests__/|test_[^/]*$|conftest\.py$|[^/]*_test\.[^/]*$|[^/]*Tests?\.(java|kt)$|[^/]*\.(test|spec)\.)')
+TIMEOUT = re.compile(r'timeout\W{0,4}(\d[\d_]*)', re.I)
+IS_TEST = re.compile(r'(^|/)(tests?/|__tests__/|test_[^/]*$|conftest\.py$|[^/]*_test\.[^/]*$|[^/]*Tests?\.(java|kt)$|[^/]*\.(test|spec|cy)\.|[^/]*_spec\.|(e2e|spec|cypress)/)')
 TIMEOUT_CONFIG = re.compile(r'(^|/)((vitest|jest|playwright|karma|cypress)[^/]*config|pytest\.ini|tox\.ini|setup\.cfg|pyproject\.toml)')
 ASSERTS = re.compile(r'\bassert|\bexpect\(|\.should\b')
 NO_BUDGET = re.compile(r'\.lock$|\.lock\.|^(package-lock|npm-shrinkwrap)\.json$|^(pnpm-lock\.yaml|go\.sum)$|\.min\.|\.(patch|diff|svg|csv|tsv|snap|md|mdx|rst|txt|json|ya?ml|sql)$')
@@ -76,25 +76,28 @@ def changed_files(base, cwd):
         paths = parts[i + 1:i + (3 if status in 'RC' else 2)]
         i += len(paths) + 1
         entries.append((paths[-1], {'add': [], 'rem': [], 'remn': [], 'deleted': status == 'D', 'old': paths[0] if status == 'R' else paths[-1]}))
-    blocks = gitb('diff', '-U0', '-M', '--no-color', '--no-ext-diff', '--no-textconv', '--inter-hunk-context=0', base, cwd=cwd).split('\ndiff --git ')
+    DIFF = ('diff', '-U0', '-M', '--no-color', '--no-ext-diff', '--no-textconv', '--inter-hunk-context=0', base)
+    blocks = gitb(*DIFF, cwd=cwd).split('\ndiff --git ')
+    # A block belongs to an entry only when its header names the path; a type change prints two blocks for one entry.
+    matched = len(blocks) == len(entries) and all(blk.split('\n', 1)[0].endswith(path) for blk, (path, _) in zip(blocks, entries))
     files = {}
     for k, (path, info) in enumerate(entries):
         files[path] = info
-        if len(blocks) != len(entries):
-            continue
-        n = o = 0
-        hunk = False
-        for ln in blocks[k].split('\n'):
-            if ln.startswith('@@'):
-                m = re.match(r'@@ -(\d+)(?:,\d+)? \+(\d+)', ln)
-                o, n, hunk = int(m.group(1)), int(m.group(2)), True
-            elif hunk and ln.startswith('+'):
-                info['add'].append((n, ln[1:]))
-                n += 1
-            elif hunk and ln.startswith('-'):
-                info['rem'].append(ln[1:])
-                info['remn'].append(o)
-                o += 1
+        mine = blocks[k:k + 1] if matched else gitb(*DIFF, '--', *dict.fromkeys((info['old'], path)), cwd=cwd).split('\ndiff --git ')
+        for blk in mine:
+            n = o = 0
+            hunk = False
+            for ln in blk.split('\n'):
+                if ln.startswith('@@'):
+                    m = re.match(r'@@ -(\d+)(?:,\d+)? \+(\d+)', ln)
+                    o, n, hunk = int(m.group(1)), int(m.group(2)), True
+                elif hunk and ln.startswith('+'):
+                    info['add'].append((n, ln[1:]))
+                    n += 1
+                elif hunk and ln.startswith('-'):
+                    info['rem'].append(ln[1:])
+                    info['remn'].append(o)
+                    o += 1
     for path in nul_list(gitb('ls-files', '-o', '-z', '--exclude-standard', cwd=cwd)):
         if path.startswith('.orchestra/sessions/'):  # Orchestra's own ledger, never part of the branch
             continue
@@ -177,9 +180,17 @@ def check(base, max_lines=500, cwd=None):
             parts = p[:-3].split('/')
             mods.update(parts[-1:] + parts[:-1])
     mods.discard('__init__')
+    mods -= set(sys.stdlib_module_names)
     waivers = read_text('.orchestra/budget-waivers', cwd) or ''
     files = changed_files(sha, cwd)
-    removed = {t.strip() for info in files.values() for t in info['rem']}  # a suppression that only moved is not new
+    removed = collections.Counter(t.strip() for info in files.values() for t in info['rem'])  # a suppression that only moved is not new
+
+    def moved(t):
+        """True once per removed occurrence of the line; a second added copy is new."""
+        if removed[t.strip()] > 0:
+            removed[t.strip()] -= 1
+            return True
+        return False
     out = []
 
     def add(kind, path, line, msg):
@@ -212,9 +223,9 @@ def check(base, max_lines=500, cwd=None):
         prose = path.endswith(('.md', '.txt', '.rst'))  # docs quote these patterns; only secrets count there
         for n, t in info['add']:
             for kind, rx, why in LINE_RULES:
-                if (kind == 'secret' or not prose) and re.search(rx, t) and not (kind == 'test-weakened' and t.strip() in removed):
+                if (kind == 'secret' or not prose) and re.search(rx, t) and not (kind == 'test-weakened' and moved(t)):
                     add(kind, path, n, why)
-            if is_test and not prose and re.search(TEST_ONLY, t) and t.strip() not in removed:
+            if is_test and not prose and re.search(TEST_ONLY, t) and not moved(t):
                 add('test-weakened', path, n, REASON)
             m = None if prose else re.search(r'''\b(?:patch|monkeypatch\.setattr)\(\s*['"]([\w.]+)|\bpatch\.object\(\s*(\w+)''', t)
             if m and (m.group(2) in mods or '.' in (m.group(1) or '') and m.group(1).split('.')[0] in mods):

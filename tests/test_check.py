@@ -447,6 +447,46 @@ class Check(unittest.TestCase):
         self.write('t.test.js', "it('a', fn, {timeout: 6000})\nit('b', fn, {timeout: 9000})\n")
         self.assertIn(('test-weakened', 't.test.js'), self.kinds())
 
+    def test_type_change_does_not_hide_line_rules(self):
+        self.write('link', 'plain\n')
+        self.write('app.js', 'ok();\n')
+        self.commit()
+        git(self.repo, 'branch', '-f', 'main', 'HEAD')
+        (self.repo / 'link').unlink()
+        (self.repo / 'link').symlink_to('app.js')
+        self.write('app.js', 'ok();\ndebugger;\n')
+        self.assertIn(('debug', 'app.js'), self.kinds())
+
+    def test_single_digit_timeout_raised(self):
+        self.write('test_a.py', '@pytest.mark.timeout(5)\ndef test_a(): pass\n')
+        self.commit()
+        git(self.repo, 'branch', '-f', 'main', 'HEAD')
+        self.write('test_a.py', '@pytest.mark.timeout(60)\ndef test_a(): pass\n')
+        self.assertIn(('test-weakened', 'test_a.py'), self.kinds())
+
+    def test_focused_test_in_cypress_e2e_and_spec_paths(self):
+        for path in ('cypress/e2e/login.cy.ts', 'e2e/login.ts', 'spec/models/user_spec.rb', 'models/user_spec.rb'):
+            self.write(path, "it.only('a', () => {})\n")
+        got = {k[1] for k in self.kinds() if k[0] == 'test-weakened'}
+        self.assertEqual(got, {'cypress/e2e/login.cy.ts', 'e2e/login.ts', 'spec/models/user_spec.rb', 'models/user_spec.rb'})
+
+    def test_module_named_like_stdlib_is_not_a_self_mock(self):
+        self.write('app/time.py', 'def now(): pass\n')
+        self.write('app/mine.py', 'def f(): pass\n')
+        self.write('t.py', "patch('time.sleep')\npatch('mine.f')\n")
+        f = {(x['path'], x['line']) for x in self.findings() if x['kind'] == 'self-mock'}
+        self.assertEqual(f, {('t.py', 2)})
+
+    def test_one_removed_suppression_does_not_hide_several_added(self):
+        self.write('a.py', 'x = 1  # type: ignore\n')
+        self.commit()
+        git(self.repo, 'branch', '-f', 'main', 'HEAD')
+        (self.repo / 'a.py').unlink()
+        self.write('b.py', 'x = 1  # type: ignore\n')
+        self.write('c.py', 'x = 1  # type: ignore\n')
+        got = {k[1] for k in self.kinds() if k[0] == 'test-weakened'}
+        self.assertEqual(len(got & {'b.py', 'c.py'}), 1)
+
 
 if __name__ == '__main__':
     unittest.main()
