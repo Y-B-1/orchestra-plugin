@@ -493,7 +493,7 @@ class Check(unittest.TestCase):
         cases = [  # (path, added lines, removed lines, tests added, tests removed)
             ('tests/test_a.py', ['def test_x(self):', '    async def test_y():', 'def helper():', '# def test_no'], ['def test_old():'], 2, 1),
             ('web/a.test.ts', ["it('a', () => {", "  test.each([1])('b', n => {", '  it.each`t`(', 'item(1)', 'latest(2)'], ["it('z', () => {"], 3, 1),
-            ('pkg/a_test.go', ['func TestOne(t *testing.T) {', 'func Testify() {', 'func helper() {'], [], 2, 0),
+            ('pkg/a_test.go', ['func TestOne(t *testing.T) {', 'func Testify() {', 'func helper() {'], [], 1, 0),
             ('tests/a_test.rs', ['#[test]', '#[tokio::test]', 'fn x() {'], ['#[test]'], 1, 1),
             ('src/app.py', ['def test_in_app():'], [], 0, 0),
             ('tests/notes.txt', ['def test_x():'], [], 0, 0),
