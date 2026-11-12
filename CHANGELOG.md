@@ -2,6 +2,26 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.4.0 — 2026-11-13
+
+Fixes from a full audit of the plugin (136 findings, each checked by a second agent), one new optional agent, and a second look at both upstream skill sets. The purpose is unchanged: every independent ask of a prompt runs in parallel, on the cheapest agent that does it well, for the fastest finish at full quality.
+
+- **Fixed: `/orchestra:goal` went silent after every Workflow.** The Stop hook read a Workflow's `journal.jsonl` as a running worker for 10 minutes, so a session could stop with open asks. Only agent transcripts count now, and a journal counts only while an agent in it has started and not returned.
+- **Fixed: the merge guard missed ordinary commands.** A merge or a default-branch push behind a shell keyword (`if`, `for`, `!`), a wrapper (`timeout`, `nice`, `sudo -u`, `env -u`, `npx`, `bash -c`) or the plugin's own `lean.py run N --` passed unseen. `git -C DIR` is followed. The hook also reads the PowerShell tool and MCP `merge_pull_request` tools.
+- **Fixed: false denies and a slow guard.** Text that only mentions a merge (a quoted string, a heredoc body, a `gh api` path or jq filter with `/merge`, a read of a PR's merge status) is allowed. The guard starts no git process for a command without `git` or `gh`, and one otherwise.
+- **Fixed: no step created a work branch.** The skill now records the start state first: a work branch when the checkout is on the default branch, the base commit in the ledger header, and files that were already dirty, which stay the owner's.
+- **Fixed: a goal that could not end or ended early.** A goal with no diff (a question, research, a review) ends when every ask is marked. A goal with commits also needs the ledger line `- [x] review: clean`. A ledger with no readable ask line blocks instead of passing. `goal set --limit N` bounds an unattended goal, and `goal stop` works from a terminal.
+- **Fixed: builders could commit a sibling's staged files.** Every commit names its paths after `--`.
+- **Fixed: the pre-PR scan.** It compares against the merge base, ignores the user's git diff settings (an external diff tool printed "no findings"), reports deleted tests and removed assertions as weakened tests, knows more secret and skip forms, skips lockfiles and data files in the size check, and prints the base and file count it used. Two git calls for the whole diff.
+- **Fixed: contradictions between the skill and the agents.** Reviewers review their area and do not run the project's checks. Only a large or risky feature gets a planner and a critic. Test hygiene runs before the review, so nothing ships unreviewed. A dependent unit starts only when its input succeeded. Installs, lockfiles, migrations, ports and build output have one owner. Sensitive, repair, lever and migrate modes are named in briefs. A planner returns its questions instead of asking an owner it cannot reach.
+- **New: a floor for small work.** A few small edits in files already read are done by the main session, without the ledger, Workflow and review procedure.
+- **New: `orchestra:critic-fable`.** The critic on Fable 5.2, as an optional third point of view at the start of a large or risky run or at the end of a large or sensitive one. The hook allows one at a time: one Agent call, or one `agent()` in a Workflow script and never in a loop or fan-out. Without Fable access the same brief goes to `orchestra:critic`.
+- **New: the model matrix is a check.** During a run, the hook denies an agent with no Orchestra agent type, because such an agent inherits the main session's model. `ORCHESTRA_MATRIX=off` turns this off.
+- **Fixed: skills.** The pre-commit setup no longer breaks parallel commits; the git guardrails script is a tested file; `ship` merges the base instead of rebasing a pushed branch; anything that moves HEAD (`git bisect`, a spike) runs in its own worktree.
+- **Fixed: the repository.** CI no longer fails on the runner's account name; the release workflow checks both manifests and the changelog; the example files match 3.x; benchmark claims match the report's own data; old Codex-era documents carry a history banner.
+- **Upstream check.** mattpocock/skills and pstack were read again at their heads. Four small rules were taken at idea level (see `docs/COVERAGE.md`); nothing else applied.
+- **Fixed: `bench.py queue-file`** stops with a message when disk is low (#46, in its own pull request).
+
 ## 3.3.1 — 2026-10-30
 
 Fixes the `/orchestra:goal` Stop hook re-prompting in a loop, and restores the 2.15 run-loop rules that 3.x had dropped.

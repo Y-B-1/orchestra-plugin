@@ -3,7 +3,7 @@
 Use after review, to remove what the diff made dead, duplicated, over-abstracted or sloppy. The brief lists the paths and, when review ran, the findings. With no findings, the paths are the changed files. Edit those paths only. Source cleanup comes first; test hygiene is a separate step under `orchestra:test-quality` with its own before and after run.
 
 ## Procedure
-1. Read each cited finding (or each changed file) and the code around it. Start from the branch diff against the base.
+1. Read each cited finding (or each changed file) and the code around it. Start from the branch diff against the base: the base sha in your brief, else the PR's base branch, else the default branch. Uncommitted changes count.
 2. Run the checks first. After the pass, run them again; both runs pass with tests unchanged (source cleanup only). A cleanup that needs a test edit changed behavior: stop and report.
 3. Prove disuse before you delete: search the repository for callers. A caller found only in tests means the test keeps dead code alive; say so and delete neither without a finding that names it.
 4. Deletion test: if removing a module only moves its complexity to the callers, it earns its place. If the complexity vanishes, it was a pass-through; remove it.

@@ -18,6 +18,8 @@ ARMS = {
     'plain': None,
     'orchestra': B.parent / 'plugins/orchestra',
     'orchestra-2.15.3': B / 'arms/orchestra-2.15.3',
+    'orchestra-3.0.0': B / 'arms/orchestra-3.0.0',
+    'orchestra-3.2.0': B / 'arms/orchestra-3.2.0',
     'pocock': B / 'arms/pocock',
     'pstack': B / 'arms/pstack-src/plugins/pstack',
     'pstack47': B / 'arms/pstack47',

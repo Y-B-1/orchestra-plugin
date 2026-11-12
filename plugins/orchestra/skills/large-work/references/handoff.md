@@ -1,6 +1,7 @@
 # Handoff and resume
 
 ## Write a handoff
+Before you create a notes or handoff file, look for the notes the repo already keeps (a docs folder, a memory file) and write there in its form.
 Write it for a fresh agent to `<git common dir>/orchestra/handoffs/<branch>.md` (outside the working tree, durable). Use `$TMPDIR` only for the copy you pass to `claude --bg`. Named sections:
 - Goal and current state
 - Decisions made, each with its reason

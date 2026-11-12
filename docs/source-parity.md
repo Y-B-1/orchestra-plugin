@@ -1,3 +1,5 @@
+> Old version, kept as history. It describes the Codex and GPT era of Orchestra; the plugin no longer supports Codex.
+
 # Comparison with the audited Claude Code setup
 
 Reference: the embedded DevOps Orchestra at commit `fd140bd32df441db36b1f70bd2d506a8582958f9`, plus portable Orchestra 0.5.0 at `82fe61fd644bb0d55965be8aa6da0bdee4721784`. Inspection was read-only. Private snapshots, project paths, product state and credentials are excluded from this distribution.

@@ -6,8 +6,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'plugins/orchestra'
 MODELS = {'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'}
+FABLE = 'claude-fable-5-2'  # one agent only: the critic's third point of view
 AGENTS = {'builder', 'builder-mechanical', 'builder-cleanup', 'reviewer', 'reviewer-light', 'reviewer-standards',
-          'planner', 'critic', 'investigator', 'investigator-research', 'operator'}
+          'planner', 'critic', 'critic-fable', 'investigator', 'investigator-research', 'operator'}
 
 
 def frontmatter(path):
@@ -68,7 +69,7 @@ class AgentTest(unittest.TestCase):
                 fields = frontmatter(path)
                 self.assertEqual(fields.get('name'), path.stem)
                 self.assertTrue(fields.get('description'))
-                self.assertIn(fields.get('model'), MODELS)
+                self.assertEqual(fields.get('model'), FABLE) if path.stem == 'critic-fable' else self.assertIn(fields.get('model'), MODELS)
                 self.assertIn(fields.get('effort'), {'low', 'medium', 'high', 'xhigh', 'max'})
                 self.assertTrue(fields.get('tools'))
 

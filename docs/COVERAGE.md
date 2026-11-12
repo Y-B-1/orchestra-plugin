@@ -131,3 +131,16 @@ None.
 ## Smaller notes, fixed
 
 The third check also found five smaller loading gaps. None changed a class, and all five are fixed in 3.3.0: the main skill names the types lens for any new type, interface or optional field; the spec row names PRD mode; the cleanup builder may load `orchestra:investigate` why mode when cleanup.md names it; PRD mode applies the `ready-for-agent` label; and the verify row covers a request to audit or update the driver.
+
+## Upstream check for 3.4.0 (2026-11-13)
+
+Both sources were read again at their heads: mattpocock/skills `5863806` (7 commits after the pin) and pstack-claude `f496834` (0.9.137, 98 commits after the pin). Neither added, removed or renamed a skill that Orchestra covers. Taken, at idea level only:
+
+| Upstream change | Orchestra part |
+|---|---|
+| pstack Orchestrate: pick a retry by its cause; check a late return from a stopped worker against the current tree | `skills/orchestra/references/finish.md`, Units that fail |
+| pstack worktree-audit: call a branch merged only by ancestry against `refs/remotes/origin/<base>` | `skills/orchestra/references/finish.md`, Worktrees and branches |
+| pstack deslop: define the diff base; uncommitted changes count | `skills/build/references/cleanup.md` |
+| Pocock chief-of-staff: look for the repo's existing notes before creating a file | `skills/large-work/references/handoff.md` |
+
+Not taken: the "fresh context" sentence (Claude Code subagents already start fresh), sampled retros on every run, the focused-fix exception (Orchestra has no fan-out to skip), per-user model stamps, project playbooks, and the port layers for other runtimes. `in-progress/software-factory` (Pocock, new, beta) is OUT OF SCOPE: it designs CI and agent infrastructure.

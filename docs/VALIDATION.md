@@ -1,3 +1,5 @@
+> Old version, kept as history. It describes the Codex and GPT era of Orchestra; the plugin no longer supports Codex.
+
 # Validation evidence — 2026-09-30
 
 ## Checked

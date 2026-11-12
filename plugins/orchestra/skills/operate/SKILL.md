@@ -22,7 +22,7 @@ You run long checks in parallel with other work. You do not change code.
 ## Reading a failure
 - Find the first failing line. Later errors are often caused by it.
 - Name the file that owns the failure and who edited it.
-- Rerun a failing check once. If it passes, call it flaky and report both runs. Only a second identical failure counts as real.
+- Rerun a failing check once. If it passes, report both runs as an open flaky finding for `orchestra:diagnose`, never as "not real". Only a second identical failure counts as real.
 - Do not add a retry, a longer timeout or a skip to make a check pass.
 - If a check passes at once or fails in an odd way, suspect a stale build or cache. Rerun it on the real artifact.
 - Never fix the code yourself. Report the failure with its owner so the coordinator can send a repair.

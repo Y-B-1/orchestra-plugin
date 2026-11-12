@@ -2,7 +2,7 @@
 
 Orchestra is a Claude Code plugin for prompts that hold more than one ask. It splits the prompt into asks, runs every independent ask at the same time, reviews the finished work once, and pushes a branch for you to merge. `/orchestra:goal` keeps a session working until every ask is done. One guard blocks merging into the default branch; everything else runs.
 
-Orchestra keeps 3.0's fast design, brings back every 2.15 capability, and holds every engineering capability of mattpocock/skills and pstack (see `docs/COVERAGE.md`), each as an on-demand part: one coordinator skill, eleven agents with pinned models, six role skills and seven shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
+Orchestra keeps 3.0's fast design, brings back every 2.15 capability, and holds every engineering capability of mattpocock/skills and pstack (see `docs/COVERAGE.md`), each as an on-demand part: one coordinator skill, twelve agents with pinned models, six role skills and seven shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
 
 ## Install
 
@@ -40,6 +40,7 @@ Installing enables the plugin, and its three hooks run from the next session or 
 | `orchestra:reviewer-standards` | Sonnet 5.5 | medium | Standards, file budget and test quality when the scan flags them |
 | `orchestra:planner` | Sonnet 5.5 | high | A short spec for a feature whose shape is a real choice |
 | `orchestra:critic` | Opus 5.5 | high | Challenges a large or risky spec before it is built |
+| `orchestra:critic-fable` | Fable 5.2 | high | Optional third point of view at the start or the end of a run. Never more than one at a time (the hook denies a second); falls back to `orchestra:critic` without Fable access |
 | `orchestra:investigator` | Haiku 5.5 | high | Fast read-only discovery of the files an ask touches |
 | `orchestra:investigator-research` | Sonnet 5.5 | medium | Checks a library or API for the version the repo uses |
 | `orchestra:operator` | Haiku 5.5 | high | Runs long checks in parallel; release steps only on an owner approval |
@@ -49,7 +50,7 @@ Installing enables the plugin, and its three hooks run from the next session or 
 Every skill loads only when its situation applies, so a routine task reads none of them.
 
 - **Main session only:** `orchestra:orchestra`, the coordinator.
-- **Role skills**, loaded by their agent in the cases its file names: `build` (repair, mechanical and cleanup modes), `review` (lenses: correctness, data and contracts, architecture, standards, tests, security, accessibility, performance), `plan`, `critique`, `investigate` (code and research modes), `operate`.
+- **Role skills**, loaded by their agent in the cases its file names: `build` (repair, mechanical, lever, migrate, cleanup and sensitive modes), `review` (lenses: correctness, data and contracts, architecture, standards, tests, security, accessibility, performance), `plan`, `critique`, `investigate` (code, how, why, survey and research modes), `operate`.
 - **Shared situation skills**, for any agent or the main session: `diagnose` (a bug whose cause is unknown), `decide` (conflicting asks, two valid product shapes, a harmful suggestion), `test-quality`, `frontend-proof` (new interactive components, accessibility), `large-work`, `ship` (pull requests, CI, review comments, conflicts), `verify` (driving the real app, flows with many states).
 
 The main session runs on the model and effort you pick.
@@ -78,7 +79,7 @@ Context you pay for in every session comes from a short list: the system prompt,
 
 - `/context` shows the breakdown for the current session; `/context all` expands each item. It also warns about context-heavy tools and memory bloat.
 - `/skills` lists skills; press `t` to sort them by token count.
-- `claude plugin details <plugin>` prints a plugin's always-on tokens. Orchestra's always-on cost is fourteen skill descriptions, eleven agent descriptions, one command description and a two-line session-start note. Skill bodies load only when a skill runs.
+- `claude plugin details <plugin>` prints a plugin's always-on tokens. Orchestra's always-on cost is fourteen skill descriptions, twelve agent descriptions, one command description and a two-line session-start note. Skill bodies load only when a skill runs.
 - The script below lists the instruction files, skill and agent descriptions and MCP servers on disk, biggest first. It is standard-library Python and runs on Windows too. Run it from a project root: `python scan.py`.
 
 <details>
