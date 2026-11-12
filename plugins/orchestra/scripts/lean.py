@@ -23,11 +23,12 @@ from pathlib import Path
 
 MAX_CONTINUES = 60
 LIVE_WORKER_SECONDS = 600  # an unfinished worker turn with no transcript write for this long counts as gone
-JOURNAL_SECONDS = 3600  # a Workflow journal is written only when an agent starts or ends, so it gets a longer window
+NEW_AGENT_SECONDS = 120  # a Workflow agent that started this recently may not have a transcript yet
 OPEN = re.compile(r'^\s*[-*] +\[( |>)\] *([^\s:]+)', re.M)
 ASK = re.compile(r'^\s*[-*] +\[[ >x~]\] *[^\s:]+', re.M)
 REVIEWED = re.compile(r'^\s*[-*] +\[x\] *review\b', re.M)
-BASE = re.compile(r'^base: (\w\S*)', re.M)
+BASE = re.compile(r'^base: (\w\S*)(?: \((\w+)\))?', re.M)
+DIRTY = re.compile(r'dirty at start: *([^|\n]*)')
 SESSION_ENV = 'CLAUDE_CODE_SESSION_ID'
 
 
@@ -137,8 +138,10 @@ def turn_open(f):
     return True  # started, no assistant turn yet
 
 
-def journal_running(f):
-    """True when a Workflow journal has an agent that started and has no result or failed record."""
+def journal_running(f, journal_age=0):
+    """True when a Workflow journal has an agent that started, has no result or failed record, and is alive: its
+    agent-<id>.jsonl beside the journal is mid-turn and written in the last LIVE_WORKER_SECONDS, or it has no
+    transcript yet and the journal is under NEW_AGENT_SECONDS old. A stopped or crashed Workflow writes no end row."""
     ended, started = set(), []
     for line in Path(f).read_text(errors='replace').splitlines():
         try:
@@ -151,13 +154,23 @@ def journal_running(f):
             started.append((row.get('key'), row.get('agentId')))
         elif row.get('type') in ('result', 'failed'):
             ended.update((row.get('key'), row.get('agentId')))
-    return any(k not in ended and a not in ended for k, a in started)
+    for key, agent in started:
+        if key in ended or agent in ended:
+            continue
+        transcript = Path(f).with_name(f'agent-{agent}.jsonl')
+        try:
+            if time.time() - transcript.stat().st_mtime < LIVE_WORKER_SECONDS and turn_open(transcript):
+                return True
+        except OSError:
+            if journal_age < NEW_AGENT_SECONDS:
+                return True
+    return False
 
 
 def worker_running(event):
     """True when a subagent or Workflow agent of this session is still working: an agent transcript whose last
     assistant record did not end the turn and was written in the last LIVE_WORKER_SECONDS, or a Workflow journal with
-    an agent that started and has no result yet. The app wakes the session when a background worker finishes, so a
+    an agent that started, has no result yet and is alive (see journal_running). The app wakes the session when a background worker finishes, so a
     Stop while one runs needs no prompt. A worker that just finished does not count."""
     path = event.get('transcript_path')
     if not isinstance(path, str) or not path.endswith('.jsonl'):
@@ -167,7 +180,7 @@ def worker_running(event):
         for f in (Path(path[:-len('.jsonl')]) / 'subagents').rglob('*.jsonl'):
             age = now - f.stat().st_mtime
             if f.name == 'journal.jsonl':
-                if age < JOURNAL_SECONDS and journal_running(f):
+                if journal_running(f, age):
                     return True
             elif f.name.startswith('agent-') and age < LIVE_WORKER_SECONDS and turn_open(f):
                 return True
@@ -222,10 +235,21 @@ def commits_ahead(cwd, text):
     """How many commits HEAD holds beyond the work's base: the ledger header's base, else the default branch."""
     main = default_branch(cwd)
     base = BASE.search(text)
-    for ref in ([base.group(1)] if base else []) + ['refs/remotes/origin/' + main, 'refs/heads/' + main]:
+    for ref in ([base.group(2) or base.group(1)] if base else []) + ['refs/remotes/origin/' + main, 'refs/heads/' + main]:
         if git('rev-parse', '--verify', '--quiet', ref + '^{commit}', cwd=cwd):
             return int(git('rev-list', '--count', ref + '..HEAD', cwd=cwd) or 0)
     return 0
+
+
+def uncommitted(cwd, text):
+    """True when tracked files changed, apart from the paths the ledger header lists after "dirty at start:"."""
+    m = DIRTY.search(text)
+    skip = [x.strip().rstrip('/') for x in (m.group(1).split(',') if m else []) if x.strip() not in ('', '-')]
+    for line in git('status', '--porcelain', '--untracked-files=no', cwd=cwd).splitlines():
+        path = line.split(None, 1)[-1].split(' -> ')[-1].strip('"')  # git() trims the first line's leading space
+        if not any(path == x or path.startswith(x + '/') for x in skip):
+            return True
+    return False
 
 
 def goal_missing(cwd, session, asks):
@@ -239,7 +263,7 @@ def goal_missing(cwd, session, asks):
         return ['the ledger has no ask lines; write one per ask as "- [ ] A1: text"']
     missing = []
     branch = git('branch', '--show-current', cwd=cwd)
-    if git('status', '--porcelain', '--untracked-files=no', cwd=cwd):
+    if uncommitted(cwd, text):
         missing.append('uncommitted changes')
     if not commits_ahead(cwd, text):
         return missing
@@ -332,7 +356,7 @@ def hook_session_start(event):
     branch = (f' On {main}, work starts on a new branch.'
               if git('branch', '--show-current', cwd=cwd) == main else '')
     print(f'Orchestra is on. Ask ledger: {ledger(cwd, session)}. CLI: python3 "{__file__}".\n'
-          'The orchestra skill handles a prompt with more than one ask. Only merging into the default branch is blocked.' + branch)
+          'The orchestra skill handles a prompt with more than one ask. Blocked: merging into the default branch, a second Fable critic, and an untyped agent during a run.' + branch)
 
 
 def run_bounded(seconds, cmd):
