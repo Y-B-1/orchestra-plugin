@@ -14,9 +14,13 @@ Checks run locally with `scripts/check.sh` (`--quick` is accepted and runs the s
 
 ## Agentic E2E (tester-army `e2e`)
 
-Unused scaffold: `tests/agentic/` tests a placeholder page (example.com), not the plugin, and cannot catch an Orchestra regression. Keep or remove it as an owner decision. It is not part of the release archive.
+Runner: `e2e` 0.23.0 with `@e2e-dev/web` 0.15.5, `@e2e-dev/decision` 0.3.2, `ai` 7.0.171, `@ai-sdk/typesafe-ai` 3.0.39 (needs Node 22.22.3+ or 24.8+; Node 20 fails). Orchestra is a plugin with no web UI, so `tests/agentic/template.e2e.ts` is the only test: a template for a project with a UI, tagged `template` and skipped. The old example.com scaffold was removed. This repo's real end-to-end check is `scripts/live-check.py` (real headless sessions, costs tokens, release only).
 
-Agentic end-to-end tests live in `tests/agentic/` and run with `npm run test:e2e`. Read `.agents/skills/e2e/SKILL.md` before writing or running one. Model and keys: `e2e.config.ts` + gitignored `.env.e2e.local`; set `APP_URL` (default https://example.com). Python tests in `tests/` are unaffected.
+Config: `e2e.config.ts` sets `filters: [decisionFilter({ model: typeSafeAi.decisionModel('jev-latest') })]` (Jev decides which tests a change can affect) and the Jev decision executor with Luna as text and vision model. Key names (names only, values live in the gitignored `.env.e2e.local`): `TYPESAFE_AI_API_KEY` (Jev), `OPENROUTER_API_KEY` (Luna). Set `APP_URL` to the app under test, on an isolated port, never a shared one.
+
+Commands, always scoped: commit first, then `npm run e2e:list` (preview, makes the filter's model call) and `npm run e2e:changed` (`e2e run --changed-since origin/main`). There is no script for a full run, and no full run unless the owner asks (`e2e run` with no flag runs every test; a change to `e2e.config.ts` or the lockfile also forces a full run). Through the gate: `lean.py gate e2e -- npx e2e run --changed-since origin/main`.
+
+Tests follow the docs: arrange, act, assert, one behavior per test, a user path, and an ending `expect`. Read `.agents/skills/e2e/SKILL.md` before writing or running one. Python tests in `tests/` are unaffected.
 
 Model routing (Jev acts and judges page text; Luna sees pixels):
 - Write `agent.act` goals as a destination or result ("go to the Billing page"), never as a click ("click Billing"). Jev rates click goals "inconclusive".
