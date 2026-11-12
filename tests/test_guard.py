@@ -276,6 +276,10 @@ class FableTest(Repo):
         self.denied(self.script("const o = {}\nawait agent(p1, o)"), 'agentType')
         self.denied(self.script("await agent(p1, {model: 'sonnet'})"), 'agentType')
 
+    def test_a_critic_type_kept_in_a_shared_variable_is_denied(self):
+        self.denied(self.script("const o = {agentType: 'orchestra:critic-fable'}\nawait Promise.all([agent(a, o), agent(b, o)])"), 'outside')
+        self.denied(self.script("const o = {agentType: 'orchestra:critic-fable'}\nconst c = x => agent(x, o)\nawait Promise.all([c(a), c(b)])"), 'outside')
+
     def test_agent_written_inside_a_string_is_not_a_call(self):
         self.ledger()
         self.assertIsNone(self.script("await agent('Call agent( on it', {agentType: 'orchestra:builder'})"))

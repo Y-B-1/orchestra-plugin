@@ -524,7 +524,10 @@ def workflow_reason(event, tool_input, cwd, session):
     for m in STRING_MARK.finditer(code):
         if CRITIC_LITERAL.fullmatch(literals[int(m.group(1))].strip()):
             call = next((c for c in calls if c[0] < m.start() < c[1]), None)
-            critics.add(call[0] if call else m.start())
+            if call is None:
+                return FABLE_SCRIPT.format(name=CRITIC, why='The critic type is written outside an agent() call (a shared '
+                                           'variable or options object), where one critic call can be reused many times.'), False
+            critics.add(call[0])
     if len(critics) > 1:
         return FABLE_SCRIPT.format(name=CRITIC, why=f'This script names it {len(critics)} times.'), False
     if critics:
