@@ -29,7 +29,7 @@ Use `gh` for all PR state. With a plain git remote and no `gh`, push the branch 
 
 ## CI and the gate
 - A green gate record for the pushed head (`gate status` exits 0) counts as the check. Do not wait for CI.
-- Whatever runs in the CI runs locally: read the CI workflow files, take each `run:` step, and run those commands through the gate. CI that runs only on dispatch is untouched.
+- Whatever runs in the CI runs locally: read the CI workflow files, take each `run:` step that checks code (typecheck, lint, test, build; not deploy or publish), and run those commands through the gate. CI that runs only on dispatch is untouched.
 - A repo whose CI does something a local run cannot (a deploy, a matrix of operating systems) says so in the PR body.
 
 ## Merge conflicts

@@ -13,7 +13,7 @@ Rules for any e2e test written or run in a repo. A repo that uses the `e2e` runn
 - Run through the gate: `python3 <plugin>/scripts/lean.py gate e2e -- e2e run --changed-since <base>`. It refuses an unscoped run.
 - A full e2e run only when the owner asks (they set `ORCHESTRA_E2E_FULL=1`). Without a flag the runner runs everything, so never run it bare.
 - A change to the e2e config or a lockfile forces a full run. Commit those apart from the rest, and tell the owner before anything runs.
-- Never pass the flag on `pull_request_target`.
+- In CI, pass `--changed-since` only on `pull_request`, never on `pull_request_target`.
 - Each run gets its own port. Never share a port or data dir with another run.
 
 ## Keys

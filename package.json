@@ -12,7 +12,6 @@
     "zod": "^4.1.8"
   },
   "scripts": {
-    "test:e2e": "e2e run",
     "e2e:changed": "e2e run --changed-since origin/main",
     "e2e:list": "e2e list --changed-since origin/main"
   }

@@ -55,6 +55,6 @@ The top-level session is the coordinator. For any prompt with more than one ask 
 - **Test gate:** unit tests run in full once per pull request, every later run is scoped; e2e is always scoped to the change and runs fully only when you ask. `gate status` must exit 0 before the push.
 - **Finish:** push the branch and open a pull request. Merging into the default branch is the owner's step; the plugin's guard blocks it. The hook also denies a second Fable critic and, during a run, an agent with no Orchestra type.
 
-`/orchestra:goal TEXT` keeps the session working until every ask is done or dropped, the review line is closed, the branch is pushed and a pull request is open (GitHub remote).
+`/orchestra:goal TEXT` keeps the session working until every ask is done or dropped, the review line is closed, the test gate holds, the branch is pushed and a pull request is open (GitHub remote).
 
 **Human-only steps** (credentials, dashboards, one-off cutovers): generate a bash wizard script instead of numbered steps in chat.

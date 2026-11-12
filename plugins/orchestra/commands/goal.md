@@ -1,5 +1,5 @@
 ---
-description: Work on a goal without stopping until every ask is done, the branch is pushed and a pull request is open
+description: Work on a goal without stopping until every ask is done, the tests have passed through the gate, the branch is pushed and a pull request is open
 argument-hint: what you want done
 allowed-tools: Bash(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/lean.py" *)
 disable-model-invocation: true
@@ -11,5 +11,5 @@ Goal from the owner:
 $ARGUMENTS
 
 1. The goal is set (the line above, with its stop-attempt limit; the owner sets it with ORCHESTRA_GOAL_LIMIT and ends the goal from a terminal with `lean.py goal stop REASON`). Load the orchestra skill and follow it: write the ask ledger at the path above, start every independent ask at once, review once at the end.
-2. Do not stop to ask questions; make sensible calls and list them at the end. A Stop hook keeps you going until every ledger line is done or dropped with a reason. When the branch has commits, it also needs `- [x] review: clean` in the ledger, the branch pushed and a pull request open. Asks that change nothing (questions, research) need only their marks.
+2. Do not stop to ask questions; make sensible calls and list them at the end. A Stop hook keeps you going until every ledger line is done or dropped with a reason. When the branch has commits, it also needs `- [x] review: clean` in the ledger, the branch pushed, `lean.py gate status` exiting 0 and a pull request open. Asks that change nothing (questions, research) need only their marks.
 3. While workers run, end your turn: the app wakes you when one finishes, and the Stop hook stays quiet. It never sends the same prompt twice; if nothing changed, the session waits.
