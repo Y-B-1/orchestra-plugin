@@ -127,6 +127,65 @@ class GuardTest(Repo):
         self.assertIsNone(self.hook('pre-tool-use', {'tool_name': 'Bash', 'tool_input': {}, 'cwd': 5}))
 
 
+class GuardReachTest(Repo):
+    """What the guard sees (wrappers, keywords, -C) and what it must leave alone (text that only mentions)."""
+    DENY = ['if gh pr checks 5 --watch; then gh pr merge 5 --squash; fi',
+            'for i in 1 2 3; do git push origin HEAD:main && break; sleep 5; done',
+            '! gh pr merge 5', 'while ! git push origin feature:main; do sleep 2; done',
+            'timeout 60 gh pr merge 5 --squash', 'timeout -s KILL 60 git push origin main',
+            'python3 "/x/scripts/lean.py" run 120 -- gh pr merge 5 --squash',
+            'python3 /x/scripts/lean.py run 120 -- git push origin HEAD:main',
+            'sudo -u bob git push origin main', 'env -u GIT_DIR git push origin main',
+            'nice -n 5 git push origin main', 'npx gh pr merge 5', 'npx -y gh pr merge 5', 'bash -ce "gh pr merge 5"',
+            'git \\\n  push origin main', 'gh pr \\\n merge 5 --squash', '/usr/bin/git.exe push origin main',
+            'bash <<\'EOF\'\ngh pr merge 5\nEOF', 'cat <<EOF\n$(gh pr merge 5)\nEOF',
+            'git push origin "$(git branch --show-current)"', 'pushd sub && git push origin main',
+            'gh pr comment 12 --body "Do not run `gh pr merge` yet"']  # a shell runs a backtick span in double quotes
+    ALLOW = ['gh pr create --title x --body "$(cat <<\'EOF\'\n## Summary\nOwner: merge with `gh pr merge 12 --squash`\nEOF\n)"',
+             'git commit -m "$(cat <<\'EOF\'\nGuard: deny `git push origin main`\nEOF\n)"',
+             "gh pr comment 12 --body 'Do not run `gh pr merge` yet'",
+             "cat > notes.md <<'EOF'\ngit push origin main is denied by the guard\nEOF",
+             "gh issue create --title t --body-file - <<'EOF'\nSteps:\ngh pr merge 5\nEOF",
+             'gh api repos/o/r/pulls/3/merge', 'gh api repos/o/r/pulls/12/comments --jq ".[] | select(.path==\\"src/merge.ts\\")"',
+             'gh api -X POST repos/o/r/pulls/12/comments/99/replies -f body="Fixed in src/merge.ts"',
+             "gh api graphql -f query='query { repository { name } }' --jq '.mergePullRequest'",
+             'git push origin "refs/heads/feat*:refs/heads/feat*"', 'git push origin feature > main',
+             'git push ${REMOTE:-origin} feature', 'timeout 600 gh pr checks 5 --watch',
+             'python3 /x/scripts/lean.py run 120 -- npm test', 'sudo -u bob ls', 'echo "$(date)" && ls']
+
+    def test_commands_that_reach_the_default_branch_are_denied(self):
+        for command in self.DENY:
+            with self.subTest(command):
+                self.assertIsNotNone(self.bash(command), command)
+
+    def test_text_that_only_mentions_runs(self):
+        for command in self.ALLOW:
+            with self.subTest(command):
+                self.assertIsNone(self.bash(command), command)
+
+    def test_git_dash_c_is_followed_to_that_checkout(self):
+        wt = Path(self.tmp.name) / 'wt'
+        git(self.repo, 'worktree', 'add', '-q', '-b', 'feature', str(wt))
+        self.assertIsNotNone(self.bash(f'git -C {wt.parent / "repo"} push', cwd=str(wt)))
+        self.assertIsNone(self.bash(f'git -C {wt} push -u origin HEAD'))
+        self.assertIsNone(self.bash(f'git -C {wt} push'))
+
+    def test_a_read_only_command_spawns_no_git_and_a_push_one(self):
+        with mock.patch.object(lean, 'git', wraps=lean.git) as spy:
+            self.assertIsNone(self.bash('cat > a.py <<EOF\n' + 'def f():\n    pass\n' * 300 + 'EOF'))
+            self.assertIsNone(self.bash('ls | grep x; echo done'))
+            self.assertEqual(spy.call_count, 0)
+            self.assertIsNone(self.bash('git status && git log -1; git push origin feature'))
+            self.assertEqual(spy.call_count, 1)
+
+    def test_powershell_and_an_mcp_merge_tool_are_guarded_too(self):
+        out = self.hook('pre-tool-use', {'tool_name': 'PowerShell', 'tool_input': {'command': 'gh pr merge 1'}})
+        self.assertEqual(out['hookSpecificOutput']['permissionDecision'], 'deny')
+        out = self.hook('pre-tool-use', {'tool_name': 'mcp__github__merge_pull_request', 'tool_input': {}})
+        self.assertEqual(out['hookSpecificOutput']['permissionDecision'], 'deny')
+        self.assertIsNone(self.hook('pre-tool-use', {'tool_name': 'mcp__github__get_pull_request', 'tool_input': {}}))
+
+
 class StopTest(Repo):
     def ledger(self, text, session=None):
         lean.ledger(self.cwd, session).write_text(text)
