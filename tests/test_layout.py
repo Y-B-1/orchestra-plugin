@@ -28,11 +28,13 @@ def frontmatter(path):
 GENERIC_ACCOUNTS = {'runner', 'runneradmin', 'root', 'user', 'admin', 'dev', 'test', 'max', 'ubuntu', 'vscode', 'node'}
 
 
+EMAIL = subprocess.run(['git', 'config', 'user.email'], cwd=ROOT, capture_output=True, text=True).stdout.strip()  # read once
+
+
 def private_words():
     """The local account name and the git email: neither may appear in a shipped file. The git user name is not
     checked, because the public repository URL carries the owner's account name."""
-    email = subprocess.run(['git', 'config', 'user.email'], cwd=ROOT, capture_output=True, text=True).stdout.strip()
-    words = {getpass.getuser(), email, email.partition('@')[0]}
+    words = {getpass.getuser(), EMAIL, EMAIL.partition('@')[0]}
     return {w for w in words if len(w) >= 3 and w.lower() not in GENERIC_ACCOUNTS}
 
 

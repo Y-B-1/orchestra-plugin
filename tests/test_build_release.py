@@ -1,6 +1,4 @@
-import os
 import sys
-import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -9,24 +7,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import build_release
-
-
-def git(repo, *args):
-    subprocess.run(['git', '-c', 'user.name=t', '-c', 'user.email=t@example.com', *args],
-                   cwd=repo, check=True, capture_output=True)
+from tests.support import git, make_repo
 
 
 class BuildSymlinkTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.repo = Path(self.tmp.name) / 'repo'
+        self.repo = make_repo(Path(self.tmp.name) / 'repo')
         self.out = Path(self.tmp.name) / 'out'
         (self.repo / 'plugins/orchestra').mkdir(parents=True)
         (self.repo / 'plugins/orchestra/plugin.json').write_text('{"version":"9.9.9"}')
         (self.repo / 'docs').mkdir()
         (self.repo / 'docs/real.txt').write_text('hello\n')
-        git(self.repo, 'init', '-q')
 
     def commit(self):
         git(self.repo, 'add', '--', 'plugins', 'docs', 'link')
@@ -51,7 +44,6 @@ class BuildSymlinkTests(unittest.TestCase):
         self.commit()
         with self.assertRaisesRegex(ValueError, 'Distribution symlinks are unsupported'):
             build_release.build(self.out, root=self.repo)
-
 
     def test_development_files_are_left_out(self):
         keep = ['plugins/orchestra/hooks/hooks.json', 'docs/real.txt']
