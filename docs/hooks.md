@@ -75,6 +75,20 @@ When none holds, the goal state becomes `done` and the session stops. After the 
 
 When no goal file exists, the Stop hook blocks once when this session's ledger has open asks, and stays quiet when the stop is already a continuation (`stop_hook_active`), while a worker runs, or when it already reminded about the same ledger state, so it never loops.
 
+## The test gate
+
+`lean.py gate` (code in `scripts/gate.py`) runs the test commands of a branch bounded and records them in `gate.json` beside `goal.json` (per session, keyed by branch; written atomically; a damaged file reads as empty).
+
+- `gate unit --full [--seconds N] -- CMD` is the one full unit run of the branch (default 600 s). Exit 3 with "a full run is already recorded for this branch; run scoped" when a completed one exists. A run that timed out (124) or was killed by a signal does not count as completed.
+- `gate unit --scoped [--seconds N] -- CMD` is always allowed.
+- `gate e2e [--seconds N] -- CMD` runs only a scoped command: one with `--changed-since`, `--grep`, `--tag`, `--last-failed`, `--shard` or a test file path (`*.e2e.*`, `*.spec.*`, `*.test.*`); else exit 3, unless the owner sets `ORCHESTRA_E2E_FULL=1`.
+- `gate skip unit|e2e REASON` records that the repo has no such runner; the reason is required.
+- `gate status` exits 0 when the gate holds for HEAD, else 1 and lists what is missing.
+
+A run returns the command's own exit code; 3 is a refusal and 2 a usage error. The gate holds when unit has a skip, or a completed full run exists for the branch and a unit run with exit 0 is recorded at HEAD; and e2e has a skip or an e2e run with exit 0 at HEAD. A new commit makes the HEAD records stale, so after a repair commit the gate asks for a new scoped run, not a second full one.
+
+The Stop hook adds the gate to its conditions: when HEAD has commits beyond the base, the goal is not done until `gate status` would exit 0 (the reason names the missing part and the command). A goal without commits beyond the base is unaffected.
+
 ## Bounded commands
 
 `lean.py run SECONDS -- CMD` runs a command in its own process group and stops the group after SECONDS (exit 124), so a hanging test cannot hold a builder. A child that starts its own session or group is not reached. A command killed by signal N exits 128+N. SECONDS must be a positive number. When `lean.py` itself is stopped (SIGTERM, SIGINT or SIGHUP, as a Bash tool timeout does), it stops the command's group too. It is a CLI, not a hook.

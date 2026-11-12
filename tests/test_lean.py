@@ -20,6 +20,10 @@ class Repo(unittest.TestCase):
         env.start()
         self.addCleanup(env.stop)
         os.environ.pop(lean.SESSION_ENV, None)
+        import gate  # the Stop-hook gate condition has its own tests in test_gate.py
+        gate_off = mock.patch.object(gate, 'missing', return_value=[])
+        gate_off.start()
+        self.addCleanup(gate_off.stop)
         self.tmp = tempfile.TemporaryDirectory()
         base = Path(self.tmp.name)
         self.origin, self.repo = base / 'origin.git', base / 'repo'
