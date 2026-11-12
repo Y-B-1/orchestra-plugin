@@ -5,7 +5,7 @@ Orchestra registers three hooks in `plugins/orchestra/hooks/hooks.json`. Each ru
 | Event | Matcher | Effect |
 | --- | --- | --- |
 | SessionStart | all | Tells the main session that Orchestra is on, prints the ask ledger path and the `lean.py` path, names the `orchestra` skill for a prompt with more than one ask, and on the default branch says work starts on a new branch. It creates no folder |
-| PreToolUse | `Bash`, `PowerShell`, MCP `merge_pull_request` tools | Denies a command or tool call that merges into the default branch. Allows everything else by printing nothing |
+| PreToolUse | `Bash`, `PowerShell`, `Agent`, `Task`, `Workflow`, MCP `merge_pull_request` tools | Denies a command or tool call that merges into the default branch, a second Fable critic, and (during a run) a subagent that inherits the main session's model. Allows everything else by printing nothing |
 | Stop | all | Under an active goal, blocks stopping until the goal is done, but stays quiet while a worker runs and never repeats a prompt for unchanged work. When no goal was set, reminds once per ledger state about open asks |
 
 ## The ledger and goal files
@@ -33,6 +33,23 @@ When the guard cannot read a command that mentions merge or push, it denies it r
 Everything else runs: pushing other branches and tags, deleting other branches, removing worktrees, `git merge` in the local checkout, `git reset`, opening and reading pull requests. Claude Code's permission mode decides those as usual.
 
 The deny reason tells the agent to push its branch and open a pull request; merging is the owner's step. The guard reads command text. It does not follow aliases, variables or scripts, so it is a safety net for agents, not isolation.
+
+## One Fable critic, and the model matrix
+
+The hook reads `Agent` (and the older `Task`) calls through `subagent_type` and `model`, and `Workflow` calls through `script` or the file at `scriptPath`. It starts no git process unless it needs the session folder, and it prints nothing for input it cannot read.
+
+One Fable critic (no switch):
+
+- An `Agent` call for `orchestra:critic-fable` (or `critic-fable`) is denied while one runs in this session. "Running" is a `critic-fable` subagent transcript (its type is read from the `agent-*.meta.json` beside it) that is mid-turn and written in the last 10 minutes. A call it allows also writes `fable.lock` in the session folder; the lock counts for 30 minutes unless a critic transcript finished after it was written.
+- A `Workflow` script that names `critic-fable` twice, or once on a line with or inside `map(`, `forEach(`, `for (`, `while (`, `parallel(`, `pipeline(` or `Array.from`, is denied; so is one that names it while a critic runs. It is a text check: a mention in a comment counts.
+- A model override containing `fable` on any other agent type is denied.
+- Deny texts: "only one Fable critic may run at a time. ... Wait for the running critic-fable to finish"; "a workflow may name critic-fable once, outside any loop or fan-out"; "the Fable model runs only as orchestra:critic-fable, one at a time".
+
+The model matrix applies during a run, when this session's ledger has an open ask (`[ ]` or `[>]`):
+
+- An `Agent` call with no `subagent_type`, or `general-purpose`, `claude` or `fork`, is denied: "every subagent names an orchestra:* agent type ... inherits the main session's model". Every other type (Explore, Plan, `orchestra:*`, other plugins') runs.
+- A `Workflow` script with more `agent(` calls than `agentType` words is denied: "Add agentType to each agent() call".
+- Outside a run the matrix never fires. `ORCHESTRA_MATRIX=off` in the environment turns it off.
 
 ## The Stop hook and /orchestra:goal
 

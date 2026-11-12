@@ -406,8 +406,169 @@ def merge_reason(command, cwd=None, cache=None):
 MERGE_TOOL = re.compile(r'^mcp__.*merge_pull_request$')
 
 
+def deny(reason):
+    print(json.dumps({'hookSpecificOutput': {
+        'hookEventName': 'PreToolUse', 'permissionDecision': 'deny', 'permissionDecisionReason': reason}}))
+
+
+# ---- one Fable critic, and the model matrix (Agent, Task and Workflow calls) -------------------
+
+CRITIC = 'critic-fable'
+FABLE_LOCK_SECONDS = 1800  # a lock written when a critic call was allowed counts for this long
+INHERIT_TYPES = ('general-purpose', 'claude', 'fork')  # agent types that run on the main session's model
+LOOP_CALL = re.compile(r'(?<!\w)(map|forEach|for|while|parallel|pipeline)\s*\(|\bArray\.from\s*\(')
+FABLE_ONE = ('Orchestra: only one Fable critic may run at a time. {why} Wait for the running critic-fable to '
+             'finish, then call it again.')
+FABLE_SCRIPT = ('Orchestra: a workflow may name {name} once, outside any loop or fan-out. {why} Name it in one '
+                'agent() call (agentType: "orchestra:critic-fable") that is not inside map(, forEach(, for (, '
+                'while (, parallel(, pipeline( or Array.from, or run the critic with the Agent tool.')
+MATRIX_AGENT = ('Orchestra: during a run every subagent names an orchestra:* agent type (builder, investigator, '
+                'reviewer, ...), because an agent with no type or a general-purpose type inherits the main '
+                "session's model. Set subagent_type, e.g. orchestra:builder. (Owner switch: ORCHESTRA_MATRIX=off.)")
+MATRIX_SCRIPT = ('Orchestra: during a run every agent() in a workflow names an orchestra:* agent type '
+                 "(agentType: 'orchestra:builder'), because an agent without a type inherits the main session's "
+                 'model. Add agentType to each agent() call. (Owner switch: ORCHESTRA_MATRIX=off.)')
+
+
+def agent_meta_type(f):
+    return read_json(f.with_name(f.stem + '.meta.json')).get('agentType')
+
+
+def fable_running(event, cwd, session):
+    """True when a critic-fable subagent of this session is mid-turn and recently written, or (a critic call was
+    allowed in the last FABLE_LOCK_SECONDS and no critic transcript has finished since) the lock file says so."""
+    lock = state_dir(cwd, session) / 'fable.lock'
+    try:
+        locked = time.time() - lock.stat().st_mtime < FABLE_LOCK_SECONDS and lock.stat().st_mtime
+    except OSError:
+        locked = False
+    path = event.get('transcript_path')
+    if isinstance(path, str) and path.endswith('.jsonl'):
+        try:
+            for f in (Path(path[:-len('.jsonl')]) / 'subagents').rglob('agent-*.jsonl'):
+                kind = agent_meta_type(f)
+                if not isinstance(kind, str) or kind.split(':')[-1] != CRITIC:
+                    continue
+                st = f.stat()
+                if turn_open(f):
+                    if time.time() - st.st_mtime < LIVE_WORKER_SECONDS:
+                        return True
+                elif locked and st.st_mtime >= locked:
+                    locked = False  # the critic the lock stands for has finished
+        except OSError:
+            pass
+    return bool(locked)
+
+
+def in_loop(text, at):
+    """True when text[at] sits on a line with a loop or fan-out call, or inside the parentheses or the block of one."""
+    line = text[text.rfind('\n', 0, at) + 1:(text.find('\n', at) + 1 or len(text))]
+    if LOOP_CALL.search(line):
+        return True
+    close = {')': '(', '}': '{'}
+    depth = {'(': 0, '{': 0}
+    for i in range(at - 1, -1, -1):
+        c = text[i]
+        if c in close:
+            depth[close[c]] += 1
+        elif c in depth:
+            if depth[c]:
+                depth[c] -= 1
+                continue
+            head = text[:i].rstrip()
+            if c == '{' and head.endswith(')'):  # a block: look at the call its header closes
+                d, j = 0, len(head) - 1
+                while j >= 0:
+                    d += (head[j] == ')') - (head[j] == '(')
+                    if d == 0:
+                        break
+                    j -= 1
+                head = head[:j].rstrip() + '('
+                if LOOP_CALL.search(head[-12:]):
+                    return True
+            elif c == '(' and LOOP_CALL.search(head[-12:] + '('):
+                return True
+    return False
+
+
+def workflow_text(tool_input):
+    script = tool_input.get('script')
+    if isinstance(script, str):
+        return script
+    path = tool_input.get('scriptPath')
+    if isinstance(path, str):
+        try:
+            return Path(path).read_text(errors='replace')
+        except OSError:
+            pass
+    return ''
+
+
+def in_run(cwd, session):
+    return os.environ.get('ORCHESTRA_MATRIX') != 'off' and bool(open_asks(cwd, session))
+
+
+def agent_reason(event, tool_input, cwd, session):
+    kind, model = tool_input.get('subagent_type'), tool_input.get('model')
+    if kind is not None and not isinstance(kind, str):
+        return None, False
+    kind = kind or ''
+    if kind.split(':')[-1] == CRITIC:
+        if fable_running(event, cwd, session):
+            return FABLE_ONE.format(why='One is already running in this session.'), True
+        return None, True
+    if isinstance(model, str) and 'fable' in model.lower():
+        return ('Orchestra: the Fable model runs only as orchestra:critic-fable, one at a time. Set '
+                'subagent_type to orchestra:critic-fable, or drop the model override.'), False
+    if kind in ('',) + INHERIT_TYPES and in_run(cwd, session):
+        return MATRIX_AGENT, False
+    return None, False
+
+
+def workflow_reason(event, tool_input, cwd, session):
+    text = workflow_text(tool_input)
+    named = text.count(CRITIC)
+    if named > 1:
+        return FABLE_SCRIPT.format(name=CRITIC, why=f'This script names it {named} times.'), False
+    if named == 1:
+        if in_loop(text, text.index(CRITIC)):
+            return FABLE_SCRIPT.format(name=CRITIC, why='This script names it inside a loop or fan-out.'), False
+        if fable_running(event, cwd, session):
+            return FABLE_ONE.format(why='One is already running in this session.'), True
+        return None, True
+    if len(re.findall(r'\bagent\s*\(', text)) > text.count('agentType') and in_run(cwd, session):
+        return MATRIX_SCRIPT, False
+    return None, False
+
+
+def fable_reason(event, tool):
+    """(deny reason or None, whether a critic call is allowed through) for an Agent, Task or Workflow call."""
+    tool_input = event.get('tool_input')
+    if not isinstance(tool_input, dict):
+        return None, False
+    cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else None
+    session = event.get('session_id') if isinstance(event.get('session_id'), str) else None
+    check = workflow_reason if tool == 'Workflow' else agent_reason
+    reason, critic = check(event, tool_input, cwd, session)
+    if critic and not reason:
+        try:
+            state_dir(cwd, session, create=True)
+            (state_dir(cwd, session) / 'fable.lock').write_text(str(time.time()))
+        except OSError:
+            pass
+    return reason, critic
+
+
 def hook_pre_tool_use(event):
     tool = event.get('tool_name')
+    if tool in ('Agent', 'Task', 'Workflow'):
+        try:
+            reason = fable_reason(event, tool)[0]
+        except Exception:  # silent on anything it does not understand
+            reason = None
+        if reason:
+            deny(reason)
+        return
     if isinstance(tool, str) and MERGE_TOOL.match(tool):
         reason = 'an MCP pull-request merge'
     elif tool in ('Bash', 'PowerShell'):
@@ -423,10 +584,8 @@ def hook_pre_tool_use(event):
     else:
         return
     if reason:
-        print(json.dumps({'hookSpecificOutput': {
-            'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
-            'permissionDecisionReason': f'Orchestra: {reason} is the one step only the owner takes. '
-                                        'Push your branch and open a PR instead; the owner merges.'}}))
+        deny(f'Orchestra: {reason} is the one step only the owner takes. '
+             'Push your branch and open a PR instead; the owner merges.')
 
 
 # ---- goal ------------------------------------------------------------------------------------

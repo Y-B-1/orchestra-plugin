@@ -526,6 +526,137 @@ class GoalEndTest(Repo):
         self.assertIn('disable-model-invocation: true', text)
 
 
+class FableTest(Repo):
+    """One Fable critic at a time, and the model matrix during an Orchestra run."""
+    CRITIC = 'orchestra:critic-fable'
+
+    def setUp(self):
+        super().setUp()
+        self.transcript = Path(self.tmp.name) / 's.jsonl'
+        self.transcript.write_text('')
+
+    def call(self, tool_input, tool='Agent'):
+        return self.hook('pre-tool-use', {'tool_name': tool, 'tool_input': tool_input, 'session_id': 'sess',
+                                          'transcript_path': str(self.transcript)})
+
+    def agent(self, type_=None, **kw):
+        return self.call({'description': 'd', 'prompt': 'p', **({'subagent_type': type_} if type_ else {}), **kw})
+
+    def script(self, text):
+        return self.call({'script': text}, 'Workflow')
+
+    def worker(self, type_, stop='tool_use', age=0):
+        d = self.transcript.with_suffix('') / 'subagents'
+        d.mkdir(parents=True, exist_ok=True)
+        f = d / f'agent-{type_.replace(":", "-")}.jsonl'
+        f.write_text(json.dumps({'type': 'assistant', 'message': {'stop_reason': stop}}) + '\n')
+        (d / (f.stem + '.meta.json')).write_text(json.dumps({'agentType': type_}))
+        os.utime(f, (time.time() - age, time.time() - age))
+
+    def ledger(self, text='- [>] A1: open\n'):
+        lean.state_dir(self.cwd, 'sess', create=True)
+        lean.ledger(self.cwd, 'sess').write_text(text)
+
+    def denied(self, out, *words):
+        self.assertEqual(out['hookSpecificOutput']['permissionDecision'], 'deny')
+        for w in words:
+            self.assertIn(w, out['hookSpecificOutput']['permissionDecisionReason'])
+
+    def test_one_critic_call_is_allowed_by_either_tool_name_and_either_type_name(self):
+        for tool, name in (('Agent', self.CRITIC), ('Task', 'critic-fable')):
+            self.assertIsNone(self.call({'subagent_type': name}, tool))
+            (lean.state_dir(self.cwd, 'sess') / 'fable.lock').unlink(missing_ok=True)
+
+    def test_a_second_critic_is_denied_while_one_runs(self):
+        self.worker(self.CRITIC)
+        self.denied(self.agent(self.CRITIC), 'one Fable critic')
+
+    def test_a_finished_or_stale_critic_does_not_block(self):
+        self.worker(self.CRITIC, stop='end_turn')
+        self.assertIsNone(self.agent(self.CRITIC))
+        (lean.state_dir(self.cwd, 'sess') / 'fable.lock').unlink()
+        self.worker(self.CRITIC, age=lean.LIVE_WORKER_SECONDS + 60)
+        self.assertIsNone(self.agent(self.CRITIC))
+
+    def test_another_agent_type_running_does_not_block_the_critic(self):
+        self.worker('orchestra:builder')
+        self.assertIsNone(self.agent(self.CRITIC))
+
+    def test_a_lock_blocks_a_second_call_until_it_is_stale(self):
+        self.assertIsNone(self.agent(self.CRITIC))
+        self.denied(self.agent(self.CRITIC), 'one Fable critic')
+        lock = lean.state_dir(self.cwd, 'sess') / 'fable.lock'
+        old = time.time() - 31 * 60
+        os.utime(lock, (old, old))
+        self.assertIsNone(self.agent(self.CRITIC))
+
+    def test_a_finished_critic_clears_the_lock(self):
+        self.assertIsNone(self.agent(self.CRITIC))
+        self.worker(self.CRITIC, stop='end_turn')
+        self.assertIsNone(self.agent(self.CRITIC))
+
+    def test_a_fable_model_override_on_another_type_is_denied(self):
+        self.denied(self.agent('orchestra:builder', model='claude-fable-5-2'), 'critic-fable')
+        self.denied(self.agent(None, model='Fable'), 'critic-fable')
+        self.assertIsNone(self.agent('orchestra:builder', model='sonnet'))
+
+    def test_a_workflow_may_name_the_critic_once_outside_a_loop(self):
+        self.assertIsNone(self.script("const r = await agent('x', {agentType: 'orchestra:critic-fable'})"))
+
+    def test_a_workflow_naming_the_critic_twice_is_denied(self):
+        self.denied(self.script("await agent('a', {agentType: 'orchestra:critic-fable'})\n"
+                                "await agent('b', {agentType: 'orchestra:critic-fable'})"), 'once', 'critic-fable')
+
+    def test_a_workflow_naming_the_critic_in_a_fan_out_is_denied(self):
+        for text in ("await Promise.all(units.map(u => agent(u, {agentType: 'orchestra:critic-fable'})))",
+                     "for (const u of units) {\n  await agent(u, {agentType: 'orchestra:critic-fable'})\n}",
+                     "await parallel([\n () => agent('a', {\n agentType: 'critic-fable' }) ])"):
+            self.denied(self.script(text), 'loop')
+
+    def test_a_workflow_script_file_is_read_and_a_running_critic_denies(self):
+        f = Path(self.tmp.name) / 'wf.js'
+        f.write_text("agent('a', {agentType: 'critic-fable'}); agent('b', {agentType: 'critic-fable'})")
+        self.denied(self.call({'scriptPath': str(f)}, 'Workflow'), 'once')
+        f.write_text("agent('a', {agentType: 'critic-fable'})")
+        self.worker(self.CRITIC)
+        self.denied(self.call({'scriptPath': str(f)}, 'Workflow'), 'one Fable critic')
+
+    def test_the_matrix_is_silent_outside_a_run(self):
+        self.assertIsNone(self.agent())
+        self.assertIsNone(self.script("agent('x')"))
+        self.ledger('- [x] A1: done\n')
+        self.assertIsNone(self.agent('general-purpose'))
+
+    def test_in_a_run_an_agent_without_a_type_or_with_an_inherit_type_is_denied(self):
+        self.ledger()
+        for t in (None, 'general-purpose', 'claude', 'fork'):
+            self.denied(self.agent(t), 'orchestra:', 'main session')
+
+    def test_in_a_run_other_agent_types_are_allowed(self):
+        self.ledger()
+        for t in ('Explore', 'Plan', 'orchestra:builder', 'other-plugin:thing'):
+            self.assertIsNone(self.agent(t))
+
+    def test_in_a_run_every_workflow_agent_names_a_type(self):
+        self.ledger()
+        self.denied(self.script("await agent('x')"), 'agentType', 'main session')
+        self.assertIsNone(self.script("await agent('x', {agentType: 'orchestra:builder'})"))
+        self.denied(self.script("await agent('x', {agentType: 'orchestra:builder'}); await agent('y')"), 'agentType')
+
+    def test_the_owner_switch_turns_the_matrix_off(self):
+        self.ledger()
+        os.environ['ORCHESTRA_MATRIX'] = 'off'
+        self.assertIsNone(self.agent('general-purpose'))
+        self.assertIsNone(self.script("await agent('x')"))
+
+    def test_input_it_does_not_understand_is_allowed(self):
+        self.ledger()
+        for tool_input in (None, 'x', {'subagent_type': 5, 'model': []}):
+            self.assertIsNone(self.call(tool_input))
+        for tool_input in (None, 'x', {'script': 5}, {'scriptPath': '/nope'}):
+            self.assertIsNone(self.call(tool_input, 'Workflow'))
+
+
 class CliTest(Repo):
     def test_goal_set_status_and_stop(self):
         self.assertIn('Goal set', self.run_cli('goal', 'set', 'ship', 'it').stdout)
