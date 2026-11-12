@@ -3,7 +3,7 @@
 
 Hooks (stdin JSON from Claude Code):
   lean.py hook session-start   prints the session context
-  lean.py hook pre-tool-use    denies merging into the default branch; allows everything else
+  lean.py hook pre-tool-use    denies merging into the default branch, a second Fable critic and (in a run) model-inheriting agents
   lean.py hook stop            keeps a /goal session going until its asks are done and the branch is pushed
 
 CLI:
