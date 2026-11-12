@@ -487,6 +487,31 @@ class Check(unittest.TestCase):
         got = {k[1] for k in self.kinds() if k[0] == 'test-weakened'}
         self.assertEqual(len(got & {'b.py', 'c.py'}), 1)
 
+    def test_count_tests_per_language(self):
+        sys.path.insert(0, str(LEAN.parent))
+        from check import count_tests
+        cases = [  # (path, added lines, removed lines, tests added, tests removed)
+            ('tests/test_a.py', ['def test_x(self):', '    async def test_y():', 'def helper():', '# def test_no'], ['def test_old():'], 2, 1),
+            ('web/a.test.ts', ["it('a', () => {", "  test.each([1])('b', n => {", '  it.each`t`(', 'item(1)', 'latest(2)'], ["it('z', () => {"], 3, 1),
+            ('pkg/a_test.go', ['func TestOne(t *testing.T) {', 'func Testify() {', 'func helper() {'], [], 2, 0),
+            ('tests/a_test.rs', ['#[test]', '#[tokio::test]', 'fn x() {'], ['#[test]'], 1, 1),
+            ('src/app.py', ['def test_in_app():'], [], 0, 0),
+            ('tests/notes.txt', ['def test_x():'], [], 0, 0),
+        ]
+        for path, add, rem, a, r in cases:
+            with self.subTest(path):
+                self.assertEqual(count_tests({path: (add, rem)})[:2], (a, r))
+        grew = count_tests({'tests/test_a.py': (['def test_a():', 'def test_b():', 'def test_c():'], []), 'tests/test_b.py': (['def test_d():'], ['def test_e():'])})
+        self.assertEqual(grew, (4, 1, [('tests/test_a.py', 3)]))
+
+    def test_test_count_reported_when_net_growth_over_five(self):
+        self.write('tests/test_many.py', ''.join(f'def test_{i}():\n    assert {i}\n' for i in range(7)))
+        f = [f for f in self.findings() if f['kind'] == 'test-count']
+        self.assertEqual([(x['path'], x['line']) for x in f], [('tests/test_many.py', None)])
+        self.assertIn('7 tests added, 0 removed (net +7): each added test must prove a behavior no existing test proves', f[0]['message'])
+        self.write('tests/test_many.py', ''.join(f'def test_{i}():\n    assert {i}\n' for i in range(5)))
+        self.assertNotIn('test-count', {f['kind'] for f in self.findings()})
+
 
 if __name__ == '__main__':
     unittest.main()

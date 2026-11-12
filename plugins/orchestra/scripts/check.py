@@ -28,10 +28,17 @@ SENSITIVE = {'auth', 'oauth', 'login', 'session', 'token', 'secret', 'password',
              'webhook', 'middleware', 'migration', 'jwt', 'csrf', 'rbac', 'acl', 'security', 'signin', 'signup', 'admin', 'stripe'}  # singular: words() strips a trailing s
 SENSITIVE_PREFIX = ('auth', 'polic', 'encrypt', 'credential')
 NOT_AUTH = {'author', 'authored', 'authoring', 'authority'}
-KINDS = ('size', 'test-weakened', 'self-mock', 'debug', 'rules', 'sensitive', 'secret')
+KINDS = ('size', 'test-weakened', 'self-mock', 'debug', 'rules', 'sensitive', 'secret', 'test-count')
+TEST_GROWTH = 5
 TIMEOUT = re.compile(r'timeout\W{0,4}(\d[\d_]*)', re.I)
 IS_TEST = re.compile(r'(^|/)(tests?/|__tests__/|test_[^/]*$|conftest\.py$|[^/]*_test\.[^/]*$|[^/]*Tests?\.(java|kt)$|[^/]*\.(test|spec|cy)\.|[^/]*_spec\.|(e2e|spec|cypress)/)')
 TIMEOUT_CONFIG = re.compile(r'(^|/)((vitest|jest|playwright|karma|cypress)[^/]*config|pytest\.ini|tox\.ini|setup\.cfg|pyproject\.toml)')
+TEST_DEFS = {  # extension -> a line that declares one test; it.each / test.each count as one
+    ('.py',): re.compile(r'\s*(async\s+)?def test_'),
+    ('.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts'): re.compile(r'\s*(it|test)(\.(each|only|concurrent))*\s*[(`]'),
+    ('.go',): re.compile(r'func Test(?![a-z])'),
+    ('.rs',): re.compile(r'\s*#\[test\]'),
+}
 ASSERTS = re.compile(r'\bassert|\bexpect\(|\.should\b')
 NO_BUDGET = re.compile(r'\.lock$|\.lock\.|^(package-lock|npm-shrinkwrap)\.json$|^(pnpm-lock\.yaml|go\.sum)$|\.min\.|\.(patch|diff|svg|csv|tsv|snap|md|mdx|rst|txt|json|ya?ml|sql)$')
 
@@ -169,6 +176,21 @@ def tool_section_lines(text, numbers):
     return any(next((s for s in reversed(lines[:n]) if s.startswith('[')), '').startswith(TOOL_SECTION) for n in numbers)
 
 
+def count_tests(files):
+    """(added, removed, [(path, net)] of the files that grew most, at most 3) from {path: (added lines, removed lines)}; test files only."""
+    added = removed = 0
+    grew = []
+    for path, (add, rem) in files.items():
+        rx = next((r for exts, r in TEST_DEFS.items() if path.endswith(exts)), None)
+        if not rx or not IS_TEST.search(path):
+            continue
+        a, r = sum(bool(rx.match(t)) for t in add), sum(bool(rx.match(t)) for t in rem)
+        added, removed = added + a, removed + r
+        if a > r:
+            grew.append((path, a - r))
+    return added, removed, sorted(grew, key=lambda g: (-g[1], g[0]))[:3]
+
+
 def check(base, max_lines=500, cwd=None):
     cwd = git('rev-parse', '--show-toplevel', cwd=cwd)
     sha, how = check_base(base, cwd) if cwd else (None, None)
@@ -232,6 +254,10 @@ def check(base, max_lines=500, cwd=None):
                 add('self-mock', path, n, 'mocks an in-repo module; test the real one')
             if path.endswith('.py') and not is_test and 'DEBUG' in t and re.search(r'\bprint\(', t):
                 add('debug', path, n, 'leftover debug code')
+    added, gone, grew = count_tests({p: ([t for _, t in i['add']], i['rem']) for p, i in files.items()})
+    if added - gone > TEST_GROWTH:
+        add('test-count', grew[0][0], None, f"{added} tests added, {gone} removed (net +{added - gone}): each added test must prove a behavior no existing test proves"
+            f"; most growth: {', '.join(f'{p} (+{n})' for p, n in grew)}; the reviewer loads the tests lens")
     out.sort(key=lambda f: (KINDS.index(f['kind']), f['path'], f['line'] or 0))
     return {'base': sha, 'how': how, 'files': len(files), 'added': sum(len(i['add']) for i in files.values()),
             'removed': sum(len(i['rem']) for i in files.values()),
