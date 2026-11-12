@@ -5,7 +5,7 @@ Orchestra registers three hooks in `plugins/orchestra/hooks/hooks.json`. Each ru
 | Event | Matcher | Effect |
 | --- | --- | --- |
 | SessionStart | all | Tells the main session that Orchestra is on, prints the ask ledger path and the `lean.py` path, and says to load the `orchestra` skill for a prompt with more than one ask |
-| PreToolUse | `Bash` | Denies a command that merges into the default branch. Allows everything else by printing nothing |
+| PreToolUse | `Bash`, `PowerShell`, MCP `merge_pull_request` tools | Denies a command or tool call that merges into the default branch. Allows everything else by printing nothing |
 | Stop | all | Under an active goal, blocks stopping until the goal is done, but stays quiet while a worker runs and never repeats a prompt for unchanged work. When no goal was set, reminds once per ledger state about open asks |
 
 ## The ledger and goal files
@@ -16,19 +16,19 @@ A ledger line is `- [mark] ID: text`, with any `| files: ... | after: ...` field
 
 ## The guard (PreToolUse)
 
-The default branch is the target of `refs/remotes/origin/HEAD`. Without it, the guard takes the first local branch of `main`, `master` and `trunk`, else `main`.
+The default branch is the target of `refs/remotes/origin/HEAD`. Without it, the guard takes the first local branch of `main`, `master` and `trunk`, else `main`; a repository whose default branch has another name and no `origin/HEAD` is unprotected until `git remote set-head origin -a` runs. One `git for-each-ref` per repository gives the default branch, the current branch and the local branches; a command with no `git` or `gh` word, and any command that is not a push or an API write, starts no git process.
 
-The guard splits the command into simple commands at `&&`, `||`, `;`, `|`, `&`, newlines, subshell and group brackets, `$(` and backticks, outside quotes. It follows `cd DIR` to the later commands, reads the payload of `sh`, `bash`, `zsh`, `dash` and `ksh` with `-c` (also `-lc` and similar) and of `eval`, and skips prefixes such as `VAR=value`, `sudo` and `env` and git's global options (`-C`, `-c`, `--git-dir`, `--no-pager`). A command is checked only when `gh` or `git` is the command itself, so `echo gh pr merge` and `grep "git push origin main"` run. It denies:
+The guard splits the command into simple commands at `&&`, `||`, `;`, `|`, `&`, newlines, subshell and group brackets, `$(` and backticks, outside quotes. It drops backslash-newline pairs and does not read heredoc bodies (a body a shell runs, and the `$( )` spans of an unquoted one, are read). It follows `cd DIR` and `pushd DIR` to the later commands, reads the payload of `sh`, `bash`, `zsh`, `dash` and `ksh` with `-c` (also `-lc`, `-ce`) and of `eval`, and skips shell keywords (`if`, `then`, `do`, `while`, `!`), `VAR=value`, wrappers with their options and values (`sudo -u USER`, `env -u VAR`, `nice -n N`, `timeout N`, `npx`, `xargs`, `time`) and `python3 .../lean.py run SECONDS --`. Git's `-C DIR`, `--git-dir` and `--work-tree` select the repository whose branches are read. A command is checked only when `gh` or `git` is the command itself, so `echo gh pr merge` and `grep "git push origin main"` run. A backtick span inside double quotes is a command substitution that a shell runs, so it is checked; put such text in single quotes or a quoted heredoc. It denies:
 
 - `gh pr merge`, also with an option such as `-R OWNER/REPO` before `pr` or between `pr` and `merge`;
-- a `gh api` call to a `/merge` or `/merges` endpoint, or a GraphQL `mergePullRequest` or `enablePullRequestAutoMerge` mutation;
+- a `gh api` write (not a GET) to an endpoint that ends in `/merge` or `/merges`, or a GraphQL `query=` field with a `mergePullRequest` or `enablePullRequestAutoMerge` mutation; a path or jq text that only contains `merge` is not read;
 - a `gh api` write (any method other than GET, or a call with fields) to `git/refs/heads/main`, a `contents/` write with `branch=main`, a ref create of `refs/heads/main`, or a rename of `main`;
-- `git push` with a destination ref that is the default branch, written as `main`, `HEAD:main`, `refs/heads/main`, a wildcard refspec, or `HEAD` or `@` while on it;
+- `git push` with a destination ref that is the default branch, written as `main`, `HEAD:main`, `refs/heads/main`, a wildcard refspec that matches it, or `HEAD` or `@` while on it;
 - a force push (`+main`, `-f`) or a delete (`:main`, `--delete main`) of the default branch;
 - `git push --mirror`, and `git push --all` or `--branches` while a local default branch exists;
 - a bare `git push` (options such as `-o` allowed) while the default branch is checked out.
 
-When the guard cannot read a command that mentions merge or push, it denies it rather than letting it through.
+When the guard cannot read a command that mentions merge or push, it denies it rather than letting it through. A hook that cannot start (no `python3`), crashes or times out lets the command run: `onFailure: "block"` is not set, because it would block every Bash call on a machine without Python. An MCP tool whose name ends in `merge_pull_request` is denied; other MCP write tools, `curl` to the API and scripts are not read.
 
 Everything else runs: pushing other branches and tags, deleting other branches, removing worktrees, `git merge` in the local checkout, `git reset`, opening and reading pull requests. Claude Code's permission mode decides those as usual.
 

@@ -17,7 +17,7 @@ CLI:
 State is per session: <git common dir>/orchestra/sessions/<session id>/ holds asks.md and goal.json.
 The session id comes from the hook event, or from CLAUDE_CODE_SESSION_ID in a Bash command.
 """
-import hashlib, json, os, re, shlex, subprocess, sys, time
+import fnmatch, hashlib, json, os, re, shlex, subprocess, sys, time
 from pathlib import Path
 
 MAX_CONTINUES = 60
@@ -55,25 +55,64 @@ def open_asks(cwd=None, session=None):
     return OPEN.findall(path.read_text()) if path.exists() else []
 
 
+def repo_state(cwd=None, opts=()):
+    """(default branch, current branch, local branches) from one git process. opts are git's -C, --git-dir
+    and --work-tree words. The default branch is the target of origin/HEAD, else the first of main, master, trunk."""
+    default, current, branches = '', '', set()
+    prefix = 'refs/remotes/origin/'
+    for line in git(*opts, 'for-each-ref', '--format=%(refname) %(symref) %(HEAD)',
+                    'refs/remotes/origin/HEAD', 'refs/heads', cwd=cwd).splitlines():
+        ref, symref, head = (line.split(' ') + ['', ''])[:3]
+        if ref == prefix + 'HEAD' and symref.startswith(prefix):
+            default = symref[len(prefix):]
+        elif ref.startswith('refs/heads/'):
+            branches.add(ref[len('refs/heads/'):])
+            if head == '*':
+                current = ref[len('refs/heads/'):]
+    default = default or next((n for n in ('main', 'master', 'trunk') if n in branches), 'main')
+    return default, current, branches
+
+
 def default_branch(cwd=None):
-    head = git('symbolic-ref', '--short', 'refs/remotes/origin/HEAD', cwd=cwd)
-    if head:
-        return head.split('/', 1)[1]
-    for name in ('main', 'master', 'trunk'):
-        if git('rev-parse', '--verify', '--quiet', 'refs/heads/' + name, cwd=cwd):
-            return name
-    return 'main'
+    return repo_state(cwd)[0]
 
 
 # ---- guard -----------------------------------------------------------------------------------
 
 SEPARATORS = ('&&', '||', '$(', ';', '|', '&', '\n', '`', '(', ')', '{', '}')
+HEREDOC = re.compile(r'<<(-?)[ \t]*(?:\'([^\']*)\'|"([^"]*)"|(\\?)([A-Za-z_][A-Za-z0-9_]*))')
+SUBSTITUTION = re.compile(r'\$\(([^)]*)\)|`([^`]*)`')
+
+
+def skip_heredocs(command, i, pending, shell):
+    """From the newline at i, skip the bodies of the pending heredocs. Returns (text still to scan, index of the
+    end of the last terminator line). A quoted body is plain text unless a shell reads it; an unquoted one can
+    still run its $( ) and backtick spans."""
+    j, scan = i + 1, []
+    for dash, quoted, delim in pending:
+        start = j
+        while j < len(command):
+            end = command.find('\n', j)
+            end = len(command) if end < 0 else end
+            if (command[j:end].lstrip('\t') if dash else command[j:end]) == delim:
+                break
+            j = end + 1
+        body = command[start:j]
+        if shell:
+            scan.append(body)
+        elif not quoted:
+            scan.extend(m.group(1) or m.group(2) for m in SUBSTITUTION.finditer(body))
+        end = command.find('\n', j)
+        j = len(command) if end < 0 else end
+    return scan, j
 
 
 def split_commands(command):
     """Split a shell line into simple commands at operators, subshells and command substitutions.
-    Quoted text stays whole, except that $( and ` inside double quotes still start a new command."""
-    parts, buf, quote, i = [], [], None, 0
+    Quoted text stays whole, except that $( and ` inside double quotes still start a new command.
+    Heredoc bodies are not commands; ${...} is one word."""
+    command = command.replace('\\\n', '')
+    parts, buf, quote, sub, pending, i = [], [], None, False, [], 0
     while i < len(command):
         c = command[i]
         if quote == "'":
@@ -85,16 +124,38 @@ def split_commands(command):
             buf.append(command[i:i + 2])
             i += 2
             continue
+        if c == '<' and command.startswith('<<', i) and not command.startswith('<<<', i) and (quote is None or sub):
+            m = HEREDOC.match(command, i)
+            if m:
+                pending.append((m.group(1) == '-', m.group(2) is not None or m.group(3) is not None or bool(m.group(4)),
+                                m.group(2) if m.group(2) is not None else m.group(3) if m.group(3) is not None else m.group(5)))
+                buf.append(m.group())
+                i = m.end()
+                continue
+        if c == '\n' and pending:
+            line = command[command.rfind('\n', 0, i) + 1:i]
+            scan, i = skip_heredocs(command, i, pending, bool(re.search(r'\b(sh|bash|zsh|dash|ksh)\b', line)))
+            pending = []
+            parts.append(''.join(buf))
+            buf = []
+            for text in scan:
+                parts.extend(split_commands(text))
+            continue
         sep = next((s for s in SEPARATORS if command.startswith(s, i)), None)
         if quote == '"':
             if c == '"':
-                quote = None
+                quote, sub = None, False
             elif sep in ('$(', '`'):
                 parts.append(''.join(buf))
-                buf, i = [], i + len(sep)
+                buf, sub, i = [], True, i + len(sep)
                 continue
             buf.append(c)
             i += 1
+            continue
+        if c == '$' and command.startswith('${', i) and command.find('}', i) > 0:
+            end = command.find('}', i) + 1
+            buf.append(command[i:end])
+            i = end
             continue
         if c in '\'"':
             quote = c
@@ -106,19 +167,48 @@ def split_commands(command):
         i += 1
     parts.append(''.join(buf))
     return [x for x in parts if x.strip()]
+
+
 SHELLS = ('sh', 'bash', 'zsh', 'dash', 'ksh')
-PREFIX = ('sudo', 'env', 'command', 'time', 'nohup', 'exec', 'xargs', 'nice')
+KEYWORDS = ('if', 'then', 'elif', 'else', 'do', 'while', 'until', '!')
+PREFIX = ('sudo', 'env', 'command', 'time', 'nohup', 'exec', 'xargs', 'nice', 'timeout', 'npx', 'bunx', 'pnpx')
+PREFIX_VALUE_OPTS = {'sudo': ('-u', '-g', '-h', '-p', '-C', '-D', '-R', '-T', '-U'), 'env': ('-u', '-C', '-S'),
+                     'nice': ('-n',), 'xargs': ('-n', '-I', '-P', '-L', '-s', '-d', '-E', '-a'),
+                     'timeout': ('-s', '--signal', '-k', '--kill-after'), 'npx': ('-p', '--package', '-c')}
 GIT_VALUE_OPTS = ('-C', '-c', '--git-dir', '--work-tree', '--namespace', '--config-env')
 PUSH_VALUE_OPTS = ('-o', '--push-option', '--repo', '--receive-pack', '--exec')
 GH_VALUE_OPTS = ('-R', '--repo')
+API_VALUE_OPTS = ('-X', '--method', '-f', '-F', '--field', '--raw-field', '-H', '--header', '--jq', '-q', '--input',
+                  '-t', '--template', '--hostname', '-p', '--preview', '--cache')
+
+
+def tool_name(word):
+    return re.sub(r'\.exe$', '', os.path.basename(word).lower())
 
 
 def command_words(words):
-    """The words from the command's own name on: skips VAR=value, sudo, env and similar prefixes."""
+    """The words from the command's own name on: skips VAR=value, shell keywords, wrappers (sudo, env, nice,
+    timeout, npx ...) with their options and values, and the plugin's `lean.py run SECONDS --`."""
     i = 0
-    while i < len(words) and (re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', words[i]) or words[i] in PREFIX
-                              or (i and words[i - 1] in PREFIX and words[i].startswith('-'))):
-        i += 1
+    while i < len(words):
+        w, name = words[i], tool_name(words[i])
+        if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*=.*', w) or w in KEYWORDS:
+            i += 1
+        elif name in PREFIX:
+            i += 1
+            while i < len(words) and words[i].startswith('-'):
+                i += 1 if words[i] == '--' else 2 if words[i] in PREFIX_VALUE_OPTS.get(name, ()) else 1
+            i += name == 'timeout'  # its duration
+        elif re.fullmatch(r'python[\d.]*', name):
+            j = i + 1
+            while j < len(words) and words[j].startswith('-'):
+                j += 1
+            if words[j + 1:j + 2] == ['run'] and tool_name(words[j]) == 'lean.py' and '--' in words[j + 2:]:
+                i = j + 2 + words[j + 2:].index('--') + 1
+            else:
+                break
+        else:
+            break
     return words[i:]
 
 
@@ -129,14 +219,40 @@ def skip_options(rest, value_opts):
     return rest
 
 
+def drop_redirects(words):
+    """Remove redirections (`> file`, `2>&1`, `< in`) so a target is not read as an argument."""
+    out, i = [], 0
+    while i < len(words):
+        if re.fullmatch(r'\d*(>>?|<<?<?|>&|&>>?)', words[i]):
+            i += 2
+        elif re.match(r'\d*[<>]', words[i]):
+            i += 1
+        else:
+            out.append(words[i])
+            i += 1
+    return out
+
+
+def api_endpoint(args):
+    i = 0
+    while i < len(args):
+        if not args[i].startswith('-'):
+            return args[i]
+        i += 2 if args[i] in API_VALUE_OPTS else 1
+    return ''
+
+
 def gh_reason(rest, main):
+    """main is a function: the default branch is looked up only for an API write."""
     rest = skip_options(rest, GH_VALUE_OPTS)
     if rest[:1] == ['pr'] and skip_options(rest[1:], GH_VALUE_OPTS)[:1] == ['merge']:
         return 'gh pr merge'
     if rest[:1] != ['api']:
         return None
+    endpoint = api_endpoint(rest[1:])
     flat = ' '.join(rest)
-    if re.search(r'/merges?\b', flat) or 'mergePullRequest' in flat or 'enablePullRequestAutoMerge' in flat:
+    if endpoint == 'graphql' and any(w.startswith('query=') and ('mergePullRequest' in w or 'enablePullRequestAutoMerge' in w)
+                                     for w in rest):
         return 'a GitHub API merge'
     method = 'GET'
     for i, w in enumerate(rest):
@@ -150,24 +266,39 @@ def gh_reason(rest, main):
             method = 'POST'
     if method == 'GET':
         return None
-    m = re.escape(main)
+    if re.search(r'/merges?/?$', endpoint.split('?')[0]):
+        return 'a GitHub API merge'
+    m = re.escape(main())
     if re.search(rf'git/refs/heads/{m}(?![\w./-])', flat) or re.search(rf'\bref=refs/heads/{m}(?![\w./-])', flat):
-        return f'a GitHub API write to {main}'
+        return f'a GitHub API write to {main()}'
     if re.search(rf'/branches/{m}/rename\b', flat):
-        return f'a rename of {main}'
+        return f'a rename of {main()}'
     if '/contents/' in flat and re.search(rf'\bbranch={m}(?![\w./-])', flat):
-        return f'a GitHub API commit to {main}'
+        return f'a GitHub API commit to {main()}'
     return None
 
 
-def git_reason(rest, main, current, cwd):
-    rest = skip_options(rest, GIT_VALUE_OPTS)
+def git_options(rest):
+    """(git's repository-selecting options, the words after the global options)."""
+    opts = []
+    while rest and rest[0].startswith('-') and rest[0] != '--':
+        n = 2 if rest[0] in GIT_VALUE_OPTS else 1
+        if rest[0] in ('-C', '--git-dir', '--work-tree') or rest[0].startswith(('-C', '--git-dir=', '--work-tree=')):
+            opts += rest[:n]
+        rest = rest[n:]
+    return opts, rest
+
+
+def git_reason(rest, state):
+    """state(opts) is a function: (default branch, current branch, local branches) of the repository git selects."""
+    opts, rest = git_options(rest)
     if rest[:1] != ['push']:
         return None
+    main, current, branches = state(tuple(opts))
     rest = rest[1:]
     if '--mirror' in rest:
         return 'a mirror push (it overwrites every branch, the default one included)'
-    if ('--all' in rest or '--branches' in rest) and git('rev-parse', '--verify', '--quiet', 'refs/heads/' + main, cwd=cwd):
+    if ('--all' in rest or '--branches' in rest) and main in branches:
         return f'a push of all branches, {main} included'
     args, explicit_repo, i = [], False, 0
     while i < len(rest):
@@ -189,43 +320,51 @@ def git_reason(rest, main, current, cwd):
         dst = dst[len('refs/heads/'):] if dst.startswith('refs/heads/') else dst
         if dst in ('HEAD', '@'):
             dst = current
-        if dst == main or '*' in dst:
+        if dst == main or fnmatch.fnmatchcase(main, dst) or fnmatch.fnmatchcase('refs/heads/' + main, dst):
             return f'a push to {main}'
     return None
 
 
-def merge_reason(command, cwd=None):
-    """A reason when the command merges into, pushes to or deletes the default branch; else None."""
+def merge_reason(command, cwd=None, cache=None):
+    """A reason when the command merges into, pushes to or deletes the default branch; else None.
+    Git runs at most once per repository, and not at all for a command with no git or gh word."""
+    if not re.search(r'\b(git|gh)\b', command):
+        return None
+    cache = {} if cache is None else cache
     for part in split_commands(command):
         try:
             words = shlex.split(part)
         except ValueError:  # an unbalanced quote, as in the tail of "$(git push origin main)"
             words = [w.strip('"\'()') for w in part.split()]
-        words = command_words(words)
+        words = command_words([w for w in words if w])
         if not words:
             continue
-        name = os.path.basename(words[0])
-        if name == 'cd' and len(words) > 1:  # later parts run in that folder
+        name = tool_name(words[0])
+        if name in ('cd', 'pushd') and len(words) > 1:  # later parts run in that folder
             cwd = str((Path(cwd or os.getcwd()) / os.path.expanduser(words[1])).resolve())
             continue
         if name in SHELLS:
             for i, w in enumerate(words[1:-1], 1):
-                if re.fullmatch(r'-[A-Za-z]*c', w):
-                    inner = merge_reason(words[i + 1], cwd)
+                if re.fullmatch(r'-[A-Za-z]*c[A-Za-z]*', w):
+                    inner = merge_reason(words[i + 1], cwd, cache)
                     if inner:
                         return inner
                     break
             continue
         if name == 'eval':
-            inner = merge_reason(' '.join(words[1:]), cwd)
+            inner = merge_reason(' '.join(words[1:]), cwd, cache)
             if inner:
                 return inner
             continue
-        main = default_branch(cwd)
+
+        def state(opts=(), cwd=cwd):
+            if (cwd, opts) not in cache:
+                cache[cwd, opts] = repo_state(cwd, opts)
+            return cache[cwd, opts]
         if name == 'gh':
-            reason = gh_reason(words[1:], main)
+            reason = gh_reason(drop_redirects(words[1:]), lambda: state()[0])
         elif name == 'git':
-            reason = git_reason(words[1:], main, git('branch', '--show-current', cwd=cwd), cwd)
+            reason = git_reason(drop_redirects(words[1:]), state)
         else:
             reason = None
         if reason:
@@ -233,18 +372,25 @@ def merge_reason(command, cwd=None):
     return None
 
 
+MERGE_TOOL = re.compile(r'^mcp__.*merge_pull_request$')
+
+
 def hook_pre_tool_use(event):
-    if event.get('tool_name') != 'Bash':
+    tool = event.get('tool_name')
+    if isinstance(tool, str) and MERGE_TOOL.match(tool):
+        reason = 'an MCP pull-request merge'
+    elif tool in ('Bash', 'PowerShell'):
+        tool_input = event.get('tool_input')
+        command = tool_input.get('command') if isinstance(tool_input, dict) else ''
+        if not isinstance(command, str):
+            return
+        cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else None
+        try:
+            reason = merge_reason(command, cwd)
+        except Exception:  # never fail open on a command that may merge or push
+            reason = 'a merge or push the guard could not read' if re.search(r'\b(merge|push)\b', command) else None
+    else:
         return
-    tool_input = event.get('tool_input')
-    command = tool_input.get('command') if isinstance(tool_input, dict) else ''
-    if not isinstance(command, str):
-        return
-    cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else None
-    try:
-        reason = merge_reason(command, cwd)
-    except Exception:  # never fail open on a command that may merge or push
-        reason = 'a merge or push the guard could not read' if re.search(r'\b(merge|push)\b', command) else None
     if reason:
         print(json.dumps({'hookSpecificOutput': {
             'hookEventName': 'PreToolUse', 'permissionDecision': 'deny',
