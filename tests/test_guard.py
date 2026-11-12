@@ -1,5 +1,5 @@
 """Unit tests for Orchestra's guard (PreToolUse): the merge guard, the one-Fable-critic rule and the model matrix."""
-import json, os, sys, time, unittest
+import json, os, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -45,6 +45,13 @@ class GuardTest(Repo):
                 out = self.bash(command)
                 self.assertIsNotNone(out, command)
                 self.assertEqual(out['hookSpecificOutput']['permissionDecision'], 'deny')
+
+    def test_a_redirect_written_without_a_space_does_not_hide_the_branch(self):
+        for command in ('git push origin main>/dev/null', 'git push origin main>>log', 'git push origin main2>&1',
+                        'gh pr merge 3>/dev/null', 'git push origin main</dev/null', 'git push origin main> out'):
+            with self.subTest(command):
+                self.assertIsNotNone(self.bash(command), command)
+        self.assertIsNone(self.bash('git push origin feature>/dev/null'))
 
     def test_everything_else_runs(self):
         for command in self.ALLOW:
@@ -214,6 +221,19 @@ class FableTest(Repo):
         self.denied(self.agent(None, model='Fable'), 'critic-fable')
         self.assertIsNone(self.agent('orchestra:builder', model='sonnet'))
 
+    def test_in_a_run_an_agent_with_an_explicit_non_fable_model_does_not_inherit(self):
+        self.ledger()
+        self.assertIsNone(self.agent(None, model='opus'))
+        self.assertIsNone(self.agent('general-purpose', model='sonnet'))
+        self.denied(self.agent('general-purpose'), 'main session')
+
+    def test_a_critic_outside_a_git_repository_writes_no_lock_into_the_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = self.hook('pre-tool-use', {'tool_name': 'Agent', 'tool_input': {'subagent_type': self.CRITIC},
+                                             'cwd': d, 'session_id': 'sess', 'transcript_path': str(self.transcript)})
+            self.assertIsNone(out)
+            self.assertEqual(os.listdir(d), [])
+
     def test_a_workflow_may_name_the_critic_once_outside_a_loop(self):
         self.assertIsNone(self.script("const r = await agent('x', {agentType: 'orchestra:critic-fable'})"))
 
@@ -226,6 +246,47 @@ class FableTest(Repo):
                      "for (const u of units) {\n  await agent(u, {agentType: 'orchestra:critic-fable'})\n}",
                      "await parallel([\n () => agent('a', {\n agentType: 'critic-fable' }) ])"):
             self.denied(self.script(text), 'loop')
+
+    def test_a_critic_helper_function_is_denied_even_when_called_once(self):
+        for text in ("const c = (x) => agent(x, {agentType: 'orchestra:critic-fable'})\nawait Promise.all([c(a), c(b)])",
+                     "async function judge(x) {\n  return agent(x, {agentType: 'orchestra:critic-fable'})\n}\nawait judge(a)",
+                     "const judge = async (x) => { return await agent(x, {agentType: 'critic-fable'}) }"):
+            self.denied(self.script(text), 'function')
+
+    def test_a_brief_that_mentions_a_loop_or_the_critic_is_not_code(self):
+        self.assertIsNone(self.script("await agent('Judge the plan for (A1..A6) with a for (x) review', "
+                                      "{agentType: 'orchestra:critic-fable'})"))
+        (lean.state_dir(self.cwd, 'sess') / 'fable.lock').unlink(missing_ok=True)
+        self.assertIsNone(self.script("await agent('Say critic-fable once, map( and agent( are text', "
+                                      "{agentType: 'orchestra:critic-fable'})"))
+
+    def test_a_critic_with_a_fallback_to_the_plain_critic_is_allowed(self):
+        text = ("try {\n  await agent('Judge', {agentType: 'orchestra:critic-fable'})\n} catch (e) {\n"
+                "  await agent('Judge again; critic-fable was unavailable', {agentType: 'orchestra:critic'})\n}")
+        self.assertIsNone(self.script(text))
+
+    def test_comments_and_template_text_are_not_code(self):
+        text = ("// agentType: 'orchestra:critic-fable' was dropped\n/* for (x of y) agent(a, {agentType: 'critic-fable'}) */\n"
+                "await agent(`one for (x) and critic-fable`, {agentType: 'orchestra:critic-fable'})")
+        self.assertIsNone(self.script(text))
+
+    def test_a_shared_options_object_is_judged_by_the_script(self):
+        self.ledger()
+        self.assertIsNone(self.script("const o = {agentType: 'orchestra:reviewer'}\nawait agent(p1, o)\nawait agent(p2, o)"))
+        self.denied(self.script("const o = {}\nawait agent(p1, o)"), 'agentType')
+        self.denied(self.script("await agent(p1, {model: 'sonnet'})"), 'agentType')
+
+    def test_a_critic_type_kept_in_a_shared_variable_is_denied(self):
+        self.denied(self.script("const o = {agentType: 'orchestra:critic-fable'}\nawait Promise.all([agent(a, o), agent(b, o)])"), 'outside')
+        self.denied(self.script("const o = {agentType: 'orchestra:critic-fable'}\nconst c = x => agent(x, o)\nawait Promise.all([c(a), c(b)])"), 'outside')
+
+    def test_agent_written_inside_a_string_is_not_a_call(self):
+        self.ledger()
+        self.assertIsNone(self.script("await agent('Call agent( on it', {agentType: 'orchestra:builder'})"))
+
+    def test_two_critics_behind_one_helper_or_named_twice_are_denied(self):
+        self.denied(self.script("await agent('a', {agentType: 'orchestra:critic-fable'})\n"
+                                "await agent('b', {agentType: 'critic-fable'})"), 'once')
 
     def test_a_workflow_script_file_is_read_and_a_running_critic_denies(self):
         f = Path(self.tmp.name) / 'wf.js'

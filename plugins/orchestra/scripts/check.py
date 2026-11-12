@@ -207,12 +207,16 @@ def check(base, max_lines=500, cwd=None):
     files = changed_files(sha, cwd)
     removed = collections.Counter(t.strip() for info in files.values() for t in info['rem'])  # a suppression that only moved is not new
 
-    def moved(t):
-        """True once per removed occurrence of the line; a second added copy is new."""
-        if removed[t.strip()] > 0:
-            removed[t.strip()] -= 1
-            return True
-        return False
+    spent = {}
+
+    def moved(t, key):
+        """True once per removed occurrence of the line; a second added copy is new. Asked again for the same
+        added line (key), it gives the same answer and uses no second occurrence."""
+        if key not in spent:
+            spent[key] = removed[t.strip()] > 0
+            if spent[key]:
+                removed[t.strip()] -= 1
+        return spent[key]
     out = []
 
     def add(kind, path, line, msg):
@@ -245,9 +249,9 @@ def check(base, max_lines=500, cwd=None):
         prose = path.endswith(('.md', '.txt', '.rst'))  # docs quote these patterns; only secrets count there
         for n, t in info['add']:
             for kind, rx, why in LINE_RULES:
-                if (kind == 'secret' or not prose) and re.search(rx, t) and not (kind == 'test-weakened' and moved(t)):
+                if (kind == 'secret' or not prose) and re.search(rx, t) and not (kind == 'test-weakened' and moved(t, (path, n))):
                     add(kind, path, n, why)
-            if is_test and not prose and re.search(TEST_ONLY, t) and not moved(t):
+            if is_test and not prose and re.search(TEST_ONLY, t) and not moved(t, (path, n)):
                 add('test-weakened', path, n, REASON)
             m = None if prose else re.search(r'''\b(?:patch|monkeypatch\.setattr)\(\s*['"]([\w.]+)|\bpatch\.object\(\s*(\w+)''', t)
             if m and (m.group(2) in mods or '.' in (m.group(1) or '') and m.group(1).split('.')[0] in mods):

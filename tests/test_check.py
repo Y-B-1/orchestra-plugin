@@ -512,6 +512,13 @@ class Check(unittest.TestCase):
         self.write('tests/test_many.py', ''.join(f'def test_{i}():\n    assert {i}\n' for i in range(5)))
         self.assertNotIn('test-count', {f['kind'] for f in self.findings()})
 
+    def test_a_moved_skip_in_a_test_file_is_not_flagged(self):
+        self.write('test_a.py', '@pytest.mark.skip(reason="x")\ndef test_a():\n    pass\n')
+        self.commit()
+        git(self.repo, 'branch', '-f', 'main', 'HEAD')
+        self.write('test_a.py', 'def test_a():\n    pass\n\n@pytest.mark.skip(reason="x")\ndef test_b():\n    pass\n')
+        self.assertEqual([k for k in self.kinds() if k[0] == 'test-weakened' and k[1] == 'test_a.py'], [])
+
 
 if __name__ == '__main__':
     unittest.main()

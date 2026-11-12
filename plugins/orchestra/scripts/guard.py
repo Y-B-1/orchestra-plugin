@@ -147,16 +147,18 @@ def skip_options(rest, value_opts):
 
 
 def drop_redirects(words):
-    """Remove redirections (`> file`, `2>&1`, `< in`) so a target is not read as an argument."""
+    """Remove redirections (`> file`, `2>&1`, `< in`, `main>/dev/null`) so a target is not read as an argument.
+    A word is cut at its first `[0-9]*[<>]` and the prefix is kept."""
     out, i = [], 0
     while i < len(words):
-        if re.fullmatch(r'\d*(>>?|<<?<?|>&|&>>?)', words[i]):
-            i += 2
-        elif re.match(r'\d*[<>]', words[i]):
-            i += 1
-        else:
+        m = re.search(r'\d*[<>]', words[i])
+        if not m:
             out.append(words[i])
             i += 1
+            continue
+        if m.start():
+            out.append(words[i][:m.start()])
+        i += 2 if re.fullmatch(r'\d*(>>?|<<?<?|>&|&>>?)', words[i][m.start():]) else 1
     return out
 
 
@@ -315,9 +317,9 @@ INHERIT_TYPES = ('general-purpose', 'claude', 'fork')  # agent types that run on
 LOOP_CALL = re.compile(r'(?<!\w)(map|forEach|for|while|parallel|pipeline)\s*\(|\bArray\.from\s*\(')
 FABLE_ONE = ('Orchestra: only one Fable critic may run at a time. {why} Wait for the running critic-fable to '
              'finish, then call it again.')
-FABLE_SCRIPT = ('Orchestra: a workflow may name {name} once, outside any loop or fan-out. {why} Name it in one '
-                'agent() call (agentType: "orchestra:critic-fable") that is not inside map(, forEach(, for (, '
-                'while (, parallel(, pipeline( or Array.from, or run the critic with the Agent tool.')
+FABLE_SCRIPT = ('Orchestra: a workflow may name {name} once, outside any loop, fan-out or function. {why} Name it in one '
+                'agent() call (agentType: "orchestra:critic-fable") at the top level of the script, not inside a function, '
+                'map(, forEach(, for (, while (, parallel(, pipeline( or Array.from, or run the critic with the Agent tool.')
 MATRIX_AGENT = ('Orchestra: during a run every subagent names an orchestra:* agent type (builder, investigator, '
                 'reviewer, ...), because an agent with no type or a general-purpose type inherits the main '
                 "session's model. Set subagent_type, e.g. orchestra:builder. (Owner switch: ORCHESTRA_MATRIX=off.)")
@@ -416,25 +418,129 @@ def agent_reason(event, tool_input, cwd, session):
     if isinstance(model, str) and 'fable' in model.lower():
         return ('Orchestra: the Fable model runs only as orchestra:critic-fable, one at a time. Set '
                 'subagent_type to orchestra:critic-fable, or drop the model override.'), False
-    if kind in ('',) + INHERIT_TYPES and in_run(cwd, session):
+    if kind in ('',) + INHERIT_TYPES and not (isinstance(model, str) and model.strip()) and in_run(cwd, session):
         return MATRIX_AGENT, False
     return None, False
 
 
+STRING_MARK = re.compile(r'\x00(\d+)\x00')
+CRITIC_LITERAL = re.compile(r'(orchestra:)?' + CRITIC)
+
+
+def strip_js(text):
+    """(code, literals): the script without comments, each string literal (', " or `) replaced by a \\x00n\\x00 mark
+    that indexes literals. Template text is taken to the next backtick; ${ } is not parsed."""
+    code, literals, i = [], [], 0
+    while i < len(text):
+        c = text[i]
+        if text.startswith('//', i):
+            end = text.find('\n', i)
+            i = len(text) if end < 0 else end
+        elif text.startswith('/*', i):
+            end = text.find('*/', i + 2)
+            i = len(text) if end < 0 else end + 2
+            code.append(' ')
+        elif c in '\'"`':
+            j = i + 1
+            while j < len(text) and text[j] != c:
+                j += 2 if text[j] == '\\' else 1
+            literals.append(text[i + 1:j])
+            code.append(f'\x00{len(literals) - 1}\x00')
+            i = j + 1
+        else:
+            code.append(c)
+            i += 1
+    return ''.join(code), literals
+
+
+def agent_calls(code):
+    """[(start, end, [top-level argument texts])] for each agent( call."""
+    calls = []
+    for m in re.finditer(r'(?<![\w$.])agent\s*\(', code):
+        args, depth, last, i = [], 0, m.end(), m.end()
+        while i < len(code):
+            c = code[i]
+            if c in '([{':
+                depth += 1
+            elif c in ')]}':
+                if depth == 0:
+                    break
+                depth -= 1
+            elif c == ',' and depth == 0:
+                args.append(code[last:i])
+                last = i + 1
+            i += 1
+        args.append(code[last:i])
+        calls.append((m.start(), i, [x for x in args if x.strip()]))
+    return calls
+
+
+def in_function(code, at):
+    """True when code[at] is an arrow function's expression body or sits inside a function or method body."""
+    if code[:at].rstrip().endswith('=>'):
+        return True
+    close = {')': '(', ']': '[', '}': '{'}
+    depth = {'(': 0, '[': 0, '{': 0}
+    for i in range(at - 1, -1, -1):
+        c = code[i]
+        if c in close:
+            depth[close[c]] += 1
+        elif c in depth:
+            if depth[c]:
+                depth[c] -= 1
+                continue
+            head = code[:i].rstrip()
+            if head.endswith('=>'):
+                return True
+            if c == '{' and head.endswith(')'):
+                d, j = 0, len(head) - 1
+                while j >= 0:
+                    d += (head[j] == ')') - (head[j] == '(')
+                    if d == 0:
+                        break
+                    j -= 1
+                word = re.search(r'(\w+)$', head[:j].rstrip())
+                if (word.group(1) if word else '') not in ('if', 'for', 'while', 'switch', 'catch', 'with', 'await'):
+                    return True
+    return False
+
+
+def untyped_agent(calls, code):
+    """True when an agent( call has no agentType. Options that are not an inline object (a shared variable) are
+    judged by whether agentType appears anywhere in the script."""
+    for _, _, args in calls:
+        options = args[1].strip() if len(args) > 1 else ''
+        if not options or (options.startswith('{') and 'agentType' not in options):
+            return True
+        if not options.startswith('{') and 'agentType' not in code:
+            return True
+    return False
+
+
 def workflow_reason(event, tool_input, cwd, session):
-    text = workflow_text(tool_input)
-    named = text.count(CRITIC)
-    if named > 1:
-        return FABLE_SCRIPT.format(name=CRITIC, why=f'This script names it {named} times.'), False
-    if named == 1:
-        if in_loop(text, text.index(CRITIC)):
+    code, literals = strip_js(workflow_text(tool_input))
+    calls = agent_calls(code)
+    critics = set()
+    for m in STRING_MARK.finditer(code):
+        if CRITIC_LITERAL.fullmatch(literals[int(m.group(1))].strip()):
+            call = next((c for c in calls if c[0] < m.start() < c[1]), None)
+            if call is None:
+                return FABLE_SCRIPT.format(name=CRITIC, why='The critic type is written outside an agent() call (a shared '
+                                           'variable or options object), where one critic call can be reused many times.'), False
+            critics.add(call[0])
+    if len(critics) > 1:
+        return FABLE_SCRIPT.format(name=CRITIC, why=f'This script names it {len(critics)} times.'), False
+    if critics:
+        at = min(critics)
+        if in_loop(code, at):
             return FABLE_SCRIPT.format(name=CRITIC, why='This script names it inside a loop or fan-out.'), False
+        if in_function(code, at):
+            return FABLE_SCRIPT.format(name=CRITIC, why='This script names it inside a function, which can run many times.'), False
         if fable_running(event, cwd, session):
             return FABLE_ONE.format(why='One is already running in this session.'), True
-        return None, True
-    if len(re.findall(r'\bagent\s*\(', text)) > text.count('agentType') and in_run(cwd, session):
+    if untyped_agent(calls, code) and in_run(cwd, session):
         return MATRIX_SCRIPT, False
-    return None, False
+    return None, bool(critics)
 
 
 def fable_reason(event, tool):
@@ -448,6 +554,8 @@ def fable_reason(event, tool):
     reason, critic = check(event, tool_input, cwd, session)
     if critic and not reason:
         try:
+            if not lean.git('rev-parse', '--git-common-dir', cwd=cwd):  # no repository: keep the folder clean
+                return reason, critic
             lean.state_dir(cwd, session, create=True)
             (lean.state_dir(cwd, session) / 'fable.lock').write_text(str(time.time()))
         except OSError:

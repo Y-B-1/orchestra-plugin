@@ -280,8 +280,26 @@ class GoalEndTest(Repo):
         self.goal()
         self.ledger('- [>] A1: running\n')
         journal = [{'type': 'launched'}, self.STARTED]
-        self.assertIsNone(self.hook('stop', {'transcript_path': self.transcript(worker_age=5, finished=True,
-                                                                               journal=journal)}))
+        self.assertIsNone(self.hook('stop', {'transcript_path': self.transcript(worker_age=5, journal=journal)}))
+
+    def test_a_stopped_workflow_whose_agent_transcript_went_stale_does_not_mute_the_goal(self):
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        journal = [{'type': 'launched'}, self.STARTED]
+        age = lean.LIVE_WORKER_SECONDS + 60
+        out = self.hook('stop', {'transcript_path': self.transcript(worker_age=age, journal=journal)})
+        self.assertEqual(out['decision'], 'block')
+
+    def test_a_workflow_agent_with_no_transcript_yet_counts_only_while_the_journal_is_new(self):
+        self.goal()
+        self.ledger('- [>] A1: starting\n')
+        path = self.transcript(worker_age=5, journal=[{'type': 'launched'}, self.STARTED])
+        sub = Path(self.tmp.name) / 'session' / 'subagents' / 'workflows' / 'w1'
+        (sub / 'agent-a1.jsonl').unlink()
+        self.assertIsNone(self.hook('stop', {'transcript_path': path}))
+        old = time.time() - 300
+        os.utime(sub / 'journal.jsonl', (old, old))
+        self.assertEqual(self.hook('stop', {'transcript_path': path})['decision'], 'block')
 
     def test_a_failed_workflow_agent_is_not_running(self):
         self.goal()
@@ -305,6 +323,34 @@ class GoalEndTest(Repo):
         self.assertIn('open asks in the ledger: review', self.hook('stop', {})['reason'])
         self.ledger('base: main (abc) | branch: feature\n- [x] A1: done\n- [x] review: clean\n')
         self.assertIsNone(self.hook('stop', {}))
+
+    def test_the_ledger_headers_sha_is_the_base_when_it_is_there(self):
+        self.goal()
+        init = lean.git('rev-parse', 'HEAD', cwd=self.cwd)
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'main moved on')
+        git(self.repo, 'switch', '-q', '-c', 'feature')
+        self.ledger(f'base: main ({init}) | branch: feature | dirty at start: -\n- [x] A1: done\n')
+        self.assertIn('no independent review', self.hook('stop', {})['reason'])
+
+    def test_files_dirty_at_start_do_not_count_as_uncommitted_changes(self):
+        self.goal()
+        (self.repo / 'owner.txt').write_text('a')
+        (self.repo / 'mine.txt').write_text('a')
+        git(self.repo, 'add', '.')
+        git(self.repo, 'commit', '-q', '-m', 'files')
+        (self.repo / 'owner.txt').write_text('owner edit')
+        head = lean.git('rev-parse', 'HEAD', cwd=self.cwd)
+        self.ledger(f'base: main ({head}) | branch: main | dirty at start: owner.txt, other.txt\n- [x] A1: done\n')
+        self.assertIsNone(self.hook('stop', {}))
+        self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['state'], 'done')
+        self.goal()
+        (self.repo / 'mine.txt').write_text('my edit')
+        self.assertIn('uncommitted', self.hook('stop', {})['reason'])
+
+    def test_session_start_names_every_block(self):
+        p = self.run_cli('hook', 'session-start', stdin=json.dumps({'cwd': self.cwd}))
+        self.assertIn('Blocked: merging into the default branch, a second Fable critic, and an untyped agent during a run.',
+                      p.stdout)
 
     def test_a_branch_pushed_by_name_counts_as_pushed(self):
         self.goal()
