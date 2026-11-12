@@ -3,16 +3,10 @@ import json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
-ROOT = Path(__file__).resolve().parents[1] / 'plugins/orchestra'
-LEAN = ROOT / 'scripts/lean.py'
-sys.path.insert(0, str(ROOT / 'scripts'))
-import gate, lean  # noqa: E402
+from tests.support import LEAN, git, make_repo
+import gate, lean  # noqa: E402  (tests.support put the scripts folder on sys.path)
 
 OK, FAIL = [sys.executable, '-c', 'pass'], [sys.executable, '-c', 'raise SystemExit(1)']
-
-
-def git(cwd, *args):
-    subprocess.run(['git', *args], cwd=cwd, check=True, capture_output=True)
 
 
 class GateTest(unittest.TestCase):
@@ -25,10 +19,9 @@ class GateTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.cwd = self.tmp.name
-        git(self.cwd, 'init', '-q', '-b', 'work')
-        git(self.cwd, 'config', 'user.email', 't@example.com')
-        git(self.cwd, 'config', 'user.name', 'T')
-        self.commit()
+        make_repo(Path(self.cwd) / 'repo')
+        self.cwd = str(Path(self.cwd) / 'repo')
+        git(self.cwd, 'checkout', '-q', '-b', 'work')
 
     def commit(self):
         git(self.cwd, 'commit', '-q', '--allow-empty', '-m', 'c')
