@@ -77,15 +77,15 @@ When no goal file exists, the Stop hook blocks once when this session's ledger h
 
 ## The test gate
 
-`lean.py gate` (code in `scripts/gate.py`) runs the test commands of a branch bounded and records them in `gate.json` beside `goal.json` (per session, keyed by branch; written atomically; a damaged file reads as empty).
+`lean.py gate` (code in `scripts/gate.py`) runs the test commands of a branch bounded and records them in `gate.json` (per repository: `<git common dir>/orchestra/gate.json`, keyed by branch, so a new session on the branch sees the same record; outside a repository, `.orchestra/gate.json` in the folder). Writes take a lock and replace the file atomically; a damaged file reads as empty. Each unit and e2e run is stored as {head, command, exit, time}; only HEAD's latest record per command is kept.
 
 - `gate unit --full [--seconds N] -- CMD` is the one full unit run of the branch (default 600 s). Exit 3 with "a full run is already recorded for this branch; run scoped" when a completed one exists. A run that timed out (124) or was killed by a signal does not count as completed.
 - `gate unit --scoped [--seconds N] -- CMD` is always allowed.
-- `gate e2e [--seconds N] -- CMD` runs only a scoped command: one with `--changed-since`, `--grep`, `--tag`, `--last-failed`, `--shard` or a test file path (`*.e2e.*`, `*.spec.*`, `*.test.*`); else exit 3, unless the owner sets `ORCHESTRA_E2E_FULL=1`.
+- `gate e2e [--seconds N] -- CMD` runs only a scoped command: one with `--changed-since`, `--grep`, `--tag`, `--last-failed`, `--shard` `--only-changed`, `--spec`, `-g` or a test file path (`*.e2e.*`, `*.spec.*`, `*.test.*`, `*.cy.*`); the value after `--config`, `-c` or `--project` is ignored. An npm script (`npm run X`, `npm test`, `pnpm X`, `yarn X`, `bun run X`) is judged by its text in the `package.json` in the current folder, and an unknown script is refused; else exit 3, unless the owner sets `ORCHESTRA_E2E_FULL=1`.
 - `gate skip unit|e2e REASON` records that the repo has no such runner; the reason is required.
 - `gate status` exits 0 when the gate holds for HEAD, else 1 and lists what is missing.
 
-A run returns the command's own exit code; 3 is a refusal and 2 a usage error. The gate holds when unit has a skip, or a completed full run exists for the branch and a unit run with exit 0 is recorded at HEAD; and e2e has a skip or an e2e run with exit 0 at HEAD. A new commit makes the HEAD records stale, so after a repair commit the gate asks for a new scoped run, not a second full one.
+A run returns the command's own exit code; 3 is a refusal and 2 a usage error. The gate holds when unit has a skip, or a completed full run exists for the branch and, at HEAD, there is a unit run and the latest run of every distinct command there exited 0; and e2e has a skip, or the same holds for its runs. A later green run of another command does not hide a red one. A new commit makes the HEAD records stale, so after a repair commit the gate asks for a new scoped run, not a second full one.
 
 The Stop hook adds the gate to its conditions: when HEAD has commits beyond the base, the goal is not done until `gate status` would exit 0 (the reason names the missing part and the command). A goal without commits beyond the base is unaffected.
 

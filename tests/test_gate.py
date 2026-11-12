@@ -1,5 +1,5 @@
 """Unit tests for the test gate (scripts/gate.py): full-once, scoped e2e, skips, status and the Stop-hook condition."""
-import os, subprocess, sys, tempfile, unittest
+import json, os, subprocess, sys, tempfile, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -116,15 +116,15 @@ class GateTest(unittest.TestCase):
     def test_damaged_gate_json_reads_as_empty(self):
         self.cli('skip', 'e2e', 'none')
         for damaged in ('{not json', '[1]', '{"work": 5}'):
-            gate.file(self.cwd, None).write_text(damaged)
+            gate.file(self.cwd).write_text(damaged)
             self.assertEqual(self.cli('status').returncode, 1)
         self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
 
     def test_stop_hook_condition_names_the_gate(self):
-        self.assertIn('gate', ' '.join(gate.missing(self.cwd, None)))
+        self.assertIn('gate', ' '.join(gate.missing(self.cwd)))
         self.cli('skip', 'unit', 'x')
         self.cli('skip', 'e2e', 'x')
-        self.assertEqual(gate.missing(self.cwd, None), [])
+        self.assertEqual(gate.missing(self.cwd), [])
 
     def test_goal_missing_asks_for_the_gate_only_with_commits_beyond_base(self):
         git(self.cwd, 'update-ref', 'refs/heads/main', 'HEAD')
@@ -136,6 +136,69 @@ class GateTest(unittest.TestCase):
         self.cli('skip', 'unit', 'x')
         self.cli('skip', 'e2e', 'x')
         self.assertEqual(lean.goal_missing(self.cwd, None, []), [])
+
+    def test_a_later_green_command_does_not_hide_a_red_one_at_head(self):
+        self.cli('skip', 'e2e', 'none')
+        self.cli('unit', '--full', '--', *OK)
+        self.assertEqual(self.cli('unit', '--scoped', '--', *FAIL).returncode, 1)
+        self.assertEqual(self.cli('unit', '--scoped', '--', sys.executable, '-c', 'x = 1').returncode, 0)
+        self.assertEqual(self.cli('status').returncode, 1)
+
+    def test_the_latest_run_of_the_same_command_decides(self):
+        self.cli('skip', 'e2e', 'none')
+        flag = Path(self.cwd) / 'flag'
+        cmd = [sys.executable, '-c', 'import os, sys; sys.exit(0 if os.path.exists(sys.argv[1]) else 1)', str(flag)]
+        self.cli('unit', '--full', '--', *OK)
+        self.cli('unit', '--scoped', '--', *cmd)
+        self.assertEqual(self.cli('status').returncode, 1)
+        flag.write_text('x')
+        self.cli('unit', '--scoped', '--', *cmd)
+        self.assertEqual(self.cli('status').returncode, 0)
+        runs = json.loads(gate.file(self.cwd).read_text())['work']['runs']['unit']
+        self.assertEqual([r['exit'] for r in runs], [0, 0])  # the full run, and the flag command's latest run only
+
+    def test_e2e_every_command_at_head_must_be_green(self):
+        self.cli('skip', 'unit', 'none')
+        self.cli('e2e', '--', *FAIL, '--grep', 'a')
+        self.cli('e2e', '--', *OK, '--grep', 'b')
+        self.assertEqual(self.cli('status').returncode, 1)
+
+    def test_state_is_per_repository_not_per_session(self):
+        a, b = {lean.SESSION_ENV: 'sess-a'}, {lean.SESSION_ENV: 'sess-b'}
+        self.assertEqual(self.cli('unit', '--full', '--', *OK, env=a).returncode, 0)
+        self.assertEqual(self.cli('unit', '--full', '--', *OK, env=b).returncode, 3)
+        self.assertEqual(self.cli('skip', 'e2e', 'none', env=b).returncode, 0)
+        self.assertEqual(self.cli('status', env=a).returncode, 0)
+
+    def test_outside_a_repository_the_state_sits_in_the_folder(self):
+        with tempfile.TemporaryDirectory() as d:
+            r = subprocess.run([sys.executable, str(LEAN), 'gate', 'skip', 'unit', 'x'], cwd=d, capture_output=True, text=True)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertTrue((Path(d) / '.orchestra/gate.json').exists())
+
+    def test_parallel_records_all_land(self):
+        procs = [subprocess.Popen([sys.executable, str(LEAN), 'gate', 'unit', '--scoped', '--', sys.executable, '-c', f'x = {i}'],
+                                  cwd=self.cwd, stderr=subprocess.PIPE, text=True) for i in range(20)]
+        codes = [(p.wait(), p.stderr.read()) for p in procs]
+        for p in procs:
+            p.stderr.close()
+        self.assertEqual([c for c, _ in codes], [0] * 20, codes)
+        self.assertEqual(len(json.loads(gate.file(self.cwd).read_text())['work']['runs']['unit']), 20)
+
+    def test_e2e_scope_reads_config_and_npm_scripts(self):
+        scripts = {'e2e:changed': 'e2e run --changed-since main', 'test:e2e': 'e2e run', 'test': 'vitest run'}
+        (Path(self.cwd) / 'package.json').write_text(json.dumps({'scripts': scripts}))
+        table = [
+            (['npx', 'vitest', 'run', '--config', 'vitest.config.e2e.ts'], False),
+            (['npx', 'jest', '-c', 'jest.config.e2e.js'], False),
+            (['npm', 'run', 'e2e:changed'], True), (['pnpm', 'e2e:changed'], True), (['yarn', 'run', 'e2e:changed'], True),
+            (['npm', 'run', 'test:e2e'], False), (['npm', 'run', 'test:e2e', '--', '--grep', 'x'], True),
+            (['npm', 'run', 'nope'], False), (['npm', 'test'], False),
+            (['cypress', 'run', '--spec', 'cypress/e2e/login.cy.ts'], True),
+            (['playwright', 'test', '-g', 'login'], True), (['playwright', 'test', '--only-changed=origin/main'], True),
+        ]
+        for cmd, scoped in table:
+            self.assertEqual(gate.e2e_scoped(cmd, self.cwd), scoped, cmd)
 
     def test_usage_errors(self):
         for args in (['unit', '--', *OK], ['unit', '--full'], ['unit', '--full', '--'], ['bogus'], []):
