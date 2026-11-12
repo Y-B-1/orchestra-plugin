@@ -159,7 +159,7 @@ class Check(unittest.TestCase):
         for p, text in files.items():
             self.write(p, text)
         self.write('.orchestra/sessions/abc/asks.md', 'x\n')  # Orchestra's own ledger is never part of the branch
-        (self.repo / 'blob.bin').write_bytes(b'\0debugger;\n' * 600)
+        (self.repo / 'blob.bin').write_bytes(b'\0\ndebugger;\n' * 600)  # binary: no line is read
         want = {('test-weakened', 'a.test.ts', 1), ('test-weakened', 'u.ts', 1), ('test-weakened', 'cypress/e2e/login.cy.ts', 1),
                 ('test-weakened', 'e2e/login.ts', 1), ('test-weakened', 'spec/models/user_spec.rb', 1), ('test-weakened', 'models/user_spec.rb', 1),
                 ('secret', 'keys.md', 1), ('test-weakened', '__snapshots__/a.snap', None), ('test-weakened', 'weak/pyproject.toml', None),
