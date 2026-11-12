@@ -43,10 +43,17 @@ def script_words(cmd, cwd, depth=0):
     if not isinstance(text, str) or depth > 3:
         return None
     try:
-        words = shlex.split(text) + [a for a in rest[1:] if a != '--']
+        lexer = shlex.shlex(text, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        words = list(lexer)
     except ValueError:
         return None
-    return script_words(words, cwd, depth + 1)
+    if any(set(w) <= set(';&|()') for w in words):
+        return None  # a chained or substituted script: one scope flag proves nothing about the rest
+    extra = rest[1:]
+    if cmd[0] == 'npm':  # npm keeps flags before `--` for itself; only what follows `--` reaches the script
+        extra = extra[extra.index('--') + 1:] if '--' in extra else []
+    return script_words(words + [a for a in extra if a != '--'], cwd, depth + 1)
 
 
 def e2e_scoped(cmd, cwd=None):
@@ -70,7 +77,10 @@ def locked(f):
     f.parent.mkdir(parents=True, exist_ok=True)
     with open(f.with_name(f.name + '.lock'), 'a') as lock:
         if fcntl:
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+            except OSError:  # no lock support here (a network filesystem): the unique temp file still keeps the file whole
+                pass
         yield
 
 
@@ -133,8 +143,11 @@ def run(kind, mode, seconds, cmd, cwd=None):
 
     def update(entry):
         text = shlex.join(cmd)
-        runs = entry.setdefault('runs', {})
-        runs[kind] = [r for r in runs.get(kind) or [] if r.get('head') == head and r.get('cmd') != text]
+        if not isinstance(entry.get('runs'), dict):
+            entry['runs'] = {}
+        runs = entry['runs']
+        old = runs.get(kind) if isinstance(runs.get(kind), list) else []
+        runs[kind] = [r for r in old if isinstance(r, dict) and r.get('head') == head and r.get('cmd') != text]
         runs[kind].append({'head': head, 'cmd': text, 'exit': rc, 'time': int(time.time())})
         if mode == 'full' and completed(rc):
             entry['full'] = {'head': head, 'exit': rc}

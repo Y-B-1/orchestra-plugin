@@ -179,7 +179,9 @@ class GateTest(unittest.TestCase):
         self.assertEqual(len(json.loads(gate.file(self.cwd).read_text())['work']['runs']['unit']), 20)
 
     def test_e2e_scope_reads_config_and_npm_scripts(self):
-        scripts = {'e2e:changed': 'e2e run --changed-since main', 'test:e2e': 'e2e run', 'test': 'vitest run'}
+        scripts = {'e2e:changed': 'e2e run --changed-since main', 'test:e2e': 'e2e run', 'test': 'vitest run',
+                   'chain': 'e2e run --changed-since main && e2e run', 'semi': 'e2e run --grep x; e2e run',
+                   'fallback': 'e2e run --last-failed || e2e run', 'sub': 'e2e run --grep $(echo x)'}
         (Path(self.cwd) / 'package.json').write_text(json.dumps({'scripts': scripts}))
         table = [
             (['npx', 'vitest', 'run', '--config', 'vitest.config.e2e.ts'], False),
@@ -187,11 +189,27 @@ class GateTest(unittest.TestCase):
             (['npm', 'run', 'e2e:changed'], True), (['pnpm', 'e2e:changed'], True), (['yarn', 'run', 'e2e:changed'], True),
             (['npm', 'run', 'test:e2e'], False), (['npm', 'run', 'test:e2e', '--', '--grep', 'x'], True),
             (['npm', 'run', 'nope'], False), (['npm', 'test'], False),
+            (['npm', 'run', 'test:e2e', '--changed-since=HEAD~1'], False), (['npm', 'run', 'test:e2e', '--grep', 'x'], False),
+            (['pnpm', 'test:e2e', '--grep', 'x'], True),
+            (['npm', 'run', 'chain'], False), (['npm', 'run', 'semi'], False), (['npm', 'run', 'fallback'], False),
+            (['npm', 'run', 'sub'], False),
             (['cypress', 'run', '--spec', 'cypress/e2e/login.cy.ts'], True),
             (['playwright', 'test', '-g', 'login'], True), (['playwright', 'test', '--only-changed=origin/main'], True),
         ]
         for cmd, scoped in table:
             self.assertEqual(gate.e2e_scoped(cmd, self.cwd), scoped, cmd)
+
+    def test_a_failing_lock_does_not_lose_the_run(self):
+        with mock.patch.object(gate.fcntl, 'flock', side_effect=OSError(77, 'no locks')):
+            gate.record(self.cwd, lambda entry: entry.setdefault('skips', {}).__setitem__('unit', 'x'))
+        self.assertEqual(gate.entry_of(self.cwd)['skips'], {'unit': 'x'})
+
+    def test_a_wrong_shaped_state_file_reads_as_empty_and_is_rewritten(self):
+        f = gate.file(self.cwd)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({'work': {'runs': {'unit': [1, 'x']}, 'skips': 5, 'full': []}}))
+        self.assertEqual(self.cli('unit', '--scoped', '--', *OK).returncode, 0)
+        self.assertEqual([r['exit'] for r in gate.entry_of(self.cwd)['runs']['unit']], [0])
 
     def test_usage_errors(self):
         for args in (['unit', '--', *OK], ['unit', '--full'], ['unit', '--full', '--'], ['bogus'], []):

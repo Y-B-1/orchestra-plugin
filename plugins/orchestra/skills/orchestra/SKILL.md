@@ -154,4 +154,4 @@ Before the final message, read `references/finish.md`. Final message: the user r
 
 ## /goal
 
-When the user sets a goal, the Stop hook keeps you working until every ledger line is `[x]` or `[~]`, the review line is `[x]`, the branch is pushed and a pull request is open (GitHub remote). Do not stop to ask; settle choices with `orchestra:decide` and write each as a `decision:` line in the ledger and in the final message. If only the owner can unblock you, run `lean.py goal stop REASON`.
+When the user sets a goal, the Stop hook keeps you working until every ledger line is `[x]` or `[~]`, the review line is `[x]`, `lean.py gate status` exits 0, the branch is pushed and a pull request is open (GitHub remote). Do not stop to ask; settle choices with `orchestra:decide` and write each as a `decision:` line in the ledger and in the final message. If only the owner can unblock you, run `lean.py goal stop REASON`.

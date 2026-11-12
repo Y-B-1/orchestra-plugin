@@ -58,7 +58,7 @@ The main session runs on the model and effort you pick.
 
 ## /orchestra:goal
 
-`/orchestra:goal TEXT` starts a goal. The main session records it with `lean.py goal set`, writes the ledger and works without stopping to ask; it lists the calls it made at the end. While a goal is active, the Stop hook blocks the session from stopping until every ledger line is `[x]` or `[~]`, the changes are committed, the branch is pushed and a pull request holding the current head is open (GitHub remote). It stops blocking after 60 continuations. When only the owner can unblock the work, the session runs `lean.py goal stop REASON`.
+`/orchestra:goal TEXT` starts a goal. The main session records it with `lean.py goal set`, writes the ledger and works without stopping to ask; it lists the calls it made at the end. While a goal is active, the Stop hook blocks the session from stopping until every ledger line is `[x]` or `[~]`, the changes are committed, the test gate holds (`lean.py gate status`), the branch is pushed and a pull request holding the current head is open (GitHub remote). It stops blocking after 60 continuations. When only the owner can unblock the work, the session runs `lean.py goal stop REASON`.
 
 Without a goal, the Stop hook reminds the session once when the ledger still has open asks, and never loops.
 
