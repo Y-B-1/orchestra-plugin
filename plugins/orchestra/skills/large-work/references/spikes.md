@@ -16,7 +16,7 @@ A critic proposes a spike and never runs it; the main session or a builder runs 
 - Start it with one command or a double click.
 
 ## Capture
-Fold the validated decision into the real code. Commit the prototype to a throwaway branch, never main, and leave a pointer to it plus the verdict and the question it settled in the ticket or a commit.
+Fold the validated decision into the real code. Commit the prototype to a throwaway branch, never main, made in a separate `git worktree add` when builders share the checkout, and leave a pointer to it plus the verdict and the question it settled in the ticket or a commit.
 
 ## Candidate designs
 Use when one attempt at a hard-to-reverse artifact would lock in the wrong shape. Skip it for mechanical work whose shape is already concrete, and never run a second round over a settled design.

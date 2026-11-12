@@ -1,6 +1,6 @@
 ---
 name: verify
-description: "Load when a flow has many states and events (booking, payments, sync, multi-step forms), or the repo has no way to run and drive the real app. Not for a single-screen change that the repo's e2e runner already drives."
+description: "Load when a flow has many states and events (booking, payments, sync, multi-step forms), the repo has no way to run and drive the real app, a change touches a flow, route, command or UI the repo's driver covers, or the owner asks to audit or update the driver. Not for a change that needs no driver update."
 ---
 # Verify
 

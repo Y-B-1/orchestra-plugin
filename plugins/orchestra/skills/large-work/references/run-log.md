@@ -10,7 +10,7 @@ Show the framing once and get one checkpoint before a multi-hour run. In a /goal
 ## Design the run
 - Split into atomic units that land on their own. Order the riskiest unknown first.
 - Build the check before the work and capture the baseline from the pre-change state, so the check reads "old value vs new value".
-- Fan out only across seams, each worker in its own worktree or branch. Do not fan out what one script can do in one pass.
+- Fan out only across seams, workers on disjoint files share the checkout; a worktree only when two running units must edit the same file. Do not fan out what one script can do in one pass.
 - Write the phase list down. That list is what the owner reviews.
 
 ## Loop per unit

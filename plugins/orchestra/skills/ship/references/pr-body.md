@@ -11,7 +11,7 @@ Before and after, per ask. Order of strength: screenshot for a visual change, th
 ## Merge danger
 - Door: one-way (data migration, deleted data, public API, published artifact) or two-way (a revert undoes it).
 - Blast radius: one word, plus who breaks (consumers, mobile layout, auth, money).
-- Files a human should read, and any that match `sensitive_paths`.
+- Files a human should read, and any file the `lean.py check` scan listed as sensitive or secret.
 
 ## Reviewer guide
 - Where to start: the two or three core files, in reading order.

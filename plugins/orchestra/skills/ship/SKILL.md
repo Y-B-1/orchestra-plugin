@@ -5,13 +5,13 @@ description: "Load when opening, updating or fixing a pull request: red CI, revi
 # Ship a pull request
 
 Merging into the default branch is the owner step. Never merge a PR yourself.
-Use `gh` for all PR state. Read `references/pr-body.md` before you write or rewrite a PR body.
+Use `gh` for all PR state. With a plain git remote and no `gh`, push the branch only and leave the PR to the owner. Read `references/pr-body.md` before you write or rewrite a PR body.
 
 ## Make it easy to review
 - One concern per commit, in dependency order: schema or types, core logic, wiring, surface, tests. Mechanical changes (renames, generated files, formatting) get their own commits.
 - Check the diff before you open: no unrelated edits, no debug leftovers, tests for each behavior change.
 - If the diff cannot be read in one sitting, say so and propose a split. Do not polish around it.
-- Rewrite history only on a branch nobody else pulled, and only when the owner asked or the PR is yours and unpushed. After a rewrite, `git rev-parse HEAD^{tree}` must equal the tree before it. If it differs, stop.
+- Rewrite history only on a branch nobody else pulled, and only when the owner asked or the commits are yours and unpushed. After a reorder or squash, `git rev-parse HEAD^{tree}` must equal the tree before it. If it differs, stop.
 - Never hide a behavior change in a cleanup commit. Never use `--no-verify`.
 
 ## Review comments
@@ -28,13 +28,13 @@ Use `gh` for all PR state. Read `references/pr-body.md` before you write or rewr
 5. After three fix rounds that are still red, stop and report the failing check and what you tried.
 
 ## Merge conflicts
-1. Update the base: `git fetch origin`, then merge or rebase as the project does. List conflicts with `git diff --name-only --diff-filter=U`.
+1. Update the base: `git fetch origin`, then merge the base into the pushed branch. Rebase only when the owner asked, and then the force push is theirs. List conflicts with `git diff --name-only --diff-filter=U`.
 2. For each file, read both sides and `git log` for each side's intent. Keep both when both are needed; otherwise keep what matches the intended behavior of the newer change. Never take "ours" or "theirs" wholesale without that read.
 3. Regenerate lockfiles and generated files with the tool, never by hand.
 4. A grep for `<<<<<<<` and `>>>>>>>` must find nothing. Re-run the checks the PR was green on. Say which choices you made and why.
 
 ## Watch a PR until green
-Only when the owner asks. Do one bounded check, not a loop: `timeout 600 gh pr checks <n> --watch` as a background command. When it exits, handle red CI or new comments as above. No sleep or polling loops in the main session. When the owner asks to keep watching for reviews, schedule a re-check every 20 to 30 minutes with the loop or schedule skill. Stop after three red fix rounds or when a fix needs a design choice. Report ready only when checks are green, all comments are answered and the branch merges cleanly.
+Only when the owner asks. Do one bounded check, not a loop: `timeout 600 gh pr checks <n> --watch` as a background command. When it exits, handle red CI or new comments as above. No sleep or polling loops in the main session. When the owner asks to keep watching for reviews, schedule a re-check every 20 to 30 minutes with the loop or schedule skill. Stop after three red fix rounds or when a fix needs a design choice. Exit 124 means checks are still running: re-arm the same watch up to three times, then report pending. A PR with no checks has no CI on push: run the project's checks locally and count those. Report ready only when checks are green, all comments are answered and the branch merges cleanly.
 
 ## Pre-commit hooks
 Only when the owner asks. Read `references/pre-commit.md`.

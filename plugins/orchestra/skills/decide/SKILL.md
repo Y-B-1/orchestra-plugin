@@ -1,12 +1,12 @@
 ---
 name: decide
-description: "Settles a choice the ask leaves open, interviews the owner, keeps the glossary and decision records, and compares design shapes. Load when two asks contradict, an ask has two valid product shapes, an owner suggestion would break existing behavior, the owner asks to be grilled or interviewed, or a new term or interface needs a name. Not for choices the ask already settles."
+description: "Settles a choice the ask leaves open, interviews the owner, keeps the glossary and decision records, and compares design shapes. Load when two asks contradict, an ask has two valid product shapes, an owner suggestion would break existing behavior, the owner asks to be grilled or interviewed, a new term or interface needs a name, or the owner wants a prototype or a questionnaire for someone else. Not for choices the ask already settles."
 ---
 # Decide an open choice
 
 ## Facts first
 - Read the code and docs before you call anything a decision. Never ask what the repository can answer. Send a read-only worker for a fact that takes a search; only the questions that depend on it wait.
-- Use the project's own terms (CONTEXT.md or GLOSSARY.md, names in code). One concept gets one name. Never rename a persisted key, column or public name by judgment. Migrate it.
+- Use the project's own terms (the existing glossary, else `GLOSSARY.md`; names in code). One concept gets one name. Never rename a persisted key, column or public name by judgment. Migrate it.
 
 ## Whose choice it is
 - A choice that changes visible behavior, scope, cost, data or risk is the owner's. A builder never settles it silently in code. It returns BLOCKED with the options, or follows the choice in its brief.
@@ -23,7 +23,7 @@ description: "Settles a choice the ask leaves open, interviews the owner, keeps 
 ## Decide-and-log mode
 - Never ask mid-run. Pick the shape cheapest to change later and closest to how the app works now.
 - Record each decision as you make it: the choice, the rejected option, one reason. Report them under "Decisions" in the final message.
-- Still update the glossary and write a decision record when the three-part test passes.
+- Still update the glossary and write a decision record when the three-part test passes (`references/interview.md`, sections Glossary and Decision record).
 
 ## Conflicts
 - Two asks set the same thing differently: the later, more specific ask wins unless the owner said otherwise. Name the conflict and your pick.

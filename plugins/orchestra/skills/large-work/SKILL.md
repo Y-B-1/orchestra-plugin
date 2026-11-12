@@ -1,6 +1,6 @@
 ---
 name: large-work
-description: "Gives a way to size, split, hand off and prove work too big for one builder. Load when an ask needs more than about 20 minutes of one builder's work, has open unknowns, runs long or overnight, or the context nears its limit. Not for prompts that are long but made of small asks."
+description: "Gives a way to size, split, hand off and prove work too big for one builder. Load when an ask needs more than about 20 minutes of one builder's work, has open unknowns, runs long or overnight, the context nears its limit, or the owner asks to triage issues or PRs, compare candidate designs or write a handoff. Not for prompts that are long but made of small asks."
 ---
 # Large or uncertain work
 
@@ -35,7 +35,7 @@ description: "Gives a way to size, split, hand off and prove work too big for on
 - For a spike, a throwaway prototype, or a choice between candidate designs, read `references/spikes.md`.
 
 ## Run in verifiable units
-- Verify each unit on the real artifact before the next starts. A break found at the unit that caused it is cheap; found after a batch it is buried.
+- A unit that feeds another is checked on the real artifact before its dependent starts, as a check step in the same script, not a pause. A break found at the unit that caused it is cheap; found after a batch it is buried.
 - Mechanical changes: count the sites before and after with the same search and report both. Regenerate generated files from source, never by hand. For a rename of something persisted or public: add the new name, move callers in batches, then remove the old name.
 - When the edit is repeated or checkable by script, build the lever (codemod, generator, rerunnable check) instead of hand edits or fan-out. Run it on the first unit, diff against the hand-done version, and keep it outside the builders' write scope.
 - For a planned rewrite, declare where breakage between phases is allowed. Keep checks on the touched areas and run the full check at the end. Never keep throwaway compatibility code just to make every step green.
