@@ -218,8 +218,19 @@ def git_options(rest):
     return opts, rest
 
 
-def git_reason(rest, state):
-    """state(opts) is a function: (default branch, current branch, local branches) of the repository git selects."""
+def pushes_branch(rest):
+    """True when the words after `push` push a branch: not a delete, not tags only."""
+    if '--delete' in rest or '-d' in rest:
+        return False
+    refs = [w for w in rest if not w.startswith('-')][1:]
+    if not refs:
+        return '--tags' not in rest
+    return any(not r.startswith((':', 'refs/tags/')) for r in refs)
+
+
+def git_reason(rest, state, pushes=None):
+    """state(opts) is a function: (default branch, current branch, local branches) of the repository git selects.
+    pushes, when given, collects the git options of each push that sends a branch."""
     opts, rest = git_options(rest)
     if rest[:1] != ['push']:
         return None
@@ -251,10 +262,12 @@ def git_reason(rest, state):
             dst = current
         if dst == main or fnmatch.fnmatchcase(main, dst) or fnmatch.fnmatchcase('refs/heads/' + main, dst):
             return f'a push to {main}'
+    if pushes is not None and pushes_branch(rest):
+        pushes.append(tuple(opts))
     return None
 
 
-def merge_reason(command, cwd=None, cache=None):
+def merge_reason(command, cwd=None, cache=None, pushes=None):
     """A reason when the command merges into, pushes to or deletes the default branch; else None.
     Git runs at most once per repository, and not at all for a command with no git or gh word."""
     if not re.search(r'\b(git|gh)\b', command):
@@ -275,13 +288,13 @@ def merge_reason(command, cwd=None, cache=None):
         if name in SHELLS:
             for i, w in enumerate(words[1:-1], 1):
                 if re.fullmatch(r'-[A-Za-z]*c[A-Za-z]*', w):
-                    inner = merge_reason(words[i + 1], cwd, cache)
+                    inner = merge_reason(words[i + 1], cwd, cache, pushes)
                     if inner:
                         return inner
                     break
             continue
         if name == 'eval':
-            inner = merge_reason(' '.join(words[1:]), cwd, cache)
+            inner = merge_reason(' '.join(words[1:]), cwd, cache, pushes)
             if inner:
                 return inner
             continue
@@ -293,7 +306,14 @@ def merge_reason(command, cwd=None, cache=None):
         if name == 'gh':
             reason = gh_reason(drop_redirects(words[1:]), lambda: state()[0])
         elif name == 'git':
-            reason = git_reason(drop_redirects(words[1:]), state)
+            found = []
+            reason = git_reason(drop_redirects(words[1:]), state, found if pushes is not None else None)
+            for opts in found:  # the folder git works in: the last -C wins, each relative to the one before
+                where = cwd
+                for k, o in enumerate(opts):
+                    if o == '-C' and k + 1 < len(opts):
+                        where = str(Path(where or os.getcwd()) / os.path.expanduser(opts[k + 1]))
+                pushes.append(where)
         else:
             reason = None
         if reason:
@@ -320,6 +340,11 @@ FABLE_ONE = ('Orchestra: only one Fable critic may run at a time. {why} Wait for
 FABLE_SCRIPT = ('Orchestra: a workflow may name {name} once, outside any loop, fan-out or function. {why} Name it in one '
                 'agent() call (agentType: "orchestra:critic-fable") at the top level of the script, not inside a function, '
                 'map(, forEach(, for (, while (, parallel(, pipeline( or Array.from, or run the critic with the Agent tool.')
+FABLE_MODEL = ('Orchestra: the Fable model runs only as orchestra:critic-fable, one at a time. Set '
+               'subagent_type to orchestra:critic-fable, or drop the model override.')
+GATE_PUSH = ('Orchestra: a push during a run needs the test gate to hold, and it does not yet. {lines} Run the gate '
+             '(lean.py gate ...), or record `lean.py gate skip KIND REASON` for a repo with no runner, then push again. '
+             '(Owner switch: ORCHESTRA_GATE=off.)')
 MATRIX_AGENT = ('Orchestra: during a run every subagent names an orchestra:* agent type (builder, investigator, '
                 'reviewer, ...), because an agent with no type or a general-purpose type inherits the main '
                 "session's model. Set subagent_type, e.g. orchestra:builder. (Owner switch: ORCHESTRA_MATRIX=off.)")
@@ -359,10 +384,7 @@ def fable_running(event, cwd, session):
 
 
 def in_loop(text, at):
-    """True when text[at] sits on a line with a loop or fan-out call, or inside the parentheses or the block of one."""
-    line = text[text.rfind('\n', 0, at) + 1:(text.find('\n', at) + 1 or len(text))]
-    if LOOP_CALL.search(line):
-        return True
+    """True when text[at] sits inside the parentheses or the block of a loop or fan-out call."""
     close = {')': '(', '}': '{'}
     depth = {'(': 0, '{': 0}
     for i in range(at - 1, -1, -1):
@@ -416,14 +438,14 @@ def agent_reason(event, tool_input, cwd, session):
             return FABLE_ONE.format(why='One is already running in this session.'), True
         return None, True
     if isinstance(model, str) and 'fable' in model.lower():
-        return ('Orchestra: the Fable model runs only as orchestra:critic-fable, one at a time. Set '
-                'subagent_type to orchestra:critic-fable, or drop the model override.'), False
+        return FABLE_MODEL, False
     if kind in ('',) + INHERIT_TYPES and not (isinstance(model, str) and model.strip()) and in_run(cwd, session):
         return MATRIX_AGENT, False
     return None, False
 
 
 STRING_MARK = re.compile(r'\x00(\d+)\x00')
+MODEL_LITERAL = re.compile(r'\bmodel\s*:\s*\x00(\d+)\x00')
 CRITIC_LITERAL = re.compile(r'(orchestra:)?' + CRITIC)
 
 
@@ -520,6 +542,9 @@ def untyped_agent(calls, code):
 def workflow_reason(event, tool_input, cwd, session):
     code, literals = strip_js(workflow_text(tool_input))
     calls = agent_calls(code)
+    for m in MODEL_LITERAL.finditer(code):
+        if 'fable' in literals[int(m.group(1))].lower():
+            return FABLE_MODEL, False
     critics = set()
     for m in STRING_MARK.finditer(code):
         if CRITIC_LITERAL.fullmatch(literals[int(m.group(1))].strip()):
@@ -563,6 +588,35 @@ def fable_reason(event, tool):
     return reason, critic
 
 
+def run_active(cwd, session):
+    """True when the session has an open ask or an active goal."""
+    try:
+        if lean.open_asks(cwd, session):
+            return True
+        return lean.read_json(lean.goal_file(cwd, session)).get('state') == 'active'
+    except Exception:
+        return False
+
+
+def push_gate_reason(folders, event):
+    """The deny text when a run pushes a branch while the test gate lacks lines; None otherwise (and on any error)."""
+    if os.environ.get('ORCHESTRA_GATE') == 'off':
+        return None
+    session = event.get('session_id') if isinstance(event.get('session_id'), str) else None
+    cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else None
+    try:
+        if not run_active(cwd, session):
+            return None
+        import gate  # lazily: gate imports lean, and lean imports this module
+        for folder in dict.fromkeys(folders):
+            lines = gate.missing(folder)
+            if lines:
+                return GATE_PUSH.format(lines=' '.join(lines))
+    except Exception:
+        return None
+    return None
+
+
 def hook_pre_tool_use(event):
     tool = event.get('tool_name')
     if tool in ('Agent', 'Task', 'Workflow'):
@@ -581,11 +635,17 @@ def hook_pre_tool_use(event):
         if not isinstance(command, str):
             return
         cwd = event.get('cwd') if isinstance(event.get('cwd'), str) else None
+        pushes = []
         try:
-            reason = merge_reason(command, cwd)
+            reason = merge_reason(command, cwd, pushes=pushes)
         except Exception:  # never fail open on a command that may merge or push
             reason = 'a merge or push the guard could not read' if re.search(r'\b(merge|push)\b', command) else None
     else:
+        return
+    if not reason and pushes:
+        gate_reason = push_gate_reason(pushes, event)
+        if gate_reason:
+            deny(gate_reason)
         return
     if reason:
         deny(f'Orchestra: {reason} is the one step only the owner takes. '

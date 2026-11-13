@@ -1,6 +1,7 @@
 """Unit tests for Orchestra's guard (PreToolUse): the merge guard, the one-Fable-critic rule and the model matrix."""
 import os, shutil, tempfile, time, unittest
 from pathlib import Path
+from unittest import mock
 
 from tests.support import RepoCase, git, lean, worker
 
@@ -138,6 +139,13 @@ class FableTest(RepoCase):
         ("await agent('Say critic-fable once, map( and agent( are text', {agentType: 'orchestra:critic-fable'})", None),
         ("// agentType: 'orchestra:critic-fable' was dropped\n/* for (x of y) agent(a, {agentType: 'critic-fable'}) */\n"
          "await agent(`one for (x) and critic-fable`, {agentType: 'orchestra:critic-fable'})", None),
+        # a Fable model override in a workflow agent() is the Agent tool's rule too
+        ("await Promise.all(xs.map(x => agent(x, {agentType:'orchestra:builder', model:'fable'})))", ('Fable',)),
+        ("await agent(p, {agentType:'orchestra:critic', model:'claude-fable-5-2'})\n"
+         "await agent(q, {agentType:'orchestra:critic', model:\"Claude-Fable-5-2\"})", ('Fable',)),
+        ("await agent(p, {agentType:'orchestra:builder', model:'sonnet'})", None),
+        # one critic call written on a line that also holds a spread map is still one call
+        ("await Promise.all([agent(brief,{agentType:'orchestra:critic-fable'}), ...briefs.map(b => agent(b, {agentType:'orchestra:reviewer'}))])", None),
         # a fallback to the plain critic is a different type
         ("try {\n  await agent('Judge', {agentType: 'orchestra:critic-fable'})\n} catch (e) {\n"
          "  await agent('Judge again; critic-fable was unavailable', {agentType: 'orchestra:critic'})\n}", None),
@@ -274,3 +282,67 @@ class FableTest(RepoCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class PushGateTest(RepoCase):
+    """During a run a push of a branch needs the test gate to hold."""
+    PUSHES = ['git push', 'git push origin', 'git push -u origin feat/x', 'git -C {repo} push origin feat/x',
+              'sudo git push -u origin feat/x', 'bash -c "git push origin feat/x"', 'git push origin HEAD']
+
+    def setUp(self):
+        super().setUp()
+        git(self.repo, 'switch', '-q', '-c', 'feat/x')
+
+    def ledger(self):
+        lean.state_dir(self.cwd, 'sess', create=True)
+        lean.ledger(self.cwd, 'sess').write_text('- [>] A1: open\n')
+
+    def push(self, command='git push -u origin feat/x'):
+        return self.bash(command.format(repo=self.repo), session_id='sess')
+
+    def hold_gate(self):
+        import gate
+        lean.write_json(gate.file(self.cwd), {'feat/x': {'skips': {'unit': 'no runner', 'e2e': 'no runner'}}})
+
+    def test_a_push_is_denied_in_a_run_while_the_gate_lacks_lines(self):
+        self.ledger()
+        for command in self.PUSHES:
+            with self.subTest(command):
+                out = self.push(command)
+                self.assertIsNotNone(out, command)
+                reason = out['hookSpecificOutput']['permissionDecisionReason']
+                self.assertIn('no full unit run recorded', reason)
+                self.assertIn('no green e2e run', reason)
+                self.assertIn('gate skip', reason)
+
+    def test_a_push_runs_outside_a_run_with_the_switch_or_with_a_holding_gate(self):
+        self.assertIsNone(self.push())
+        self.ledger()
+        os.environ['ORCHESTRA_GATE'] = 'off'
+        self.assertIsNone(self.push())
+        del os.environ['ORCHESTRA_GATE']
+        self.hold_gate()
+        self.assertIsNone(self.push())
+
+    def test_an_active_goal_counts_as_a_run(self):
+        lean.state_dir(self.cwd, 'sess', create=True)
+        lean.write_json(lean.goal_file(self.cwd, 'sess'), {'state': 'active'})
+        self.assertIsNotNone(self.push())
+
+    def test_a_delete_or_a_tags_only_push_needs_no_gate(self):
+        self.ledger()
+        for command in ('git push origin --delete old', 'git push origin :old', 'git push --tags', 'git push origin --tags',
+                        'git push origin refs/tags/v1'):
+            with self.subTest(command):
+                self.assertIsNone(self.push(command), command)
+
+    def test_the_default_branch_deny_stays_first(self):
+        self.ledger()
+        out = self.push('git push origin main')
+        self.assertIn('only the owner', out['hookSpecificOutput']['permissionDecisionReason'])
+
+    def test_a_gate_that_cannot_be_read_lets_the_push_run(self):
+        self.ledger()
+        import gate
+        with mock.patch.object(gate, 'missing', side_effect=OSError):
+            self.assertIsNone(self.push())
