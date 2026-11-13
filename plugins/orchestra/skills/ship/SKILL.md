@@ -34,7 +34,7 @@ Clear blockers in this order: merge conflicts, then review threads, then CI. A m
 
 ## CI and the gate
 - A green gate record for the pushed head (`gate status` exits 0) counts as the check. Do not wait for CI.
-- Whatever runs in the CI runs locally: read the CI workflow files, take each `run:` step that checks code (typecheck, lint, test, build; not deploy or publish), and chain them into the one `gate unit --full` call (`sh -c 'a && b && c'`); a second `--full` is refused. CI that runs only on dispatch is untouched.
+- Whatever runs in the CI runs locally: read the CI workflow files, take each `run:` step that checks code (typecheck, lint, test, build; not deploy or publish), and chain them into the one `gate unit --full` call (`sh -c 'a && b && c'`); a second `--full` is refused. CI that runs only on dispatch is untouched, except for a release: start it once on the release head before the release tag and read every job. Never start it per PR or per repair round.
 - A repo whose CI does something a local run cannot (a deploy, a matrix of operating systems) says so in the PR body.
 
 ## Merge conflicts

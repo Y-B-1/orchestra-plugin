@@ -16,6 +16,8 @@ Rules for any e2e test written or run in a repo. A repo that uses the `e2e` runn
 - A full e2e run only when the owner asks (they set `ORCHESTRA_E2E_FULL=1`). Without a flag the runner runs everything, so never run it bare.
 - A change to the e2e config or a lockfile anywhere on the branch forces every test, because the filter reads the whole branch diff against the base. Splitting commits does not help. Put those changes on their own branch or PR, and tell the owner before anything runs.
 - In CI, pass `--changed-since` only on `pull_request`, never on `pull_request_target`. Check out with `fetch-depth: 0`, or the run fails `INVALID_CHANGED_SINCE`.
+- A repo with an e2e config cannot skip e2e (`gate skip e2e` exits 3); it runs scoped. Only the owner sets `ORCHESTRA_E2E_SKIP=1`.
+- When a `--changed-since` run left out no test, the gate prints a note. Put that note in the final message with the cause (a missing key or a bad `filters`). The run's exit code is unchanged.
 - Each run gets its own port. Never share a port or data dir with another run.
 
 ## Keys
@@ -23,6 +25,7 @@ Rules for any e2e test written or run in a repo. A repo that uses the `e2e` runn
 - The key name depends on the provider in the repo's `e2e.config.ts`: `AI_GATEWAY_API_KEY` for `gateway()`, `TYPESAFE_AI_API_KEY` for `typeSafeAi`. Without it the filter leaves nothing out.
 
 ## Upkeep
+- Before the first e2e run in a repo, run `python3 <plugin>/scripts/lean.py e2e-doctor`. It reads local files only and names each gap. A gap that needs a package install or a key is the owner's step (a wizard script): report it, never work around it.
 - `e2e doctor` checks that a run can start (config, engine, models). Run it before you blame the app.
 - `e2e upgrade` refreshes the package and the project skill copy under `.agents/skills/e2e`. A stale copy hides newer flags, so run it when the copy is older than the installed version, and tell the owner.
 

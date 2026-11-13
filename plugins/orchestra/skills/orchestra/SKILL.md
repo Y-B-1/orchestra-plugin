@@ -139,7 +139,7 @@ Unit tests run in full once per PR; every later run is scoped. Write each comman
 - `gate unit --full -- CMD` is the one full run. Chain every CI check step into that one call: `gate unit --full -- sh -c 'npm run typecheck && npm run lint && npm test && npm run build'`. A second `--full` exits 3.
 - `gate unit --scoped -- CMD` for every other run, on the files a repair touched (`vitest related <files>`, `jest --findRelatedTests`, `pytest <paths>`, `go test <pkgs>`).
 - `gate e2e -- CMD` for e2e, always scoped (`e2e run --changed-since <base>`), once on the final head after the review is clean, never per repair round. A full e2e run only when the owner asks (`ORCHESTRA_E2E_FULL=1`). Rules: `<plugin>/skills/verify/references/e2e.md`.
-- A repo with no runner and no recorded run: `gate skip unit|e2e REASON`.
+- A repo with no runner and no recorded run: `gate skip unit|e2e REASON`. A repo with an e2e config runs e2e scoped and cannot skip it (`skills/verify/references/e2e.md`).
 - Before the push, `gate status` must exit 0. During a run the hook denies the push until it does. A commit after a green run voids it: rerun scoped.
 - Tests stay lean: `orchestra:test-quality`, "Lean tests".
 
