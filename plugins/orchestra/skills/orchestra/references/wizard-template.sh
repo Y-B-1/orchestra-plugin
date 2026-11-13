@@ -16,13 +16,19 @@ env_get() {                                # print the decoded saved value of KE
   printf '%s' "$v"
 }
 env_upsert() {                             # env_upsert KEY VALUE: one line, single-quoted
-  local f="$ENV_FILE" tmp q
+  local f="$ENV_FILE" tmp q old rc=0
   if [ "$DRY_RUN" = 1 ]; then echo "dry run: would set $1"; return 0; fi
-  while [ -L "$f" ]; do f=$(readlink "$f"); done   # write through a symlink
-  [ -f "$f" ] || : > "$f"
+  old=$(umask); umask 077                  # the env file and the temp copy are owner-only
+  [ -e "$f" ] || : >> "$f"                 # also creates the target of a dangling link
   q=${2//\'/\'\\\'\'}; tmp=$(mktemp)
-  { grep -v "^$1=" "$f" || true; printf "%s='%s'\n" "$1" "$q"; } > "$tmp"
-  cat "$tmp" > "$f"; rm -f "$tmp"; echo "saved $1"
+  { grep -v "^$1=" "$f" || true; printf "%s='%s'\n" "$1" "$q"; } > "$tmp" || rc=$?
+  [ "$rc" = 0 ] && { cat "$tmp" > "$f" || rc=$?; }   # writing through a symlink follows it
+  rm -f "$tmp"; umask "$old"
+  [ "$rc" = 0 ] || fail "could not write $f"
+  echo "saved $1"
+}
+run() {                                    # run CMD ARGS: every changing command goes through it
+  if [ "$DRY_RUN" = 1 ]; then echo "dry run: would run $1"; else "$@"; fi
 }
 ask() {                                    # ask KEY "prompt": the saved value is the default
   local d v; d=$(env_get "$1"); printf '%s [%s]: ' "$2" "$d"
@@ -35,7 +41,7 @@ ask_secret() {                             # hidden input; the value is never pr
 run_stage() { "$1"; yes "Stage $N done?"; DONE="$DONE $1"; }
 summary() { local s; for s in $STAGES; do case "$DONE " in *" $s "*) ;; *) echo "not done: $s";; esac; done; }
 
-# ---- STAGES (fill; one function per stage, listed in order) ----
+# ---- STAGES (fill; one function per stage, listed in order; every changing command goes through `run`) ----
 STAGES="stage_example"
 stage_example() {
   stage "Example token"
