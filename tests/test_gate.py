@@ -1,5 +1,5 @@
 """Unit tests for the test gate (scripts/gate.py): full-once, scoped e2e, skips, status and the Stop-hook condition."""
-import json, os, subprocess, sys, tempfile, unittest
+import json, os, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -44,6 +44,44 @@ class GateTest(unittest.TestCase):
         slow = [sys.executable, '-c', 'import time; time.sleep(30)']
         self.assertEqual(self.cli('unit', '--full', '--seconds', '0.5', '--', *slow).returncode, 124)
         self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
+
+    def claim(self, **fields):
+        f = gate.file(self.cwd)
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text(json.dumps({'work': {'claim': fields}}))
+
+    def test_concurrent_full_runs_let_exactly_one_run(self):
+        slow = [sys.executable, '-c', 'import time; time.sleep(2)']
+        procs = [subprocess.Popen([sys.executable, str(LEAN), 'gate', 'unit', '--full', '--', *slow], cwd=self.cwd,
+                                  stderr=subprocess.PIPE, text=True) for _ in range(2)]
+        out = [(p.wait(), p.stderr.read()) for p in procs]
+        for p in procs:
+            p.stderr.close()
+        self.assertEqual(sorted(c for c, _ in out), [0, 3], out)
+        refused = next(e for c, e in out if c == 3)
+        self.assertIn('a full run is running for this branch (started ', refused)
+        self.assertIn('); run scoped', refused)
+
+    def test_a_claim_of_a_dead_process_does_not_block(self):
+        dead = subprocess.Popen([sys.executable, '-c', 'pass'])
+        dead.wait()
+        self.claim(pid=dead.pid, start=int(time.time()), limit=600)
+        self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
+
+    def test_a_claim_past_its_limit_does_not_block(self):
+        self.claim(pid=os.getpid(), start=int(time.time()) - 100, limit=10)
+        self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
+
+    def test_a_live_claim_within_its_limit_blocks(self):
+        self.claim(pid=os.getpid(), start=int(time.time()), limit=600)
+        self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 3)
+
+    def test_a_timed_out_full_run_leaves_no_claim(self):
+        slow = [sys.executable, '-c', 'import time; time.sleep(3)']
+        self.assertEqual(self.cli('unit', '--full', '--seconds', '1', '--', *slow).returncode, 124)
+        self.assertNotIn('claim', json.loads(gate.file(self.cwd).read_text())['work'])
+        self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
+        self.assertNotIn('claim', json.loads(gate.file(self.cwd).read_text())['work'])
 
     def test_scoped_is_always_allowed(self):
         for _ in range(2):

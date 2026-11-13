@@ -1,6 +1,7 @@
 """The test gate: `lean.py gate ...` (see docs/hooks.md). State is <git common dir>/orchestra/gate.json (the folder's
 .orchestra outside a repository), keyed by branch: {branch: {"full": {"head", "exit"}, "skips": {kind: reason},
-"runs": {kind: [{"head", "cmd", "exit", "time"} ...]}}}; runs keep only HEAD's latest record per command."""
+"runs": {kind: [{"head", "cmd", "exit", "time"} ...]}, "claim": {"pid", "start", "limit"}}}; runs keep only HEAD's latest
+record per command; the claim marks the running full unit run and is dropped when it ends."""
 import contextlib, os, re, shlex, sys, time
 from pathlib import Path
 
@@ -68,10 +69,6 @@ def e2e_scoped(cmd, cwd=None):
     return False
 
 
-def completed(rc):
-    return rc != 124 and rc <= 128  # a timeout or a signal kill leaves no verdict
-
-
 @contextlib.contextmanager
 def locked(f):
     f.parent.mkdir(parents=True, exist_ok=True)
@@ -124,15 +121,30 @@ def missing(cwd):
     return ['test gate: ' + m for m in out]
 
 
+def take(entry, seconds):
+    """Under the lock, claim the full run; the refusal text when taken. A claim counts while its pid lives and now <= start + limit + 30 s."""
+    c = entry.get('claim')
+    try:
+        c = c if time.time() <= c['start'] + c['limit'] + 30 and not os.kill(c['pid'], 0) else None
+    except (OSError, KeyError, TypeError) as err:
+        c = c if isinstance(err, PermissionError) else None  # a pid owned by someone else still exists
+    if entry.get('full'):
+        return 'a full run is already recorded for this branch; run scoped (gate unit --scoped -- CMD)'
+    if c:
+        return f"a full run is running for this branch (started {time.strftime('%H:%M:%S', time.localtime(c['start']))}); run scoped"
+    entry['claim'] = {'pid': os.getpid(), 'start': int(time.time()), 'limit': seconds}
+
+
 def run(kind, mode, seconds, cmd, cwd=None):
     """Run cmd bounded and record it; returns its exit code, or 3 for a refusal."""
-    e = entry_of(cwd)
-    if mode == 'full' and e['full']:
-        print('gate: a full run is already recorded for this branch; run scoped (gate unit --scoped -- CMD)', file=sys.stderr)
-        return 3
+    if mode == 'full':
+        busy = []
+        record(cwd, lambda entry: busy.append(take(entry, seconds)))
+        if busy[0]:
+            print('gate: ' + busy[0], file=sys.stderr)
+            return 3
     if kind == 'e2e' and not e2e_scoped(cmd, cwd) and os.environ.get('ORCHESTRA_E2E_FULL') != '1':
-        print('gate: this e2e command is not scoped. Add --changed-since REF, --grep, --tag, --last-failed, --shard or a '
-              'test file path; the owner allows a full run with ORCHESTRA_E2E_FULL=1.', file=sys.stderr)
+        print('gate: this e2e command is not scoped. Add --changed-since REF, --grep, --tag, --last-failed, --shard or a test file path; the owner allows a full run with ORCHESTRA_E2E_FULL=1.', file=sys.stderr)
         return 3
     try:
         rc = lean.run_bounded(seconds, cmd)
@@ -143,14 +155,14 @@ def run(kind, mode, seconds, cmd, cwd=None):
 
     def update(entry):
         text = shlex.join(cmd)
-        if not isinstance(entry.get('runs'), dict):
-            entry['runs'] = {}
-        runs = entry['runs']
+        runs = entry['runs'] = entry['runs'] if isinstance(entry.get('runs'), dict) else {}
         old = runs.get(kind) if isinstance(runs.get(kind), list) else []
         runs[kind] = [r for r in old if isinstance(r, dict) and r.get('head') == head and r.get('cmd') != text]
         runs[kind].append({'head': head, 'cmd': text, 'exit': rc, 'time': int(time.time())})
-        if mode == 'full' and completed(rc):
-            entry['full'] = {'head': head, 'exit': rc}
+        if mode == 'full':
+            entry.pop('claim', None)  # a timeout or kill leaves no claim and no record: a new full run may start
+            if rc != 124 and rc <= 128:  # a timeout or a signal kill leaves no verdict
+                entry['full'] = {'head': head, 'exit': rc}
 
     record(cwd, update)
     return rc
