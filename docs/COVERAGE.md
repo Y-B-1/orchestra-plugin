@@ -26,7 +26,7 @@ This file lists every skill in mattpocock/skills@59db609 and pstack@47c6f80 and 
 | engineering/tdd | EQUAL | agents/builder.md Tests (red first, one slice at a time, expected values from the spec, mock only system boundaries); skills/plan/SKILL.md test seams | Builder agent file, every unit; planner for seams |
 | engineering/implement-spec | EQUAL | skills/orchestra/SKILL.md sections 4 and 5; skills/orchestra/references/finish.md | Coordinator skill |
 | engineering/retro | EQUAL | skills/orchestra/references/finish.md Retro on request; skills/orchestra/SKILL.md Retro line | Section 3 retro row |
-| engineering/wizard | EQUAL | skills/orchestra/references/finish.md Steps only a person can take | Section 3 retro and wizard row |
+| engineering/wizard | EQUAL | skills/orchestra/references/finish.md Steps only a person can take, and references/wizard-template.sh | Section 3 retro and wizard row |
 | productivity/to-questionnaire | EQUAL | skills/decide/references/interview.md Questionnaire | Section 3 decide row (a questionnaire for someone else) |
 | in-progress/writing-beats | OUT OF SCOPE | Prose writing | |
 | in-progress/chief-of-staff | EQUAL | skills/orchestra/SKILL.md section 4 and /goal; skills/large-work/references/handoff.md and run-log.md; skills/orchestra/references/finish.md | Coordinator skill; commands/goal.md; section 3 large-work row |
@@ -173,7 +173,6 @@ Not taken, with the reason:
 - Conventional Commits titles for pull requests: this repository's commits are not in that style.
 - A failing-test-first commit before the fix: it conflicts with one commit per unit.
 - An HTML survey report: presentation only.
-- A shipped `wizard-template.sh`: the wizard rules are in finish.md instead.
 - An import-boundary scan item: left to the review lens, since only a repo with a boundary lint has one.
 - The `all-tests` label escape for the e2e filter: not shown in the 0.23.1 docs read.
 - Port layers for other runtimes and forges, per-user model stamps and project playbooks.

@@ -17,6 +17,7 @@ CLI:
   lean.py gate skip unit|e2e REASON   records that the repo has no such runner
   lean.py gate status          exit 0 when the gate holds for HEAD, else 1 with what is missing (docs/hooks.md)
   lean.py check [--base REF] [--max-lines N] [--json]   scans the branch diff; findings never block (docs/check.md)
+  lean.py owns COMMIT|A..B -- PATH...   exit 0 when every file the commit(s) changed matches a path, folder/ or glob (docs/hooks.md)
 
 State is per session: <git common dir>/orchestra/sessions/<session id>/ holds asks.md and goal.json. The folder is
 created when something is written. The ledger may start with "base: <ref> (<sha>) | branch: <name>".
@@ -439,6 +440,9 @@ def main():
     if args[:1] == ['check']:
         from check import run_check  # loaded only for this command
         return run_check(args[1:])
+    if args[:1] == ['owns']:
+        import owns
+        return owns.main(args[1:])
     if args[:1] == ['gate']:
         import gate
         return gate.main(args[1:])

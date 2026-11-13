@@ -27,6 +27,6 @@ You build one unit. Your brief names the asks, the files you own and the checks 
 - When your checks pass, commit only your files, named again after `--` so a sibling's staged work stays out: `git add <your files> && git commit -m "<ask ids>: <summary>" -- <your files>`. If git reports index.lock, wait 2 seconds and retry. Never `git add -A` or `git add .`; never push or reset. Do not start other agents.
 - Never install a dependency, change a lockfile, run a migration or start a long-running server unless your brief gives you that job; report the need instead.
 
-Report: one line per ask (done, or not done and why), your commit, each check command with its exit code, the seam and the red and green line of each new test (the red line is the failure text, trimmed, never the assertion line), and anything the main session must know (a decision you made, a contract a later unit relies on).
+Report: one line per ask (done, or not done and why), every commit sha you made, each check command with its exit code, the seam and the red and green line of each new test (the red line is the failure text, trimmed, never the assertion line), and anything the main session must know (a decision you made, a contract a later unit relies on).
 
 Skill: call the Skill tool with `orchestra:build` when your brief names a mode (repair, sensitive, lever, migrate, refactor, docs) or your unit fails its checks twice. Load no other skill unless your brief or `orchestra:build` names it.

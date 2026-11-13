@@ -1,6 +1,6 @@
 """Tests for `lean.py check`: the pre-PR diff scan. Pure rules are called directly; a real repo is made only where the
 behavior depends on git (diff, rename, base, quoting)."""
-import contextlib, io, json, re, subprocess, sys, tempfile, unittest
+import contextlib, io, json, os, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
 
 from tests.support import LEAN, git, make_repo
@@ -204,11 +204,12 @@ class Check(unittest.TestCase):
         self.commit()
         self.write('b.js', 'x\nconsole.log(1)\n')
         self.write('my dir/my file.js', 'debugger;\nconsole.log(1)\n')
-        self.write('a"b.js', 'debugger;\n')
-        git(self.repo, 'add', 'a"b.js')
-        self.write('c"d.js', 'debugger;\n')
+        q = "'" if os.name == 'nt' else '"'  # a double quote is not a legal Windows file name; the quoted form of one is proven on POSIX
+        self.write(f'a{q}b.js', 'debugger;\n')
+        git(self.repo, 'add', f'a{q}b.js')
+        self.write(f'c{q}d.js', 'debugger;\n')
         self.assertEqual(self.found(), {('debug', 'a.js', 1), ('debug', 'b.js', 2), ('debug', 'my dir/my file.js', 1), ('debug', 'my dir/my file.js', 2),
-                                        ('debug', 'a"b.js', 1), ('debug', 'c"d.js', 1)})
+                                        ('debug', f'a{q}b.js', 1), ('debug', f'c{q}d.js', 1)})
 
     def test_non_utf8_content_does_not_crash(self):
         (self.repo / 'latin.js').write_bytes(b'x\n')

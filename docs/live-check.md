@@ -13,3 +13,5 @@ Each scenario creates a scratch Git repository with a bare `origin` and runs `cl
 The script prints PASS or FAIL per scenario and exits 0 only when all three pass. A failed scenario keeps its event stream in the temporary directory and prints the path.
 
 Claude Code 2.1.306 emits no `hook_response` event for the Stop hook in headless runs. The goal scenario therefore also accepts the `Stop hook feedback` message that Claude Code feeds back to the session when the hook blocks.
+
+The three scenarios do not start each agent type. To check that the model families in `agents/*.md` resolve under a different main model, run one headless session on `--model haiku` that starts `orchestra:investigator-research`, `orchestra:critic` and `orchestra:operator`, and read `modelUsage` in the result event: it lists a Haiku, a Sonnet and an Opus model (checked for 3.6.1 on Claude Code 2.1.323).

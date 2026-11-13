@@ -331,9 +331,9 @@ class CliTest(Repo):
         self.assertEqual([self.goal_state(s) for s in ('s-one', 's-two', 's-four')], ['stopped'] * 3)
 
     def test_the_ledger_lives_in_the_git_dir(self):
-        self.assertTrue(self.cli('ledger')[1].strip().endswith('.git/orchestra/asks.md'))
+        self.assertTrue(self.cli('ledger')[1].strip().replace('\\', '/').endswith('.git/orchestra/asks.md'))  # Windows prints backslashes
         out = self.cli('ledger', env={lean.SESSION_ENV: 's-one'})[1]
-        self.assertTrue(out.strip().endswith('.git/orchestra/sessions/s-one/asks.md'))
+        self.assertTrue(out.strip().replace('\\', '/').endswith('.git/orchestra/sessions/s-one/asks.md'))
 
     def test_session_start_names_the_blocks_and_creates_no_folder(self):
         rc, out, _ = self.start(session_id='s-1')
@@ -409,7 +409,8 @@ class ProcessTest(unittest.TestCase):
 
     def test_exit_codes_pass_through_and_a_signal_death_is_128_plus_the_signal(self):
         self.assertEqual(run_lean('run', '5', '--', 'sh', '-c', 'exit 3').returncode, 3)
-        self.assertEqual(run_lean('run', '5', '--', 'sh', '-c', 'kill -9 $$').returncode, 137)
+        if hasattr(os, 'killpg'):  # Windows has no signals: its wait status is not a signal number
+            self.assertEqual(run_lean('run', '5', '--', 'sh', '-c', 'kill -9 $$').returncode, 137)
 
     @unittest.skipUnless(hasattr(os, 'killpg'), 'process groups are POSIX only')
     def test_stopping_the_caller_stops_the_command(self):
@@ -419,6 +420,67 @@ class ProcessTest(unittest.TestCase):
         p.send_signal(signal.SIGTERM)
         self.assertEqual(p.wait(timeout=10), 128 + signal.SIGTERM)
         self.assertTrue(wait_for(lambda: not self.alive(sleeper)))
+
+
+class Owns(RepoCase):
+    """`lean.py owns COMMIT -- PATH...` against a real repository."""
+
+    def owns(self, commit, *paths, cwd=None):
+        return subprocess.run([sys.executable, str(LEAN), 'owns', commit, '--', *paths], cwd=cwd or self.cwd,
+                              capture_output=True, text=True)
+
+    def commit(self, *files):
+        for f in files:
+            (self.repo / f).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / f).write_text(f)
+            git(self.repo, 'add', f)
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'c')
+        return git(self.repo, 'rev-parse', 'HEAD')
+
+    def test_a_commit_inside_the_unit_passes_and_one_outside_names_the_file(self):
+        inside = self.commit('a/x.py', 'b.txt')
+        self.assertEqual(self.owns(inside, 'a/', 'b.txt').returncode, 0)
+        outside = self.commit('a/y.py', 'c/z.py')
+        r = self.owns(outside, 'a/')
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['c/z.py']))
+
+    def test_a_glob_crosses_folders_only_with_two_stars(self):
+        deep = self.commit('t/a/b/test_x.py')
+        self.assertEqual(self.owns(deep, 't/**/*.py').returncode, 0)
+        self.assertEqual(self.owns(deep, 't/*.py').returncode, 1)
+
+    def test_a_rename_out_of_the_unit_fails_on_the_new_side(self):
+        self.commit('a/x.py')
+        (self.repo / 'c').mkdir()
+        git(self.repo, 'mv', 'a/x.py', 'c/x.py')
+        git(self.repo, 'commit', '-q', '-m', 'move')
+        moved = git(self.repo, 'rev-parse', 'HEAD')
+        r = self.owns(moved, 'a/')
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['c/x.py']))
+
+    def test_a_range_checks_every_commit_in_it(self):
+        base = self.commit('a/1.py')
+        self.commit('a/2.py')
+        self.commit('c/3.py')
+        r = self.owns(f'{base}..HEAD', 'a/')
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['c/3.py']))
+        self.assertEqual(self.owns(f'{base}..HEAD', 'a/', 'c/').returncode, 0)
+
+    def test_a_folder_named_without_a_slash_owns_everything_under_it(self):
+        deep = self.commit('docs/hooks.md', 'plugins/s/x.py')
+        self.assertEqual(self.owns(deep, 'docs', 'plugins/s').returncode, 0)
+        sibling = self.commit('docs2/y.md')
+        r = self.owns(sibling, 'docs')
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['docs2/y.md']))
+
+    def test_bad_input_exits_2_with_a_message(self):
+        head = self.commit('a/1.py')
+        empty_range = f'{head}..{head}'
+        for args, cwd in [(('nope', 'a/'), None), ((head,), None), ((head, 'a/'), self.tmp.name), ((empty_range, 'a/'), None),
+                          ((f'{head}~0..{head}~0', 'a/'), None), ((head, ''), None)]:
+            r = self.owns(*args, cwd=cwd)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn('owns:', r.stderr)
 
 
 if __name__ == '__main__':

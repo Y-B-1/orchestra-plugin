@@ -1,5 +1,5 @@
 """Layout checks for the shipped plugin: manifests, hook commands, agent and skill frontmatter, no private content."""
-import getpass, json, re, subprocess, unittest
+import getpass, json, os, re, shutil, subprocess, tempfile, unittest
 from unittest import mock
 from pathlib import Path
 
@@ -61,10 +61,12 @@ GENERIC_ACCOUNTS = {'runner', 'runneradmin', 'root', 'user', 'admin', 'dev', 'te
 EMAIL = subprocess.run(['git', 'config', 'user.email'], cwd=ROOT, capture_output=True, text=True).stdout.strip()  # read once
 
 
-def private_words():
+def private_words(email=EMAIL):
     """The local account name and the git email: neither may appear in a shipped file. The git user name is not
-    checked, because the public repository URL carries the owner's account name."""
-    words = {getpass.getuser(), EMAIL, EMAIL.partition('@')[0]}
+    checked, because the public repository URL carries the owner's account name. A placeholder email (a reserved
+    or example domain, as the CI workflow sets) is not private."""
+    placeholder = re.search(r'@(example\.(com|net|org)|[\w.-]+\.(invalid|test|example|localhost))$', email, re.I)
+    words = {getpass.getuser()} | (set() if placeholder else {email, email.partition('@')[0]})
     return {w for w in words if len(w) >= 3 and w.lower() not in GENERIC_ACCOUNTS}
 
 
@@ -138,7 +140,7 @@ class WritingTest(unittest.TestCase):
         """One source per rule. Agent files may repeat each other, because each loads alone."""
         homes = {}
         for path in sorted(PLUGIN.rglob('*.md')):
-            rel = str(path.relative_to(PLUGIN))
+            rel = path.relative_to(PLUGIN).as_posix()
             body = re.sub(r'^---\n.*?\n---\n', '', path.read_text(), flags=re.S)
             for sentence in re.split(r'(?<=[.!?])\s+|\n', body):
                 sentence = ' '.join(sentence.lstrip('-* 0123456789.').split())
@@ -216,6 +218,57 @@ class SkillTest(unittest.TestCase):
                     self.assertTrue((PLUGIN / 'skills' / name / 'SKILL.md').exists())
                     self.assertIn('Skill', frontmatter(path).get('tools', ''))
 
+@unittest.skipIf(os.name == 'nt' or not shutil.which('bash'), 'the wizard template is a POSIX bash script; on Windows bash may be WSL')
+class WizardTemplateTest(unittest.TestCase):
+    TEMPLATE = PLUGIN / 'skills/orchestra/references/wizard-template.sh'
+
+    def test_the_template_is_valid_bash(self):
+        self.assertEqual(subprocess.run(['bash', '-n', str(self.TEMPLATE)]).returncode, 0)
+
+    def test_upsert_twice_keeps_one_line_and_the_value_survives_sourcing(self):
+        value = "a b # $HOME it's \"q\""
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / '.env'
+            script = f'env_upsert KEY "$V"; env_upsert KEY "$V"; env_upsert OTHER x; . "$ENV_FILE"; printf %s "$KEY"'
+            r = subprocess.run(['bash', '-c', f'. "{self.TEMPLATE}"; {script}'], capture_output=True, text=True,
+                               env={'PATH': '/usr/bin:/bin', 'WIZARD_SOURCE_ONLY': '1', 'ENV_FILE': str(env), 'V': value})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(sum(l.startswith('KEY=') for l in env.read_text().splitlines()), 1)
+            self.assertTrue(r.stdout.endswith(value), r.stdout)
+
+    def run_template(self, script, env_file, **extra):
+        return subprocess.run(['bash', '-c', f'. "{self.TEMPLATE}"; {script}'], capture_output=True, text=True,
+                              env={'PATH': '/usr/bin:/bin', 'WIZARD_SOURCE_ONLY': '1', 'ENV_FILE': str(env_file), **extra})
+
+    def test_a_relative_symlink_is_written_through_to_its_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / 'app').mkdir(); (Path(d) / 'shared').mkdir()
+            (Path(d) / 'shared/.env').write_text("A='1'\n")
+            (Path(d) / 'app/.env').symlink_to('../shared/.env')
+            r = self.run_template('env_upsert KEY v', Path(d) / 'app/.env')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual((Path(d) / 'shared/.env').read_text(), "A='1'\nKEY='v'\n")
+
+    def test_a_new_env_file_is_private_and_no_temp_file_is_left(self):
+        with tempfile.TemporaryDirectory() as d, tempfile.TemporaryDirectory() as tmpdir:
+            env = Path(d) / '.env'
+            r = self.run_template('env_upsert KEY v', env, TMPDIR=tmpdir)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(env.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(list(Path(tmpdir).iterdir()), [])
+
+    def test_dry_run_skips_every_changing_command_and_prints_only_its_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            mark = Path(d) / 'ran'
+            r = self.run_template(f'run touch "{mark}" secret-arg', Path(d) / '.env', DRY_RUN='1')
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertFalse(mark.exists())
+            self.assertIn('touch', r.stdout)
+            self.assertNotIn('secret-arg', r.stdout)
+            r = self.run_template(f'run touch "{mark}"', Path(d) / '.env')
+            self.assertTrue(mark.exists())
+
+
 class ReviewLoopTest(unittest.TestCase):
     def test_every_agent_loads_no_other_skill_unless_named(self):
         for path in sorted((PLUGIN / 'agents').glob('*.md')):
@@ -266,6 +319,11 @@ class PrivacyTest(unittest.TestCase):
             self.assertNotIn('runner', private_words())
         with mock.patch('getpass.getuser', return_value='jdoe'):
             self.assertIn('jdoe', private_words())
+        with mock.patch('getpass.getuser', return_value='runner'):
+            self.assertEqual(private_words('ci@example.invalid'), set())  # the placeholder identity the CI workflow sets
+            self.assertEqual(private_words('me@example.com'), set())
+            self.assertEqual(private_words('jdoe@corp.io'), {'jdoe@corp.io', 'jdoe'})
+            self.assertEqual(private_words('jdoe@example.io'), {'jdoe@example.io', 'jdoe'})  # only .com .net .org are reserved
         self.assertEqual(private_hits('see /Users/jdoe/x', {'jdoe'}), {'jdoe'})
         self.assertEqual(private_hits('jdoes', {'jdoe'}), set())
 

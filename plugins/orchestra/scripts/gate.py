@@ -6,12 +6,8 @@ record per command; the claim marks the running full unit run and is dropped whe
 import contextlib, os, shlex, sys, time
 from pathlib import Path
 
-try:
-    import fcntl
-except ImportError:  # no flock here: the unique temp file in lean.write_json still keeps the file whole
-    fcntl = None
-
 import lean
+from procs import alive, exclusive
 from gate_scope import e2e_scoped, filters_missing, nothing_to_gate, refuse_empty
 
 KINDS = ('unit', 'e2e')
@@ -30,12 +26,7 @@ def branch_of(cwd):
 @contextlib.contextmanager
 def locked(f):
     f.parent.mkdir(parents=True, exist_ok=True)
-    with open(f.with_name(f.name + '.lock'), 'a') as lock:
-        if fcntl:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-            except OSError:  # no lock support here (a network filesystem): the unique temp file still keeps the file whole
-                pass
+    with exclusive(f.with_name(f.name + '.lock')):
         yield
 
 
@@ -115,9 +106,9 @@ def take(entry, seconds, cwd=None):
     """Under the lock, claim the full run; the refusal text when taken. A claim counts while its pid lives and now <= start + limit + 30 s."""
     c = entry.get('claim')
     try:
-        c = c if time.time() <= c['start'] + c['limit'] + 30 and not os.kill(c['pid'], 0) else None
-    except (OSError, KeyError, TypeError) as err:
-        c = c if isinstance(err, PermissionError) else None  # a pid owned by someone else still exists
+        c = c if time.time() <= c['start'] + c['limit'] + 30 and alive(c['pid']) else None
+    except (KeyError, TypeError):
+        c = None
     entry['full'], entry['skips'] = fresh(entry, cwd)
     if entry['full']:
         return 'a full run is already recorded for this branch; run scoped (gate unit --scoped -- CMD)'

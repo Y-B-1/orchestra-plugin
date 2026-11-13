@@ -2,6 +2,18 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.6.1 — 2026-11-13
+
+Follow-ups from the 3.6.0 run, and the first CI run on every platform. See `docs/release-notes/v3.6.1.md`.
+
+- **New: `lean.py owns COMMIT|A..B -- PATH...`.** It exits 0 when every file the commit changed is inside the unit, and 1 with one line per file outside it. A path is a file, a folder (with or without a trailing `/`) or a glob. An empty range or an empty path list exits 2. It reads commits, so an uncommitted edit is not seen. The check agent and the coordinator run it on every commit a builder reports.
+- **New: a wizard template.** `skills/orchestra/references/wizard-template.sh` is the library for a step only the owner can take: staged prompts, hidden secret input, a private `.env` written through a symlink, a `run` helper that skips changing commands under `DRY_RUN=1`, and a summary of unfinished stages on exit.
+- **Fixed: the test gate on Windows.** A claim's liveness check used `os.kill(pid, 0)`, which sends Ctrl+C to the console on Windows and stopped the caller. The gate now asks the process table there. The gate's file lock did nothing on Windows, so two full runs could start at once; it now uses `msvcrt.locking`. Both live in the new `scripts/procs.py`.
+- **Fixed: the guard on Windows.** A `git -C C:\path` command lost its backslashes when the guard split it, so the checkout was not followed. On Windows the guard now reads a backslash as a path separator.
+- **Changed: two packing rules from the 3.6.0 retro.** A file and the file that mirrors its rule go in the same unit. Release documents are written after the review is clean, from the diff.
+- **Tests.** The privacy test no longer treats a placeholder git email (`example.com`, `.invalid` and the other reserved names) as private. Test repositories turn git's background maintenance off, which removes a copy race on macOS. Windows-only assumptions in five tests are corrected. CI passed on Ubuntu (Python 3.11 and 3.13), macOS and Windows.
+- **Checked: model families under a different main model.** A headless session on Haiku that started `investigator-research`, `critic` and `operator` used Haiku, Sonnet and Opus models. `critic-fable` was not started.
+
 ## 3.6.0 — 2026-11-13
 
 A full-read upstream audit of both skill sets, applied across every skill and agent. See `docs/release-notes/v3.6.0.md`. The purpose is unchanged: every independent ask of a prompt runs in parallel, on the cheapest agent that does it well, for the fastest finish at full quality.
