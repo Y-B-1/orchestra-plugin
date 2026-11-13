@@ -280,9 +280,6 @@ class FableTest(RepoCase):
             self.assertIsNone(self.call(tool_input, 'Workflow'))
 
 
-if __name__ == '__main__':
-    unittest.main()
-
 
 class PushGateTest(RepoCase):
     """During a run a push of a branch needs the test gate to hold."""
@@ -302,7 +299,9 @@ class PushGateTest(RepoCase):
 
     def hold_gate(self):
         import gate
-        lean.write_json(gate.file(self.cwd), {'feat/x': {'skips': {'unit': 'no runner', 'e2e': 'no runner'}}})
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'work')  # a skip counts only for a head on the branch, not on main
+        head = git(self.repo, 'rev-parse', 'HEAD')
+        lean.write_json(gate.file(self.cwd), {'feat/x': {'skips': {k: {'reason': 'no runner', 'head': head} for k in ('unit', 'e2e')}}})
 
     def test_a_push_is_denied_in_a_run_while_the_gate_lacks_lines(self):
         self.ledger()
@@ -346,3 +345,7 @@ class PushGateTest(RepoCase):
         import gate
         with mock.patch.object(gate, 'missing', side_effect=OSError):
             self.assertIsNone(self.push())
+
+
+if __name__ == '__main__':
+    unittest.main()
