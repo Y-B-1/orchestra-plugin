@@ -1,5 +1,5 @@
 """Layout checks for the shipped plugin: manifests, hook commands, agent and skill frontmatter, no private content."""
-import getpass, json, re, subprocess, unittest
+import getpass, json, re, subprocess, tempfile, unittest
 from unittest import mock
 from pathlib import Path
 
@@ -215,6 +215,24 @@ class SkillTest(unittest.TestCase):
                 with self.subTest(path.name, skill=name):
                     self.assertTrue((PLUGIN / 'skills' / name / 'SKILL.md').exists())
                     self.assertIn('Skill', frontmatter(path).get('tools', ''))
+
+class WizardTemplateTest(unittest.TestCase):
+    TEMPLATE = PLUGIN / 'skills/orchestra/references/wizard-template.sh'
+
+    def test_the_template_is_valid_bash(self):
+        self.assertEqual(subprocess.run(['bash', '-n', str(self.TEMPLATE)]).returncode, 0)
+
+    def test_upsert_twice_keeps_one_line_and_the_value_survives_sourcing(self):
+        value = "a b # $HOME it's \"q\""
+        with tempfile.TemporaryDirectory() as d:
+            env = Path(d) / '.env'
+            script = f'env_upsert KEY "$V"; env_upsert KEY "$V"; env_upsert OTHER x; . "$ENV_FILE"; printf %s "$KEY"'
+            r = subprocess.run(['bash', '-c', f'. "{self.TEMPLATE}"; {script}'], capture_output=True, text=True,
+                               env={'PATH': '/usr/bin:/bin', 'WIZARD_SOURCE_ONLY': '1', 'ENV_FILE': str(env), 'V': value})
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(sum(l.startswith('KEY=') for l in env.read_text().splitlines()), 1)
+            self.assertTrue(r.stdout.endswith(value), r.stdout)
+
 
 class ReviewLoopTest(unittest.TestCase):
     def test_every_agent_loads_no_other_skill_unless_named(self):
