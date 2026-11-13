@@ -3,7 +3,7 @@
 Load before you write the final message, open a PR, or clean up.
 
 ## Own every result
-Read each unit's diff yourself before you count it as done; a builder's "done" is a claim, not evidence. Write the final message from the code and the check output, never by forwarding a worker's text. A claim with "should", "probably" or "seems" needs its check run. Before the first `gh issue create` or `gh pr create` of a session, check the target with `gh repo view --json nameWithOwner`; in a fork `gh` can default to the upstream repo, so confirm with the owner when it is not theirs.
+Read each unit's diff yourself before you count it as done; a builder's "done" is a claim, not evidence. Write the final message from the code and the check output, never by forwarding a worker's text. A claim with "should", "probably" or "seems" needs its check run. Before the first `gh issue create` or `gh pr create` of a session, do the target-repo check at the top of the `orchestra:ship` skill.
 
 ## Units that fail
 A unit that dies or hits its cap gets one retry with the original brief plus what is already done. Pick the retry by cause: a smaller scope after a context limit or a cap, the same brief after a dropped connection, a different model after a tool error. A stopped worker that returns late is checked against the tree as it is now; a finding only it has goes to a fresh unit. A second failure becomes an open item in the final message, never a pass. When scope changes mid-run, start a fresh unit with the whole new scope; do not chain a correction onto a redirected worker. Before you redispatch a unit, stop its old worker and confirm it stopped (live process, `git status`).

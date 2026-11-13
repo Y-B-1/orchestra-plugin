@@ -91,9 +91,9 @@ The Workflow is the main tool: every unit of a run, reviewers and repairs includ
 ```js
 const b = (brief, label) => agent(brief, { label, agentType: 'orchestra:builder', schema: DONE }) // DONE: {done, commit, report}
 const pill = b(briefA6, 'A6 pill')
-const check = c => agent(briefCheck(c), { label: 'check', agentType: 'orchestra:operator', schema: EXIT })
+const check = c => agent(briefCheck(c), { label: 'check', agentType: 'orchestra:operator', schema: EXIT }).then(x => !!x && x.exit === 0)
 const others = [briefA1, briefA2, briefA4].map((x, i) => b(x, 'u' + i))
-const alerts = pill.then(async r => r && r.done && (await check(r.commit)).exit === 0 ? b(briefA10, 'A10 alerts') : { done: false, report: 'skipped: A6 not done or its check failed' }) // check: an orchestra:operator agent() that runs the unit's scoped check, schema EXIT: {exit, report}
+const alerts = pill.then(async r => r && r.done && (await check(r.commit)) ? b(briefA10, 'A10 alerts') : { done: false, report: 'skipped: A6 not done or its check failed' }) // check: an orchestra:operator agent() that runs the unit's scoped check, schema EXIT: {exit, report}
 return await Promise.all([pill, ...others, alerts])
 ```
 

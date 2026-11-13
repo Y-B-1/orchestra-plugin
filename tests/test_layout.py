@@ -35,7 +35,7 @@ def model_ok(model, stem):
 
 def strict_problems(text):
     """Frontmatter lines that a real YAML reader would reject or misread (standard library only, no PyYAML):
-    an unquoted value holding a colon and a space, or a quoted value that is not closed or holds a bare quote."""
+    an unquoted value holding a colon and a space or ending in a colon, or a quoted value that is not closed or holds a bare quote."""
     match = re.match(r'---\n(.*?)\n---\n', text, re.S)
     if not match:
         return ['no frontmatter']
@@ -50,7 +50,7 @@ def strict_problems(text):
             if not closed:
                 problems.append(f'{key}: quoted value is not closed or holds a bare quote')
         elif ': ' in value or value.endswith(':'):
-            problems.append(f'{key}: unquoted value holds a colon and a space')
+            problems.append(f'{key}: unquoted value holds a colon and a space or ends in a colon')
     return problems
 
 
@@ -107,13 +107,14 @@ class AgentTest(unittest.TestCase):
         self.assertTrue(model_ok('claude-sonnet-5-5', 'builder'))
         self.assertTrue(model_ok('claude-fable-5-2', 'critic-fable'))
         self.assertFalse(model_ok('claude-opus-5-5', 'critic-fable'))
-        self.assertFalse(model_ok('claude-opus-5-5', 'builder') and model_ok('gpt-5', 'builder'))
+        self.assertFalse(model_ok('gpt-5', 'builder'))
 
 
 class FrontmatterTest(unittest.TestCase):
     def test_strict_check_catches_an_unquoted_colon_and_an_unclosed_quote(self):
         self.assertEqual(strict_problems('---\nname: x\ndescription: Use when: a thing\n---\n'),
-                         ['description: unquoted value holds a colon and a space'])
+                         ['description: unquoted value holds a colon and a space or ends in a colon'])
+        self.assertTrue(strict_problems('---\nname: x\ndescription: Use when:\n---\n'))
         self.assertEqual(strict_problems('---\nname: x\ndescription: "Use it\n---\n'),
                          ['description: quoted value is not closed or holds a bare quote'])
         self.assertEqual(strict_problems('---\nname: x\ndescription: "Use when: a thing"\n---\n'), [])
