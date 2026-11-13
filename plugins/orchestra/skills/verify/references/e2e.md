@@ -27,4 +27,4 @@ Rules for any e2e test written or run in a repo. A repo that uses the `e2e` runn
 - `e2e upgrade` refreshes the package and the project skill copy under `.agents/skills/e2e`. A stale copy hides newer flags, so run it when the copy is older than the installed version, and tell the owner.
 
 ## Another runner (Playwright, Cypress)
-The same scoping rule applies with that runner's own filters: a changed-since or related-files option, `--grep`, a tag, `--last-failed`, a shard, or the test file paths. No full run unless the owner asks.
+The same scoping rule applies with that runner's own filters: a changed-since or related-files option, `--grep`, a tag, or the test file paths. A shard or `--last-failed` is not a scope. No full run unless the owner asks.
