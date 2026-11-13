@@ -10,6 +10,10 @@ SUPPRESS = (r'eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|#\s*noqa|# 
             r'|biome-ignore|istanbul ignore|nolint|\bxit\(|\bxdescribe\(|\bxtest\(|\bfit\(|\bfdescribe\(|@pytest\.mark\.(skip|xfail)|@unittest\.(skip|expectedFailure)'
             r'|\bskipTest\(|\bt\.Skip(Now)?\(|#\[ignore\]|@Disabled|@Ignore\b')
 TEST_ONLY = r'\.skip\(|\.only\(|\.skip\.|\.skipIf\(|\.fixme\(|\.todo\('
+# A skip that was already there counts only at the start of a statement, so a string, a regex or `rows.skip(n)` does not.
+EXISTING_SKIP = re.compile(r'\s*(?:(?:it|test|describe|context|suite)\.(?:\w+\.)*(?:skip|skipIf|fixme)\b|x(?:it|describe|test)\('
+                           r'|@pytest\.mark\.(?:skip|xfail)|@unittest\.(?:skip|expectedFailure)|(?:self\.)?skipTest\(|t\.Skip(?:Now)?\('
+                           r'|#\[ignore\]|@(?:Disabled|Ignore)\b)')
 LINE_RULES = [  # (kind, regex on an added line, message)
     ('test-weakened', SUPPRESS, REASON),
     ('self-mock', r'''\b(?:vi|jest)\.(?:mock|doMock|unstable_mockModule)\(\s*(?:import\(\s*)?['"`](?:\.|@/|~/|src/)''', 'mocks an in-repo module; test the real one'),
@@ -21,14 +25,14 @@ LINE_RULES = [  # (kind, regex on an added line, message)
 WEAK_FILES = (r'(^|/)(eslint\.config\.[^/]*|\.eslintrc[^/]*|\.eslintignore|tsconfig[^/]*\.json|setup\.cfg|ruff\.toml|\.ruff\.toml|mypy\.ini|\.flake8|pytest\.ini'
               r'|tox\.ini|pyrightconfig\.json|biome\.jsonc?|(vitest|jest|playwright)[^/]*\.config\.[^/]*|\.pre-commit-config\.yaml|\.gitlab-ci\.yml'
               r'|\.golangci\.ya?ml)$|\.snap$|(^|/)__snapshots__/|^\.github/workflows/|^\.circleci/|^scripts/check\.sh$')
-RULES_FILES = (r'(^|/)(AGENTS|CLAUDE|CONTEXT)\.md$|(^|/)\.(claude|agents)/|\.cursor/rules/|(^|/)\.cursorrules$'
+RULES_FILES = (r'(^|/)(AGENTS|CLAUDE|CONTEXT)\.md$|^(?i:(docs/)?(contributing|coding_standards)\.md)$|(^|/)\.(claude|agents)/|\.cursor/rules/|(^|/)\.cursorrules$'
                r'|^\.github/copilot-instructions\.md$|^docs/AGENT-MEMORY\.md$|^\.orchestra/budget-waivers$')
 TOOL_SECTION = ('[tool.ruff', '[tool.mypy', '[tool.pytest', '[tool.coverage', '[tool.pyright', '[tool.pylint')
 SENSITIVE = {'auth', 'oauth', 'login', 'session', 'token', 'secret', 'password', 'payment', 'billing', 'permission', 'role', 'crypto',
              'webhook', 'middleware', 'migration', 'jwt', 'csrf', 'rbac', 'acl', 'security', 'signin', 'signup', 'admin', 'stripe'}  # singular: words() strips a trailing s
 SENSITIVE_PREFIX = ('auth', 'polic', 'encrypt', 'credential')
 NOT_AUTH = {'author', 'authored', 'authoring', 'authority'}
-KINDS = ('size', 'test-weakened', 'self-mock', 'debug', 'rules', 'sensitive', 'secret', 'test-count')
+KINDS = ('size', 'test-weakened', 'skipped-test', 'self-mock', 'debug', 'rules', 'sensitive', 'secret', 'test-count')
 TEST_GROWTH = 5
 TIMEOUT = re.compile(r'timeout\W{0,4}(\d[\d_]*)', re.I)
 IS_TEST = re.compile(r'(^|/)(tests?/|__tests__/|test_[^/]*$|conftest\.py$|[^/]*_test\.[^/]*$|[^/]*Tests?\.(java|kt)$|[^/]*\.(test|spec|cy)\.|[^/]*_spec\.|(e2e|spec|cypress)/)')
@@ -242,6 +246,11 @@ def check(base, max_lines=500, cwd=None):
         if is_test or TIMEOUT_CONFIG.search(path):
             for n in raised_timeouts(info):
                 add('test-weakened', path, n, 'test timeout raised; ' + REASON)
+        if is_test and text and not path.endswith(('.md', '.txt', '.rst')):
+            fresh = {n for n, _ in info['add']}  # an added skip is test-weakened already; count the ones that were there
+            old = sum(bool(EXISTING_SKIP.match(ln)) for n, ln in enumerate(text.splitlines(), 1) if n not in fresh)
+            if old:
+                add('skipped-test', path, None, f'{old} skipped test{"s" * (old > 1)} already in a file this diff touches; fix or delete each')
         if any(re.search(RULES_FILES, p) for p in names):
             add('rules', path, None, 'rules changed; the reviewer judges with the base version')
         if any(is_sensitive(p) for p in names):

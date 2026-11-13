@@ -12,7 +12,7 @@ except ImportError:  # no flock here: the unique temp file in lean.write_json st
     fcntl = None
 
 import lean
-from gate_scope import e2e_scoped, nothing_to_gate, refuse_empty
+from gate_scope import e2e_scoped, filters_missing, nothing_to_gate, refuse_empty
 
 KINDS = ('unit', 'e2e')
 SECONDS = 600.0
@@ -136,8 +136,10 @@ def run(kind, mode, seconds, cmd, cwd=None):
         if busy[0]:
             print('gate: ' + busy[0], file=sys.stderr)
             return 3
-    if kind == 'e2e' and not e2e_scoped(cmd, cwd) and os.environ.get('ORCHESTRA_E2E_FULL') != '1':
-        print('gate: this e2e command is not scoped. Add --changed-since REF, --grep, --tag, --last-failed, --shard or a test file path; the owner allows a full run with ORCHESTRA_E2E_FULL=1.', file=sys.stderr)
+    cfg = filters_missing(cmd, cwd) if kind == 'e2e' else ''
+    if kind == 'e2e' and os.environ.get('ORCHESTRA_E2E_FULL') != '1' and (cfg or not e2e_scoped(cmd, cwd)):  # the owner allows a full run
+        print(f'gate: {cfg} has no `filters`, so --changed-since runs every test. Fix: add `filters` to it, or scope with --grep, --tag or a test file.' if cfg else
+              'gate: this e2e command is not scoped. Add --changed-since REF, --grep, --tag or a test file path; the owner allows a full run with ORCHESTRA_E2E_FULL=1.', file=sys.stderr)
         return 3
     try:
         rc = lean.run_bounded(seconds, cmd)
@@ -178,8 +180,7 @@ def main(args, cwd=None):
         record(cwd, lambda entry: entry.__setitem__('skips', {**fresh(entry, cwd)[1], args[1]: skip}))
         return 0
     if args[:1] and args[0] in KINDS and '--' in args:
-        i = args.index('--')
-        opts, cmd = args[1:i], args[i + 1:]
+        opts, cmd = args[1:(i := args.index('--'))], args[i + 1:]
         mode, seconds = None, SECONDS
         while opts:
             if opts[0] in ('--full', '--scoped') and args[0] == 'unit':

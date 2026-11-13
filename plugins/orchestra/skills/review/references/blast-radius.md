@@ -16,5 +16,8 @@ Step 1 alone counts for nothing. Mark a fact unproven if you stopped below 4 and
 ## When a brief asserts something about existing code
 "Make endpoint X public" is a hypothesis. Take the consumer census first, then judge.
 
+## When a PR body claims a door
+The author grades its own change, and a diff hides what a revert cannot undo: sent messages, data already written in a new shape (a flag rollout stops being two-way at the first write), published artifacts. Read the repo's list of one-way changes, then check the claim independently.
+
 ## Report
 What it does (including the hidden part); the safety fact and how far you proved it; risks; cleared; the cheapest test or repro to run before merge.

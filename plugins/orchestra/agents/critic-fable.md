@@ -1,7 +1,7 @@
 ---
 name: critic-fable
-description: "The critic on Fable 5.2: one third point of view that judges a run at its start or its end and redirects it. Never more than one at a time."
-model: claude-fable-5-2
+description: "The critic on Fable: one third point of view that judges a run at its start or its end and redirects it. Never more than one at a time."
+model: fable
 effort: high
 tools: Skill, Read, Bash, Glob, Grep
 ---

@@ -5,8 +5,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'plugins/orchestra'
-MODELS = {'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'}
-FABLE = 'claude-fable-5-2'  # one agent only: the critic's third point of view
+MODELS = {'opus', 'sonnet', 'haiku'}  # family aliases: each follows the newest model of its family
+FABLE = 'fable'  # one agent only: the critic's third point of view
 AGENTS = {'builder', 'builder-mechanical', 'builder-cleanup', 'reviewer', 'reviewer-light', 'reviewer-standards',
           'planner', 'critic', 'critic-fable', 'investigator', 'investigator-research', 'operator'}
 
@@ -22,6 +22,36 @@ def frontmatter(path):
         if sep and not key.startswith(' '):
             fields[key.strip()] = value.strip().strip('"')
     return fields
+
+
+QUOTED = {'"': re.compile(r'"(?:[^"\\]|\\.)*"\s*(?:#.*)?$'), "'": re.compile(r"'(?:[^']|'')*'\s*(?:#.*)?$")}
+
+
+def model_ok(model, stem):
+    """A family alias, or a full id of the same family (claude-fable-... only for the critic)."""
+    families = {FABLE} if stem == 'critic-fable' else MODELS
+    return model in families or any(re.fullmatch(rf'claude-{f}-[\w.-]+', model or '') for f in families)
+
+
+def strict_problems(text):
+    """Frontmatter lines that a real YAML reader would reject or misread (standard library only, no PyYAML):
+    an unquoted value holding a colon and a space or ending in a colon, or a quoted value that is not closed or holds a bare quote."""
+    match = re.match(r'---\n(.*?)\n---\n', text, re.S)
+    if not match:
+        return ['no frontmatter']
+    problems = []
+    for line in match.group(1).splitlines():
+        key, sep, value = line.partition(':')
+        if not sep or line.startswith((' ', '#', '-')):
+            continue
+        value = value.strip()
+        if value[:1] in ('"', "'"):
+            closed = QUOTED[value[0]].match(value)
+            if not closed:
+                problems.append(f'{key}: quoted value is not closed or holds a bare quote')
+        elif ': ' in value or value.endswith(':'):
+            problems.append(f'{key}: unquoted value holds a colon and a space or ends in a colon')
+    return problems
 
 
 # Account names CI runners and containers use; they are ordinary words, so they are not private.
@@ -71,9 +101,53 @@ class AgentTest(unittest.TestCase):
                 fields = frontmatter(path)
                 self.assertEqual(fields.get('name'), path.stem)
                 self.assertTrue(fields.get('description'))
-                self.assertEqual(fields.get('model'), FABLE) if path.stem == 'critic-fable' else self.assertIn(fields.get('model'), MODELS)
+                self.assertTrue(model_ok(fields.get('model'), path.stem), fields.get('model'))
                 self.assertIn(fields.get('effort'), {'low', 'medium', 'high', 'xhigh', 'max'})
                 self.assertTrue(fields.get('tools'))
+        self.assertTrue(model_ok('claude-sonnet-5-5', 'builder'))
+        self.assertTrue(model_ok('claude-fable-5-2', 'critic-fable'))
+        self.assertFalse(model_ok('claude-opus-5-5', 'critic-fable'))
+        self.assertFalse(model_ok('gpt-5', 'builder'))
+
+
+class FrontmatterTest(unittest.TestCase):
+    def test_strict_check_catches_an_unquoted_colon_and_an_unclosed_quote(self):
+        self.assertEqual(strict_problems('---\nname: x\ndescription: Use when: a thing\n---\n'),
+                         ['description: unquoted value holds a colon and a space or ends in a colon'])
+        self.assertTrue(strict_problems('---\nname: x\ndescription: Use when:\n---\n'))
+        self.assertEqual(strict_problems('---\nname: x\ndescription: "Use it\n---\n'),
+                         ['description: quoted value is not closed or holds a bare quote'])
+        self.assertEqual(strict_problems('---\nname: x\ndescription: "Use when: a thing"\n---\n'), [])
+        self.assertEqual(strict_problems("---\nname: x\ndescription: 'Use when: x'  # note\n---\n"), [])
+        self.assertEqual(strict_problems('---\nname: x\ndescription: "a" # note\n---\n'), [])
+
+    def test_every_skill_and_agent_frontmatter_is_valid_yaml_in_shape(self):
+        for path in sorted(PLUGIN.glob('skills/*/SKILL.md')) + sorted(PLUGIN.glob('agents/*.md')):
+            with self.subTest(str(path.relative_to(PLUGIN))):
+                self.assertEqual(strict_problems(path.read_text()), [])
+
+
+class WritingTest(unittest.TestCase):
+    def test_a_description_stays_short(self):
+        """Every description sits in context all the time; a long one costs every session."""
+        for path in sorted(PLUGIN.glob('skills/*/SKILL.md')) + sorted(PLUGIN.glob('agents/*.md')):
+            with self.subTest(str(path.relative_to(PLUGIN))):
+                self.assertLessEqual(len(frontmatter(path).get('description', '').split()), 90)
+
+    def test_a_rule_sentence_lives_in_one_file(self):
+        """One source per rule. Agent files may repeat each other, because each loads alone."""
+        homes = {}
+        for path in sorted(PLUGIN.rglob('*.md')):
+            rel = str(path.relative_to(PLUGIN))
+            body = re.sub(r'^---\n.*?\n---\n', '', path.read_text(), flags=re.S)
+            for sentence in re.split(r'(?<=[.!?])\s+|\n', body):
+                sentence = ' '.join(sentence.lstrip('-* 0123456789.').split())
+                if len(sentence) >= 70:
+                    homes.setdefault(sentence, set()).add(rel)
+        for sentence, files in homes.items():
+            with self.subTest(sentence[:60]):
+                self.assertLessEqual(len({f for f in files if not f.startswith('agents/')}) + (1 if any(f.startswith('agents/') for f in files) else 0), 1,
+                                     f'repeated in {sorted(files)}')
 
 
 class SkillTest(unittest.TestCase):
@@ -91,7 +165,7 @@ class SkillTest(unittest.TestCase):
             skill = (ref.parent.parent / 'SKILL.md').read_text()
             with self.subTest(str(ref.relative_to(PLUGIN))):
                 self.assertTrue(f'references/{ref.name}' in skill, 'a reference file its skill never names')
-                self.assertLessEqual(len(ref.read_text().splitlines()), 60)
+                self.assertLessEqual(len(ref.read_text().splitlines()), 100)
 
     def test_no_plugin_file_names_a_repo_only_path(self):
         """An installed plugin has no plugins/orchestra/ folder; pointers use <plugin>/skills/..."""

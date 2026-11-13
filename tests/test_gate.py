@@ -93,13 +93,57 @@ class GateTest(unittest.TestCase):
     def test_e2e_scope_detection(self):
         table = [
             (['e2e', 'run', '--changed-since', 'main'], True), (['e2e', 'run', '--grep', 'login'], True),
-            (['e2e', 'run', '--tag=smoke'], True), (['e2e', 'run', '--last-failed'], True),
-            (['e2e', 'run', '--shard', '1/4'], True), (['e2e', 'run', 'tests/a.e2e.ts'], True),
+            (['e2e', 'run', '--tag=smoke'], True), (['e2e', 'run', '--last-failed'], False),
+            (['e2e', 'run', '--shard', '1/4'], False), (['e2e', 'run', 'tests/a.e2e.ts'], True),
             (['npx', 'playwright', 'test', 'x.spec.ts'], True), (['vitest', 'run', 'a.test.tsx'], True),
             (['e2e', 'run'], False), (['e2e', 'run', '--headed'], False),
         ]
         for cmd, scoped in table:
             self.assertEqual(gate.e2e_scoped(cmd), scoped, cmd)
+
+    def test_changed_since_needs_filters_in_the_e2e_config(self):
+        run = ['e2e', 'run', '--changed-since', 'main']
+        self.assertEqual(gate.filters_missing(run, self.cwd), '')  # no e2e config: nothing to check
+        for name, text, missing in (('e2e.config.ts', 'export default { filters: {} }', ''), ('e2e.config.mjs', 'export default {}', 'e2e.config.mjs')):
+            cfg = Path(self.cwd) / name
+            cfg.write_text(text)
+            self.assertEqual(gate.filters_missing(run, self.cwd), missing, name)
+            self.assertEqual(gate.filters_missing(run + ['--grep', 'x'], self.cwd), '', 'another scope narrows the run')
+            self.assertEqual(gate.filters_missing(['playwright', 'test', '--changed-since', 'main'], self.cwd), '', 'not the e2e runner')
+            cfg.unlink()
+
+    def test_filters_config_is_found_like_the_runner_finds_it(self):
+        root, run = Path(self.cwd), ['e2e', 'run', '--changed-since', 'main']
+        (root / 'pkg' / 'deep').mkdir(parents=True)
+        (root / 'e2e.config.mts').write_text('export default {}')
+        (root / 'pkg' / 'e2e.config.ts').write_text('export default { filters: {} }')
+        self.assertEqual(gate.filters_missing(run, self.cwd), 'e2e.config.mts', '.mts is a config')
+        self.assertEqual(gate.filters_missing(run + ['--config', 'pkg/e2e.config.ts'], self.cwd), '', '--config names the file')
+        self.assertEqual(gate.filters_missing(run + ['--config=pkg/e2e.config.ts'], self.cwd), '')
+        self.assertEqual(gate.filters_missing(run + ['-c', 'e2e.config.mts'], self.cwd), 'e2e.config.mts')
+        self.assertEqual(gate.filters_missing(run, str(root / 'pkg' / 'deep')), '', 'the nearest config upward wins')
+        (root / 'pkg' / 'e2e.config.ts').unlink()
+        self.assertEqual(os.path.basename(gate.filters_missing(run, str(root / 'pkg' / 'deep'))), 'e2e.config.mts', 'found upward')
+
+    def test_the_e2e_runner_is_found_after_runner_options_and_a_version(self):
+        (Path(self.cwd) / 'e2e.config.ts').write_text('export default {}')
+        for pre in (['npx', '--yes'], ['npx'], ['bunx'], ['pnpm', 'exec'], ['pnpm', 'dlx'], ['npx', '-y']):
+            for name in ('e2e', 'e2e@latest', 'e2e@0.23.1'):
+                run = pre + [name, 'run', '--changed-since', 'main']
+                self.assertEqual(gate.filters_missing(run, self.cwd), 'e2e.config.ts', run)
+
+    def test_owner_full_override_lifts_the_filters_refusal(self):
+        (Path(self.cwd) / 'e2e.config.ts').write_text('export default {}')
+        cmd = ('e2e', 'run', '--changed-since', 'main')  # no e2e runner here: the run itself fails to start
+        self.assertEqual(self.cli('e2e', '--', *cmd).returncode, 3)
+        self.assertNotEqual(self.cli('e2e', '--', *cmd, env={'ORCHESTRA_E2E_FULL': '1'}).returncode, 3)
+
+    def test_gate_e2e_refuses_changed_since_without_filters(self):
+        (Path(self.cwd) / 'e2e.config.ts').write_text('export default {}')
+        r = self.cli('e2e', '--', 'e2e', 'run', '--changed-since', 'main')
+        self.assertEqual(r.returncode, 3, r.stderr)
+        self.assertIn('no `filters`', r.stderr)
+        self.assertIn('add `filters`', r.stderr)
 
     def test_e2e_unscoped_refused_unless_owner_allows(self):
         cmd = [sys.executable, '-c', 'pass']  # no scope flag

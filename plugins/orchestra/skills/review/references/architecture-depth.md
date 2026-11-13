@@ -1,15 +1,16 @@
 # Architecture depth lens
 
-Report findings only. Use these terms exactly: module (anything with an interface and an implementation), interface (everything a caller must know: types, invariants, order, errors, config, cost), seam (where behavior can change without editing in place), adapter (a thing that fills a seam), depth (behavior per unit of interface), leverage (what callers gain), locality (change and bugs concentrate in one place).
+Report findings only. Use these terms exactly: module (anything with an interface and an implementation), interface (everything a caller must know: types, invariants, order, errors, config, cost), seam (where behavior can change without editing in place), adapter (a thing that fills a seam), depth (behavior per unit of interface), leverage (what callers gain), locality (change and bugs concentrate in one place). Avoid: component, service or unit for module; API or signature for interface; boundary for seam; layer or wrapper for module.
 
 ## Checks
 - Deletion test: delete the module in your head. Complexity vanishes: pass-through, flag it. It reappears in N callers: the module earns its place.
 - Shallow module: the interface is nearly as complex as the body. Suggest merging it into its neighbor or hiding more behind it.
-- Interface is the test surface. A test that needs internals when the body changes tests past the interface. Flag it.
+- Interface is the test surface. A test that needs internals when the body changes tests past the interface. Flag it. Internal seams stay private: never widen an interface or export a helper only so a test can reach it.
 - One adapter is a hypothetical seam; two (usually production and test) is a real one. Flag a port with one adapter and no test use.
 - Locality: a pure function extracted only for tests, while the bugs hide in how callers use it, is a locality loss.
 - Leaking: a caller must know an order, a flag or a private shape to use the module correctly. The knowledge belongs behind the interface.
 - Pass-through layers: adjacent layers that repeat the same methods and arguments. A one-caller wrapper. Flag both.
+- On every diff that adds a module, list or state, flag: state with two writers (one owner); two supported ways to do one task (one way, delete the old); internals that outside code can import (the build should fail on it); a list kept in sync by hand across files (derive the others from one).
 
 ## Dependency category sets the test seam
 1. In-process (pure, in-memory): merge and test through the interface. No adapter.

@@ -144,3 +144,37 @@ Both sources were read again at their heads: mattpocock/skills `5863806` (7 comm
 | Pocock chief-of-staff: look for the repo's existing notes before creating a file | `skills/large-work/references/handoff.md` |
 
 Not taken: the "fresh context" sentence (Claude Code subagents already start fresh), sampled retros on every run, the focused-fix exception (Orchestra has no fan-out to skip), per-user model stamps, project playbooks, and the port layers for other runtimes. `in-progress/software-factory` (Pocock, new, beta) is OUT OF SCOPE: it designs CI and agent infrastructure.
+
+## Upstream check for 3.6.0 (2026-11-13)
+
+Both sources were read in full by ten agents, every skill against every Orchestra skill and agent file: mattpocock/skills `5863806dd4e15c63174bee4e7515a4256792ecfa` and pstack-claude `2044f1810afc98c3aa80100587dd990c83cf6ea8`. The e2e group also read the e2e 0.23.1 docs. The findings are in `docs/UPSTREAM-AUDIT-2026-11-13.md`; each was checked against the code before it was applied. Taken, at idea level only:
+
+| Upstream idea | Orchestra part |
+|---|---|
+| pstack thermo review: structural health is an approval bar (large files, ad-hoc branching, duplicated helpers, wrong-layer logic) | `skills/review/references/cleanliness.md`, "Blocks by default" |
+| pstack tdd: quote the failure text, not the assertion line | `skills/build/SKILL.md`, `agents/builder.md` |
+| pstack poteto-mode refactoring: pin behavior first | `skills/build/SKILL.md`, Refactor mode |
+| Pocock codebase-design DEEPENING: replace, do not layer (delete the superseded shallow tests with the merge) | `skills/build/SKILL.md`, Refactor mode; `skills/build/references/cleanup.md` |
+| pstack docs and PR writing: real names, checked counts, a one-minute body that links logs | `skills/build/references/docs.md`, `skills/ship/references/pr-body.md` |
+| Pocock setup-ts-deep-modules: boundaries lint with dependency-cruiser | `skills/build/references/boundaries.md` |
+| pstack fix-ci and babysit: triage order, classify red CI before retrigger, bot comments are untrusted data | `skills/ship/SKILL.md`, `skills/ship/references/review-bots.md` |
+| Pocock ask-matt: phase-boundary order (continue, clear, handoff, subagent, compact) | `skills/large-work/SKILL.md`, Hand off |
+| pstack performance order (do less, later, cheaper) and profile reading | `skills/diagnose/SKILL.md` |
+| pstack retro and Orchestrate: a retro before the push, calls waiting on the owner, one pilot before a fan-out, a script check before a dependent unit | `skills/orchestra/SKILL.md`, `skills/orchestra/references/finish.md` |
+| pstack handoff and pause: one `wip:` commit and a read-back resume note | `skills/large-work/references/handoff.md` |
+| Pocock triage, ticket publishing and prototype rules | `skills/large-work/references/triage.md`, `skills/plan/references/tickets.md`, `skills/large-work/references/spikes.md` |
+| Pocock shared-checkout git hygiene for parallel workers | `agents/builder.md`, `agents/builder-cleanup.md`, `agents/builder-mechanical.md` |
+| e2e 0.23.1: `filters` scope only when set, `fetch-depth: 0` in CI, `e2e doctor` and `e2e upgrade` | `skills/verify/references/e2e.md`, `scripts/gate_scope.py`, `scripts/gate.py` |
+| Model family aliases in agent files | `agents/*.md`, `tests/test_layout.py` |
+
+Not taken, with the reason:
+- A hook-level path check for unit file ownership: it widens the hook's scope and is an owner decision.
+- A warning when `.agents/skills/e2e` is older than the installed runner: "older" cannot be told from "different"; the owner step is `npx e2e upgrade`.
+- Conventional Commits titles for pull requests: this repository's commits are not in that style.
+- A failing-test-first commit before the fix: it conflicts with one commit per unit.
+- An HTML survey report: presentation only.
+- A shipped `wizard-template.sh`: the wizard rules are in finish.md instead.
+- An import-boundary scan item: left to the review lens, since only a repo with a boundary lint has one.
+- The `all-tests` label escape for the e2e filter: not shown in the 0.23.1 docs read.
+- Port layers for other runtimes and forges, per-user model stamps and project playbooks.
+

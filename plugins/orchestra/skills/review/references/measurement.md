@@ -3,16 +3,17 @@
 Use when the diff or the author's report claims a speedup, regression, throughput, latency or eval score. A number with no evidence is unproven, not a pass.
 
 ## Before you judge
+- Before the run, the author names the result that would change a decision and the noise floor. A gap under the floor decides nothing.
 - Write the claim in the words it would ship in ("export is 30% faster at p50 on 60k rows"). Each check below tests that sentence.
 - Read the measurement script. Note what it times, counts and ignores.
 - Note machine load (`uptime`) and core count. A busy machine needs interleaved runs, and the report says so.
 
 ## Seven checks (answer from a run or a trace, not from reading the code)
-1. Why not double? Name the limiter (a core, a lock, disk, network, the load generator) from a profile or counters, mapped to source. Cannot name it: inconclusive.
-2. Tuned? Every side runs as production runs: release build, production flags, warm or cold caches as in production, same data and versions. A side on defaults compares settings, not implementations.
+1. Why not double? Name the limiter (a core, a lock, disk, network, the load generator) from a profile or counters, mapped to source. Profile in a run you do not report, since profilers slow the work. Check the load generator did not saturate first. Cannot name it: inconclusive.
+2. Tuned? Every side runs as production runs: release build, production flags, warm or cold caches as in production, same data and versions. A side on defaults compares settings, not implementations: when the limiter is a setting (commit per row, debug build, missing index), tune that side and remeasure before naming a winner.
 3. Past a limit? Check bytes per second against bandwidth, operations against cores. Removing a piece that is 10 percent of a run speeds it at most about 11 percent. A result past a limit measured something else.
 4. Errors? Count failures and wrong outputs. Rejections are fast and timeouts are slow, so errors distort a mean.
-5. Reproduces? At least five runs per side, alternating A B A B. Report median and range. A gap inside run-to-run spread is no difference.
+5. Reproduces? At least five runs per side, alternating A B A B. Report median and range. A gap inside run-to-run spread is no difference; use a rank-sum test when the call is close.
 6. Matters? Compare the micro result to the end-to-end path a user waits on, with realistic size and concurrency.
 7. Happened? Confirm the work ran inside the timed region. Lazy generators, unawaited promises, discarded results and timeouts give numbers for work that never ran.
 

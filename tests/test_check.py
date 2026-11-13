@@ -41,8 +41,9 @@ class PureRulesTest(unittest.TestCase):
         weak = ['__snapshots__/a.snap', '.github/workflows/ci.yml', 'tsconfig.json', 'ruff.toml', 'mypy.ini', 'pytest.ini', 'biome.json',
                 'vitest.config.ts', '.pre-commit-config.yaml', '.gitlab-ci.yml', 'scripts/check.sh', 'web/.eslintrc.json']
         rules = ['AGENTS.md', 'packages/web/CLAUDE.md', '.claude/settings.json', 'packages/web/.claude/rules/testing.md',
-                 '.agents/skills/e2e/SKILL.md', '.cursor/rules/a.mdc', '.orchestra/budget-waivers', 'docs/AGENT-MEMORY.md']
-        for rx, yes, no in ((check.WEAK_FILES, weak, ['src/app.py', 'docs/ci.md']), (check.RULES_FILES, rules, ['src/agents.py', 'README.md'])):
+                 '.agents/skills/e2e/SKILL.md', '.cursor/rules/a.mdc', '.orchestra/budget-waivers', 'docs/AGENT-MEMORY.md',
+                 'CONTRIBUTING.md', 'docs/contributing.md', 'CODING_STANDARDS.md', 'docs/Coding_Standards.md']
+        for rx, yes, no in ((check.WEAK_FILES, weak, ['src/app.py', 'docs/ci.md']), (check.RULES_FILES, rules, ['src/agents.py', 'README.md', 'packages/web/CONTRIBUTING.md', 'docs/guides/CONTRIBUTING.md'])):
             for p in yes:
                 with self.subTest(p):
                     self.assertTrue(re.search(rx, p))
@@ -236,6 +237,22 @@ class Check(unittest.TestCase):
         f = self.result()['findings']
         self.assertEqual({(x['kind'], x['path']) for x in f}, {('size', 'moved.py'), ('debug', 'moved.py')})
         self.assertIn('600 lines at base, 601 now', next(x['message'] for x in f if x['kind'] == 'size'))
+
+    def test_a_skip_already_in_a_touched_test_file_is_reported_once(self):
+        self.write('test_a.py', '@pytest.mark.skip(reason="x")\ndef test_a():\n    pass\n\n@unittest.skip("y")\ndef test_b():\n    pass\n')
+        self.write('test_b.py', '@pytest.mark.skip\ndef test_c():\n    pass\n')
+        self.write('app.py', 'rows.skip(1)\n')
+        # a skip inside a string, a regex or an iterator call is not a skipped test
+        self.write('test_c.py', "X = '@pytest.mark.skip'\nRX = r'\\.skip\\('\nY = \"it.skip('a', f)\"\n")
+        self.write('c.test.ts', 'const n = lines.iter().skip(1)\nq.skip(2)\nconst t = \"it.skip(1)\"\n')
+        self.commit(base=True)
+        self.write('test_a.py', (self.repo / 'test_a.py').read_text() + '\ndef test_d():\n    assert 1\n')
+        self.write('test_c.py', (self.repo / 'test_c.py').read_text() + 'Z = 1\n')
+        self.write('c.test.ts', (self.repo / 'c.test.ts').read_text() + 'const z = 1\n')
+        self.write('app.py', 'rows.skip(2)\n')
+        r = self.result()['findings']
+        self.assertEqual([(f['kind'], f['path'], f['line']) for f in r], [('skipped-test', 'test_a.py', None)])
+        self.assertIn('2 skipped tests', r[0]['message'])
 
     def test_a_file_renamed_away_from_a_watched_path_is_still_judged_by_the_old_name(self):
         self.write('.github/workflows/ci.yml', 'on: push\n')

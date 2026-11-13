@@ -16,6 +16,8 @@ Use for typed code. A type that lets an illegal state exist is a finding when a 
 - Narrowing order: discriminant switch, `in`, `typeof` or `instanceof`, a type guard, then `as`.
 - A type guard must verify what its name claims. A guard that returns true unchecked is worse than a cast.
 - Use the repo's runtime schema library and infer the type from it before hand-writing a guard.
+- When the type comes first, annotate the validator with it (`z.ZodType<User>`), so the compiler rejects a validator that proves less than the type.
+- To remove an `as`, find why the compiler cannot infer: a missing discriminant (add one), a source type too wide (narrow it), an untyped boundary (parse with the schema that owns the shape), or truly inexpressible (a brand or `satisfies`).
 - Prefer `Pick`, `Omit`, `Parameters`, `ReturnType`, `Awaited` over a new interface.
 - Pass an object for three or more parameters, except on hot paths.
 - No `console.log` in shipped code; use the project logger with an id.

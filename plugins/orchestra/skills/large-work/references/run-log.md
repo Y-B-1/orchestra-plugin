@@ -2,7 +2,7 @@
 
 ## Frame before a long run
 State before any code:
-- Done as a falsifiable predicate (a command and its expected result).
+- Done as a falsifiable predicate (a command and its expected result). A hill-climb stop pairs the target with a floor on attempts, so a lucky early win cannot end it; after a plateau, change the kind of attempt before you conclude.
 - Scope with numbers: units, effort, the blockers found while reading.
 - Rigor, biased high. One-way doors and wide blast radius get more gates and artifacts; reversible low-stakes steps get fewer.
 Show the framing once and get one checkpoint before a multi-hour run. In a /goal session or with the owner away, log the framing as a decision and proceed without waiting. Reversible work proceeds.
@@ -25,9 +25,9 @@ Each unit is an experiment: state the hypothesis, make the smallest change, meas
 Use for long, unattended or multi-phase runs. One TSV file, one row per decision, append-only: `.audit/<task-slug>.tsv`, or `decisions.tsv` in the work folder. Leave it out of git unless a reviewer needs the trail to trust the result; then commit it.
 Columns: ts (ISO 8601), phase, decision (one line), why (plain words), evidence (commit SHA, PR, `file:line` or artifact path, never prose), result (`tests green`, `reverted`, `INCONCLUSIVE`, `open`).
 - Log forks, finished units with their check result, pivots and reverts with the trigger, blockers, fixed gates. Skip the trivial.
-- A wrong call gets a new row that supersedes it. Never edit or delete history. A new run starts with a `start` row.
-- Cells stay single-line; prefix a cell starting with `=`, `+`, `-` or `@` with a quote.
-- Before handing back, check each row maps to a real action and its evidence resolves. Add a row for any unlogged fork.
+- A wrong call gets a new row that supersedes it. Never edit or delete history. A resumed or second run starts with a `start` row that names the ts range it did not write. Parallel writers append one whole row at a time.
+- Cells stay single-line; prefix a cell starting with `=`, `+`, `-`, `@` or a double quote with a quote.
+- Before handing back, check each row against the transcript: it maps to a real action and its evidence resolves. Add a row for any unlogged fork. Supersede a wrong row; never edit it.
 - End the reply with the verdicts, the log path, what is verified and what is open.
-- Before you hand back a logged run, a reviewer on a different model than the author (for example Sonnet when Opus built it, via the Agent tool's model option) reads the log and the transcript. It flags weak evidence, claimed but unrun checks and risky calls. The final message ends with those flags and the reviewer's model.
-- A verification or measurement unit's brief names the exact SHAs and the method. A result that does not record them is respawned once, then reported as a gap, never a pass. For a race, declare first-pass, rank-all or best-of before starting.
+- Before you hand back a logged run, a reviewer on a different model than the author (for example Sonnet when Opus built it, as an `agent()` call in the Workflow with a `model:` option) reads the log and the transcript. It flags weak evidence, claimed but unrun checks and risky calls. The final message ends with those flags and the reviewer's model.
+- A verification or measurement unit's brief names the exact SHAs and the method. A result that does not record them is respawned once, then reported as a gap, never a pass. For a race, declare first-pass, rank-all or best-of before starting, and name each arm's model up front.
