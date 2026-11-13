@@ -294,6 +294,7 @@ class PushGateTest(RepoCase):
     def setUp(self):
         super().setUp()
         git(self.repo, 'switch', '-q', '-c', 'feat/x')
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'work')  # a branch with no commits beyond main has nothing to gate
         git(self.repo, 'tag', 'v1.0')
 
     def ledger(self):
@@ -305,8 +306,7 @@ class PushGateTest(RepoCase):
 
     def hold_gate(self):
         import gate
-        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'work')  # a skip counts only for a head on the branch, not on main
-        head = git(self.repo, 'rev-parse', 'HEAD')
+        head = git(self.repo, 'rev-parse', 'HEAD')  # a skip counts only for a head on the branch, not on main
         lean.write_json(gate.file(self.cwd), {'feat/x': {'skips': {k: {'reason': 'no runner', 'head': head} for k in ('unit', 'e2e')}}})
 
     def test_a_push_is_denied_in_a_run_while_the_gate_lacks_lines(self):
@@ -328,6 +328,11 @@ class PushGateTest(RepoCase):
         del os.environ['ORCHESTRA_GATE']
         self.hold_gate()
         self.assertIsNone(self.push())
+
+    def test_a_branch_with_no_commits_beyond_main_needs_no_gate(self):
+        self.ledger()
+        git(self.repo, 'switch', '-q', '-c', 'feat/empty', 'main')
+        self.assertIsNone(self.push('git push -u origin feat/empty'))
 
     def test_an_active_goal_counts_as_a_run(self):
         lean.state_dir(self.cwd, 'sess', create=True)
