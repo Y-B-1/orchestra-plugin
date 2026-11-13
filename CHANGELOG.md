@@ -2,6 +2,12 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.5.1 — 2026-11-13
+
+### Fixed
+- The guard now denies a GitHub API write to the default branch when the command holds a `$( )` or backtick span, for example `gh api -X PUT .../contents/f -f content="$(...)" -f branch=main`. The span cut the command into two pieces that were judged apart, so the write passed.
+- Known limit, now documented: `gh api --input FILE` hides the branch in a file the guard does not read.
+
 ## 3.5.0 — 2026-11-14
 
 A mandatory test gate before every push, leaner unit tests, and agentic e2e only. See `docs/release-notes/v3.5.0.md`.
