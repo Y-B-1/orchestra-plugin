@@ -218,17 +218,19 @@ def git_options(rest):
     return opts, rest
 
 
-def pushes_branch(rest):
-    """True when the words after `push` push a branch: not a delete, not tags only."""
+def pushes_branch(rest, branches=(), is_tag=lambda name: False):
+    """True when the words after `push` push a branch: not a delete, not tags only. A bare name that is no local
+    branch but is a tag (is_tag, asked only then) is a tag push."""
     if '--delete' in rest or '-d' in rest:
         return False
     refs = [w for w in rest if not w.startswith('-')][1:]
     if not refs:
         return '--tags' not in rest
-    return any(not r.startswith((':', 'refs/tags/')) for r in refs)
+    return any(not r.startswith((':', 'refs/tags/'))
+               and (':' in r or r.lstrip('+') in branches or not is_tag(r.lstrip('+'))) for r in refs)
 
 
-def git_reason(rest, state, pushes=None):
+def git_reason(rest, state, pushes=None, is_tag=lambda opts, name: False):
     """state(opts) is a function: (default branch, current branch, local branches) of the repository git selects.
     pushes, when given, collects the git options of each push that sends a branch."""
     opts, rest = git_options(rest)
@@ -262,7 +264,7 @@ def git_reason(rest, state, pushes=None):
             dst = current
         if dst == main or fnmatch.fnmatchcase(main, dst) or fnmatch.fnmatchcase('refs/heads/' + main, dst):
             return f'a push to {main}'
-    if pushes is not None and pushes_branch(rest):
+    if pushes is not None and pushes_branch(rest, branches, lambda n: is_tag(tuple(opts), n)):
         pushes.append(tuple(opts))
     return None
 
@@ -307,7 +309,8 @@ def merge_reason(command, cwd=None, cache=None, pushes=None):
             reason = gh_reason(drop_redirects(words[1:]), lambda: state()[0])
         elif name == 'git':
             found = []
-            reason = git_reason(drop_redirects(words[1:]), state, found if pushes is not None else None)
+            reason = git_reason(drop_redirects(words[1:]), state, found if pushes is not None else None,
+                                lambda o, n: bool(lean.git(*o, 'rev-parse', '-q', '--verify', 'refs/tags/' + n, cwd=cwd)))
             for opts in found:  # the folder git works in: the last -C wins, each relative to the one before
                 where = cwd
                 for k, o in enumerate(opts):
@@ -385,6 +388,16 @@ def fable_running(event, cwd, session):
 
 def in_loop(text, at):
     """True when text[at] sits inside the parentheses or the block of a loop or fan-out call."""
+    head = re.sub(r'\b(await|return)\s*$', '', text[:at].rstrip()).rstrip()
+    if head.endswith(')'):  # a loop header with no block: for (...) agent(...)
+        d, j = 0, len(head) - 1
+        while j >= 0:
+            d += (head[j] == ')') - (head[j] == '(')
+            if d == 0:
+                break
+            j -= 1
+        if re.search(r'(?<!\w)(for|while)\s*$', head[:j]):
+            return True
     close = {')': '(', '}': '{'}
     depth = {'(': 0, '{': 0}
     for i in range(at - 1, -1, -1):
@@ -445,7 +458,8 @@ def agent_reason(event, tool_input, cwd, session):
 
 
 STRING_MARK = re.compile(r'\x00(\d+)\x00')
-MODEL_LITERAL = re.compile(r'\bmodel\s*:\s*\x00(\d+)\x00')
+MODEL_KEY = r'(?:\bmodel\b|\x00(\d+)\x00)'  # a bare key, or a quoted one (a string mark)
+MODEL_LITERAL = re.compile(MODEL_KEY + r'\s*:\s*\x00(\d+)\x00')
 CRITIC_LITERAL = re.compile(r'(orchestra:)?' + CRITIC)
 
 
@@ -543,7 +557,7 @@ def workflow_reason(event, tool_input, cwd, session):
     code, literals = strip_js(workflow_text(tool_input))
     calls = agent_calls(code)
     for m in MODEL_LITERAL.finditer(code):
-        if 'fable' in literals[int(m.group(1))].lower():
+        if (m.group(1) is None or literals[int(m.group(1))] == 'model') and 'fable' in literals[int(m.group(2))].lower():
             return FABLE_MODEL, False
     critics = set()
     for m in STRING_MARK.finditer(code):

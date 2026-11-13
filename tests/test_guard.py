@@ -128,6 +128,9 @@ class FableTest(RepoCase):
         ("await agent('a', {agentType: 'orchestra:critic-fable'})\nawait agent('b', {agentType: 'critic-fable'})", ('once',)),
         ("await Promise.all(units.map(u => agent(u, {agentType: 'orchestra:critic-fable'})))", ('loop',)),
         ("for (const u of units) {\n  await agent(u, {agentType: 'orchestra:critic-fable'})\n}", ('loop',)),
+        ("for (const x of xs) await agent(x, {agentType:'orchestra:critic-fable'})", ('loop',)),
+        ("while (i++ < 5) await agent(x, {agentType:'orchestra:critic-fable'})", ('loop',)),
+        ("for (const x of xs)\n  agent(x, {agentType:'orchestra:critic-fable'})", ('loop',)),
         ("await parallel([\n () => agent('a', {\n agentType: 'critic-fable' }) ])", ('loop',)),
         ("const c = (x) => agent(x, {agentType: 'orchestra:critic-fable'})\nawait Promise.all([c(a), c(b)])", ('function',)),
         ("async function judge(x) {\n  return agent(x, {agentType: 'orchestra:critic-fable'})\n}\nawait judge(a)", ('function',)),
@@ -143,6 +146,8 @@ class FableTest(RepoCase):
         ("await Promise.all(xs.map(x => agent(x, {agentType:'orchestra:builder', model:'fable'})))", ('Fable',)),
         ("await agent(p, {agentType:'orchestra:critic', model:'claude-fable-5-2'})\n"
          "await agent(q, {agentType:'orchestra:critic', model:\"Claude-Fable-5-2\"})", ('Fable',)),
+        ("await Promise.all(xs.map(x => agent(x, {agentType:'orchestra:builder', \"model\": 'fable'})))", ('Fable',)),
+        ("await Promise.all(xs.map(x => agent(x, {agentType:'orchestra:builder', 'model': 'claude-fable-5-2'})))", ('Fable',)),
         ("await agent(p, {agentType:'orchestra:builder', model:'sonnet'})", None),
         # one critic call written on a line that also holds a spread map is still one call
         ("await Promise.all([agent(brief,{agentType:'orchestra:critic-fable'}), ...briefs.map(b => agent(b, {agentType:'orchestra:reviewer'}))])", None),
@@ -289,6 +294,7 @@ class PushGateTest(RepoCase):
     def setUp(self):
         super().setUp()
         git(self.repo, 'switch', '-q', '-c', 'feat/x')
+        git(self.repo, 'tag', 'v1.0')
 
     def ledger(self):
         lean.state_dir(self.cwd, 'sess', create=True)
@@ -331,9 +337,11 @@ class PushGateTest(RepoCase):
     def test_a_delete_or_a_tags_only_push_needs_no_gate(self):
         self.ledger()
         for command in ('git push origin --delete old', 'git push origin :old', 'git push --tags', 'git push origin --tags',
-                        'git push origin refs/tags/v1'):
+                        'git push origin refs/tags/v1',
+                        'git push origin v1.0', 'git push origin +v1.0'):
             with self.subTest(command):
                 self.assertIsNone(self.push(command), command)
+        self.assertIsNotNone(self.push('git push origin v2.0'))  # no such tag: a branch to create
 
     def test_the_default_branch_deny_stays_first(self):
         self.ledger()
