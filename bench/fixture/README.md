@@ -14,7 +14,7 @@ Requires Node 20 or newer.
 npm install
 npm run dev        # start the dev server
 npm test           # vitest, one run
-npm run typecheck  # tsc in strict mode
+npm run typecheck  # tsrs in strict mode
 npm run lint       # eslint (flat config)
 npm run build      # type check, then production build into dist/
 ```
