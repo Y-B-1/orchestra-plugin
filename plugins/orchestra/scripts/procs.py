@@ -57,8 +57,8 @@ def exclusive(path):
                         lock.seek(0)
                         msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)  # retries about 10 s, then raises
                         held = True
-                    except OSError:
-                        if time.monotonic() > deadline:
+                    except OSError as e:  # 13 and 36: another process holds it; anything else means no locks here
+                        if e.errno not in (13, 36) or time.monotonic() > deadline:
                             break
         except OSError:  # no lock support here (a network filesystem): the unique temp file in lean.write_json still keeps the file whole
             pass
