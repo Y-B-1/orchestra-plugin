@@ -24,6 +24,15 @@ def frontmatter(path):
     return fields
 
 
+QUOTED = {'"': re.compile(r'"(?:[^"\\]|\\.)*"\s*(?:#.*)?$'), "'": re.compile(r"'(?:[^']|'')*'\s*(?:#.*)?$")}
+
+
+def model_ok(model, stem):
+    """A family alias, or a full id of the same family (claude-fable-... only for the critic)."""
+    families = {FABLE} if stem == 'critic-fable' else MODELS
+    return model in families or any(re.fullmatch(rf'claude-{f}-[\w.-]+', model or '') for f in families)
+
+
 def strict_problems(text):
     """Frontmatter lines that a real YAML reader would reject or misread (standard library only, no PyYAML):
     an unquoted value holding a colon and a space, or a quoted value that is not closed or holds a bare quote."""
@@ -36,10 +45,11 @@ def strict_problems(text):
         if not sep or line.startswith((' ', '#', '-')):
             continue
         value = value.strip()
-        if value.startswith('"'):
-            if len(value) < 2 or not value.endswith('"') or re.search(r'(?<!\\)"', value[1:-1]):
+        if value[:1] in ('"', "'"):
+            closed = QUOTED[value[0]].match(value)
+            if not closed:
                 problems.append(f'{key}: quoted value is not closed or holds a bare quote')
-        elif ': ' in value:
+        elif ': ' in value or value.endswith(':'):
             problems.append(f'{key}: unquoted value holds a colon and a space')
     return problems
 
@@ -91,9 +101,13 @@ class AgentTest(unittest.TestCase):
                 fields = frontmatter(path)
                 self.assertEqual(fields.get('name'), path.stem)
                 self.assertTrue(fields.get('description'))
-                self.assertEqual(fields.get('model'), FABLE) if path.stem == 'critic-fable' else self.assertIn(fields.get('model'), MODELS)
+                self.assertTrue(model_ok(fields.get('model'), path.stem), fields.get('model'))
                 self.assertIn(fields.get('effort'), {'low', 'medium', 'high', 'xhigh', 'max'})
                 self.assertTrue(fields.get('tools'))
+        self.assertTrue(model_ok('claude-sonnet-5-5', 'builder'))
+        self.assertTrue(model_ok('claude-fable-5-2', 'critic-fable'))
+        self.assertFalse(model_ok('claude-opus-5-5', 'critic-fable'))
+        self.assertFalse(model_ok('claude-opus-5-5', 'builder') and model_ok('gpt-5', 'builder'))
 
 
 class FrontmatterTest(unittest.TestCase):
@@ -103,6 +117,8 @@ class FrontmatterTest(unittest.TestCase):
         self.assertEqual(strict_problems('---\nname: x\ndescription: "Use it\n---\n'),
                          ['description: quoted value is not closed or holds a bare quote'])
         self.assertEqual(strict_problems('---\nname: x\ndescription: "Use when: a thing"\n---\n'), [])
+        self.assertEqual(strict_problems("---\nname: x\ndescription: 'Use when: x'  # note\n---\n"), [])
+        self.assertEqual(strict_problems('---\nname: x\ndescription: "a" # note\n---\n'), [])
 
     def test_every_skill_and_agent_frontmatter_is_valid_yaml_in_shape(self):
         for path in sorted(PLUGIN.glob('skills/*/SKILL.md')) + sorted(PLUGIN.glob('agents/*.md')):
