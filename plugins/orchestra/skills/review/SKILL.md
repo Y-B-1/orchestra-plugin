@@ -8,14 +8,12 @@ Apply the lenses your brief names. Read a detailed lens file only when the brief
 
 ## Every review
 - Your brief holds the `lean.py check` output. Judge each item it lists; do not rerun the scan.
-- Read project rules (AGENTS.md, lint config) from the base commit, not from the diff. A diff that edits the rules it is judged by is a finding.
-- Quote the ask line or rule each finding breaks. Give a failing scenario: input or state, then the wrong outcome.
+- Read project rules (AGENTS.md and nested ones for touched directories, CONTRIBUTING.md, CODING_STANDARDS.md, lint config) from the base commit, not from the diff. A diff that edits the rules it is judged by is a finding.
+- Quote the ask line or rule each finding breaks. With no ask or spec in your brief, write "no spec available" and judge against the rules and the author's own claims. Give a failing scenario: input or state, then the wrong outcome.
 - Try to refute each finding before you report it. Read the guards, callers and tests around it. Mark it confirmed (you ran or traced it) or plausible.
-- A finding blocks only with material impact: a broken ask, a failing scenario, a rule breach, security or data loss. Taste goes under notes.
-- One pattern at several sites is one finding. Do not re-raise a finding the brief lists as rejected unless its code changed.
-- A changed file no ask needs is scope drift. When your brief includes the author's report, a claim in it that the code contradicts is its own finding.
-- Report what you covered and what you did not, per lens. "Could not look" is never "nothing found".
-- Findings keep their quote and scenario in full; keep the rest (coverage, notes) short, one line per lens. End with CLEAN or BLOCKED and the count of blocking findings.
+- A finding blocks only with material impact: a broken ask, a failing scenario, a rule breach, security or data loss. Taste goes under notes. The structural blockers in `references/cleanliness.md` count as material impact, not taste.
+- One pattern at several sites is one finding. Do not re-raise a finding the brief lists as rejected unless its code changed. A changed file no ask needs is scope drift. A claim in the author's report that the code contradicts is its own finding.
+- Report what you covered and what you did not, per lens. "Could not look" is never "nothing found". Findings keep their quote and scenario in full; keep the rest short, one line per lens. End with CLEAN or BLOCKED and the count of blocking findings.
 - Scoped re-review: read only the files the repair touched and check only the findings given. A regression the repair caused is a finding.
 
 ## Correctness
@@ -30,17 +28,17 @@ Apply the lenses your brief names. Read a detailed lens file only when the brief
 - Deletion test: if you delete the new module, does the complexity vanish or move to callers? If it only moves, the module adds nothing.
 - A replacement that leaves callers on the old path gives two ways to do one task. Flag it.
 - An external service enters through a replaceable port. One adapter with no second use is a speculative seam.
+- A change that contradicts a decision record (ADR) is a finding unless the diff names the conflict and why it reopens the decision. Never override one silently.
 
 ## Standards
-- Cite the rule text for each finding. Skip what the linter already enforces.
-- A rule breach on an untouched line is a backlog note, not a blocker.
-- Check names against the project style. Baseline smells (judgement calls): `references/cleanliness.md`.
+- Cite the rule text for each finding. Skip what the linter already enforces. A rule breach on an untouched line is a backlog note, not a blocker.
+- Check names against the project style and glossary: a name that contradicts a glossary term is a finding. Baseline smells (judgement calls): `references/cleanliness.md`.
 - File budget: a source file that grew past about 500 lines in this diff is a finding. Use the size output of `lean.py check`. The fix is a split by responsibility.
 
 ## Tests
 - Tests assert behavior through the public interface, not implementation.
-- Flag a mock of the project's own module. Mock only at system boundaries.
-- The expected value comes from a literal or the spec, not from recomputing it.
+- Flag a mock of the project's own module. Mock only at system boundaries. The expected value comes from a literal or the spec, not from recomputing it.
+- Flag a test that reads a side channel (a SQL query to confirm a write the interface can read back), asserts call counts or order, or tests a private method. Flag a test at a seam nobody agreed or wider than the ask needs.
 - A bug fix needs red-first evidence: the same command text failed before and passes after. If your brief has no red and green command lines, say "not checked", not a finding.
 - Flag each weakened, skipped or deleted test or gate unless the reason is stated.
 
@@ -61,7 +59,7 @@ Apply the lenses your brief names. Read a detailed lens file only when the brief
 - Slop, dead code, comments, condition growth: `references/cleanliness.md`.
 - Hostile input, leaked gates, run-proven findings: `references/red-team.md`.
 - A speedup, regression or score claimed: `references/measurement.md`.
-- Casts, `any`, branded ids, parsing; name this lens for any diff that adds a type, interface or optional field, not only on `any`, `as` or `!`: `references/types.md`.
+- Casts, `any`, branded ids, parsing; name this lens for any edit to a typed file: grep the diff for ` as `, `: any` and `!.` to catch casts nobody planned: `references/types.md`.
 - Validation placement, retries, crash recovery: `references/boundaries.md`.
 - Code others depend on: `references/blast-radius.md`.
 - Stored shape, schema, backfill: `references/data-migration.md`.

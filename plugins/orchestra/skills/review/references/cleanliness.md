@@ -22,19 +22,28 @@ Tag each finding: delete, stdlib, native, speculative, shrink, slop, comment, gr
 
 ## Comments
 - Flag a comment that restates the code, narrates the change, or disagrees with the code.
-- A comment that states a rule of a dependency, platform or protocol is kept. Say where to check it.
+- A comment that states a rule of a dependency, platform or protocol is kept only once the rule is confirmed in that source's docs or code. A refuted one is deleted, citing the source. With the source unreachable it stays, marked HOLD with where to check.
+- A surprise in our own code is never kept as prose: flag the symbol for a rename, extract or type change.
 - A comment saying "do not remove" or "workaround for X" is a flag: the root cause or a lint, type or test that enforces it is the fix.
 - A new lint or type suppression needs a reason beside it.
+
+## Blocks by default
+Correct behavior alone does not approve. These block unless the author justifies them:
+- A file pushed past the size cap (about 500 lines; past 1000 is strong).
+- Ad-hoc branching added to an existing flow.
+- Feature checks scattered across shared code.
+- An unneeded wrapper, or a contract held up by casts.
+- A duplicated canonical helper, or logic in the wrong layer.
 
 ## Growth
 - New ad-hoc conditionals, one-off booleans or special cases in an unrelated flow: a missing model or helper. Suggest the home for the logic.
 - Feature logic leaking into a general module.
-- A file pushed past about 500 lines (the standards lens budget): suggest the split. Past 1000 is a strong finding.
+- A file past about 500 lines: suggest the split by responsibility.
 - Generic "magic" that hides a simple data shape. Identity wrappers and pass-throughs.
 - Independent work run in sequence for no reason, or two related writes that can leave half state.
 
 ## Code judo
-Once per diff, ask: is there a reframe that deletes whole branches, helpers or layers while behavior stays? Prefer deleting complexity over moving it. Name the reframe in one sentence. In a deep or thermo review, a reframe that deletes whole branches or layers is a blocking finding unless the author justifies the current shape. Otherwise it is a note.
+Once per diff, ask: is there a reframe that deletes whole branches, helpers or layers while behavior stays? Prefer deleting complexity over moving it. Name the reframe in one sentence. When it deletes whole branches or layers and the author has not justified the current shape, it blocks in a deep or thermo review; otherwise it is a note.
 
 ## Baseline smells
 Always a labelled judgement call, overridden by a repo rule: mysterious name, duplicated code, feature envy, data clumps, primitive obsession, repeated switches, shotgun surgery, divergent change, speculative generality, message chains, middle man, refused bequest.

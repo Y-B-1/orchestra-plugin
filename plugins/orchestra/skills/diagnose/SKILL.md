@@ -15,11 +15,12 @@ Redact every secret in commands, output and artifacts as `<REDACTED>`; quote onl
 - Confirm the command shows the user's failure, not a neighbouring one.
 
 ## Find the cause
-- A report names a symptom, not a cause. Trace back to where the bad value is first made. A wrong value on one page often comes from a shared helper, hook or data layer. After a regression, read the diff of the affected paths.
+- A report names a symptom, not a cause. Trace back to where the bad value is first made. A wrong value on one page often comes from a shared helper, hook or data layer. After a regression, read the diff of the affected paths. Search `git log`, closed PRs and reverts for earlier fixes of this symptom before you rank hypotheses.
+- When continuing earlier work, rebuild its state from git and PRs first (`git log`, branches, `gh pr list --state all`). Tag each thread merged, open PR, in flight, reverted or not started, and carry forward a fix that shipped and was reverted.
 - Write 3 to 5 ranked hypotheses, each with a prediction: "if X is the cause, changing Y removes the bug". Discard any without a prediction. Change one variable per probe.
 - When the owner is present, show the ranked list before probing so they can re-rank; do not wait if they are away.
 - Prefer a debugger over logs; never "log everything". Tag debug output `[DEBUG-a1]` and remove every tagged line before you commit.
-- Performance bug: take a baseline measurement first, then bisect. Measure before you fix.
+- Performance bug: take a baseline first, then try ideas in this order: do not do it, do not do it again, do it less, do it later, do it when not looking, do it concurrently, do it cheaper. Stop when one meets the target. Load a captured profile or trace into a queryable form before reading, and map each hot frame to source; a frame with no source is not a diagnosis. Measure before you fix.
 - Flaky or order-dependent failure is a bug. Raise its rate: repeat, shuffle, run alone and with others. Name the cause before any retry, longer timeout or skip.
 - A failure only after restart: suspect persisted state first (config, cache, lock file).
 
@@ -29,6 +30,7 @@ Redact every secret in commands, output and artifacts as `<REDACTED>`; quote onl
 
 ## Fix the root cause
 - Ask "why" until the answer is a wrong decision in code. Then decide: if the system may legitimately be in that state, handle it where it broke. If the state should never exist, fix what produced it; a guard, retry, swallowed error or clamp hides the bug.
+- A fix that changes an interface, ownership, a schema, migration behavior, a concurrency or transaction guarantee, or a deployment or routing contract needs design exploration first, even inside one function; patch size alone never excuses it. A fix to code that enforces a security or data-integrity invariant gets an independent correctness reviewer. Skip both only when runtime evidence fixes the cause in one subsystem, interfaces and state semantics stay unchanged, and a cheap regression check exists.
 - A workaround that needs a paragraph of comment means the code is wrong.
 - Check for the pattern: find every place with the same fault and fix them all.
 

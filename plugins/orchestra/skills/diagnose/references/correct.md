@@ -9,12 +9,12 @@ Trigger: the owner corrects one instance of a mistake. The failure to prevent: f
 4. Add a check so the class cannot return. Use the highest level that works:
    - Architecture: one owner for the state, one supported way to do the task, wrong imports hidden, hand-synced lists replaced by one source, dead examples deleted.
    - Types: make the bad state unwritable.
-   - A lint or CI check whose error names the file, type or function to use. If the pattern is already common, fail only when a change adds more.
+   - A lint or CI check whose error names the file, type or function to use. If the pattern is already common, fail only when a change adds more, and keep its exceptions in a list that only shrinks: a small PR may take one entry off (the owner approves any schedule for that).
    - A behavior test (fix or delete any test that still passes when the behavior breaks).
    - Docs or an agent rule last, only for judgment calls nothing can check.
    - An exception to the new check sits on the offending line with a reason, an expiry and the owner's approval.
 5. Prove the check: run it against a real past instance and see it fail, then pass after the fix. Run the same command locally, and in CI when CI runs on push (in a repo where CI runs only by hand, run it locally).
-6. If the repo keeps a rule table, add a row pairing the rule with its check. If the rule already existed and nothing enforced it, that is a repeat: enforce it at a higher level now.
+6. Keep a rule table pairing each rule with its check; create it with the first enforced rule. When the check makes the mistake impossible, remove the row and the rule's sentence. If the rule already existed and nothing enforced it, that is a repeat: enforce it at a higher level now.
 
 ## Report
 The class, the instances found and fixed, the check added and its level, and why a higher level did not work.
