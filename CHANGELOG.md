@@ -2,6 +2,17 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.6.2 — 2026-11-14
+
+Three local checks for agentic e2e in any repository, and the CI rule. See `docs/release-notes/v3.6.2.md`. The checks read local files only: no model call, no package install.
+
+- **Changed: a repo with an e2e config cannot skip e2e.** `gate skip e2e REASON` exits 3 when an `e2e.config.*` file is found from the current folder up to the repository root. The owner allows a skip with `ORCHESTRA_E2E_SKIP=1`. `gate skip unit` is unchanged.
+- **New: the left-out note.** After `gate e2e` runs `e2e run` scoped only by `--changed-since`, the gate reads the run's `report.json`. When 2 or more tests ran and none was left out, it prints a note and stores `"left_out": 0` on the run; `gate status` repeats the note. It only warns: the exit code stays the command's own, because a second run would cost more.
+- **New: `lean.py e2e-doctor [--config PATH]`.** One `ok` or `gap` line per check: the config, `filters` in it, the `e2e` and `@e2e-dev/decision` packages, each key name the config or its provider needs (the name only, never a value), and the project skill copy. Exit 0 with no gap, 1 with a gap, 2 on bad usage. With no config it prints the setup command.
+- **Fixed: the e2e config lookup stays inside the repository.** On Windows the upward search did not stop at the repository root.
+- **Changed: hand-started CI runs once per release.** `orchestra:ship` says to start it on the release head before the tag and read every job, never per PR or per repair round.
+- **Code.** The checks live in the new `scripts/e2e_checks.py`; their tests in `tests/test_e2e_checks.py`.
+
 ## 3.6.1 — 2026-11-13
 
 Follow-ups from the 3.6.0 run, and the first CI run on every platform. See `docs/release-notes/v3.6.1.md`.
