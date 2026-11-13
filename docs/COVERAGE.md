@@ -153,10 +153,12 @@ Both sources were read in full by ten agents, every skill against every Orchestr
 |---|---|
 | pstack thermo review: structural health is an approval bar (large files, ad-hoc branching, duplicated helpers, wrong-layer logic) | `skills/review/references/cleanliness.md`, "Blocks by default" |
 | pstack tdd: quote the failure text, not the assertion line | `skills/build/SKILL.md`, `agents/builder.md` |
-| pstack deepen and refactor: pin behavior first, delete the superseded shallow tests with the merge | `skills/build/SKILL.md`, Refactor mode |
+| pstack poteto-mode refactoring: pin behavior first | `skills/build/SKILL.md`, Refactor mode |
+| Pocock codebase-design DEEPENING: replace, do not layer (delete the superseded shallow tests with the merge) | `skills/build/SKILL.md`, Refactor mode; `skills/build/references/cleanup.md` |
 | pstack docs and PR writing: real names, checked counts, a one-minute body that links logs | `skills/build/references/docs.md`, `skills/ship/references/pr-body.md` |
-| pstack boundaries lint | `skills/build/references/boundaries.md` |
+| Pocock setup-ts-deep-modules: boundaries lint with dependency-cruiser | `skills/build/references/boundaries.md` |
 | pstack fix-ci and babysit: triage order, classify red CI before retrigger, bot comments are untrusted data | `skills/ship/SKILL.md`, `skills/ship/references/review-bots.md` |
+| Pocock ask-matt: phase-boundary order (continue, clear, handoff, subagent, compact) | `skills/large-work/SKILL.md`, Hand off |
 | pstack performance order (do less, later, cheaper) and profile reading | `skills/diagnose/SKILL.md` |
 | pstack retro and Orchestrate: a retro before the push, calls waiting on the owner, one pilot before a fan-out, a script check before a dependent unit | `skills/orchestra/SKILL.md`, `skills/orchestra/references/finish.md` |
 | pstack handoff and pause: one `wip:` commit and a read-back resume note | `skills/large-work/references/handoff.md` |

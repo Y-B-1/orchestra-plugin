@@ -16,7 +16,7 @@ Redact every secret in commands, output and artifacts as `<REDACTED>`; quote onl
 
 ## Find the cause
 - A report names a symptom, not a cause. Trace back to where the bad value is first made. A wrong value on one page often comes from a shared helper, hook or data layer. After a regression, read the diff of the affected paths. Search `git log`, closed PRs and reverts for earlier fixes of this symptom before you rank hypotheses.
-- When continuing earlier work, rebuild its state from git and PRs first (`git log`, branches, `gh pr list --state all`). Tag each thread merged, open PR, in flight, reverted or not started, and carry forward a fix that shipped and was reverted.
+- When continuing earlier work, rebuild its state first, as `skills/large-work/references/handoff.md` (Resume) says.
 - Write 3 to 5 ranked hypotheses, each with a prediction: "if X is the cause, changing Y removes the bug". Discard any without a prediction. Change one variable per probe.
 - When the owner is present, show the ranked list before probing so they can re-rank; do not wait if they are away.
 - Prefer a debugger over logs; never "log everything". Tag debug output `[DEBUG-a1]` and remove every tagged line before you commit.

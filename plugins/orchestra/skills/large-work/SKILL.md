@@ -44,11 +44,11 @@ description: "Gives a way to size, split, hand off and prove work too big for on
 
 ## Hand off
 - At a phase boundary the first yes wins, in this order:
-  1. Continue: the next phase needs this one as a primary source, or about 150k tokens of room remain. Keep grilling, spec and tickets in one window, and run the retro before any clear.
+  1. Continue: the next phase needs this one as a primary source, and context fill is under about 150k tokens. Keep grilling, spec and tickets in one window, and run the retro before any clear.
   2. Clear: everything in the window is disposable.
   3. Handoff: only for a new harness, a new directory, a colleague, or a side task in mid-phase. Read `references/handoff.md`.
   4. Subagent: the next phase can run unattended.
-  5. Compact: only when nothing above fits, with an instruction on what to keep.
+  5. Compact: the last option, when nothing above fits.
 - Mid-phase, continue or split into subagents. The work stopping for the night is a pause: read the Pause section of `references/handoff.md`.
 
 Sources: mattpocock/skills@59db609 (wayfinder, triage, handoff, claude-handoff, prototype), pstack@47c6f80 (figure-it-out, show-me-your-work, foundational-thinking, outcome-oriented-execution, build-the-lever, arena, sequence-verifiable-units), orchestra v2.15.3 (wayfinder, triage, handoff, feasibility).

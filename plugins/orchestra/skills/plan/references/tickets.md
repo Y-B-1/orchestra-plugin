@@ -28,8 +28,8 @@ Name the checks to run and each live check (a human step: write exact steps). On
 
 ## Publish
 Write one file per ticket, or one issue per ticket in dependency order, whichever the project uses. Return the breakdown (title, blockers, what it delivers) in your report; the main session confirms granularity and blockers with the owner before publishing, unless in a goal. On a tracker, the main session:
-- Checks the target repo first: `gh repo view --json nameWithOwner`; pass `--repo`, and never file into an upstream parent.
+- Checks the target repo first (`orchestra:ship`, top section); pass `--repo`.
 - Checks each label exists (`gh label list`). It creates one with `gh label create` or publishes without it and says so; a missing label never stops a set halfway.
-- Publishes blockers first. On GitHub use `gh issue create --blocked-by <n>` or `gh issue edit --add-blocked-by` and `--add-sub-issue` (gh 2.94 and later). On an older `gh`, POST to `repos/<o>/<r>/issues/<n>/dependencies/blocked_by` with the blocker's numeric database id (`gh api repos/<o>/<r>/issues/<n> --jq .id`), never its number. Count open blockers with `.issue_dependencies_summary.blocked_by`.
+- Publishes blockers first. On GitHub use `gh issue create --blocked-by <n>` or `gh issue edit --add-blocked-by` and `--add-sub-issue` (recent `gh`; check `gh issue create --help`). On an older `gh`, POST to `repos/<o>/<r>/issues/<n>/dependencies/blocked_by` with the blocker's numeric database id (`gh api repos/<o>/<r>/issues/<n> --jq .id`), never its number. Count open blockers with `.issue_dependencies_summary.blocked_by`.
 - Applies `ready-for-agent`, and never closes or edits the parent.
 - Appends each published issue's URL to the ledger and searches the tracker before it creates one, so a retry never files a ticket twice. Wire cross-references with real numbers, never a placeholder.

@@ -38,7 +38,7 @@ Correct behavior alone does not approve. These block unless the author justifies
 ## Growth
 - New ad-hoc conditionals, one-off booleans or special cases in an unrelated flow: a missing model or helper. Suggest the home for the logic.
 - Feature logic leaking into a general module.
-- A file past about 500 lines: suggest the split by responsibility.
+- A file pushed past about 500 lines: suggest the split by responsibility.
 - Generic "magic" that hides a simple data shape. Identity wrappers and pass-throughs.
 - Independent work run in sequence for no reason, or two related writes that can leave half state.
 

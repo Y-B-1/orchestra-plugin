@@ -13,8 +13,7 @@ Use when the ask is a README, a guide, a changelog, a doc comment or a PR body.
 - Date a claim that can go stale, or cite the commit it was true at.
 
 ## PR body and commit message
-- A reviewer reads the PR body in under a minute. Lead with what changed and why.
-- Link logs, sha lists and metric tables. Do not paste them.
+- A PR body follows `orchestra:ship` `references/pr-body.md`.
 - The commit subject says what changed in the imperative, with no task id or narration.
 
 ## Check before you report

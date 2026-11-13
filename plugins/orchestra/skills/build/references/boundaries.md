@@ -46,4 +46,4 @@ module.exports = {
 };
 ```
 
-Run it as `npx depcruise src` (or the repo's source folder) beside the typecheck.
+Run it as `npx depcruise --config .dependency-cruiser.cjs src` (or the repo's source folder) beside the typecheck.

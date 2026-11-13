@@ -10,7 +10,7 @@ Rules for any e2e test written or run in a repo. A repo that uses the `e2e` runn
 
 ## Run only what the change can affect
 - Commit first, then `e2e run --changed-since <base>`. Preview what would run with `e2e list --changed-since <base>`. It reads committed changes only: a file only the working tree changed is named, never read.
-- The flag scopes a run only when `filters` is set in the e2e config (`decisionFilter`, the Jev decision model). Without `filters`, nothing is left out.
+- The flag scopes a run only when `filters` is set in the e2e config (`decisionFilter`, the Jev decision model). Without `filters`, nothing is left out, and the gate exits 3 on a `--changed-since`-only run. Setup: install `@e2e-dev/decision` and `ai`, then add `filters: [decisionFilter({ model: ... })]` to the config (`npx e2e guide setup` has the model options).
 - The filter fails open: with no model key, or when its calls fail, it warns and runs every test. Read the run's "left out" count; a run that left out none was not scoped.
 - Run through the gate: `python3 <plugin>/scripts/lean.py gate e2e -- e2e run --changed-since <base>`. It refuses an unscoped run.
 - A full e2e run only when the owner asks (they set `ORCHESTRA_E2E_FULL=1`). Without a flag the runner runs everything, so never run it bare.
