@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest import mock
 
 from tests.support import LEAN, git, make_repo
-import gate, lean  # noqa: E402  (tests.support put the scripts folder on sys.path)
+import gate, lean, procs  # noqa: E402  (tests.support put the scripts folder on sys.path)
 
 OK, FAIL = [sys.executable, '-c', 'pass'], [sys.executable, '-c', 'raise SystemExit(1)']
 
@@ -136,8 +136,9 @@ class GateTest(unittest.TestCase):
         (Path(self.cwd) / 'e2e.config.ts').write_text('export default {}')
         cmd = ('e2e', 'run', '--changed-since', 'main')
         self.assertEqual(self.cli('e2e', '--', *cmd).returncode, 3)
-        if os.name == 'nt':
-            self.skipTest('the stub runner is a shell script; Windows cannot start it without a shell')
+        if os.name == 'nt':  # the stub runner is a shell script that Windows cannot start without a shell: prove only that the refusal lifts
+            self.assertNotEqual(self.cli('e2e', '--', *cmd, env={'ORCHESTRA_E2E_FULL': '1'}).returncode, 3)
+            return
         bin_dir = Path(self.cwd).parent / 'bin'  # a stub runner that exits 0: the run is allowed and started
         bin_dir.mkdir()
         stub = bin_dir / 'e2e'
@@ -292,9 +293,15 @@ class GateTest(unittest.TestCase):
 
     def test_a_failing_lock_does_not_lose_the_run(self):
         head = git(self.cwd, 'rev-parse', 'HEAD')
-        with mock.patch.object(gate.fcntl, 'flock', side_effect=OSError(77, 'no locks')):
+        lib, call = (procs.fcntl, 'flock') if procs.fcntl else (procs.msvcrt, 'locking')  # the OS lock call of this platform
+        with mock.patch.object(lib, call, side_effect=OSError(77, 'no locks')):
             gate.record(self.cwd, lambda entry: entry.setdefault('skips', {}).__setitem__('unit', {'reason': 'x', 'head': head}))
         self.assertEqual(gate.entry_of(self.cwd)['skips'], {'unit': {'reason': 'x', 'head': head}})
+
+    def test_a_pid_is_alive_only_when_it_is_a_running_process(self):
+        self.assertTrue(procs.alive(os.getpid()))
+        self.assertFalse(procs.alive(0))
+        self.assertFalse(procs.alive(-5))
 
     def test_a_wrong_shaped_state_file_reads_as_empty_and_is_rewritten(self):
         f = gate.file(self.cwd)

@@ -10,9 +10,12 @@ def _git(*args):
 
 
 def pattern(path):
-    """A regex for one unit path: a folder prefix ending in /, a glob (** crosses folders, * and ? do not), or a file."""
+    """A regex for one unit path: a folder prefix ending in /, a glob (** crosses folders, * and ? do not), or a name that is
+    a file or a folder (so everything under it)."""
     if path.endswith('/'):
         return re.compile(re.escape(path) + '.*', re.S)
+    if not re.search(r'[*?]', path):
+        return re.compile(re.escape(path) + '(?:/.*)?', re.S)
     out, i = '', 0
     while i < len(path):
         if path.startswith('**/', i):
@@ -39,10 +42,13 @@ def main(args):
         print('owns: usage: lean.py owns COMMIT|A..B -- PATH...', file=sys.stderr)
         return 2
     spec, paths = args[0], [p for p in args[2:] if p]
+    if not paths:
+        print('owns: no paths', file=sys.stderr)
+        return 2
     try:
         commits = _git('rev-list', '--reverse', spec).split() if '..' in spec else [_git('rev-parse', '--verify', '-q', spec + '^{commit}').strip()]
-        if not all(commits):
-            raise ValueError(f'not a commit: {spec}')
+        if not commits or not all(commits):
+            raise ValueError(f'no commit in {spec}' if commits == [] else f'not a commit: {spec}')
         patterns = [pattern(p) for p in paths]
         outside = []
         for c in commits:

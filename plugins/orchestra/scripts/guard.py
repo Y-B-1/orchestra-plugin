@@ -280,7 +280,7 @@ def merge_reason(command, cwd=None, cache=None, pushes=None):
         parts += split_commands(SUBSTITUTION.sub(' SUBST ', command))
     for part in parts:
         try:
-            words = shlex.split(part)
+            words = shlex.split(part.replace('\\', '/') if os.name == 'nt' else part)  # POSIX shlex would eat the backslashes of a Windows path
         except ValueError:  # an unbalanced quote, as in the tail of "$(git push origin main)"
             words = [w.strip('"\'()') for w in part.split()]
         words = command_words([w for w in words if w])

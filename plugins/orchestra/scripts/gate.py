@@ -6,12 +6,8 @@ record per command; the claim marks the running full unit run and is dropped whe
 import contextlib, os, shlex, sys, time
 from pathlib import Path
 
-try:
-    import fcntl
-except ImportError:  # no flock here: the unique temp file in lean.write_json still keeps the file whole
-    fcntl = None
-
 import lean
+from procs import alive, exclusive
 from gate_scope import e2e_scoped, filters_missing, nothing_to_gate, refuse_empty
 
 KINDS = ('unit', 'e2e')
@@ -30,12 +26,7 @@ def branch_of(cwd):
 @contextlib.contextmanager
 def locked(f):
     f.parent.mkdir(parents=True, exist_ok=True)
-    with open(f.with_name(f.name + '.lock'), 'a') as lock:
-        if fcntl:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX)
-            except OSError:  # no lock support here (a network filesystem): the unique temp file still keeps the file whole
-                pass
+    with exclusive(f.with_name(f.name + '.lock')):
         yield
 
 
@@ -109,29 +100,6 @@ def missing(cwd):
     if out and e['full'].get('exit') not in (0, None):
         out.append(f"the full unit run was red (exit {e['full']['exit']}): {e['full'].get('cmd')}")
     return ['test gate: ' + m for m in out]
-
-
-def alive(pid):
-    """Whether a process with this pid exists. os.kill(pid, 0) is no probe on Windows: signal 0 is CTRL_C_EVENT there and
-    interrupts the process group (the caller), so Windows asks the process table instead."""
-    if os.name != 'nt':
-        try:
-            os.kill(pid, 0)
-        except PermissionError:  # owned by someone else, still exists
-            return True
-        except OSError:
-            return False
-        return True
-    import ctypes
-    k32 = ctypes.windll.kernel32
-    k32.OpenProcess.restype = ctypes.c_void_p
-    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-    if not handle:
-        return k32.GetLastError() == 5  # access denied: it exists
-    code = ctypes.c_ulong()
-    ok = k32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))
-    k32.CloseHandle(ctypes.c_void_p(handle))
-    return bool(ok) and code.value == 259  # STILL_ACTIVE
 
 
 def take(entry, seconds, cwd=None):

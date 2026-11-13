@@ -331,9 +331,9 @@ class CliTest(Repo):
         self.assertEqual([self.goal_state(s) for s in ('s-one', 's-two', 's-four')], ['stopped'] * 3)
 
     def test_the_ledger_lives_in_the_git_dir(self):
-        self.assertTrue(self.cli('ledger')[1].strip().endswith('.git/orchestra/asks.md'))
+        self.assertTrue(self.cli('ledger')[1].strip().replace('\\', '/').endswith('.git/orchestra/asks.md'))  # Windows prints backslashes
         out = self.cli('ledger', env={lean.SESSION_ENV: 's-one'})[1]
-        self.assertTrue(out.strip().endswith('.git/orchestra/sessions/s-one/asks.md'))
+        self.assertTrue(out.strip().replace('\\', '/').endswith('.git/orchestra/sessions/s-one/asks.md'))
 
     def test_session_start_names_the_blocks_and_creates_no_folder(self):
         rc, out, _ = self.start(session_id='s-1')
@@ -409,7 +409,8 @@ class ProcessTest(unittest.TestCase):
 
     def test_exit_codes_pass_through_and_a_signal_death_is_128_plus_the_signal(self):
         self.assertEqual(run_lean('run', '5', '--', 'sh', '-c', 'exit 3').returncode, 3)
-        self.assertEqual(run_lean('run', '5', '--', 'sh', '-c', 'kill -9 $$').returncode, 137)
+        if hasattr(os, 'killpg'):  # Windows has no signals: its wait status is not a signal number
+            self.assertEqual(run_lean('run', '5', '--', 'sh', '-c', 'kill -9 $$').returncode, 137)
 
     @unittest.skipUnless(hasattr(os, 'killpg'), 'process groups are POSIX only')
     def test_stopping_the_caller_stops_the_command(self):
@@ -465,9 +466,18 @@ class Owns(RepoCase):
         self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['c/3.py']))
         self.assertEqual(self.owns(f'{base}..HEAD', 'a/', 'c/').returncode, 0)
 
+    def test_a_folder_named_without_a_slash_owns_everything_under_it(self):
+        deep = self.commit('docs/hooks.md', 'plugins/s/x.py')
+        self.assertEqual(self.owns(deep, 'docs', 'plugins/s').returncode, 0)
+        sibling = self.commit('docs2/y.md')
+        r = self.owns(sibling, 'docs')
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['docs2/y.md']))
+
     def test_bad_input_exits_2_with_a_message(self):
         head = self.commit('a/1.py')
-        for args, cwd in [(('nope', 'a/'), None), ((head,), None), ((head, 'a/'), self.tmp.name)]:
+        empty_range = f'{head}..{head}'
+        for args, cwd in [(('nope', 'a/'), None), ((head,), None), ((head, 'a/'), self.tmp.name), ((empty_range, 'a/'), None),
+                          ((f'{head}~0..{head}~0', 'a/'), None), ((head, ''), None)]:
             r = self.owns(*args, cwd=cwd)
             self.assertEqual(r.returncode, 2, args)
             self.assertIn('owns:', r.stderr)
