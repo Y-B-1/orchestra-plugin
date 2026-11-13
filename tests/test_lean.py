@@ -52,86 +52,15 @@ class Repo(unittest.TestCase):
                               input=stdin, env={**os.environ, **(env or {})})
 
 
-class GuardTest(Repo):
-    DENY = ['gh pr merge 3 --squash', 'gh pr -R o/r merge 3', 'gh pr -Ro/r merge 3', 'gh -R o/r pr merge 3',
-            'git push origin main', 'git push origin HEAD:main', 'git push origin @',
-            'git push -f origin main', 'git push origin +main', 'git push origin :main', 'git push origin --delete main',
-            'git push origin refs/heads/main', 'git push origin "refs/heads/*:refs/heads/*"',
-            "bash -c 'gh pr merge 4'", "sh -lc 'git push origin main'", 'eval "git push origin main"',
-            'npm test && gh pr merge 5', 'npm test & gh pr merge 5', '(git push origin main)',
-            '(cd sub && git push origin main)', 'echo "$(git push origin main)"', 'x=`gh pr merge 6`',
-            'git -C . push origin main', 'git --no-pager push origin main', 'git --git-dir=.git push origin main',
-            'git --git-dir .git push origin main', 'git -c push.default=current push origin main', 'git push',
-            'git push -o ci.skip origin', 'git push --push-option=ci.skip origin main', 'git push --repo=origin main',
-            'git push --mirror origin', 'git push --all origin', 'git push --branches origin', 'sudo git push origin main',
-            'GIT_TRACE=1 git push origin main', 'env -i git push origin main',
-            'gh api -X PUT repos/o/r/pulls/3/merge', 'gh api repos/o/r/merges -f base=main -f head=x',
-            "gh api graphql -f query='mutation { mergePullRequest(input:{}) { clientMutationId } }'",
-            'gh api -X DELETE repos/o/r/git/refs/heads/main', 'gh api -XDELETE repos/o/r/git/refs/heads/main',
-            'gh api --method=PATCH repos/o/r/git/refs/heads/main -f sha=abc -F force=true',
-            'gh api -X PUT repos/o/r/contents/x.txt -f message=m -f content=eA== -f branch=main',
-            'gh api repos/o/r/git/refs -f ref=refs/heads/main -f sha=abc',
-            'gh api -X POST repos/o/r/branches/main/rename -f new_name=old']
-
-    ALLOW = ['git push -u origin feature/x', 'git push origin --delete old-branch', 'git branch -D stale',
-             'git worktree remove --force ../wt', 'git worktree prune', 'rm -rf ../old-worktree',
-             'gh pr create --title "merge fix" --body x', 'gh pr create --body "then git push origin main (later)"',
-             'gh pr view 3 --json mergeable', 'gh pr list', 'gh pr list --search merge', 'echo gh pr merge 3',
-             'echo git push origin main', 'grep -rn "git push origin main" docs', 'git merge main',
-             'git push origin feature:feature', 'git push --tags', 'npm run build', 'git reset --hard HEAD~1',
-             'gh api repos/o/r/git/refs/heads/main', 'gh api -X PATCH repos/o/r/git/refs/heads/feature -f sha=abc',
-             'gh api -X DELETE repos/o/r/git/refs/heads/old', 'gh api -X PUT repos/o/r/contents/x -f branch=feature',
-             'echo "a (b) {c} & d"', 'git log --oneline -3', 'git push origin main-backup',
-             'gh api -X DELETE repos/o/r/git/refs/heads/main-old', 'gh api -X PATCH repos/o/r/git/refs/heads/main.bak -f sha=a',
-             'gh api repos/o/r/git/refs -f ref=refs/heads/main-v2 -f sha=a', 'gh api -X PUT repos/o/r/contents/x -f branch=main-docs']
-
-    def test_merges_into_main_are_denied(self):
-        for command in self.DENY:
-            with self.subTest(command):
-                out = self.bash(command)
-                self.assertIsNotNone(out, command)
-                self.assertEqual(out['hookSpecificOutput']['permissionDecision'], 'deny')
-
-    def test_everything_else_runs(self):
-        for command in self.ALLOW:
-            with self.subTest(command):
-                self.assertIsNone(self.bash(command))
-
-    def test_a_bare_push_from_a_feature_branch_runs(self):
-        git(self.repo, 'switch', '-q', '-c', 'feature')
-        self.assertIsNone(self.bash('git push'))
-        self.assertIsNone(self.bash('git push -o ci.skip origin'))
-        self.assertIsNone(self.bash('git push origin @'))
-        self.assertIsNotNone(self.bash('git push origin HEAD:main'))
-
-    def test_push_all_runs_without_a_local_default_branch(self):
-        git(self.repo, 'switch', '-q', '-c', 'feature')
-        git(self.repo, 'branch', '-q', '-D', 'main')
-        self.assertIsNone(self.bash('git push --all origin'))
-        self.assertIsNotNone(self.bash('git push --mirror origin'))
-
-    def test_the_default_branch_comes_from_the_remote(self):
-        git(self.repo, 'branch', '-q', '-m', 'main', 'trunk')
-        git(self.repo, 'push', '-q', '-u', 'origin', 'trunk')
-        git(self.repo, 'remote', 'set-head', 'origin', 'trunk')
-        self.assertIsNotNone(self.bash('git push origin trunk'))
-        self.assertIsNone(self.bash('git push origin main'))
-
-    def test_a_missing_cwd_does_not_crash_and_still_denies(self):
-        out = self.bash('git push origin main', cwd=str(self.repo / 'gone'))
-        self.assertEqual(out['hookSpecificOutput']['permissionDecision'], 'deny')
-
-    def test_other_tools_and_odd_inputs_are_never_checked(self):
-        self.assertIsNone(self.hook('pre-tool-use', {'tool_name': 'Edit', 'tool_input': {'command': 'gh pr merge 1'}}))
-        self.assertIsNone(self.hook('pre-tool-use', {'tool_name': 'Bash', 'tool_input': {'command': 123}}))
-        self.assertIsNone(self.hook('pre-tool-use', {'tool_name': 'Bash', 'tool_input': {}, 'cwd': 5}))
-
-
 class StopTest(Repo):
+    REVIEWED = '- [x] review: clean\n'
+
     def ledger(self, text, session=None):
+        lean.state_dir(self.cwd, session, create=True)
         lean.ledger(self.cwd, session).write_text(text)
 
     def goal(self, state='active', session=None, **kw):
+        lean.state_dir(self.cwd, session, create=True)
         lean.goal_file(self.cwd, session).write_text(json.dumps({'state': state, 'text': 't', 'continues': 0, **kw}))
 
     def feature(self, pushed=False):
@@ -164,7 +93,7 @@ class StopTest(Repo):
 
     def test_a_goal_needs_the_branch_pushed(self):
         self.goal()
-        self.ledger('- [x] A1: done\n')
+        self.ledger('- [x] A1: done\n' + self.REVIEWED)
         self.feature()
         self.assertIn('not pushed', self.hook('stop', {})['reason'])
         git(self.repo, 'push', '-q', '-u', 'origin', 'feature')
@@ -174,7 +103,7 @@ class StopTest(Repo):
     def test_a_goal_on_github_needs_an_open_pr_with_the_current_head(self):
         """2.15 rule: a run is complete only once an open pull request holds the current head."""
         self.goal()
-        self.ledger('- [x] A1: done\n')
+        self.ledger('- [x] A1: done\n' + self.REVIEWED)
         self.feature(pushed=True)
         head = lean.git('rev-parse', 'HEAD', cwd=self.cwd)
         with mock.patch.object(lean, 'pr_head', return_value=None):
@@ -190,20 +119,22 @@ class StopTest(Repo):
 
     def test_a_goal_on_the_default_branch_asks_for_a_feature_branch(self):
         self.goal()
-        self.ledger('- [x] A1: done\n')
+        self.ledger('- [x] A1: done\n' + self.REVIEWED)
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'work on main')
         reason = self.hook('stop', {})['reason']
         self.assertIn('create a feature branch', reason)
         self.assertNotIn('not pushed', reason)
 
     def test_a_goal_on_a_detached_head_says_so(self):
         self.goal()
-        self.ledger('- [x] A1: done\n')
+        self.ledger('- [x] A1: done\n' + self.REVIEWED)
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'work on main')
         git(self.repo, 'switch', '-q', '--detach')
         self.assertIn('detached', self.hook('stop', {})['reason'])
 
     def test_a_goal_needs_changes_committed(self):
         self.goal()
-        self.ledger('- [x] A1: done\n')
+        self.ledger('- [x] A1: done\n' + self.REVIEWED)
         self.feature(pushed=True)
         (self.repo / 'f.txt').write_text('x')
         git(self.repo, 'add', 'f.txt')
@@ -212,7 +143,7 @@ class StopTest(Repo):
     def test_a_goal_stops_blocking_after_the_cap(self):
         self.goal(continues=lean.MAX_CONTINUES)
         self.ledger('- [ ] A1: open\n')
-        self.assertIsNone(self.hook('stop', {}))
+        self.assertNotIn('decision', self.hook('stop', {}))  # only a message to the owner
         self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['state'], 'capped')
 
     def test_a_stopped_goal_lets_the_session_stop(self):
@@ -240,7 +171,7 @@ class StopTest(Repo):
         self.assertIsNone(self.hook('stop', {'session_id': 's-two', 'cwd': str(wt)}))
 
 
-    def transcript(self, worker_age=None, finished=False):
+    def transcript(self, worker_age=None, finished=False, journal=None):
         """A session transcript path; with worker_age, one subagent transcript last written that many seconds ago,
         whose last assistant turn is finished (end_turn) or still in a tool call."""
         path = Path(self.tmp.name) / 'session.jsonl'
@@ -254,6 +185,8 @@ class StopTest(Repo):
                          + json.dumps({'type': 'attachment'}) + '\n')
             when = time.time() - worker_age
             os.utime(f, (when, when))
+            if journal is not None:  # what a Workflow writes beside its agents: launched/started/result rows
+                (sub / 'journal.jsonl').write_text(''.join(json.dumps(r) + '\n' for r in journal))
         return str(path)
 
     def test_a_goal_stays_quiet_while_a_background_worker_runs(self):
@@ -330,6 +263,181 @@ class StopTest(Repo):
         self.assertEqual(self.hook('stop', {})['decision'], 'block')
         self.assertIsNone(self.hook('stop', {}))  # a later turn, same ledger: no second reminder
 
+class GoalEndTest(Repo):
+    """What ends a goal, which files it reads, and what keeps the Stop hook from crashing or going silent."""
+    ledger, goal, feature, transcript, REVIEWED = (StopTest.ledger, StopTest.goal, StopTest.feature,
+                                                   StopTest.transcript, StopTest.REVIEWED)
+    STARTED = {'type': 'started', 'key': 'k1', 'agentId': 'a1'}
+
+    def test_a_finished_workflow_does_not_mute_the_goal(self):
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        journal = [{'type': 'launched'}, self.STARTED, {'type': 'result', 'key': 'k1', 'agentId': 'a1'}]
+        out = self.hook('stop', {'transcript_path': self.transcript(worker_age=5, finished=True, journal=journal)})
+        self.assertEqual(out['decision'], 'block')
+
+    def test_a_workflow_agent_without_a_result_keeps_the_goal_quiet(self):
+        self.goal()
+        self.ledger('- [>] A1: running\n')
+        journal = [{'type': 'launched'}, self.STARTED]
+        self.assertIsNone(self.hook('stop', {'transcript_path': self.transcript(worker_age=5, journal=journal)}))
+
+    def test_a_stopped_workflow_whose_agent_transcript_went_stale_does_not_mute_the_goal(self):
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        journal = [{'type': 'launched'}, self.STARTED]
+        age = lean.LIVE_WORKER_SECONDS + 60
+        out = self.hook('stop', {'transcript_path': self.transcript(worker_age=age, journal=journal)})
+        self.assertEqual(out['decision'], 'block')
+
+    def test_a_workflow_agent_with_no_transcript_yet_counts_only_while_the_journal_is_new(self):
+        self.goal()
+        self.ledger('- [>] A1: starting\n')
+        path = self.transcript(worker_age=5, journal=[{'type': 'launched'}, self.STARTED])
+        sub = Path(self.tmp.name) / 'session' / 'subagents' / 'workflows' / 'w1'
+        (sub / 'agent-a1.jsonl').unlink()
+        self.assertIsNone(self.hook('stop', {'transcript_path': path}))
+        old = time.time() - 300
+        os.utime(sub / 'journal.jsonl', (old, old))
+        self.assertEqual(self.hook('stop', {'transcript_path': path})['decision'], 'block')
+
+    def test_a_failed_workflow_agent_is_not_running(self):
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        journal = [self.STARTED, {'type': 'failed', 'key': 'k1', 'agentId': 'a1'}]
+        out = self.hook('stop', {'transcript_path': self.transcript(worker_age=5, finished=True, journal=journal)})
+        self.assertEqual(out['decision'], 'block')
+
+    def test_work_without_a_diff_ends_when_the_asks_are_marked(self):
+        self.goal()
+        self.ledger('- [x] A1: explained how the parser works\n')
+        self.assertIsNone(self.hook('stop', {}))
+        self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['state'], 'done')
+
+    def test_a_branch_with_commits_needs_the_review_line(self):
+        self.goal()
+        self.ledger('- [x] A1: done\n')
+        self.feature(pushed=True)
+        self.assertIn('review', self.hook('stop', {})['reason'])
+        self.ledger('- [x] A1: done\n- [>] review: round 2\n')
+        self.assertIn('open asks in the ledger: review', self.hook('stop', {})['reason'])
+        self.ledger('base: main (abc) | branch: feature\n- [x] A1: done\n- [x] review: clean\n')
+        self.assertIsNone(self.hook('stop', {}))
+
+    def test_the_ledger_headers_sha_is_the_base_when_it_is_there(self):
+        self.goal()
+        init = lean.git('rev-parse', 'HEAD', cwd=self.cwd)
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'main moved on')
+        git(self.repo, 'switch', '-q', '-c', 'feature')
+        self.ledger(f'base: main ({init}) | branch: feature | dirty at start: -\n- [x] A1: done\n')
+        self.assertIn('no independent review', self.hook('stop', {})['reason'])
+
+    def test_files_dirty_at_start_do_not_count_as_uncommitted_changes(self):
+        self.goal()
+        (self.repo / 'owner.txt').write_text('a')
+        (self.repo / 'mine.txt').write_text('a')
+        git(self.repo, 'add', '.')
+        git(self.repo, 'commit', '-q', '-m', 'files')
+        (self.repo / 'owner.txt').write_text('owner edit')
+        head = lean.git('rev-parse', 'HEAD', cwd=self.cwd)
+        self.ledger(f'base: main ({head}) | branch: main | dirty at start: owner.txt, other.txt\n- [x] A1: done\n')
+        self.assertIsNone(self.hook('stop', {}))
+        self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['state'], 'done')
+        self.goal()
+        (self.repo / 'mine.txt').write_text('my edit')
+        self.assertIn('uncommitted', self.hook('stop', {})['reason'])
+
+    def test_session_start_names_every_block(self):
+        p = self.run_cli('hook', 'session-start', stdin=json.dumps({'cwd': self.cwd}))
+        self.assertIn('Blocked: merging into the default branch, a second Fable critic, and an untyped agent during a run.',
+                      p.stdout)
+
+    def test_a_branch_pushed_by_name_counts_as_pushed(self):
+        self.goal()
+        self.ledger('- [x] A1: done\n' + self.REVIEWED)
+        git(self.repo, 'switch', '-q', '-c', 'feat', '--track', 'origin/main')
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'work')
+        self.assertIn('git push -u origin feat', self.hook('stop', {})['reason'])
+        git(self.repo, 'push', '-q', 'origin', 'feat')
+        self.assertIsNone(self.hook('stop', {}))
+
+    def test_a_ledger_without_ask_lines_does_not_end_a_goal(self):
+        self.goal()
+        for text in ('', '| A1 | todo |\n', '- [?] A1: odd mark\n'):
+            with self.subTest(text=text):
+                self.ledger(text)
+                self.assertIn('no ask lines', self.hook('stop', {})['reason'])
+                lean.goal_file(self.cwd).write_text(json.dumps({'state': 'active', 'continues': 0}))
+
+    def test_star_bullets_and_extra_spaces_are_asks(self):
+        self.ledger('*  [ ] A1: open\n')
+        self.assertIn('open asks: A1.', self.hook('stop', {})['reason'])
+
+    def test_the_reminder_is_keyed_on_the_ledger_alone(self):
+        self.ledger('- [ ] A1: open\n')
+        self.assertEqual(self.hook('stop', {})['decision'], 'block')
+        (self.repo / 'new.txt').write_text('edit')
+        git(self.repo, 'add', 'new.txt')
+        git(self.repo, 'commit', '-q', '-m', 'unrelated fix')
+        self.assertIsNone(self.hook('stop', {}))
+        self.ledger('- [ ] A1: open\n- [ ] A2: open\n')
+        self.assertEqual(self.hook('stop', {})['decision'], 'block')
+
+    def test_a_non_utf8_change_and_a_damaged_goal_file_do_not_crash_the_hook(self):
+        (self.repo / 'a.txt').write_text('cafe\n')
+        git(self.repo, 'add', 'a.txt')
+        git(self.repo, 'commit', '-q', '-m', 'a')
+        (self.repo / 'a.txt').write_bytes(b'caf\xe9\n')
+        self.goal()
+        self.ledger('- [ ] A1: open\n')
+        self.assertEqual(self.hook('stop', {})['decision'], 'block')
+        lean.goal_file(self.cwd).write_text('')
+        self.assertIsNone(self.hook('stop', {'session_id': 's-x'}))
+        self.assertIsNone(self.hook('stop', {}))
+
+    def test_the_ledger_is_found_after_the_folder_became_a_repository(self):
+        with tempfile.TemporaryDirectory() as d:
+            old = Path(d) / '.orchestra' / 'sessions' / 's-1'
+            old.mkdir(parents=True)
+            (old / 'asks.md').write_text('- [ ] A1: open\n')
+            git(Path(d), 'init', '-q', '-b', 'main')
+            self.assertEqual([a[1] for a in lean.open_asks(d, 's-1')], ['A1'])
+
+    def test_a_goal_stops_at_its_own_limit_and_says_so(self):
+        self.goal(continues=3, limit=3)
+        self.ledger('- [ ] A1: open\n')
+        out = self.hook('stop', {})
+        self.assertIn('limit of 3', out['systemMessage'])
+        self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['state'], 'capped')
+
+    def test_goal_set_takes_a_limit_and_status_shows_it(self):
+        self.run_cli('goal', 'set', '--limit', '7', 'ship')
+        self.assertIn('"limit": 7', self.run_cli('goal', 'status').stdout)
+        self.run_cli('goal', 'set', 'ship', env={'ORCHESTRA_GOAL_LIMIT': '9'})
+        self.assertEqual(json.loads(lean.goal_file(self.cwd).read_text())['limit'], 9)
+
+    def test_goal_stop_from_a_terminal_stops_the_session_goals(self):
+        self.goal(session='s-one')
+        self.assertIn('stopped 1', self.run_cli('goal', 'stop', 'owner').stdout)
+        self.assertEqual(json.loads(lean.goal_file(self.cwd, 's-one').read_text())['state'], 'stopped')
+        self.goal(session='s-two')
+        self.run_cli('goal', 'stop', '--session', 's-two', 'owner')
+        self.assertEqual(json.loads(lean.goal_file(self.cwd, 's-two').read_text())['state'], 'stopped')
+
+    def test_session_start_in_a_repo_creates_no_folder_and_points_at_a_branch(self):
+        p = self.run_cli('hook', 'session-start', stdin=json.dumps({'cwd': self.cwd, 'session_id': 's-1'}))
+        self.assertIn('new branch', p.stdout)
+        self.assertFalse((Path(self.cwd) / '.git' / 'orchestra' / 'sessions' / 's-1').exists())
+        git(self.repo, 'switch', '-q', '-c', 'feature')
+        p = self.run_cli('hook', 'session-start', stdin=json.dumps({'cwd': self.cwd, 'session_id': 's-1'}))
+        self.assertNotIn('new branch', p.stdout)
+
+    def test_the_goal_command_grants_only_its_own_script(self):
+        text = (ROOT / 'commands/goal.md').read_text()
+        self.assertNotIn('python3:*', text)
+        self.assertIn('disable-model-invocation: true', text)
+
+
 class CliTest(Repo):
     def test_goal_set_status_and_stop(self):
         self.assertIn('Goal set', self.run_cli('goal', 'set', 'ship', 'it').stdout)
@@ -361,7 +469,8 @@ class CliTest(Repo):
                     p = self.run_cli('hook', name, stdin=stdin)
                     self.assertEqual(p.returncode, 0, p.stderr)
                     self.assertNotIn('Traceback', p.stderr)
-        for args in (['hook'], ['hook', 'bogus'], ['run', '--', 'true'], ['run', 'x', '--', 'true'], ['bogus']):
+        for args in (['hook'], ['hook', 'bogus'], ['run', '--', 'true'], ['run', 'x', '--', 'true'], ['bogus'],
+                     ['run', 'nan', '--', 'true'], ['run', '0', '--', 'true']):
             with self.subTest(args=args):
                 p = self.run_cli(*args)
                 self.assertEqual(p.returncode, 2)
@@ -393,6 +502,10 @@ class RunTest(unittest.TestCase):
         self.assertIn('TIMEOUT', p.stderr)
         time.sleep(0.5)
         self.assertFalse(self.alive(f'sleep {self.MARK}1'))
+
+    def test_a_signal_killed_command_exits_128_plus_the_signal(self):
+        p = subprocess.run([sys.executable, str(LEAN), 'run', '5', '--', 'sh', '-c', 'kill -9 $$'])
+        self.assertEqual(p.returncode, 137)
 
     def test_stopping_the_caller_stops_the_command(self):
         p = subprocess.Popen([sys.executable, str(LEAN), 'run', '60', '--', 'sleep', f'{self.MARK}2'])

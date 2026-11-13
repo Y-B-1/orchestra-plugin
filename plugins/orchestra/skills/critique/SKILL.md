@@ -1,6 +1,6 @@
 ---
 name: critique
-description: "Gives the rules for challenging a spec or a disputed finding. Load when you are the critic. Not for builders, reviewers or investigators."
+description: "Gives the rules for challenging a spec. Load when you are the critic. Not for builders, reviewers or investigators."
 ---
 # Critique
 
@@ -11,8 +11,6 @@ description: "Gives the rules for challenging a spec or a disputed finding. Load
 - Mark each premise the spec relies on as OBSERVED, REASONED or UNKNOWN. For an UNKNOWN that matters, propose a small scratch check.
 - Flag adjectives with no measure and acceptance checks that no test could fail.
 - Flag a product decision nobody made. Do not make it yourself.
-- For a disputed finding: judge it on the source, not on who raised it. Say whether it is valid, and name the impact.
-- If a finding survived 3 repair rounds and the one Opus repair, stop the loop. Give options with impact, effort and risk. Say the cause is in the spec or plan.
 - Do not edit files. Put scratch work outside the repository.
 - End with APPROVE or REVISE. REVISE lists the items to fix first.
 

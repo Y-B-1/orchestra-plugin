@@ -1,12 +1,14 @@
 """Layout checks for the shipped plugin: manifests, hook commands, agent and skill frontmatter, no private content."""
 import getpass, json, re, subprocess, unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 PLUGIN = ROOT / 'plugins/orchestra'
 MODELS = {'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'}
+FABLE = 'claude-fable-5-2'  # one agent only: the critic's third point of view
 AGENTS = {'builder', 'builder-mechanical', 'builder-cleanup', 'reviewer', 'reviewer-light', 'reviewer-standards',
-          'planner', 'critic', 'investigator', 'investigator-research', 'operator'}
+          'planner', 'critic', 'critic-fable', 'investigator', 'investigator-research', 'operator'}
 
 
 def frontmatter(path):
@@ -22,12 +24,21 @@ def frontmatter(path):
     return fields
 
 
+# Account names CI runners and containers use; they are ordinary words, so they are not private.
+GENERIC_ACCOUNTS = {'runner', 'runneradmin', 'root', 'user', 'admin', 'dev', 'test', 'max', 'ubuntu', 'vscode', 'node'}
+
+
 def private_words():
     """The local account name and the git email: neither may appear in a shipped file. The git user name is not
     checked, because the public repository URL carries the owner's account name."""
     email = subprocess.run(['git', 'config', 'user.email'], cwd=ROOT, capture_output=True, text=True).stdout.strip()
     words = {getpass.getuser(), email, email.partition('@')[0]}
-    return {w for w in words if len(w) >= 3}
+    return {w for w in words if len(w) >= 3 and w.lower() not in GENERIC_ACCOUNTS}
+
+
+def private_hits(text, words):
+    """Words that appear in the text as whole words, case-insensitive."""
+    return {w for w in words if re.search(rf'(?<![\w]){re.escape(w)}(?![\w])', text, re.I)}
 
 
 class ManifestTest(unittest.TestCase):
@@ -58,7 +69,7 @@ class AgentTest(unittest.TestCase):
                 fields = frontmatter(path)
                 self.assertEqual(fields.get('name'), path.stem)
                 self.assertTrue(fields.get('description'))
-                self.assertIn(fields.get('model'), MODELS)
+                self.assertEqual(fields.get('model'), FABLE) if path.stem == 'critic-fable' else self.assertIn(fields.get('model'), MODELS)
                 self.assertIn(fields.get('effort'), {'low', 'medium', 'high', 'xhigh', 'max'})
                 self.assertTrue(fields.get('tools'))
 
@@ -157,8 +168,30 @@ class PrivacyTest(unittest.TestCase):
             with self.subTest(str(path.relative_to(ROOT))):
                 self.assertNotIn('/Users/', text)
                 self.assertNotIn('/home/', text)
-                for word in words:
-                    self.assertNotIn(word.lower(), text.lower())
+                self.assertEqual(private_hits(text, words), set())
+
+    def test_no_tracked_file_holds_a_credential_or_the_owner_account_name(self):
+        secret = re.compile(r'gh[op]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abpr]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}'
+                            r'|sk-ant-api[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY-----')
+        words = private_words()
+        tracked = subprocess.run(['git', 'ls-files', '-z'], cwd=ROOT, capture_output=True, text=True).stdout.split('\0')
+        for name in filter(None, tracked):
+            path = ROOT / name
+            if not path.is_file() or path.is_symlink() or path.suffix in {'.png', '.lock'} or name == 'package-lock.json':
+                continue
+            text = path.read_text(errors='replace')
+            with self.subTest(name):
+                if name != 'tests/test_check.py':  # holds fake credentials as scan fixtures
+                    self.assertIsNone(secret.search(text))
+                self.assertEqual(private_hits(text, words), set())
+
+    def test_ci_account_name_is_not_private_but_a_real_name_is(self):
+        with mock.patch('getpass.getuser', return_value='runner'):
+            self.assertNotIn('runner', private_words())
+        with mock.patch('getpass.getuser', return_value='jdoe'):
+            self.assertIn('jdoe', private_words())
+        self.assertEqual(private_hits('see /Users/jdoe/x', {'jdoe'}), {'jdoe'})
+        self.assertEqual(private_hits('jdoes', {'jdoe'}), set())
 
 
 if __name__ == '__main__':

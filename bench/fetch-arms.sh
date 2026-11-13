@@ -17,14 +17,21 @@ fetch() {  # dir, url, commit
 }
 
 fetch "$arms/pocock" https://github.com/mattpocock/skills.git 59db609eb1e18aaf59b63284d0e52255aff0c63c
+# pstack-src: the 3.0.0 round (36885ea). pstack47: pstack 0.9.108 (47c6f80), the 3.3.0 round.
 fetch "$arms/pstack-src" https://github.com/michael-denyer/pstack-claude.git 36885ea631d2afd9482cf9333cc4bbc829b3b02d
 test -d "$arms/pstack-src/plugins/pstack"
+fetch "$arms/pstack47-src" https://github.com/michael-denyer/pstack-claude.git 47c6f8020ad3a4dc533f220eb362a144bfac2153
+rm -rf "$arms/pstack47"
+cp -R "$arms/pstack47-src/plugins/pstack" "$arms/pstack47"
 
-if [ -f "$arms/orchestra-2.15.3/plugin.json" ]; then
-  echo "ok   $arms/orchestra-2.15.3"
-else
-  rm -rf "$arms/orchestra-2.15.3"
-  mkdir -p "$arms/orchestra-2.15.3"
-  git -C "$repo" archive v2.15.3 plugins/orchestra | tar -x -C "$arms/orchestra-2.15.3" --strip-components=2
-  echo "got  $arms/orchestra-2.15.3 from tag v2.15.3"
-fi
+for version in 2.15.3 3.0.0 3.2.0; do  # Orchestra arms from their release tags
+  dir="$arms/orchestra-$version"
+  if [ -f "$dir/plugin.json" ]; then
+    echo "ok   $dir"
+  else
+    rm -rf "$dir"
+    mkdir -p "$dir"
+    git -C "$repo" archive "v$version" plugins/orchestra | tar -x -C "$dir" --strip-components=2
+    echo "got  $dir from tag v$version"
+  fi
+done

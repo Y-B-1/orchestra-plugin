@@ -2,7 +2,7 @@
 """Runs the Orchestra hooks in three real headless Claude Code sessions (haiku, a few cents in all).
 
 Each scenario gets a scratch git repository with a bare origin and runs `claude -p` from a clean environment.
-  1. init: the session lists the orchestra skill, agents and goal command; SessionStart names the ledger path.
+  1. init: the session lists every orchestra skill, every agent and goal command; SessionStart names the ledger path.
   2. guard: `git push origin main` is denied by the PreToolUse hook; `git push -u origin feature` runs.
   3. goal: /orchestra:goal with one open ask in the ledger; the Stop hook blocks at least once.
 Prints PASS or FAIL per scenario. Exit 0 only when every scenario passes. Usage: python3 scripts/live-check.py
@@ -11,7 +11,8 @@ import json, os, subprocess, sys, tempfile
 from pathlib import Path
 
 PLUGIN = Path(__file__).resolve().parents[1] / 'plugins' / 'orchestra'
-AGENTS = {f'orchestra:{n}' for n in ('builder', 'reviewer', 'planner', 'critic', 'investigator')}
+AGENTS = {f'orchestra:{p.stem}' for p in (PLUGIN / 'agents').glob('*.md')}
+SKILLS = {f'orchestra:{p.parent.name}' for p in (PLUGIN / 'skills').glob('*/SKILL.md')}
 TIMEOUT = 600
 
 
@@ -79,8 +80,9 @@ def scenario_init(base):
     events = claude(repo, 'Reply with OK only.', base / 'init.jsonl')
     init = next((e for e in events if e.get('subtype') == 'init'), {})
     problems = []
-    if 'orchestra:orchestra' not in init.get('skills', []):
-        problems.append('skill orchestra:orchestra missing')
+    missing = SKILLS - set(init.get('skills', []))
+    if missing:
+        problems.append(f'skills missing: {sorted(missing)}')
     missing = AGENTS - set(init.get('agents', []))
     if missing:
         problems.append(f'agents missing: {sorted(missing)}')

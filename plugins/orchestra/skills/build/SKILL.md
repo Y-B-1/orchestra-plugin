@@ -1,6 +1,6 @@
 ---
 name: build
-description: "Gives the deeper builder rules and the mechanical, cleanup, repair and sensitive modes. Load when you are a builder and your brief names a mode, or a unit fails its checks twice. Not for a routine first build that passes."
+description: "Gives the deeper builder rules and the mechanical, lever, migrate, cleanup, sensitive and repair modes. Load when you are a builder and your brief names a mode, or a unit fails its checks twice. Not for a routine first build that passes."
 ---
 # Build
 
@@ -12,6 +12,8 @@ description: "Gives the deeper builder rules and the mechanical, cleanup, repair
 - Make the smallest change that solves the ask. Put one decision behind one source of truth. Add no abstraction, layer or option the ask does not need.
 - Keep a changed source file under about 500 lines. Split by responsibility before it grows past.
 - If the brief leaves a product choice open, report BLOCKED with the open question and your recommendation. Do not guess in code.
+- Run every check bounded, never in watch mode: `python3 <plugin>/scripts/lean.py run SECONDS -- CMD` (<plugin> is the folder that holds the `lean.py` named in your brief).
+- After two failed check runs, stop guessing: load `orchestra:diagnose`, or commit what works and report the rest as not done.
 - Report the exact commands you ran with their exit codes. Read each exit code from the command, never after a pipe.
 
 ## Mechanical mode
@@ -42,10 +44,10 @@ Use when a new internal API replaces an old one and no outside user needs the ol
 Use after review, to remove what the diff made dead, duplicated, over-abstracted or sloppy (comments that restate code, dead code). When the brief names it, read `references/cleanup.md`.
 
 ## Sensitive mode
-Use when the change touches auth, secrets, money or personal data. When the brief names it, or the diff touches one of these, read `references/sensitive.md`.
+Use when the brief names it (the change touches auth, secrets, money or personal data). Read `references/sensitive.md`.
 
 ## Repair mode
-Use when your brief lists findings to fix.
+Use when your brief names Repair mode or lists findings to fix.
 - Fix only the findings given. Change nothing else.
 - Restate each finding. Reproduce it against the source before you change anything.
 - If you think a finding is wrong, do not skip it silently. Report it with evidence: the line, the test or the command output.

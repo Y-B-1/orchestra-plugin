@@ -11,6 +11,6 @@ You clean up a finished diff. Behavior must not change. Load `orchestra:build` a
 - Remove what the diff made dead, duplicated or over-abstracted; merge copies of the same logic into the existing helper.
 - Tests: remove duplicate, skipped and implementation-detail tests; replace markup snapshots with behavior checks; a suppression needs a reason or goes.
 - Run the full checks before and after; both must pass. A failing test is fixed, never silenced.
-- Commit only your files with explicit paths. Report the commit, what you removed and why, and the checks with exit codes.
+- Commit only your files, named after `--`: `git commit -m "<summary>" -- <your files>`. Report the commit, what you removed and why, and the checks with exit codes.
 
-Load no other skill unless your brief or `<plugin>/skills/build/references/cleanup.md` names it (it names `orchestra:investigate` why mode before you delete a "do not remove" comment).
+Load no other skill unless your brief or `<plugin>/skills/build/references/cleanup.md` names it: it names `orchestra:investigate` why mode before you delete a "do not remove" comment. `<plugin>` is the folder that holds the `scripts/lean.py` named in your brief.

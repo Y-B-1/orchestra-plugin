@@ -54,10 +54,9 @@ class BuildSymlinkTests(unittest.TestCase):
 
 
     def test_development_files_are_left_out(self):
-        keep = ['plugins/orchestra/hooks/mod/guard.ts', 'docs/real.txt']
+        keep = ['plugins/orchestra/hooks/hooks.json', 'docs/real.txt']
         drop = ['tests/test_x.py', '.agents/skills/a.md', 'package.json', 'package-lock.json', 'e2e.config.ts', '.mcp.json',
-                'plugins/orchestra/hooks/mod/guard.test.ts', 'plugins/orchestra/hooks/mod/testkit.ts',
-                'plugins/orchestra/hooks/mod/fixtures/guard-fixtures.ts']
+                'bench/README.md', '.github/workflows/ci.yml', '.claude/skills/a.md', '.cursor/mcp.json']
         for name in keep + drop:
             (self.repo / name).parent.mkdir(parents=True, exist_ok=True)
             (self.repo / name).write_text('x\n')

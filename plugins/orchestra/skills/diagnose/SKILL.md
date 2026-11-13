@@ -8,7 +8,7 @@ Redact every secret in commands, output and artifacts as `<REDACTED>`; quote onl
 
 ## Reproduce first
 - Build one command that shows the reported symptom before you read code for a theory. It must be red-capable (asserts the symptom the user saw, not "does not crash"), deterministic, fast and runnable unattended. Run it once and show the output.
-- Seams to try, in order: failing test, request script, CLI on a fixture, headless browser, replay of a captured payload, throwaway harness, property or fuzz loop, `git bisect run`, old-versus-new diff. A human-driven script is the last resort.
+- Seams to try, in order: failing test, request script, CLI on a fixture, headless browser, replay of a captured payload, throwaway harness, property or fuzz loop, `git bisect run`, old-versus-new diff. Anything that moves HEAD (bisect, checking out the start commit, a throwaway branch) runs in its own `git worktree add` outside the shared checkout, removed afterwards; never bisect in place. A human-driven script is the last resort.
 - Tighten it: faster setup, sharper assertion, pinned time and seed.
 - If the failing input is large, remove one element at a time until removing any more turns the command green.
 - If no command can be built (production data, credentials, a device), stop and report BLOCKED. List what you tried and name what you need: access, a redacted artifact, or approval for temporary instrumentation. Never fix blind.

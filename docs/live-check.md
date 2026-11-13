@@ -2,11 +2,11 @@
 
 `python3 scripts/live-check.py` runs Orchestra's hooks in three real headless Claude Code sessions. Unit tests call the hook functions directly; this check proves that Claude Code loads the plugin and runs the hooks. Run it before a release. It uses haiku and costs a few cents. `scripts/check.sh` never runs it.
 
-Each scenario creates a scratch Git repository with a bare `origin` and runs `claude -p` with `--setting-sources ""`, `--strict-mcp-config`, `--permission-mode bypassPermissions`, `--plugin-dir plugins/orchestra`, `--model haiku` and `--output-format stream-json --verbose`. The environment holds only `HOME`, `USER`, `PATH`, `SHELL`, `LANG`, `TMPDIR` and `TERM`, so your own settings, hooks and MCP servers do not load.
+Each scenario creates a scratch Git repository with a bare `origin` and runs `claude -p` with `--setting-sources ""`, `--strict-mcp-config`, `--permission-mode bypassPermissions`, `--plugin-dir plugins/orchestra`, `--model haiku` and `--output-format stream-json --verbose`. The environment holds only `HOME`, `USER`, `PATH`, `SHELL`, `LANG`, `TMPDIR` and `TERM`, so your own settings, hooks and MCP servers do not load. It also drops `ANTHROPIC_API_KEY` and `CLAUDE_CODE_OAUTH_TOKEN`, so the check needs stored sign-in credentials (a `claude` login on this machine).
 
 | Scenario | Passes when |
 | --- | --- |
-| init | The init event lists the skill `orchestra:orchestra`, the five `orchestra:*` agents and the command `orchestra:goal`, and the SessionStart hook output names the session's ledger under `.git/orchestra/sessions/` |
+| init | The init event lists every `orchestra:*` skill and agent found in `plugins/orchestra/skills` and `plugins/orchestra/agents`, and the command `orchestra:goal`, and the SessionStart hook output names the session's ledger under `.git/orchestra/sessions/` |
 | guard | `git push origin main` is denied with the Orchestra reason and `origin/main` does not move; `git push -u origin feature` runs and creates the branch on `origin` |
 | goal | `/orchestra:goal` runs with no ledger; the Stop hook blocks with "Goal not done" (a reason only an active goal gives), and `goal.json` exists for the session the init event names |
 

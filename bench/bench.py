@@ -18,6 +18,8 @@ ARMS = {
     'plain': None,
     'orchestra': B.parent / 'plugins/orchestra',
     'orchestra-2.15.3': B / 'arms/orchestra-2.15.3',
+    'orchestra-3.0.0': B / 'arms/orchestra-3.0.0',
+    'orchestra-3.2.0': B / 'arms/orchestra-3.2.0',
     'pocock': B / 'arms/pocock',
     'pstack': B / 'arms/pstack-src/plugins/pstack',
     'pstack47': B / 'arms/pstack47',
@@ -385,6 +387,9 @@ def queue_file(path):
                 and not (RUNS / '-'.join(i.split(':')) / 'skip').exists()]
         if not todo:
             print(datetime.now().strftime('%H:%M'), 'queue empty', flush=True)
+            return
+        if free_gb() < MIN_FREE_GB:  # run_session's sys.exit only ends its worker thread, so stop the queue here
+            print(datetime.now().strftime('%H:%M'), f'only {free_gb():.1f} GB free; stopping', flush=True)
             return
         import threading
         ensure_fixture()  # once, before the pair: two threads must not run npm ci in the fixture at the same time

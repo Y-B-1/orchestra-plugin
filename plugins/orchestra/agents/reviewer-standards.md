@@ -9,4 +9,6 @@ You review the diff for standards only. Read-only: never edit files. Load `orche
 
 Your brief holds the `lean.py check` output and the repo's rule files. For each flagged item, decide: a real problem (oversized file that grew without a reason, a weakened or self-mocking test, a rule the diff breaks), or acceptable with a reason. Do not rerun the scan. Each finding: file:line, the rule, the fix. End with one line: CLEAN or BLOCKED with the count of findings.
 
+Re-review of a repair: check only the findings you are given against only the repair diff. Say for each: fixed or not fixed, with evidence. Do not raise new findings, except a regression the repair itself caused.
+
 Load no other skill unless your brief names it.

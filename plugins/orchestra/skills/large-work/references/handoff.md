@@ -1,7 +1,8 @@
 # Handoff and resume
 
 ## Write a handoff
-Write it for a fresh agent into `$TMPDIR`, else `/tmp` (`%TEMP%` on Windows), outside the workspace. Named sections:
+Before you create a notes or handoff file, look for the notes the repo already keeps (a docs folder, a memory file) and write there in its form.
+Write it for a fresh agent to `<git common dir>/orchestra/handoffs/<branch>.md` (outside the working tree, durable). Use `$TMPDIR` only for the copy you pass to `claude --bg`. Named sections:
 - Goal and current state
 - Decisions made, each with its reason
 - Remaining work, in dependency order
@@ -17,12 +18,12 @@ Rules:
 - To start the next agent at once, run `claude --bg --name "<descriptive name>" -- "$(cat <file>)"`. Pass the file so the shell does not expand the text. It starts in the current directory and returns at once.
 
 ## Progress ledger
-Keep an append-only ledger in the run's state folder. First line names the run. One line per event: time, unit, action (dispatched, reported, accepted, repair, hold, pr), artifact SHA, decision. It outlasts compaction; recollection does not.
+Keep an append-only ledger beside it, `<git common dir>/orchestra/handoffs/<branch>.ledger`. First line names the run. One line per event: time, unit, action (dispatched, reported, accepted, repair, hold, pr), artifact SHA, decision. It outlasts compaction; recollection does not.
 
 ## Resume
 Check in this order:
 1. The ledger. After compaction it outranks recollection.
-2. The newest run brief or handoff file.
+2. The handoff and ledger in `<git common dir>/orchestra/handoffs/`, else the newest run brief.
 3. Live worker state: a live process first, then the transcript's last modification time. A quiet transcript alone is not a stopped worker.
 4. Artifacts: `git log`, `git status`, each report against its logs.
 5. Re-dispatch by ledger line. A unit with a completion line is never dispatched again. A unit whose last line is a repair resumes at the fix re-review. A held unit waits for the owner.

@@ -2,7 +2,7 @@
 
 <!-- Example project charter. Save it as AGENTS.md at the repository root.
      Claude Code loads AGENTS.md when the project has no CLAUDE.md.
-     The Orchestra coordinator copies the binding rules below into every builder brief,
+     Reviewers read this file as the project's standing rules,
      so keep them checkable. Replace every name, path and command. -->
 
 Customer-facing web app: a TypeScript API in `api/` and a React client in `web/`. Read `docs/AGENT-MEMORY.md` before you start; it holds current state and open decisions. Domain terms are in `CONTEXT.md`.
@@ -39,8 +39,8 @@ These rules bind every agent and every worker, including subagents.
 
 ## Review
 
-- Every pull request gets one independent pre-PR review of the frozen candidate.
-- A diff that touches a sensitive path gets the `security` lens. The default list covers `**/auth/**`, `**/security/**`, `**/*secret*`, `**/migrations/**` and a few others. To cover payments too, this project passes `start --policy` a JSON file whose `sensitive_paths` repeats the default list and adds `api/payments/**`; the key replaces the default, it does not extend it.
+- Every pull request gets one independent review of the whole diff before the pull request.
+- A diff that touches auth, security, secrets, migrations or payments (`api/payments/**`) gets the `security` lens.
 
 ## Memory
 

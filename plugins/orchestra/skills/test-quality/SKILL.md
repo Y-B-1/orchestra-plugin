@@ -1,6 +1,6 @@
 ---
 name: test-quality
-description: "Gives the rules for tests that can fail and the test-hygiene pass. Load when doing the hygiene pass before the PR, or when a unit's tests keep failing for unclear reasons. Not for a routine unit that adds one behavior test."
+description: "Gives the rules for tests that can fail and the test-hygiene pass. Load when doing the hygiene pass before the PR or when writing tests that must be able to fail. Not for a routine unit that adds one behavior test."
 ---
 # Test quality
 
@@ -29,6 +29,7 @@ description: "Gives the rules for tests that can fail and the test-hygiene pass.
 - Keep tests few, fast and at behavior level. Use the repo's tools. Add none.
 
 ## Read checks honestly
+- A failure whose cause is unknown: load `orchestra:diagnose`.
 - Read the exit code from the checker itself, never after a pipe. A pipe to `tail` hides failures.
 - A check that passes at once on new code, or fails oddly, points at the wrong target, a cache or a stale build. Rerun on the real files.
 - "Tests pass" means the tests you changed and the ones covering the changed code ran with zero failures in this state of the tree. Words like "should" or "probably" mean you have not run it.

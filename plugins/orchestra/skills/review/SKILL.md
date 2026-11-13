@@ -4,7 +4,7 @@ description: "Gives review lenses (correctness, data and contracts, architecture
 ---
 # Review lenses
 
-Apply only the lenses your brief names. Then apply "Every review".
+Apply the lenses your brief names. Read a detailed lens file only when the brief names it or the diff shows the risk. Then apply "Every review".
 
 ## Every review
 - Your brief holds the `lean.py check` output. Judge each item it lists; do not rerun the scan.
@@ -13,9 +13,9 @@ Apply only the lenses your brief names. Then apply "Every review".
 - Try to refute each finding before you report it. Read the guards, callers and tests around it. Mark it confirmed (you ran or traced it) or plausible.
 - A finding blocks only with material impact: a broken ask, a failing scenario, a rule breach, security or data loss. Taste goes under notes.
 - One pattern at several sites is one finding. Do not re-raise a finding the brief lists as rejected unless its code changed.
-- A changed file no ask needs is scope drift. A claim in the author's report that the code contradicts is its own finding.
+- A changed file no ask needs is scope drift. When your brief includes the author's report, a claim in it that the code contradicts is its own finding.
 - Report what you covered and what you did not, per lens. "Could not look" is never "nothing found".
-- Keep the report to about 600 words. End with CLEAN or BLOCKED and the count of blocking findings.
+- Findings keep their quote and scenario in full; keep the rest (coverage, notes) short, one line per lens. End with CLEAN or BLOCKED and the count of blocking findings.
 - Scoped re-review: read only the files the repair touched and check only the findings given. A regression the repair caused is a finding.
 
 ## Correctness
@@ -41,7 +41,7 @@ Apply only the lenses your brief names. Then apply "Every review".
 - Tests assert behavior through the public interface, not implementation.
 - Flag a mock of the project's own module. Mock only at system boundaries.
 - The expected value comes from a literal or the spec, not from recomputing it.
-- A bug fix needs red-first evidence: the same command text failed before and passes after.
+- A bug fix needs red-first evidence: the same command text failed before and passes after. If your brief has no red and green command lines, say "not checked", not a finding.
 - Flag each weakened, skipped or deleted test or gate unless the reason is stated.
 
 ## Security
@@ -56,7 +56,7 @@ Apply only the lenses your brief names. Then apply "Every review".
 ## Performance
 - Check work per render or per row that grows with the data. Flag queries in loops, network calls without timeouts, and lists with no limit.
 
-## Detailed lenses (read a file only when the brief names it or the diff shows the risk)
+## Detailed lenses
 - Deep modules, seams, shallow layers: `references/architecture-depth.md`.
 - Slop, dead code, comments, condition growth: `references/cleanliness.md`.
 - Hostile input, leaked gates, run-proven findings: `references/red-team.md`.

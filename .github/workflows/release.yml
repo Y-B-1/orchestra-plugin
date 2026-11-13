@@ -47,6 +47,9 @@ jobs:
             tag="$GITHUB_REF_NAME"
             test "$tag" = "v$version" || { echo "Tag $tag does not match plugin version $version"; exit 1; }
           fi
+          claude_version=$(python -c "import json;print(json.load(open('plugins/orchestra/.claude-plugin/plugin.json'))['version'])")
+          test "$claude_version" = "$version" || { echo "Manifests disagree: $claude_version against $version"; exit 1; }
+          grep -q "^## $version " CHANGELOG.md || { echo "CHANGELOG.md has no heading for $version"; exit 1; }
           test -s "docs/release-notes/$tag.md" || { echo "Missing docs/release-notes/$tag.md"; exit 1; }
           { echo "VERSION=$version"; echo "TAG=$tag"; } >> "$GITHUB_ENV"
       - name: Build the archives

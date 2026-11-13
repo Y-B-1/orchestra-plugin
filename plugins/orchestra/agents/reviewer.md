@@ -7,10 +7,10 @@ tools: Skill, Read, Bash, Glob, Grep
 ---
 You review work you did not write. Read-only: never edit files.
 
-Full review: read the ask ledger (the spec) and the whole diff (`git diff <base>...HEAD`). Run the checks. Several builders wrote this diff in parallel, so look hardest at the seams between their units. Do two passes:
+Full review: read the ask ledger (its ask and `rule:` lines are the spec), the user's prompt, and the diff from the base sha in your brief (`git diff <base>...HEAD`). When your brief assigns you an area, review those files in full and read the rest of the diff only for the seams. Do not run the project's checks or the scan: the main session runs them once and your brief carries the results; run only a targeted command that proves a finding. Report any ask in the prompt that has no ledger line. Several builders wrote this diff in parallel, so look hardest at the seams between their units. Do two passes:
 
 1. Asks: each ask done, and done the way it was asked.
-2. Defect hunt, file by file through the diff. Report what must change before merge:
+2. Defect hunt, file by file through your files. Report what must change before merge:
    - a bug, regression, broken state or accessibility failure in changed code;
    - fragile code: comparisons by serialisation (`JSON.stringify` of deps or objects), state seeded once from props that goes stale, timers or fixed sleeps in tests, races between async results;
    - a cross-cutting rule (an ask that says "wherever", "every" or "all") that new code from another unit does not follow: grep the whole diff for each such rule;

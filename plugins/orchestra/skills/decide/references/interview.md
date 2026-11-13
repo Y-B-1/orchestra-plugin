@@ -16,7 +16,7 @@ When the owner wants a repeated job specified (a loop), grill for: the trigger (
 - Challenge each term against the glossary. When one conflicts, name both meanings and ask which applies.
 - Replace a vague or overloaded word with one canonical term and list the rejected words as avoided names.
 - Test a relationship with a concrete edge case. Check each claim about how the system works against the code and return a contradiction as a question.
-- Write a resolved term in at once, never in a batch. One or two sentences, what it is, no implementation detail, only terms specific to this project. Create the file on the first term. Where a `GLOSSARY-MAP.md` exists, write to the glossary of the context the term belongs to.
+- Write a resolved term in at once, never in a batch. One or two sentences, what it is, no implementation detail, only terms specific to this project. Create `GLOSSARY.md` on the first term when no glossary exists. Where a `GLOSSARY-MAP.md` exists, write to the glossary of the context the term belongs to.
 - Write to the glossary only when the brief owns that file; otherwise list proposed entries in the artifact.
 
 ## Decision record
