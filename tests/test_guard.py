@@ -42,10 +42,17 @@ class GuardTest(RepoCase):
             'git \\\n  push origin main', 'gh pr \\\n merge 5 --squash', '/usr/bin/git.exe push origin main',
             'bash <<\'EOF\'\ngh pr merge 5\nEOF', 'cat <<EOF\n$(gh pr merge 5)\nEOF',
             'git push origin "$(git branch --show-current)"', 'pushd sub && git push origin main',
-            'gh pr comment 12 --body "Do not run `gh pr merge` yet"']  # a shell runs a backtick span in double quotes
+            'gh pr comment 12 --body "Do not run `gh pr merge` yet"',  # a shell runs a backtick span in double quotes
+            # a substitution inside a quoted argument must not hide the rest of the command from the check
+            'gh api -X PUT repos/o/r/contents/f -f message=m -f content="$(printf x | base64)" -f branch=main',
+            'gh api -X PUT repos/o/r/contents/f -f content="`printf x`" -f branch=main',
+            'gh api -X PATCH repos/o/r/git/refs/heads/main -f sha="$(git rev-parse HEAD)" -F force=true',
+            'gh pr "$(echo merge)" 3 && gh pr merge 3']
 
     # Commands that run: other branches, and text that only mentions a merge or a push.
-    ALLOW = ['git push -u origin feature/x', 'git push origin --delete old-branch', 'git branch -D stale',
+    ALLOW = ['gh api -X PUT repos/o/r/contents/f -f content="$(printf x | base64)" -f branch=feat/x',
+             'echo "gh pr merge $(date)"', 'git commit -m "$(cat msg.txt)" -- a.py',
+             'git push -u origin feature/x', 'git push origin --delete old-branch', 'git branch -D stale',
              'git worktree remove --force ../wt', 'git worktree prune', 'rm -rf ../old-worktree',
              'gh pr create --title "merge fix" --body x', 'gh pr create --body "then git push origin main (later)"',
              'gh pr view 3 --json mergeable', 'gh pr list', 'gh pr list --search merge', 'echo gh pr merge 3',

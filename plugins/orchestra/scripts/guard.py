@@ -275,7 +275,10 @@ def merge_reason(command, cwd=None, cache=None, pushes=None):
     if not re.search(r'\b(git|gh)\b', command):
         return None
     cache = {} if cache is None else cache
-    for part in split_commands(command):
+    parts = split_commands(command)
+    if SUBSTITUTION.search(command):  # a $( ) span cuts the outer command in two: judge it whole as well
+        parts += split_commands(SUBSTITUTION.sub(' SUBST ', command))
+    for part in parts:
         try:
             words = shlex.split(part)
         except ValueError:  # an unbalanced quote, as in the tail of "$(git push origin main)"

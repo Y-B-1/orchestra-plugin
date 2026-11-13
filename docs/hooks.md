@@ -32,7 +32,7 @@ When the guard cannot read a command that mentions merge or push, it denies it r
 
 Everything else runs: pushing other branches and tags (during a run, a branch push waits for the test gate: see below), deleting other branches, removing worktrees, `git merge` in the local checkout, `git reset`, opening and reading pull requests. Claude Code's permission mode decides those as usual.
 
-The deny reason tells the agent to push its branch and open a pull request; merging is the owner's step. The guard reads command text. It does not follow aliases, variables or scripts, so it is a safety net for agents, not isolation.
+The deny reason tells the agent to push its branch and open a pull request; merging is the owner's step. The guard reads command text, and judges a command that holds a `$( )` or backtick span both in pieces and whole, so `gh api ... -f content="$(...)" -f branch=main` is denied. It does not read files: `gh api --input body.json` hides the branch in the file, so that form is not checked. It does not follow aliases, variables or scripts, so it is a safety net for agents, not isolation.
 
 ## One Fable critic, and the model matrix
 
