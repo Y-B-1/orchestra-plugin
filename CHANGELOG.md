@@ -13,6 +13,7 @@ A full-read upstream audit of both skill sets, applied across every skill and ag
 - **Changed: the pre-PR scan.** It reads CONTRIBUTING.md and CODING_STANDARDS.md as rules files and reports a new `skipped-test` finding for skips already in a touched test file.
 - **Changed: the references limit is 100 lines** (was 60). The layout test also checks strict frontmatter (no unquoted colon-space, no unclosed quote), descriptions of at most 90 words, and no repeated rule sentence of 70 characters or more across files.
 - **New: the full-read rule for upstream audits.** An audit of the sources reads every skill in full on both sides; `AGENTS.md` records it and `docs/COVERAGE.md` records the heads read. It is for improving Orchestra's own skills, not for a run in a user's project.
+- **Changed: the e2e runner is 0.23.1** (`@e2e-dev/web` 0.16.0, `@e2e-dev/decision` 0.3.3), and the agent skill copy in `.agents/skills/e2e/` is refreshed, so it now covers filters and `--changed-since`.
 - **Audit fixes, by area:**
   - Coordinator: fetch a named issue or PR first; a `check:` field on every ask; ledger lines for hygiene, gate, cleanup and retro; bugs that change an interface, schema or a security or data invariant get a planner sketch and an independent review.
   - Agents: no stash, amend, rebase or branch switch in a shared checkout; a worktree builder confirms its base; one test per behavior with the seam and the red failure text in the report; reviewers judge against the ledger's `check:` or say "no spec available"; the standards reviewer is handed the rules files.

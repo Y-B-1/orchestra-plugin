@@ -18,7 +18,7 @@ Checks run locally with `scripts/check.sh` (`--quick` is accepted and runs the s
 
 ## Agentic E2E (tester-army `e2e`)
 
-Runner: `e2e` 0.23.0 with `@e2e-dev/web` 0.15.5, `@e2e-dev/decision` 0.3.2, `ai` 7.0.171, `@ai-sdk/typesafe-ai` 3.0.39 (needs Node 22.22.3+ or 24.8+; Node 20 fails). Orchestra is a plugin with no web UI, so `tests/agentic/template.e2e.ts` is the only test: a template for a project with a UI, tagged `template` and skipped. The old example.com scaffold was removed. This repo's real end-to-end check is `scripts/live-check.py` (real headless sessions, costs tokens, release only).
+Runner: `e2e` 0.23.1 with `@e2e-dev/web` 0.16.0, `@e2e-dev/decision` 0.3.3, `ai` 7.0.171, `@ai-sdk/typesafe-ai` 3.0.39 (needs Node 22.22.3+ or 24.8+; Node 20 fails). Orchestra is a plugin with no web UI, so `tests/agentic/template.e2e.ts` is the only test: a template for a project with a UI, tagged `template` and skipped. The old example.com scaffold was removed. This repo's real end-to-end check is `scripts/live-check.py` (real headless sessions, costs tokens, release only).
 
 Config: `e2e.config.ts` sets `filters: [decisionFilter({ model: typeSafeAi.decisionModel('jev-latest') })]` (Jev decides which tests a change can affect) and the Jev decision executor (no screenshots) with Luna as its text model; vision steps use the `luna` agent (`--agent luna`). Key names (names only, values live in the gitignored `.env.e2e.local`): `TYPESAFE_AI_API_KEY` (Jev), `OPENROUTER_API_KEY` (Luna). Set `APP_URL` to the app under test, on an isolated port, never a shared one.
 
