@@ -15,6 +15,15 @@ description: "Gives the rules for tests that can fail and the test-hygiene pass.
 - Tests that share module state (caches, singletons, stores) reset it between tests.
 - If a test is hard to write, write the call you wish existed first. Heavy setup means the interface is too wide. A test that needs many mocks means you should inject the boundary.
 
+## Lean tests
+- One test per behavior. Table-driven cases instead of copies.
+- Call a pure function directly, not through a subprocess or a built repo.
+- No test of a mock, of a type the compiler checks, or of wording.
+- Share fixtures; do not rebuild them per test.
+- The hygiene pass reports tests added minus tests removed. Every added test must prove a behavior no existing test proves.
+- Expected values are literals.
+- Runs: one full run per PR (`gate unit --full`), then scoped (`gate unit --scoped`). e2e rules: `<plugin>/skills/verify/references/e2e.md`.
+
 ## Red first
 - For new behavior, write the test and see it fail for the right reason before the code exists. Name any exemption (rename, copy, style, docs, config).
 

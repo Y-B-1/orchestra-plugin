@@ -3,15 +3,16 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "@ai-sdk/typesafe-ai": "^3.0.13",
-    "@e2e-dev/decision": "^0.1.0",
-    "@e2e-dev/web": "^0.13.0",
+    "@ai-sdk/typesafe-ai": "^3.0.39",
+    "@e2e-dev/decision": "^0.3.2",
+    "@e2e-dev/web": "^0.15.5",
     "@openrouter/ai-sdk-provider": "^3.1.0",
-    "ai": "^7.0.128",
-    "e2e": "^0.18.0",
+    "ai": "^7.0.171",
+    "e2e": "^0.23.0",
     "zod": "^4.1.8"
   },
   "scripts": {
-    "test:e2e": "e2e run"
+    "e2e:changed": "e2e run --changed-since origin/main",
+    "e2e:list": "e2e list --changed-since origin/main"
   }
 }

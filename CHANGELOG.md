@@ -2,6 +2,21 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.5.1 — 2026-11-13
+
+### Fixed
+- The guard now denies a GitHub API write to the default branch when the command holds a `$( )` or backtick span, for example `gh api -X PUT .../contents/f -f content="$(...)" -f branch=main`. The span cut the command into two pieces that were judged apart, so the write passed.
+- Known limit, now documented: `gh api --input FILE` hides the branch in a file the guard does not read.
+
+## 3.5.0 — 2026-11-14
+
+A mandatory test gate before every push, leaner unit tests, and agentic e2e only. See `docs/release-notes/v3.5.0.md`.
+
+- **Added: `lean.py gate`.** One full unit run per branch, scoped runs after it, scoped e2e only, `gate skip` for a repo with no runner, and `gate status` as the push condition; the Stop hook enforces it under a goal.
+- **Added: lean-test rules and the `test-count` scan item.** `orchestra:test-quality` "Lean tests"; the scan reports a net growth of more than 5 tests.
+- **Added: `orchestra:verify` e2e rules.** User-path tests, Filters API, never a full run unless asked.
+- **Changed: this repository's tests are leaner and the e2e runner is 0.23.0.**
+
 ## 3.4.0 — 2026-11-13
 
 Fixes from a full audit of the plugin (136 findings, each checked by a second agent), one new optional agent, and a second look at both upstream skill sets. The purpose is unchanged: every independent ask of a prompt runs in parallel, on the cheapest agent that does it well, for the fastest finish at full quality.
@@ -20,7 +35,7 @@ Fixes from a full audit of the plugin (136 findings, each checked by a second ag
 - **Fixed: skills.** The pre-commit setup no longer breaks parallel commits; the git guardrails script is a tested file; `ship` merges the base instead of rebasing a pushed branch; anything that moves HEAD (`git bisect`, a spike) runs in its own worktree.
 - **Fixed: the repository.** CI no longer fails on the runner's account name; the release workflow checks both manifests and the changelog; the example files match 3.x; benchmark claims match the report's own data; old Codex-era documents carry a history banner.
 - **Upstream check.** mattpocock/skills and pstack were read again at their heads. Four small rules were taken at idea level (see `docs/COVERAGE.md`); nothing else applied.
-- **Fixed: `bench.py queue-file`** stops with a message when disk is low (#46, in its own pull request).
+- **Fixed: `bench.py queue-file`** stops with a message when disk is low (#46).
 
 ## 3.3.1 — 2026-10-30
 

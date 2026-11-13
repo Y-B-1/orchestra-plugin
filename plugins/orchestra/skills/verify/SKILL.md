@@ -8,6 +8,7 @@ description: "Load when a flow has many states and events (booking, payments, sy
 - The repo has no scripted way to start the real app and exercise a flow: build a driver. Read `references/driver.md`.
 - A driver exists and the flow, route, command or UI it drives changed: update the driver in the same change. Read `references/driver.md`, section Maintain.
 - The flow has three or more states and several events (booking, payments, sync, wizards): model it as a statechart before you code or test it. Read `references/statechart.md`.
+- The repo has e2e tests or the ask is an e2e test: read `references/e2e.md`.
 - Any ask that ends in "done", "fixed" or "works": apply the proof rules below.
 
 ## Prove it works

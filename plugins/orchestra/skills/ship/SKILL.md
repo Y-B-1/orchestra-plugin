@@ -27,6 +27,11 @@ Use `gh` for all PR state. With a plain git remote and no `gh`, push the branch 
 4. Run the failing command and the project's checks locally, commit, push. One failure at a time.
 5. After three fix rounds that are still red, stop and report the failing check and what you tried.
 
+## CI and the gate
+- A green gate record for the pushed head (`gate status` exits 0) counts as the check. Do not wait for CI.
+- Whatever runs in the CI runs locally: read the CI workflow files, take each `run:` step that checks code (typecheck, lint, test, build; not deploy or publish), and chain them into the one `gate unit --full` call (`sh -c 'a && b && c'`); a second `--full` is refused. CI that runs only on dispatch is untouched.
+- A repo whose CI does something a local run cannot (a deploy, a matrix of operating systems) says so in the PR body.
+
 ## Merge conflicts
 1. Update the base: `git fetch origin`, then merge the base into the pushed branch. Rebase only when the owner asked, and then the force push is theirs. List conflicts with `git diff --name-only --diff-filter=U`.
 2. For each file, read both sides and `git log` for each side's intent. Keep both when both are needed; otherwise keep what matches the intended behavior of the newer change. Never take "ours" or "theirs" wholesale without that read.

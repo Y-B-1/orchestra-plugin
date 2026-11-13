@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import type { E2EConfig } from 'e2e';
 import { web } from '@e2e-dev/web';
-import { decisionExecutor } from '@e2e-dev/decision';
+import { decisionExecutor, decisionFilter } from '@e2e-dev/decision';
 import { typeSafeAi } from '@ai-sdk/typesafe-ai';
 import { openrouter } from '@openrouter/ai-sdk-provider';
 
@@ -21,6 +21,9 @@ export default {
       app: { url: process.env.APP_URL ?? 'https://example.com' },
     },
   ],
+  // --changed-since <ref> leaves out the tests the change cannot affect (Jev rates each one).
+  // Without the flag every test runs, so scripts and the test gate always pass the flag.
+  filters: [decisionFilter({ model: typeSafeAi.decisionModel('jev-latest') })],
   agents: {
     // Default: Jev picks each action (no screenshots); Luna types values and judges.
     default: {

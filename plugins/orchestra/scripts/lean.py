@@ -12,13 +12,17 @@ CLI:
   lean.py goal set [--limit N] TEXT   starts a goal (N stop attempts, default 60; or set ORCHESTRA_GOAL_LIMIT)
   lean.py goal stop [--session ID] REASON   ends a goal; from a terminal with no session id it ends every active goal
   lean.py goal status
+  lean.py gate unit --full|--scoped [--seconds N] -- CMD   the test gate: the one full unit run per branch, then scoped runs
+  lean.py gate e2e [--seconds N] -- CMD   a scoped e2e run (a full one only with ORCHESTRA_E2E_FULL=1)
+  lean.py gate skip unit|e2e REASON   records that the repo has no such runner
+  lean.py gate status          exit 0 when the gate holds for HEAD, else 1 with what is missing (docs/hooks.md)
   lean.py check [--base REF] [--max-lines N] [--json]   scans the branch diff; findings never block (docs/check.md)
 
 State is per session: <git common dir>/orchestra/sessions/<session id>/ holds asks.md and goal.json. The folder is
 created when something is written. The ledger may start with "base: <ref> (<sha>) | branch: <name>".
 The session id comes from the hook event, or from CLAUDE_CODE_SESSION_ID in a Bash command.
 """
-import hashlib, json, math, os, re, subprocess, sys, time
+import hashlib, json, math, os, re, subprocess, sys, tempfile, time
 from pathlib import Path
 
 MAX_CONTINUES = 60
@@ -67,8 +71,9 @@ def read_json(f):
 
 
 def write_json(f, data):
-    tmp = Path(f).with_name(Path(f).name + '.tmp')
-    tmp.write_text(json.dumps(data))
+    fd, tmp = tempfile.mkstemp(dir=Path(f).parent, prefix=Path(f).name + '.')
+    with os.fdopen(fd, 'w') as out:
+        out.write(json.dumps(data))
     os.replace(tmp, f)
 
 
@@ -269,6 +274,8 @@ def goal_missing(cwd, session, asks):
         return missing
     if not REVIEWED.search(text):
         missing.append('no independent review recorded: when it is clean, add "- [x] review: clean" to the ledger')
+    import gate  # loaded only here
+    missing += gate.missing(cwd)
     if not git('remote', cwd=cwd):
         return missing
     if not branch:
@@ -432,6 +439,9 @@ def main():
     if args[:1] == ['check']:
         from check import run_check  # loaded only for this command
         return run_check(args[1:])
+    if args[:1] == ['gate']:
+        import gate
+        return gate.main(args[1:])
     if args[:1] == ['ledger']:
         state_dir(create=True)
         print(ledger())
