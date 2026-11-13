@@ -16,7 +16,7 @@ Checks run locally with `scripts/check.sh` (`--quick` is accepted and runs the s
 
 Runner: `e2e` 0.23.0 with `@e2e-dev/web` 0.15.5, `@e2e-dev/decision` 0.3.2, `ai` 7.0.171, `@ai-sdk/typesafe-ai` 3.0.39 (needs Node 22.22.3+ or 24.8+; Node 20 fails). Orchestra is a plugin with no web UI, so `tests/agentic/template.e2e.ts` is the only test: a template for a project with a UI, tagged `template` and skipped. The old example.com scaffold was removed. This repo's real end-to-end check is `scripts/live-check.py` (real headless sessions, costs tokens, release only).
 
-Config: `e2e.config.ts` sets `filters: [decisionFilter({ model: typeSafeAi.decisionModel('jev-latest') })]` (Jev decides which tests a change can affect) and the Jev decision executor with Luna as text and vision model. Key names (names only, values live in the gitignored `.env.e2e.local`): `TYPESAFE_AI_API_KEY` (Jev), `OPENROUTER_API_KEY` (Luna). Set `APP_URL` to the app under test, on an isolated port, never a shared one.
+Config: `e2e.config.ts` sets `filters: [decisionFilter({ model: typeSafeAi.decisionModel('jev-latest') })]` (Jev decides which tests a change can affect) and the Jev decision executor (no screenshots) with Luna as its text model; vision steps use the `luna` agent (`--agent luna`). Key names (names only, values live in the gitignored `.env.e2e.local`): `TYPESAFE_AI_API_KEY` (Jev), `OPENROUTER_API_KEY` (Luna). Set `APP_URL` to the app under test, on an isolated port, never a shared one.
 
 Commands, always scoped: commit first, then `npm run e2e:list` (preview, makes the filter's model call) and `npm run e2e:changed` (`e2e run --changed-since origin/main`). There is no script for a full run, and no full run unless the owner asks (`e2e run` with no flag runs every test; a change to `e2e.config.ts` or the lockfile also forces a full run). Through the gate: `lean.py gate e2e -- npx e2e run --changed-since origin/main`.
 
@@ -25,7 +25,7 @@ Tests follow the docs: arrange, act, assert, one behavior per test, a user path,
 Model routing (Jev acts and judges page text; Luna sees pixels):
 - Write `agent.act` goals as a destination or result ("go to the Billing page"), never as a click ("click Billing"). Jev rates click goals "inconclusive".
 - Route visual checks to Luna: `agent.assert("…", { agent: "luna", vision: true })`. Route canvas-only or image-only steps with `agent.act("…", { agent: "luna" })`.
-- Jev has no vision. A step it cannot confirm fails as `AUTOMATION_UNSUPPORTED` or `ASSERTION_INCONCLUSIVE`. Before you call that a product bug, rerun the step once with `--agent luna`. Only a failure that Luna also reports is a bug.
+- Jev has no vision in this config (the executor sets no `vision: true`). A step it cannot confirm fails as `AUTOMATION_UNSUPPORTED` or `ASSERTION_INCONCLUSIVE`. Before you call that a product bug, rerun the step once with `--agent luna`. Only a failure that Luna also reports is a bug.
 
 Run tests to completion without asking:
 - When a test you wrote fails because the screen contradicts your wording, read the failure screen, fix the wording, and rerun. Do this up to 2 times without asking.

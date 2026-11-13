@@ -127,7 +127,7 @@ Keep tests few, fast and behavior-level. In the tests the diff added or touched 
 - a failing test is fixed (code or test), never silenced or excepted;
 - every new module gets the smallest test that proves its behavior; in a repo with no test runner, add none: prove it with the closest executable check and name the missing test seam in the final message;
 - on every diff, remove slop per `<plugin>/skills/build/references/cleanup.md` "Slop to remove": comments that restate the code, defensive checks on trusted paths, casts that only silence types.
-Use fast native tools if the repo already has them (oxlint, tsgo); never add tools unasked. If the repo already has tsc-rs, tsrs or tsgo, use it for the full typecheck; these are type checkers only and do not run tests.
+Use fast native tools if the repo already has them (oxlint, tsgo); never add tools unasked. If the repo already has tsc-rs, tsrs or tsgo, use it for the full typecheck; these are compiler ports with no test runner and no changed-file scoping.
 
 ### The test gate (before every push)
 `G="python3 <plugin>/scripts/lean.py gate"`. Unit tests run in full once per PR; every later run is scoped:

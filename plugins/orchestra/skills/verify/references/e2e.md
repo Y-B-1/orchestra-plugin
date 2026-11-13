@@ -18,6 +18,7 @@ Rules for any e2e test written or run in a repo. A repo that uses the `e2e` runn
 
 ## Keys
 - Read keys from the environment. Never print them, write them to a log or commit them.
+- The Jev key is `TYPESAFE_AI_API_KEY`. Without it the filter warns and leaves nothing out, so every test runs.
 
 ## Another runner (Playwright, Cypress)
 The same scoping rule applies with that runner's own filters: a changed-since or related-files option, `--grep`, a tag, `--last-failed`, a shard, or the test file paths. No full run unless the owner asks.
