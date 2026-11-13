@@ -2,7 +2,7 @@
 
 Orchestra is a Claude Code plugin for prompts that hold more than one ask. It splits the prompt into asks, runs every independent ask at the same time, reviews the finished work once, and pushes a branch for you to merge. `/orchestra:goal` keeps a session working until every ask is done. One guard blocks merging into the default branch; everything else runs.
 
-Orchestra keeps 3.0's fast design, brings back every 2.15 capability, and holds every engineering capability of mattpocock/skills and pstack (see `docs/COVERAGE.md`), each as an on-demand part: one coordinator skill, twelve agents with pinned models, six role skills and seven shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
+Orchestra keeps 3.0's fast design, brings back every 2.15 capability, and holds every engineering capability of mattpocock/skills and pstack (see `docs/COVERAGE.md`), each as an on-demand part: one coordinator skill, twelve agents with a model family and effort each, six role skills and seven shared situation skills (each loaded only when its situation applies), one command, a pre-PR diff scan and three small hooks in standard-library Python (`scripts/lean.py`, `scripts/check.py`). It needs no API key, daemon or extra service.
 
 ## Install
 
@@ -31,20 +31,20 @@ Installing enables the plugin, and its three hooks run from the next session or 
 
 ## Agents
 
-| Agent | Model | Effort | Job |
+| Agent | Model family | Effort | Job |
 | --- | --- | --- | --- |
-| `orchestra:builder` | Sonnet 5.5 | medium | Builds one unit, checks it and commits it |
-| `orchestra:builder-mechanical` | Haiku 5.5 | high | One uniform change across many files |
-| `orchestra:builder-cleanup` | Haiku 5.5 | high | The simplify and test-hygiene pass on a large diff |
-| `orchestra:reviewer` | Opus 5.5 | medium | Review of one area of a large diff, and its scoped re-reviews |
-| `orchestra:reviewer-light` | Sonnet 5.5 | medium | Review of a diff under about 300 lines |
-| `orchestra:reviewer-standards` | Sonnet 5.5 | medium | Standards, file budget and test quality when the scan flags them |
-| `orchestra:planner` | Sonnet 5.5 | high | A short spec for a feature whose shape is a real choice |
-| `orchestra:critic` | Opus 5.5 | high | Challenges a large or risky spec before it is built |
-| `orchestra:critic-fable` | Fable 5.2 | high | Optional third point of view at the start or the end of a run. Never more than one at a time (the hook denies a second); falls back to `orchestra:critic` without Fable access |
-| `orchestra:investigator` | Haiku 5.5 | high | Fast read-only discovery of the files an ask touches |
-| `orchestra:investigator-research` | Sonnet 5.5 | medium | Checks a library or API for the version the repo uses |
-| `orchestra:operator` | Haiku 5.5 | high | Runs long checks in parallel; release steps only on an owner approval |
+| `orchestra:builder` | Sonnet | medium | Builds one unit, checks it and commits it |
+| `orchestra:builder-mechanical` | Haiku | high | One uniform change across many files |
+| `orchestra:builder-cleanup` | Haiku | high | The simplify and test-hygiene pass on a large diff |
+| `orchestra:reviewer` | Opus | medium | Review of one area of a large diff, and its scoped re-reviews |
+| `orchestra:reviewer-light` | Sonnet | medium | Review of a diff under about 300 lines |
+| `orchestra:reviewer-standards` | Sonnet | medium | Standards, file budget and test quality when the scan flags them |
+| `orchestra:planner` | Sonnet | high | A short spec for a feature whose shape is a real choice |
+| `orchestra:critic` | Opus | high | Challenges a large or risky spec before it is built |
+| `orchestra:critic-fable` | Fable | high | Optional third point of view at the start or the end of a run. Never more than one at a time (the hook denies a second); falls back to `orchestra:critic` without Fable access |
+| `orchestra:investigator` | Haiku | high | Fast read-only discovery of the files an ask touches |
+| `orchestra:investigator-research` | Sonnet | medium | Checks a library or API for the version the repo uses |
+| `orchestra:operator` | Haiku | high | Runs long checks in parallel; release steps only on an owner approval |
 
 ## Skills
 
@@ -54,7 +54,7 @@ Every skill loads only when its situation applies, so a routine task reads none 
 - **Role skills**, loaded by their agent in the cases its file names: `build` (repair, mechanical, lever, migrate, cleanup and sensitive modes), `review` (lenses: correctness, data and contracts, architecture, standards, tests, security, accessibility, performance), `plan`, `critique`, `investigate` (code, how, why, survey and research modes), `operate`.
 - **Shared situation skills**, for any agent or the main session: `diagnose` (a bug whose cause is unknown), `decide` (conflicting asks, two valid product shapes, a harmful suggestion), `test-quality`, `frontend-proof` (new interactive components, accessibility), `large-work`, `ship` (pull requests, CI, review comments, conflicts), `verify` (driving the real app, flows with many states).
 
-The main session runs on the model and effort you pick.
+The main session runs on the model and effort you pick. Each agent names a model family (`sonnet`, `opus`, `haiku`, `fable`), which Claude Code resolves to the newest model of that family for your provider, so the matrix follows new releases; on Bedrock, Google Cloud, Foundry and AWS-hosted platforms an alias can resolve to an older model. To pin one agent to an exact model, put a full id such as `claude-opus-5-5` in its `model:` line.
 
 ## /orchestra:goal
 
