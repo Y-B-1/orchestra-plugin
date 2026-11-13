@@ -4,7 +4,9 @@ from pathlib import Path
 
 import lean
 
-SCOPE_FLAGS = ('--changed-since', '--grep', '-g', '--tag', '--last-failed', '--shard', '--only-changed', '--spec')
+# --shard 1/1 is a full run and --last-failed reruns nothing new, so neither counts as a scope.
+SCOPE_FLAGS = ('--changed-since', '--grep', '-g', '--tag', '--only-changed', '--spec')
+CONFIGS = ('e2e.config.ts', 'e2e.config.js', 'e2e.config.mjs')
 VALUE_FLAGS = ('--config', '-c', '--project')
 TEST_FILE = re.compile(r'\.(e2e|spec|test|cy)\.\w+$')
 RUNNERS = ('npm', 'pnpm', 'yarn', 'bun')
@@ -38,16 +40,38 @@ def script_words(cmd, cwd, depth=0):
     return script_words(words + [a for a in extra if a != '--'], cwd, depth + 1)
 
 
-def e2e_scoped(cmd, cwd=None):
-    skip = False
+def scopes(cmd, cwd=None):
+    """The scope flags (and 'file' for a test file path) the command carries, after its package script is read."""
+    found, skip = set(), False
     for a in script_words(cmd, cwd) or ():
         if skip:
             skip = False
         elif a in VALUE_FLAGS:
             skip = True
-        elif a.split('=')[0] in SCOPE_FLAGS or (not a.startswith('-') and TEST_FILE.search(a)):
-            return True
-    return False
+        elif a.split('=')[0] in SCOPE_FLAGS:
+            found.add(a.split('=')[0])
+        elif not a.startswith('-') and TEST_FILE.search(a):
+            found.add('file')
+    return found
+
+
+def e2e_scoped(cmd, cwd=None):
+    return bool(scopes(cmd, cwd))
+
+
+def filters_missing(cmd, cwd=None):
+    """The e2e config file name when the agentic runner (`e2e run`) is scoped only by --changed-since and that config
+    has no `filters` key (a plain text search), else ''. Without filters the flag leaves nothing out."""
+    words = [w for w in script_words(cmd, cwd) or () if w not in ('npx', 'bunx', 'exec', 'dlx')]
+    if words[:2] != ['e2e', 'run'] or scopes(cmd, cwd) != {'--changed-since'}:
+        return ''
+    for name in CONFIGS:
+        try:
+            text = (Path(cwd or '.') / name).read_text(errors='replace')
+        except OSError:
+            continue
+        return '' if 'filters' in text else name
+    return ''
 
 
 def nothing_to_gate(cwd):
