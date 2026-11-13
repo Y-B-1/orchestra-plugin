@@ -29,7 +29,7 @@ Fixes from a full audit of the plugin (136 findings, each checked by a second ag
 - **Fixed: skills.** The pre-commit setup no longer breaks parallel commits; the git guardrails script is a tested file; `ship` merges the base instead of rebasing a pushed branch; anything that moves HEAD (`git bisect`, a spike) runs in its own worktree.
 - **Fixed: the repository.** CI no longer fails on the runner's account name; the release workflow checks both manifests and the changelog; the example files match 3.x; benchmark claims match the report's own data; old Codex-era documents carry a history banner.
 - **Upstream check.** mattpocock/skills and pstack were read again at their heads. Four small rules were taken at idea level (see `docs/COVERAGE.md`); nothing else applied.
-- **Fixed: `bench.py queue-file`** stops with a message when disk is low (#46, in its own pull request).
+- **Fixed: `bench.py queue-file`** stops with a message when disk is low (#46).
 
 ## 3.3.1 — 2026-10-30
 

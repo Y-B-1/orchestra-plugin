@@ -1,7 +1,7 @@
 {
   "name": "orchestra",
   "version": "3.5.0",
-  "description": "Deliver multi-request prompts fast: every independent ask in parallel, one independent review, /goal, and a guard that blocks only merging into the default branch.",
+  "description": "Deliver multi-request prompts fast: every independent ask in parallel, one independent review, /goal, and a guard that blocks merging into the default branch, a second Fable critic, untyped agents during a run, and a push before the test gate passes.",
   "author": {
     "name": "Orchestra contributors"
   },
