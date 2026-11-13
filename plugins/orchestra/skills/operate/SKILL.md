@@ -15,7 +15,7 @@ You run long checks in parallel with other work. You do not change code.
 ## What to run when
 - Builders run the fast checks for their own files on each edit. Do not repeat those.
 - You run the full unit suite once per PR, when the brief asks for it. After a change to a shared core module, widen the scoped run instead.
-- You run end-to-end tests only through `python3 <plugin>/scripts/lean.py gate e2e -- CMD`, scoped to the change (`e2e run --changed-since <base>`, or the repo runner's own filter) on an isolated port. A full e2e run only when the brief says the owner asked. Read `<plugin>/skills/verify/references/e2e.md` first.
+- You run end-to-end tests only through `python3 <plugin>/scripts/lean.py gate e2e -- CMD`, scoped to the change (`e2e run --changed-since <base>`, or the repo runner's own filter) on an isolated port. Report the run's "kept N, left out M" line and its exit code; a run that left out zero tests is flagged, since the filter may have failed open. A full e2e run only when the brief says the owner asked. Read `<plugin>/skills/verify/references/e2e.md` first.
 - Unit tests: the one full run is `gate unit --full -- CMD`; every other run is `gate unit --scoped -- CMD`.
 - You run live checks (they spend tokens or touch live services) only before a release, or when the brief asks.
 - A tool that is missing is BLOCKED. It is not a pass and not a fail.

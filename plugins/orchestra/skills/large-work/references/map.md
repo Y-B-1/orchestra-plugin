@@ -22,18 +22,19 @@ Tickets sit in `docs/maps/<name>/`, one file each: `## Question`, a type, a `blo
 - **Research** (no owner): a fact a decision waits on, from docs, APIs or other repositories. An investigator unit resolves it. Start all open research tickets together.
 - **Prototype** (with owner): a cheap rough artifact to react to. Read `references/spikes.md`.
 - **Grilling** (with owner): questions in frontier rounds, each with a recommended answer. The main session asks; a worker never answers for the owner.
-- **Task**: work that must happen before a decision, such as access or sample data. A worker does it when it can; otherwise the owner gets a wizard script.
+- **Task**: work that must happen before a decision, such as access or sample data. A worker does it when it can; otherwise the owner gets a wizard script. Its answer records what was done and the facts later tickets rely on (where a credential lives, new URLs, row counts).
+- Size each ticket to one agent session. A ticket that needs more is two tickets.
 
 ## Charting
 1. Name the destination with the owner.
 2. Map the frontier breadth first: surface the open decisions and the first steps takeable now.
-3. Create the map, then the tickets you can state now. Wire the `blocked by` lines in a second pass, with real titles.
+3. Create the map, then the tickets you can state now. Wire the `blocked by` lines in a second pass, with real titles or ids. A placeholder such as `#<n>` auto-links to an unrelated issue.
 4. Start the research tickets in parallel. Stop: charting resolves no human ticket.
 
 ## Working the map
 One human ticket per session; research tickets are the exception.
 1. Read the map, not every ticket.
-2. Take the named ticket, else the first frontier ticket (open, unblocked, unclaimed). Mark it claimed before any work.
+2. Take the named ticket, else the first frontier ticket (open, unblocked, unclaimed). Claim it as the first write: on GitHub, `gh issue edit <n> --add-assignee @me`. The frontier is the open, unblocked, unassigned children.
 3. Resolve it by its type. Open closed tickets only when the answer needs them.
 4. Write the answer in the ticket, close it, add its line to Decisions so far.
 5. Add the tickets the answer made sharp; update or close tickets it made wrong.

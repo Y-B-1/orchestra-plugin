@@ -5,7 +5,7 @@ description: "Settles a choice the ask leaves open, interviews the owner, keeps 
 # Decide an open choice
 
 ## Facts first
-- Read the code and docs before you call anything a decision. Never ask what the repository can answer. Send a read-only worker for a fact that takes a search; only the questions that depend on it wait.
+- Read the code and docs before you call anything a decision. Never ask what the repository can answer. A question whose answer is a fact a run can show (behavior, timing, layout, output, speed) gets a throwaway sketch first, and the result decides; keep the question for a product or preference call no run can settle. Send a read-only worker for a fact that takes a search; only the questions that depend on it wait.
 - Use the project's own terms (the existing glossary, else `GLOSSARY.md`; names in code). One concept gets one name. Never rename a persisted key, column or public name by judgment. Migrate it.
 
 ## Whose choice it is
@@ -16,13 +16,13 @@ description: "Settles a choice the ask leaves open, interviews the owner, keeps 
 - When the owner is present, ask the whole frontier in one round: every open decision whose prerequisites are settled. A question that depends on an open answer waits for the next round.
 - Each question has a title, the options with trade-offs, and your recommended answer worded so "yes" accepts it. Start all work no open answer touches before you ask.
 - Ask only choices that are costly to undo. Settle cheap ones yourself and list them.
-- After each answer, write it into the glossary or a decision record at once, then recompute the frontier. Stop when it is empty and nothing is assumed in silence. Do not act until the owner confirms the shared understanding.
+- After each answer, write it into the glossary or a decision record at once, then recompute the frontier. An answer that is neither a term nor a record goes to the ledger as a `decision:` line and is copied literally into every brief it affects; keep numbers, orderings and "must not" clauses as the owner said them. Stop when it is empty and nothing is assumed in silence. Do not act until the owner confirms the shared understanding.
 - When the owner asks to be grilled, run the same rounds without the cost filter and probe every branch of the plan. Read `references/interview.md` for the round format, the glossary rules and the decision record test.
 - When only a third person holds the facts, write them a questionnaire. Read `references/interview.md`, section Questionnaire.
 
 ## Decide-and-log mode
 - Never ask mid-run. Pick the shape cheapest to change later and closest to how the app works now.
-- Record each decision as you make it: the choice, the rejected option, one reason. Report them under "Decisions" in the final message.
+- Record each decision as you make it: the choice, the rejected option, one reason, and in plain words what the owner could say to override it. Report them under "Decisions" in the final message.
 - Still update the glossary and write a decision record when the three-part test passes (`references/interview.md`, sections Glossary and Decision record).
 
 ## Conflicts

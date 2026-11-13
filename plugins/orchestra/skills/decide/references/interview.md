@@ -20,7 +20,9 @@ When the owner wants a repeated job specified (a loop), grill for: the trigger (
 - Write to the glossary only when the brief owns that file; otherwise list proposed entries in the artifact.
 
 ## Decision record
-Write one only when all three hold: hard to reverse, surprising without context, a real trade-off between genuine alternatives. If one is missing, write none. A record holds the context, the choice, the rejected options and the consequences, in a few lines, under `docs/adr/NNNN-slug.md`.
+Write one only when all three hold: hard to reverse, surprising without context, a real trade-off between genuine alternatives. If one is missing, write none. A record holds the context, the choice, the rejected options and the consequences, in a few lines, under `docs/adr/NNNN-slug.md`; one paragraph is enough, and options and consequences appear only when they add something.
+What qualifies: an integration pattern between parts, a technology choice with lock-in, a scope exclusion, a deliberate departure from the obvious path, a constraint the code does not show, a rejected alternative that is not obvious.
+A revisited decision gets a Status (proposed, accepted, deprecated, or superseded by ADR-NNNN) instead of an edit. Date every durable claim and cite the commit it held at (`as of <sha>`); never write "currently".
 
 ## Questionnaire
 Use it when the owner cannot answer alone because someone else holds the facts. Interview the send, never the subject: ask who receives it and what the owner must get back, in one exchange. Then write one Markdown file: purpose, from and to, context in one paragraph, how to answer (partial answers and "I do not know" are useful), questions grouped by theme and ordered by importance, each one idea with an answer stub and a why line only where it could be misread, and a closing "Anything else?". Done when every item the owner named is covered.

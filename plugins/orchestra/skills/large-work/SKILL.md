@@ -22,6 +22,7 @@ description: "Gives a way to size, split, hand off and prove work too big for on
 - One symbol changed by two units is a conflict. Give it to one unit, or make the later unit depend on the earlier one.
 - Name shared resources beyond files: dev server port, database, fixture, lockfile, build output, generated files. Units that share one run in order, or one unit owns it.
 - Decide the data types and shapes first. Put scaffold (shared types, test setup, the check) before features, and subtraction (dead code) before scaffold.
+- A reported contract change is checked against the frozen contract before any dependent brief goes out. The contract's owner updates the contract file, never the code to match; never rewrite the spec afterward to justify what was built.
 - Before state is shared between units or actors, ask what happens if another one changes it at the same time. If the answer is not "nothing", isolate it.
 
 ## Specs that can be checked
@@ -42,6 +43,12 @@ description: "Gives a way to size, split, hand off and prove work too big for on
 - For a long, unattended or multi-phase run, or work a person reviews later, or a hypothesis loop, read `references/run-log.md`.
 
 ## Hand off
-- When the context nears its limit, or the work stops for the night, write a handoff. Read `references/handoff.md`.
+- At a phase boundary the first yes wins, in this order:
+  1. Continue: the next phase needs this one as a primary source, or about 150k tokens of room remain. Keep grilling, spec and tickets in one window, and run the retro before any clear.
+  2. Clear: everything in the window is disposable.
+  3. Handoff: only for a new harness, a new directory, a colleague, or a side task in mid-phase. Read `references/handoff.md`.
+  4. Subagent: the next phase can run unattended.
+  5. Compact: only when nothing above fits, with an instruction on what to keep.
+- Mid-phase, continue or split into subagents. The work stopping for the night is a pause: read the Pause section of `references/handoff.md`.
 
 Sources: mattpocock/skills@59db609 (wayfinder, triage, handoff, claude-handoff, prototype), pstack@47c6f80 (figure-it-out, show-me-your-work, foundational-thinking, outcome-oriented-execution, build-the-lever, arena, sequence-verifiable-units), orchestra v2.15.3 (wayfinder, triage, handoff, feasibility).
