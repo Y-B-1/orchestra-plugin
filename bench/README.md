@@ -8,7 +8,7 @@ A benchmark kit that compares Orchestra with plain Claude Code and other skill p
 - Cost in USD from the session result.
 - Parallelism: summed agent busy time (Agent tool and Workflow subagents, read from the session transcripts) over time to last push. Peak concurrent agents.
 - Hidden tests: the task's `hidden/` tests copied into the pushed branch and run with vitest.
-- Project checks: `typecheck`, `lint`, `test` and `build` run on the pushed branch.
+- Project checks: `typecheck`, `lint`, `test` and `build` run on the pushed branch. `typecheck` and `build` use `tsrs` (the Rust port of the TypeScript 7 compiler, pinned to an exact beta version); runs recorded before 3.6.2 used `tsc` 6.0.3.
 - A blind judge, a second Opus session that sees only the spec, rubric, hidden test results, final message and diff. It scores each ask 0 to 2 and lists defects with a fix size. Repair points combine failed hidden tests, defect sizes (S 1, M 3, L 8) and 3 per failed check.
 
 ## Layout

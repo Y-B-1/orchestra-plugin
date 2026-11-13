@@ -39,6 +39,12 @@ fi
 
 run hooks-json "$py311" -m json.tool plugins/orchestra/hooks/hooks.json
 
+if [ -x node_modules/.bin/tsrs ]; then
+  run typecheck node_modules/.bin/tsrs --noEmit
+else
+  summary+=("SKIPPED  typecheck (tsrs is not installed: run npm install)")
+fi
+
 if command -v claude >/dev/null 2>&1; then
   run validate-plugin claude plugin validate --strict plugins/orchestra
   run validate-marketplace claude plugin validate --strict .
