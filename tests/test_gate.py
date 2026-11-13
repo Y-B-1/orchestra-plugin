@@ -261,7 +261,7 @@ class GateTest(unittest.TestCase):
         self.assertEqual(self.cli('status').returncode, 1)
         refused = self.cli('skip', 'unit', 'flaky')
         self.assertEqual(refused.returncode, 3)
-        self.assertIn('runs are recorded for this branch; a skip is for a repo with no runner', refused.stderr)
+        self.assertIn('this repository has a unit runner: runs are recorded; a skip is for a repo with no runner', refused.stderr)
         self.assertEqual(self.cli('status').returncode, 1)
 
     def test_a_skip_of_a_kind_is_refused_after_a_run_of_that_kind(self):
@@ -289,7 +289,7 @@ class GateTest(unittest.TestCase):
         git(self.cwd, 'checkout', '-q', 'main')
         git(self.cwd, 'branch', '-q', '-D', 'work')
         git(self.cwd, 'checkout', '-q', '-b', 'work')
-        self.commit()
+        git(self.cwd, 'commit', '-q', '--allow-empty', '-m', 'again')  # another message: the same commit within one second would be the old head
 
     def test_a_recreated_branch_starts_without_the_old_full_run_and_skips(self):
         self.recreate()
@@ -321,6 +321,44 @@ class GateTest(unittest.TestCase):
         out = self.cli('status').stdout
         self.assertIn('exit 1', out)
         self.assertIn('raise SystemExit(1)', out)
+
+    def test_a_skip_does_not_hide_a_red_run_after_one_more_commit(self):
+        self.cli('skip', 'unit', 'r')
+        self.assertEqual(self.cli('unit', '--full', '--', *FAIL).returncode, 1)
+        self.cli('skip', 'e2e', 'r')
+        self.assertEqual(self.cli('status').returncode, 1)
+        self.commit()
+        self.assertEqual(self.cli('status').returncode, 1)
+
+    def test_an_amend_does_not_let_a_skip_through_after_a_run(self):
+        self.cli('unit', '--full', '--', *FAIL)
+        self.assertEqual(self.cli('skip', 'unit', 'r').returncode, 3)
+        git(self.cwd, 'commit', '-q', '--amend', '--no-edit', '--allow-empty')
+        refused = self.cli('skip', 'unit', 'r')
+        self.assertEqual(refused.returncode, 3)
+        self.assertIn('this repository has a unit runner: runs are recorded; a skip is for a repo with no runner', refused.stderr)
+        self.cli('skip', 'e2e', 'r')
+        self.assertEqual(self.cli('status').returncode, 1)
+
+    def test_the_runner_flag_is_kept_at_the_top_level_and_old_files_still_read(self):
+        self.cli('unit', '--scoped', '--', *OK)
+        self.cli('e2e', '--', *OK, '--grep', 'x')
+        self.assertEqual(json.loads(gate.file(self.cwd).read_text())['runner'], {'unit': True, 'e2e': True})
+        gate.file(self.cwd).write_text('{"work": {"skips": {"unit": {"reason": "r", "head": "x"}}}}')
+        self.assertEqual(self.cli('status').returncode, 1)
+        gate.file(self.cwd).write_text('{"runner": 5}')
+        self.assertEqual(self.cli('skip', 'unit', 'r').returncode, 0)
+
+    def test_a_branch_with_no_commits_beyond_the_default_branch_has_nothing_to_gate(self):
+        git(self.cwd, 'update-ref', 'refs/heads/main', 'HEAD')
+        self.assertEqual(gate.missing(self.cwd), [])
+        self.assertEqual(self.cli('status').returncode, 0)
+        for args in (['skip', 'unit', 'r'], ['unit', '--full', '--', *OK]):
+            done = self.cli(*args)
+            self.assertEqual(done.returncode, 3, args)
+            self.assertIn('no commits beyond main: nothing to gate yet; commit first', done.stderr)
+        self.commit()
+        self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
 
 
 if __name__ == '__main__':

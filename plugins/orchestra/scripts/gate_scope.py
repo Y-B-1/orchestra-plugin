@@ -1,5 +1,5 @@
 """Which e2e commands are scoped (see gate.py): a scope flag or a test file in the command or in the package script it runs."""
-import re, shlex
+import re, shlex, sys
 from pathlib import Path
 
 import lean
@@ -48,3 +48,17 @@ def e2e_scoped(cmd, cwd=None):
         elif a.split('=')[0] in SCOPE_FLAGS or (not a.startswith('-') and TEST_FILE.search(a)):
             return True
     return False
+
+
+def nothing_to_gate(cwd):
+    """The default branch's name when HEAD has no commits beyond it (reusing the Stop hook's count), else ''."""
+    d = lean.default_branch(cwd)
+    exists = any(lean.git('rev-parse', '--verify', '--quiet', r + d + '^{commit}', cwd=cwd) for r in ('refs/remotes/origin/', 'refs/heads/'))
+    return d if exists and not lean.commits_ahead(cwd, '') else ''
+
+
+def refuse_empty(cwd):
+    d = nothing_to_gate(cwd)
+    if d:
+        print(f'gate: no commits beyond {d}: nothing to gate yet; commit first', file=sys.stderr)
+    return bool(d)

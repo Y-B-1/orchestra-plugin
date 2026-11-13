@@ -1,6 +1,7 @@
 """The test gate: `lean.py gate ...` (see docs/hooks.md). State is <git common dir>/orchestra/gate.json (the folder's
 .orchestra outside a repository), keyed by branch: {branch: {"full": {"head", "exit", "cmd"}, "skips": {kind: {"reason", "head"}},
-"runs": {kind: [{"head", "cmd", "exit", "time"} ...]}, "claim": {"pid", "start", "limit"}}}; runs keep only HEAD's latest
+"runs": {kind: [{"head", "cmd", "exit", "time"} ...]}, "claim": {"pid", "start", "limit"}}, plus a top-level
+"runner": {kind: true} set when a run of that kind is first recorded and never cleared; runs keep only HEAD's latest
 record per command; the claim marks the running full unit run and is dropped when it ends."""
 import contextlib, os, shlex, sys, time
 from pathlib import Path
@@ -11,7 +12,7 @@ except ImportError:  # no flock here: the unique temp file in lean.write_json st
     fcntl = None
 
 import lean
-from gate_scope import e2e_scoped
+from gate_scope import e2e_scoped, nothing_to_gate, refuse_empty
 
 KINDS = ('unit', 'e2e')
 SECONDS = 600.0
@@ -38,10 +39,17 @@ def locked(f):
         yield
 
 
-def record(cwd, update):
+def runner_of(cwd):
+    runner = lean.read_json(file(cwd)).get('runner')
+    return {k: isinstance(runner, dict) and runner.get(k) is True for k in KINDS}
+
+
+def record(cwd, update, kind=None):
     f = file(cwd)
     with locked(f):
         data = lean.read_json(f)
+        if kind:
+            data['runner'] = {**(data['runner'] if isinstance(data.get('runner'), dict) else {}), kind: True}
         entry = data.get(branch_of(cwd))
         entry = entry if isinstance(entry, dict) else {}
         update(entry)
@@ -71,7 +79,7 @@ def entry_of(cwd):
     runs = {k: [r for r in runs[k] if isinstance(r, dict)] if isinstance(runs.get(k), list) else [] for k in KINDS}
     full, skips = fresh(entry, cwd)
     return {'full': full, 'skips': skips, 'runs': runs,
-            'ran': {k: any(live(r.get('head'), cwd) for r in runs[k]) for k in KINDS}}
+            'runner': runner_of(cwd)}
 
 
 def latest(runs, head):
@@ -85,10 +93,12 @@ def green(runs, head):
 
 def missing(cwd):
     """What the pre-PR gate still lacks for HEAD; empty when it holds."""
+    if nothing_to_gate(cwd):
+        return []
     e, head = entry_of(cwd), lean.git('rev-parse', 'HEAD', cwd=cwd)
     out = []
-    skipped = lambda k: k in e['skips'] and all(x == 0 for x in latest(e['runs'][k], head).values())  # a red run at HEAD voids the skip
-    hint = lambda k: '' if e['ran'][k] else f' (or gate skip {k} REASON)'
+    skipped = lambda k: k in e['skips'] and not e['runner'][k]  # a repository with a runner of that kind never skips it
+    hint = lambda k: '' if e['runner'][k] else f' (or gate skip {k} REASON)'
     if not skipped('unit'):
         if not e['full']:
             out.append('no full unit run recorded for the branch: gate unit --full -- CMD' + hint('unit'))
@@ -119,6 +129,8 @@ def take(entry, seconds, cwd=None):
 def run(kind, mode, seconds, cmd, cwd=None):
     """Run cmd bounded and record it; returns its exit code, or 3 for a refusal."""
     if mode == 'full':
+        if refuse_empty(cwd):
+            return 3
         busy = []
         record(cwd, lambda entry: busy.append(take(entry, seconds, cwd)))
         if busy[0]:
@@ -145,7 +157,7 @@ def run(kind, mode, seconds, cmd, cwd=None):
             if rc not in (124, 126, 127) and rc <= 128:  # a timeout, a kill or a command that did not start leaves no verdict
                 entry['full'] = {'head': head, 'exit': rc, 'cmd': text}
 
-    record(cwd, update)
+    record(cwd, update, kind)
     return rc
 
 
@@ -157,9 +169,10 @@ def main(args, cwd=None):
     if args[:1] == ['skip']:
         if len(args) < 3 or args[1] not in KINDS:
             return lean.usage()
-        e = entry_of(cwd)
-        if (args[1] == 'unit' and e['full']) or e['ran'][args[1]]:
-            print('gate: runs are recorded for this branch; a skip is for a repo with no runner', file=sys.stderr)
+        if refuse_empty(cwd):
+            return 3
+        if runner_of(cwd)[args[1]]:
+            print(f'gate: this repository has a {args[1]} runner: runs are recorded; a skip is for a repo with no runner', file=sys.stderr)
             return 3
         skip = {'reason': ' '.join(args[2:]), 'head': lean.git('rev-parse', 'HEAD', cwd=cwd)}
         record(cwd, lambda entry: entry.__setitem__('skips', {**fresh(entry, cwd)[1], args[1]: skip}))
