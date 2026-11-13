@@ -1,12 +1,12 @@
 """Which e2e commands are scoped (see gate.py): a scope flag or a test file in the command or in the package script it runs."""
-import re, shlex, sys
+import os, re, shlex, sys
 from pathlib import Path
 
 import lean
 
 # --shard 1/1 is a full run and --last-failed reruns nothing new, so neither counts as a scope.
 SCOPE_FLAGS = ('--changed-since', '--grep', '-g', '--tag', '--only-changed', '--spec')
-CONFIGS = ('e2e.config.ts', 'e2e.config.js', 'e2e.config.mjs')
+CONFIGS = ('e2e.config.ts', 'e2e.config.mts', 'e2e.config.js', 'e2e.config.mjs')
 VALUE_FLAGS = ('--config', '-c', '--project')
 TEST_FILE = re.compile(r'\.(e2e|spec|test|cy)\.\w+$')
 RUNNERS = ('npm', 'pnpm', 'yarn', 'bun')
@@ -18,6 +18,8 @@ def script_words(cmd, cwd, depth=0):
         return cmd
     if cmd[1] in ('run', 'run-script'):
         rest = cmd[2:]
+    elif cmd[1] in ('exec', 'dlx'):
+        return cmd  # a binary, not a script
     elif cmd[0] != 'npm' or cmd[1] == 'test':
         rest = cmd[1:]
     else:
@@ -59,19 +61,47 @@ def e2e_scoped(cmd, cwd=None):
     return bool(scopes(cmd, cwd))
 
 
+def runner_words(words):
+    """The words from the runner name on: npx, bunx, pnpm exec/dlx and their options are dropped, and an @version suffix too."""
+    if words[:1] in (['npx'], ['bunx']):
+        words = words[1:]
+    elif words[:1] == ['pnpm'] and words[1:2] in (['exec'], ['dlx']):
+        words = words[2:]
+    while words and words[0].startswith('-'):
+        words = words[1:]
+    return [words[0].split('@')[0]] + words[1:] if words else []
+
+
+def config_path(words, cwd):
+    """The e2e config the runner reads: the --config/-c path, else the first e2e.config.* found from cwd up to the repository root."""
+    for i, w in enumerate(words):
+        if w in ('--config', '-c') and i + 1 < len(words):
+            return Path(cwd or '.') / words[i + 1]
+        if w.startswith('--config='):
+            return Path(cwd or '.') / w[9:]
+    here = Path(cwd or '.').resolve()
+    top = lean.git('rev-parse', '--show-toplevel', cwd=cwd)
+    for d in (here, *here.parents):
+        for name in CONFIGS:
+            if (d / name).is_file():
+                return d / name
+        if str(d) == top:
+            break
+    return None
+
+
 def filters_missing(cmd, cwd=None):
-    """The e2e config file name when the agentic runner (`e2e run`) is scoped only by --changed-since and that config
-    has no `filters` key (a plain text search), else ''. Without filters the flag leaves nothing out."""
-    words = [w for w in script_words(cmd, cwd) or () if w not in ('npx', 'bunx', 'exec', 'dlx')]
+    """The e2e config path (as given, or relative to cwd) when the agentic runner (`e2e run`) is scoped only by --changed-since
+    and that config has no `filters` key (a plain text search), else ''. Without filters the flag leaves nothing out."""
+    words = runner_words(script_words(cmd, cwd) or [])
     if words[:2] != ['e2e', 'run'] or scopes(cmd, cwd) != {'--changed-since'}:
         return ''
-    for name in CONFIGS:
-        try:
-            text = (Path(cwd or '.') / name).read_text(errors='replace')
-        except OSError:
-            continue
-        return '' if 'filters' in text else name
-    return ''
+    cfg = config_path(words, cwd)
+    try:
+        text = cfg.read_text(errors='replace') if cfg else 'filters'
+    except OSError:
+        return ''
+    return '' if 'filters' in text else os.path.relpath(os.path.realpath(cfg), os.path.realpath(cwd or '.'))
 
 
 def nothing_to_gate(cwd):

@@ -10,8 +10,10 @@ SUPPRESS = (r'eslint-disable|@ts-ignore|@ts-expect-error|@ts-nocheck|#\s*noqa|# 
             r'|biome-ignore|istanbul ignore|nolint|\bxit\(|\bxdescribe\(|\bxtest\(|\bfit\(|\bfdescribe\(|@pytest\.mark\.(skip|xfail)|@unittest\.(skip|expectedFailure)'
             r'|\bskipTest\(|\bt\.Skip(Now)?\(|#\[ignore\]|@Disabled|@Ignore\b')
 TEST_ONLY = r'\.skip\(|\.only\(|\.skip\.|\.skipIf\(|\.fixme\(|\.todo\('
-EXISTING_SKIP = re.compile(r'\.skip\(|\.skip\.|\.skipIf\(|\.fixme\(|\bxit\(|\bxdescribe\(|\bxtest\(|@pytest\.mark\.(skip|xfail)'
-                           r'|@unittest\.(skip|expectedFailure)|\bskipTest\(|\bt\.Skip(Now)?\(|#\[ignore\]|@Disabled|@Ignore\b')
+# A skip that was already there counts only at the start of a statement, so a string, a regex or `rows.skip(n)` does not.
+EXISTING_SKIP = re.compile(r'\s*(?:(?:it|test|describe|context|suite)\.(?:\w+\.)*(?:skip|skipIf|fixme)\b|x(?:it|describe|test)\('
+                           r'|@pytest\.mark\.(?:skip|xfail)|@unittest\.(?:skip|expectedFailure)|(?:self\.)?skipTest\(|t\.Skip(?:Now)?\('
+                           r'|#\[ignore\]|@(?:Disabled|Ignore)\b)')
 LINE_RULES = [  # (kind, regex on an added line, message)
     ('test-weakened', SUPPRESS, REASON),
     ('self-mock', r'''\b(?:vi|jest)\.(?:mock|doMock|unstable_mockModule)\(\s*(?:import\(\s*)?['"`](?:\.|@/|~/|src/)''', 'mocks an in-repo module; test the real one'),
@@ -246,7 +248,7 @@ def check(base, max_lines=500, cwd=None):
                 add('test-weakened', path, n, 'test timeout raised; ' + REASON)
         if is_test and text and not path.endswith(('.md', '.txt', '.rst')):
             fresh = {n for n, _ in info['add']}  # an added skip is test-weakened already; count the ones that were there
-            old = sum(bool(EXISTING_SKIP.search(ln)) for n, ln in enumerate(text.splitlines(), 1) if n not in fresh)
+            old = sum(bool(EXISTING_SKIP.match(ln)) for n, ln in enumerate(text.splitlines(), 1) if n not in fresh)
             if old:
                 add('skipped-test', path, None, f'{old} skipped test{"s" * (old > 1)} already in a file this diff touches; fix or delete each')
         if any(re.search(RULES_FILES, p) for p in names):
