@@ -1,6 +1,6 @@
 """The test gate: `lean.py gate ...` (see docs/hooks.md). State is <git common dir>/orchestra/gate.json (the folder's
 .orchestra outside a repository), keyed by branch: {branch: {"full": {"head", "exit", "cmd"}, "skips": {kind: {"reason", "head"}},
-"runs": {kind: [{"head", "cmd", "exit", "time"} ...]}, "claim": {"pid", "start", "limit"}}, plus a top-level
+"runs": {kind: [{"head", "cmd", "exit", "time", and for an e2e run that left out no test "left_out", "ran"} ...]}, "claim": {"pid", "start", "limit"}}, plus a top-level
 "runner": {kind: true} set when a run of that kind is first recorded and never cleared; runs keep only HEAD's latest
 record per command; the claim marks the running full unit run and is dropped when it ends."""
 import contextlib, os, shlex, sys, time
@@ -132,12 +132,13 @@ def run(kind, mode, seconds, cmd, cwd=None):
         print(f'gate: {cfg} has no `filters`, so --changed-since runs every test. Fix: add `filters` to it, or scope with --grep, --tag or a test file.' if cfg else
               'gate: this e2e command is not scoped. Add --changed-since REF, --grep, --tag or a test file path; the owner allows a full run with ORCHESTRA_E2E_FULL=1.', file=sys.stderr)
         return 3
+    started = time.time()
     try:
         rc = lean.run_bounded(seconds, cmd)
     except OSError as err:
         print(f'gate: cannot start {cmd[0]}: {err}', file=sys.stderr)
         return 127
-    head, left = lean.git('rev-parse', 'HEAD', cwd=cwd), e2e_checks.left_out(cmd, cwd) if kind == 'e2e' else {}
+    head, left = lean.git('rev-parse', 'HEAD', cwd=cwd), e2e_checks.left_out(cmd, cwd, started) if kind == 'e2e' else {}
 
     def update(entry):
         text = shlex.join(cmd)

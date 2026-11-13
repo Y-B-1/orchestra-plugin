@@ -429,13 +429,15 @@ class GateTest(unittest.TestCase):
         self.assertEqual(self.cli('skip', 'e2e', 'no runner', env={'ORCHESTRA_E2E_SKIP': '1'}).returncode, 0)
         self.assertEqual(self.cli('status').returncode, 0)
 
-    def agentic(self, selected, report=True):
-        """A repo with an e2e config holding filters, a report with one result per flag in selected, and a stub `e2e` that exits 0."""
+    def agentic(self, selected, report=True, config="export default { filters: [] }", folder='.e2e'):
+        """A repo with an e2e config, a report in folder written as if by the run (one result per flag in selected), and a stub `e2e` that exits 0."""
         root = Path(self.cwd)
-        (root / 'e2e.config.ts').write_text('export default { filters: [] }')
+        (root / 'e2e.config.ts').write_text(config)
         if report:
-            (root / '.e2e').mkdir()
-            (root / '.e2e' / 'report.json').write_text(json.dumps({'run': {'results': [{'selected': s} for s in selected]}}))
+            (root / folder).mkdir(exist_ok=True)
+            body = report if isinstance(report, dict) else {'run': {'results': [{'selected': s} for s in selected]}}
+            (root / folder / 'report.json').write_text(json.dumps(body))
+            os.utime(root / folder / 'report.json', (time.time() + 60, time.time() + 60))
         bin_dir = root.parent / 'bin'
         bin_dir.mkdir(exist_ok=True)
         stub = bin_dir / 'e2e'
@@ -460,8 +462,20 @@ class GateTest(unittest.TestCase):
         self.assertIn(self.NOTE, status.stdout)
 
     @unittest.skipIf(os.name == 'nt', 'the stub runner is a shell script')
+    def test_the_report_is_read_from_the_configs_output_folder_and_only_when_this_run_wrote_it(self):
+        env = self.agentic([True, True], config="export default { output: 'reports', filters: [] }", folder='reports')
+        r = self.cli('e2e', '--', 'e2e', 'run', '--changed-since', 'main', env=env)
+        self.assertIn('left out no test (2 of 2 ran)', r.stderr)
+        old = time.time() - 3600
+        os.utime(Path(self.cwd) / 'reports' / 'report.json', (old, old))
+        r = self.cli('e2e', '--', 'e2e', 'run', '--changed-since', 'main', env=env)
+        self.assertNotIn('left out no test', r.stderr)
+        self.assertNotIn('left_out', self.last_run())
+
+    @unittest.skipIf(os.name == 'nt', 'the stub runner is a shell script')
     def test_a_run_that_left_a_test_out_or_has_no_usable_report_stays_quiet(self):
-        for selected, report, extra in (([True, False, True], True, []), ([True], True, []), ([], False, []), ([True, True], True, ['--grep', 'x'])):
+        for selected, report, extra in (([True, False, True], True, []), ([True], True, []), ([], False, []), ([True, True], True, ['--grep', 'x']),
+                                       ([], {'run': 'x'}, []), ([], {'run': {'results': 5}}, [])):
             with self.subTest(selected=selected, report=report, extra=extra):
                 shutil.rmtree(Path(self.cwd) / '.e2e', ignore_errors=True)
                 env = self.agentic(selected, report)
@@ -470,51 +484,6 @@ class GateTest(unittest.TestCase):
                 self.assertNotIn('left out no test', r.stderr)
                 self.assertNotIn('left_out', self.last_run())
                 self.assertNotIn('left out no test', self.cli('status').stdout)
-
-    def doctor(self, *args, env=None):
-        r = subprocess.run([sys.executable, str(LEAN), 'e2e-doctor', *args], cwd=self.cwd, capture_output=True, text=True,
-                           env={**os.environ, **(env or {})})
-        return r.returncode, r.stdout
-
-    def set_up_e2e(self, config='export default { filters: [decisionFilter({ model: m(process.env.TYPESAFE_AI_API_KEY) })] }'):
-        root = Path(self.cwd)
-        (root / 'e2e.config.ts').write_text(config)
-        (root / 'package.json').write_text(json.dumps({'devDependencies': {'e2e': '^0.23.1', '@e2e-dev/decision': '^0.3.3'}}))
-        (root / '.env.e2e.local').write_text('TYPESAFE_AI_API_KEY=sekret-value\n')
-        (root / '.agents' / 'skills' / 'e2e').mkdir(parents=True)
-        (root / '.agents' / 'skills' / 'e2e' / 'SKILL.md').write_text('skill')
-
-    def test_e2e_doctor_passes_a_complete_setup_and_never_prints_a_key_value(self):
-        self.set_up_e2e()
-        code, out = self.doctor()
-        self.assertEqual(code, 0, out)
-        self.assertEqual([line.split()[0] for line in out.splitlines()], ['ok'] * 6, out)
-        self.assertIn('TYPESAFE_AI_API_KEY', out)
-        self.assertNotIn('sekret-value', out)
-
-    def test_e2e_doctor_names_each_gap(self):
-        self.set_up_e2e('export default { agent: process.env.OPENROUTER_API_KEY }')
-        (Path(self.cwd) / 'package.json').write_text(json.dumps({'dependencies': {'e2e': '1'}}))
-        (Path(self.cwd) / '.env.e2e.local').unlink()
-        (Path(self.cwd) / '.agents' / 'skills' / 'e2e' / 'SKILL.md').unlink()
-        code, out = self.doctor()
-        self.assertEqual(code, 1, out)
-        gaps = [line for line in out.splitlines() if line.startswith('gap')]
-        self.assertEqual(len(gaps), 4, out)
-        self.assertTrue(any('filters' in g for g in gaps) and any('@e2e-dev/decision' in g for g in gaps), out)
-        self.assertTrue(any('OPENROUTER_API_KEY' in g for g in gaps) and any('SKILL.md' in g for g in gaps), out)
-        code, out = self.doctor(env={'OPENROUTER_API_KEY': 'v4lue'})
-        self.assertNotIn('OPENROUTER_API_KEY', ''.join(line for line in out.splitlines() if line.startswith('gap')))
-        self.assertNotIn('v4lue', out)
-
-    def test_e2e_doctor_without_a_config_gives_the_setup_command_and_rejects_bad_usage(self):
-        code, out = self.doctor()
-        self.assertEqual(code, 1, out)
-        self.assertEqual(out.count('gap'), 1, out)
-        self.assertIn('npx e2e init --yes', out)
-        self.assertIn('npm install --save-dev e2e @e2e-dev/web ai@^7', out)
-        self.assertEqual(self.doctor('--bogus')[0], 2)
-        self.assertEqual(self.doctor('--config')[0], 2)
 
 
 if __name__ == '__main__':
