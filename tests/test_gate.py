@@ -22,6 +22,7 @@ class GateTest(unittest.TestCase):
         make_repo(Path(self.cwd) / 'repo')
         self.cwd = str(Path(self.cwd) / 'repo')
         git(self.cwd, 'checkout', '-q', '-b', 'work')
+        self.commit()  # the gate counts only commits the default branch lacks
 
     def commit(self):
         git(self.cwd, 'commit', '-q', '--allow-empty', '-m', 'c')
@@ -238,9 +239,10 @@ class GateTest(unittest.TestCase):
             self.assertEqual(gate.e2e_scoped(cmd, self.cwd), scoped, cmd)
 
     def test_a_failing_lock_does_not_lose_the_run(self):
+        head = git(self.cwd, 'rev-parse', 'HEAD')
         with mock.patch.object(gate.fcntl, 'flock', side_effect=OSError(77, 'no locks')):
-            gate.record(self.cwd, lambda entry: entry.setdefault('skips', {}).__setitem__('unit', 'x'))
-        self.assertEqual(gate.entry_of(self.cwd)['skips'], {'unit': 'x'})
+            gate.record(self.cwd, lambda entry: entry.setdefault('skips', {}).__setitem__('unit', {'reason': 'x', 'head': head}))
+        self.assertEqual(gate.entry_of(self.cwd)['skips'], {'unit': {'reason': 'x', 'head': head}})
 
     def test_a_wrong_shaped_state_file_reads_as_empty_and_is_rewritten(self):
         f = gate.file(self.cwd)
@@ -252,6 +254,73 @@ class GateTest(unittest.TestCase):
     def test_usage_errors(self):
         for args in (['unit', '--', *OK], ['unit', '--full'], ['unit', '--full', '--'], ['bogus'], []):
             self.assertEqual(self.cli(*args).returncode, 2, args)
+
+    def test_a_skip_cannot_turn_a_red_gate_green(self):
+        self.assertEqual(self.cli('unit', '--full', '--', *FAIL).returncode, 1)
+        self.assertEqual(self.cli('skip', 'e2e', 'none').returncode, 0)
+        self.assertEqual(self.cli('status').returncode, 1)
+        refused = self.cli('skip', 'unit', 'flaky')
+        self.assertEqual(refused.returncode, 3)
+        self.assertIn('runs are recorded for this branch; a skip is for a repo with no runner', refused.stderr)
+        self.assertEqual(self.cli('status').returncode, 1)
+
+    def test_a_skip_of_a_kind_is_refused_after_a_run_of_that_kind(self):
+        self.cli('e2e', '--', *OK, '--grep', 'x')
+        self.assertEqual(self.cli('skip', 'e2e', 'none').returncode, 3)
+        self.assertEqual(self.cli('skip', 'unit', 'none').returncode, 0)
+
+    def test_an_earlier_skip_is_ignored_while_a_run_of_that_kind_is_red_at_head(self):
+        self.cli('skip', 'unit', 'none')
+        self.cli('skip', 'e2e', 'none')
+        self.assertEqual(self.cli('status').returncode, 0)
+        self.cli('unit', '--scoped', '--', *FAIL)
+        self.assertEqual(self.cli('status').returncode, 1)
+
+    def test_the_skip_hint_shows_only_when_no_run_of_that_kind_is_recorded(self):
+        self.assertIn('gate skip unit REASON', self.cli('status').stdout)
+        self.cli('unit', '--full', '--', *FAIL)
+        self.assertNotIn('gate skip unit', self.cli('status').stdout)
+        self.assertIn('gate skip e2e', self.cli('status').stdout)
+
+    def recreate(self):
+        self.cli('skip', 'e2e', 'old')
+        self.cli('unit', '--full', '--', *OK)
+        self.assertEqual(self.cli('status').returncode, 0)
+        git(self.cwd, 'checkout', '-q', 'main')
+        git(self.cwd, 'branch', '-q', '-D', 'work')
+        git(self.cwd, 'checkout', '-q', '-b', 'work')
+        self.commit()
+
+    def test_a_recreated_branch_starts_without_the_old_full_run_and_skips(self):
+        self.recreate()
+        self.assertEqual(self.cli('status').returncode, 1)
+        self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
+
+    def test_a_recreated_branch_is_not_held_by_a_scoped_run_alone(self):
+        self.recreate()
+        self.cli('e2e', '--', *OK, '--grep', 'x')
+        self.cli('unit', '--scoped', '--', *OK)
+        status = self.cli('status')
+        self.assertEqual(status.returncode, 1)
+        self.assertIn('gate unit --full', status.stdout)
+
+    def test_a_full_run_that_reached_the_default_branch_no_longer_counts(self):
+        self.cli('unit', '--full', '--', *OK)
+        git(self.cwd, 'branch', '-f', 'main', 'work')
+        self.commit()
+        self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
+
+    def test_a_full_command_that_did_not_start_does_not_use_up_the_full_run(self):
+        for code in (126, 127):
+            self.assertEqual(self.cli('unit', '--full', '--', sys.executable, '-c', f'raise SystemExit({code})').returncode, code)
+        self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
+
+    def test_status_names_a_red_full_run(self):
+        self.cli('skip', 'e2e', 'none')
+        self.cli('unit', '--full', '--', *FAIL)
+        out = self.cli('status').stdout
+        self.assertIn('exit 1', out)
+        self.assertIn('raise SystemExit(1)', out)
 
 
 if __name__ == '__main__':
