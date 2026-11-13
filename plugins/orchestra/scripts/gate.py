@@ -1,12 +1,12 @@
 """The test gate: `lean.py gate ...` (see docs/hooks.md). State is <git common dir>/orchestra/gate.json (the folder's
 .orchestra outside a repository), keyed by branch: {branch: {"full": {"head", "exit", "cmd"}, "skips": {kind: {"reason", "head"}},
-"runs": {kind: [{"head", "cmd", "exit", "time"} ...]}, "claim": {"pid", "start", "limit"}}, plus a top-level
+"runs": {kind: [{"head", "cmd", "exit", "time", and for an e2e run that left out no test "left_out", "ran"} ...]}, "claim": {"pid", "start", "limit"}}, plus a top-level
 "runner": {kind: true} set when a run of that kind is first recorded and never cleared; runs keep only HEAD's latest
 record per command; the claim marks the running full unit run and is dropped when it ends."""
 import contextlib, os, shlex, sys, time
 from pathlib import Path
 
-import lean
+import e2e_checks, lean
 from procs import alive, exclusive
 from gate_scope import e2e_scoped, filters_missing, nothing_to_gate, refuse_empty
 
@@ -132,19 +132,20 @@ def run(kind, mode, seconds, cmd, cwd=None):
         print(f'gate: {cfg} has no `filters`, so --changed-since runs every test. Fix: add `filters` to it, or scope with --grep, --tag or a test file.' if cfg else
               'gate: this e2e command is not scoped. Add --changed-since REF, --grep, --tag or a test file path; the owner allows a full run with ORCHESTRA_E2E_FULL=1.', file=sys.stderr)
         return 3
+    started = time.time()
     try:
         rc = lean.run_bounded(seconds, cmd)
     except OSError as err:
         print(f'gate: cannot start {cmd[0]}: {err}', file=sys.stderr)
         return 127
-    head = lean.git('rev-parse', 'HEAD', cwd=cwd)
+    head, left = lean.git('rev-parse', 'HEAD', cwd=cwd), e2e_checks.left_out(cmd, cwd, started) if kind == 'e2e' else {}
 
     def update(entry):
         text = shlex.join(cmd)
         runs = entry['runs'] = entry['runs'] if isinstance(entry.get('runs'), dict) else {}
         old = runs.get(kind) if isinstance(runs.get(kind), list) else []
         runs[kind] = [r for r in old if isinstance(r, dict) and r.get('head') == head and r.get('cmd') != text]
-        runs[kind].append({'head': head, 'cmd': text, 'exit': rc, 'time': int(time.time())})
+        runs[kind].append({'head': head, 'cmd': text, 'exit': rc, 'time': int(time.time()), **left})
         if mode == 'full':
             entry.pop('claim', None)  # a timeout or kill leaves no claim and no record: a new full run may start
             if rc not in (124, 126, 127) and rc <= 128:  # a timeout, a kill or a command that did not start leaves no verdict
@@ -158,11 +159,14 @@ def main(args, cwd=None):
     if args[:1] == ['status']:
         lack = missing(cwd)
         print('\n'.join(lack) if lack else 'test gate holds for HEAD')
+        e2e_checks.status_note(entry_of(cwd)['runs']['e2e'], lean.git('rev-parse', 'HEAD', cwd=cwd))
         return 1 if lack else 0
     if args[:1] == ['skip']:
         if len(args) < 3 or args[1] not in KINDS:
             return lean.usage()
         if refuse_empty(cwd):
+            return 3
+        if args[1] == 'e2e' and e2e_checks.refuse_skip(cwd):
             return 3
         if runner_of(cwd)[args[1]]:
             print(f'gate: this repository has a {args[1]} runner: runs are recorded; a skip is for a repo with no runner', file=sys.stderr)

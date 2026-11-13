@@ -1,5 +1,5 @@
 """Unit tests for the test gate (scripts/gate.py): full-once, scoped e2e, skips, status and the Stop-hook condition."""
-import json, os, subprocess, sys, tempfile, time, unittest
+import json, os, shutil, subprocess, sys, tempfile, time, unittest
 from pathlib import Path
 from unittest import mock
 
@@ -418,6 +418,72 @@ class GateTest(unittest.TestCase):
             self.assertIn('no commits beyond main: nothing to gate yet; commit first', done.stderr)
         self.commit()
         self.assertEqual(self.cli('unit', '--full', '--', *OK).returncode, 0)
+
+    def test_skip_e2e_is_refused_where_the_repo_holds_an_e2e_config(self):
+        (Path(self.cwd) / 'e2e.config.ts').write_text('export default {}')
+        r = self.cli('skip', 'e2e', 'no runner')
+        self.assertEqual(r.returncode, 3)
+        self.assertIn('gate: this repo has an e2e config (e2e.config.ts), so e2e runs scoped instead of skipped: '
+                      'gate e2e -- e2e run --changed-since <base>. The owner allows a skip with ORCHESTRA_E2E_SKIP=1.', r.stderr)
+        self.assertEqual(self.cli('skip', 'unit', 'no runner').returncode, 0)
+        self.assertEqual(self.cli('skip', 'e2e', 'no runner', env={'ORCHESTRA_E2E_SKIP': '1'}).returncode, 0)
+        self.assertEqual(self.cli('status').returncode, 0)
+
+    def agentic(self, selected, report=True, config="export default { filters: [] }", folder='.e2e'):
+        """A repo with an e2e config, a report in folder written as if by the run (one result per flag in selected), and a stub `e2e` that exits 0."""
+        root = Path(self.cwd)
+        (root / 'e2e.config.ts').write_text(config)
+        if report:
+            (root / folder).mkdir(exist_ok=True)
+            body = report if isinstance(report, dict) else {'run': {'results': [{'selected': s} for s in selected]}}
+            (root / folder / 'report.json').write_text(json.dumps(body))
+            os.utime(root / folder / 'report.json', (time.time() + 60, time.time() + 60))
+        bin_dir = root.parent / 'bin'
+        bin_dir.mkdir(exist_ok=True)
+        stub = bin_dir / 'e2e'
+        stub.write_text('#!/bin/sh\nexit 0\n')
+        stub.chmod(0o755)
+        return {'PATH': os.pathsep.join([str(bin_dir), os.environ.get('PATH', '')])}
+
+    def last_run(self):
+        return json.loads(gate.file(self.cwd).read_text())['work']['runs']['e2e'][-1]
+
+    NOTE = 'gate: this --changed-since run left out no test (3 of 3 ran). The filter may have failed open'
+
+    @unittest.skipIf(os.name == 'nt', 'the stub runner is a shell script')
+    def test_a_changed_since_run_that_left_nothing_out_is_noted_and_recorded(self):
+        env = self.agentic([True, True, True])
+        r = self.cli('e2e', '--', 'e2e', 'run', '--changed-since', 'main', env=env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn(self.NOTE, r.stderr)
+        self.assertIn('lean.py e2e-doctor', r.stderr)
+        self.assertEqual(self.last_run()['left_out'], 0)
+        status = self.cli('status')
+        self.assertIn(self.NOTE, status.stdout)
+
+    @unittest.skipIf(os.name == 'nt', 'the stub runner is a shell script')
+    def test_the_report_is_read_from_the_configs_output_folder_and_only_when_this_run_wrote_it(self):
+        env = self.agentic([True, True], config="export default { output: 'reports', filters: [] }", folder='reports')
+        r = self.cli('e2e', '--', 'e2e', 'run', '--changed-since', 'main', env=env)
+        self.assertIn('left out no test (2 of 2 ran)', r.stderr)
+        old = time.time() - 3600
+        os.utime(Path(self.cwd) / 'reports' / 'report.json', (old, old))
+        r = self.cli('e2e', '--', 'e2e', 'run', '--changed-since', 'main', env=env)
+        self.assertNotIn('left out no test', r.stderr)
+        self.assertNotIn('left_out', self.last_run())
+
+    @unittest.skipIf(os.name == 'nt', 'the stub runner is a shell script')
+    def test_a_run_that_left_a_test_out_or_has_no_usable_report_stays_quiet(self):
+        for selected, report, extra in (([True, False, True], True, []), ([True], True, []), ([], False, []), ([True, True], True, ['--grep', 'x']),
+                                       ([], {'run': 'x'}, []), ([], {'run': {'results': 5}}, [])):
+            with self.subTest(selected=selected, report=report, extra=extra):
+                shutil.rmtree(Path(self.cwd) / '.e2e', ignore_errors=True)
+                env = self.agentic(selected, report)
+                r = self.cli('e2e', '--', 'e2e', 'run', '--changed-since', 'main', *extra, env=env)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertNotIn('left out no test', r.stderr)
+                self.assertNotIn('left_out', self.last_run())
+                self.assertNotIn('left out no test', self.cli('status').stdout)
 
 
 if __name__ == '__main__':

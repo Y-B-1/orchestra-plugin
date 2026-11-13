@@ -81,11 +81,12 @@ def config_path(words, cwd):
             return Path(cwd or '.') / w[9:]
     here = Path(cwd or '.').resolve()
     top = lean.git('rev-parse', '--show-toplevel', cwd=cwd)
+    top = Path(top).resolve() if top else here  # never above the repository, or above the folder when there is none
     for d in (here, *here.parents):
         for name in CONFIGS:
             if (d / name).is_file():
                 return d / name
-        if str(d) == top:
+        if d == top:
             break
     return None
 
