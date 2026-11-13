@@ -1,5 +1,5 @@
 """Layout checks for the shipped plugin: manifests, hook commands, agent and skill frontmatter, no private content."""
-import getpass, json, re, subprocess, tempfile, unittest
+import getpass, json, os, re, shutil, subprocess, tempfile, unittest
 from unittest import mock
 from pathlib import Path
 
@@ -61,10 +61,12 @@ GENERIC_ACCOUNTS = {'runner', 'runneradmin', 'root', 'user', 'admin', 'dev', 'te
 EMAIL = subprocess.run(['git', 'config', 'user.email'], cwd=ROOT, capture_output=True, text=True).stdout.strip()  # read once
 
 
-def private_words():
+def private_words(email=EMAIL):
     """The local account name and the git email: neither may appear in a shipped file. The git user name is not
-    checked, because the public repository URL carries the owner's account name."""
-    words = {getpass.getuser(), EMAIL, EMAIL.partition('@')[0]}
+    checked, because the public repository URL carries the owner's account name. A placeholder email (a reserved
+    or example domain, as the CI workflow sets) is not private."""
+    placeholder = re.search(r'@(example(\.\w+)?|[\w.-]+\.(invalid|test|example|localhost))$', email, re.I)
+    words = {getpass.getuser()} | (set() if placeholder else {email, email.partition('@')[0]})
     return {w for w in words if len(w) >= 3 and w.lower() not in GENERIC_ACCOUNTS}
 
 
@@ -216,6 +218,7 @@ class SkillTest(unittest.TestCase):
                     self.assertTrue((PLUGIN / 'skills' / name / 'SKILL.md').exists())
                     self.assertIn('Skill', frontmatter(path).get('tools', ''))
 
+@unittest.skipIf(os.name == 'nt' or not shutil.which('bash'), 'the wizard template is a POSIX bash script; on Windows bash may be WSL')
 class WizardTemplateTest(unittest.TestCase):
     TEMPLATE = PLUGIN / 'skills/orchestra/references/wizard-template.sh'
 
@@ -284,6 +287,10 @@ class PrivacyTest(unittest.TestCase):
             self.assertNotIn('runner', private_words())
         with mock.patch('getpass.getuser', return_value='jdoe'):
             self.assertIn('jdoe', private_words())
+        with mock.patch('getpass.getuser', return_value='runner'):
+            self.assertEqual(private_words('ci@example.invalid'), set())  # the placeholder identity the CI workflow sets
+            self.assertEqual(private_words('me@example.com'), set())
+            self.assertEqual(private_words('jdoe@corp.io'), {'jdoe@corp.io', 'jdoe'})
         self.assertEqual(private_hits('see /Users/jdoe/x', {'jdoe'}), {'jdoe'})
         self.assertEqual(private_hits('jdoes', {'jdoe'}), set())
 

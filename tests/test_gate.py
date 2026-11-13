@@ -136,6 +136,8 @@ class GateTest(unittest.TestCase):
         (Path(self.cwd) / 'e2e.config.ts').write_text('export default {}')
         cmd = ('e2e', 'run', '--changed-since', 'main')
         self.assertEqual(self.cli('e2e', '--', *cmd).returncode, 3)
+        if os.name == 'nt':
+            self.skipTest('the stub runner is a shell script; Windows cannot start it without a shell')
         bin_dir = Path(self.cwd).parent / 'bin'  # a stub runner that exits 0: the run is allowed and started
         bin_dir.mkdir()
         stub = bin_dir / 'e2e'

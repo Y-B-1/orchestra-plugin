@@ -111,13 +111,36 @@ def missing(cwd):
     return ['test gate: ' + m for m in out]
 
 
+def alive(pid):
+    """Whether a process with this pid exists. os.kill(pid, 0) is no probe on Windows: signal 0 is CTRL_C_EVENT there and
+    interrupts the process group (the caller), so Windows asks the process table instead."""
+    if os.name != 'nt':
+        try:
+            os.kill(pid, 0)
+        except PermissionError:  # owned by someone else, still exists
+            return True
+        except OSError:
+            return False
+        return True
+    import ctypes
+    k32 = ctypes.windll.kernel32
+    k32.OpenProcess.restype = ctypes.c_void_p
+    handle = k32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        return k32.GetLastError() == 5  # access denied: it exists
+    code = ctypes.c_ulong()
+    ok = k32.GetExitCodeProcess(ctypes.c_void_p(handle), ctypes.byref(code))
+    k32.CloseHandle(ctypes.c_void_p(handle))
+    return bool(ok) and code.value == 259  # STILL_ACTIVE
+
+
 def take(entry, seconds, cwd=None):
     """Under the lock, claim the full run; the refusal text when taken. A claim counts while its pid lives and now <= start + limit + 30 s."""
     c = entry.get('claim')
     try:
-        c = c if time.time() <= c['start'] + c['limit'] + 30 and not os.kill(c['pid'], 0) else None
-    except (OSError, KeyError, TypeError) as err:
-        c = c if isinstance(err, PermissionError) else None  # a pid owned by someone else still exists
+        c = c if time.time() <= c['start'] + c['limit'] + 30 and alive(c['pid']) else None
+    except (KeyError, TypeError):
+        c = None
     entry['full'], entry['skips'] = fresh(entry, cwd)
     if entry['full']:
         return 'a full run is already recorded for this branch; run scoped (gate unit --scoped -- CMD)'

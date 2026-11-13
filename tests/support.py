@@ -27,6 +27,8 @@ def make_repo(path, origin=False):
         git(_template, 'init', '-q', '-b', 'main', '--template=')  # no sample hooks to copy
         git(_template, 'config', 'user.email', 't@example.com')
         git(_template, 'config', 'user.name', 'T')
+        git(_template, 'config', 'maintenance.auto', 'false')  # the commit's background `git maintenance` holds
+        git(_template, 'config', 'gc.auto', '0')  # objects/maintenance.lock while the template is copied
         git(_template, 'commit', '-q', '--allow-empty', '-m', 'init')
     shutil.copytree(_template, path, symlinks=True)
     if origin:
