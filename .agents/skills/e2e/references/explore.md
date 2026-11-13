@@ -3,7 +3,9 @@
 `e2e explore` runs the agent against the app with a goal instead of a test
 file: see what it can do with an app before tests exist, hunt for regressions
 on a branch, or find what is worth turning into a test. It needs a config with
-a target and an agent that holds a model, nothing else.
+a target and an agent that holds a model, nothing else. With no config, it
+runs the `e2e init` wizard first in a terminal; without one (an agent's
+shell, CI) it fails with `CONFIG_NOT_FOUND`, so run `npx e2e init --yes` first.
 
 ```bash
 npx e2e explore   # goal: "Explore the app and find bugs"
@@ -11,11 +13,22 @@ npx e2e explore 'Explore checkout like a first-time buyer and report anything of
 npx e2e explore --target web --max-steps 4 --headed
 npx e2e explore 'Hunt for broken forms' --video
 npx e2e explore --session admin 'Explore the admin settings'
+npx e2e explore --changed-since origin/main   # explore what the branch changed
 ```
+
+## Contents
+
+- What a run does
+- Start signed in
+- Flags
+- Reading the result
+- When it does not fit
 
 ## What a run does
 
-1. Opens the app on the target's URL.
+1. Opens the app: the target's URL, or on a device the pinned app, launched
+   fresh. Explore installs no build, so a local device target needs
+   `app.bundleId`; an `appPath` alone leaves nothing to launch.
 2. Plans one step: a structured model call reads the goal, the steps and
    findings so far, and the current screen, and answers with a title and a
    concrete charter for one flow, or decides the goal is covered.
@@ -41,7 +54,7 @@ secrets; otherwise the agent skips signing in and says so in the step summary.
 (`test.setup('...', { sessions: ['admin'] }, ...)` and `session.save('admin')`,
 topic `writing-tests`). The run collects the config's test files, runs exactly
 the setup that declares the session, then restores it into the exploration
-and, on a target with a URL, opens the app, as a test with
+and opens the app, as a test with
 `{ session: 'admin' }` does. No other test runs. The setup runs as for
 `e2e run`, with the configured agents, cache, and retries; only the
 exploration runs as the explorer. The planner and the agent are told they
@@ -49,9 +62,7 @@ start signed in, so no charter is spent signing in again. A name no setup
 declares fails before any app process starts with `COLLECTION_ERROR`, naming
 the declared sessions.
 
-A setup that filled a secret taints the restored session, so every finding
-goes without a screenshot; one that signed in without a fill (a `browser.setCookies`
-session cookie, say) keeps them where the engine captures pixels, and only
+Findings keep their screenshots after a setup that filled a secret. Only
 configured secrets are redacted (topic `writing-tests`).
 
 ## Flags
@@ -62,9 +73,10 @@ configured secrets are redacted (topic `writing-tests`).
 | `--target <id>` | first configured target | The one target to explore. |
 | `--agent <name>` | `default` | Build the explorer from another configured agent (`agents.<name>`). |
 | `--session <name>` | none | Run the setup that saves this session, then explore with it restored. |
-| `--max-steps <n>` | 8 (1 to 12) | Exploration steps at most. |
-| `--timeout <ms>` | 600000 (180000 to 900000) | Wall clock; the last minute is for the assessment. |
-| `--headed`, `--reporter`, `--output`, `--debug`, `--ai-trace`, `--trace [mode]`, `--video [mode]` | as `run` | Same meaning as for `e2e run`. One attempt, so a retry mode (`on-first-retry`, `on-all-retries`, the CI trace default) records nothing (`CI=1 e2e explore` needs `--trace on`; the run's notice says so); put the goal before a bare `--trace` or `--video`. |
+| `--changed-since <ref>` | none | Explore what the branch changed since the merge base of the ref and HEAD. The planner reads the commit messages and the committed diff, and plans charters for the screens the change can affect. Only a defect the change can cause is an `issue`; one elsewhere is a `warning`. With no goal, the goal becomes `Explore what this change affects and find bugs in it`, and the planner may skip a change no user can see, such as docs or tests only. That run ends `skipped` and passes. In CI it needs the base in the checkout (`fetch-depth: 0`), and a clean working tree for the skip. |
+| `--max-steps <n>` | 8 (1 to 100) | Exploration steps at most. |
+| `--timeout <ms>` | 600000 (180000 to 7200000) | Wall clock; the last minute is for the assessment. |
+| `--headed`, `--reporter`, `--output`, `--debug`, `--ai-trace`, `--trace [mode]`, `--video [mode]` | as `run` | Same meaning as for `e2e run`. The exploration is one attempt, so a retry mode (`on-first-retry`, `on-all-retries`) records nothing (the run's notice says to pass `--trace on`); put the goal before a bare `--trace` or `--video`. |
 
 Per-step action and model-call budgets default to 40 each;
 `agents.<name>.maxSteps` and `agents.<name>.maxModelCalls` in the config
@@ -74,8 +86,9 @@ exploration.
 ## Reading the result
 
 Exit code `0`: steps ran, no `issue` was reported, and not every charter was
-blocked; warnings are allowed. Exit code `1`: at least one `issue`, or no step
-ran and nothing was found. If every charter was blocked and no `issue` was
+blocked; warnings are allowed. With `--changed-since`, a change the planner
+skipped before the first step (no file a user can see) is also `0`. Exit
+code `1`: at least one `issue`, or no step ran and nothing was found. If every charter was blocked and no `issue` was
 reported, the run is `blocked` even with warnings, and the exit code is the
 first blocker's own, as for `run`: 1 for an automation limit, 2 for a missing
 model, credentials, seed data, or test setup, 3 for an unavailable
@@ -96,24 +109,25 @@ medium 3, low 2, trivial 1. `.e2e/report.json` has the record under
 {
   "goal": "...",
   "budgets": { "maxSteps": 8, "timeoutMs": 600000 },
-  "ended": "finished | step-limit | time | stuck | aborted",
+  "ended": "finished | skipped | step-limit | time | stuck | aborted",
   "summary": "the closing assessment",
+  "change": { "base": "<merge base sha>", "files": 3 },
   "steps": [{ "index": 1, "title": "...", "instruction": "...", "status": "passed | failed | blocked | exhausted", "summary": "...", "errorCode": "...", "startedAt": "...", "durationMs": 0 }],
   "findings": [{ "id": "<uuid>", "index": 0, "step": 1, "kind": "issue", "severity": 4, "title": "...", "expected": "...", "actual": "...", "reproduction": ["..."], "path": "/cart", "observationRevision": "...", "artifactId": "<attempt id>:artifact:2", "reportedAt": "..." }]
 }
 ```
 
-A step carries `errorCode` only when it did not pass; a finding carries
+`change` is there only with `--changed-since`. A step carries `errorCode` only when it did not pass; a finding carries
 `step`, `path`, `observationRevision`, and `artifactId` only when known.
 `artifactId` names the evidence screenshot among the attempt's `artifacts` in
 the result whose `file` is `explore`, where its path, size, and digest are.
 With `--session`, `run.results` also holds the setup's result and the
 project's other tests as skipped (`filtered`). The attempt directory is
-`.e2e/artifacts/<target>/explore-<slug>-<digest>/<agent>/attempt-0/`: the slug
-is the goal's first words in lowercase ASCII, capped, and the digest keeps
-distinct goals apart while the same goal always maps to the same directory.
-For example
-`.e2e/artifacts/web/explore-check-the-cart-totals-1a2b3c4d5e6f7a8b/default/attempt-0/finding-1.png`.
+`.e2e/results/explore-<slug>-<id>/attempt-1/`: the slug is the goal's first
+words in lowercase ASCII, capped, and the id keeps distinct goals, targets, and
+agents apart while the same goal on the same target and agent always maps to
+the same directory. For example
+`.e2e/results/explore-check-the-cart-totals-1a2b3c4d5e6f7a8b/attempt-1/finding-1.png`.
 
 Turn a finding into a test: its `reproduction` steps are the `agent.act()`
 instructions or `screen.*` actions, and `expected` is the assertion.
