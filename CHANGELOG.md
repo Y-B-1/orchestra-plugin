@@ -2,6 +2,25 @@
 
 Release 2.0.0 is described in docs/RELEASE-NOTES-2.0.0.md.
 
+## 3.6.0 — 2026-11-13
+
+A full-read upstream audit of both skill sets, applied across every skill and agent. See `docs/release-notes/v3.6.0.md`. The purpose is unchanged: every independent ask of a prompt runs in parallel, on the cheapest agent that does it well, for the fastest finish at full quality.
+
+- **Changed: Workflow is the main tool.** Every unit of a run, reviewers and repairs included, is an `agent()` call in one Workflow script. A single Agent call is only for work beside the Workflow and outside the run's branch, or when the Workflow tool is missing or refused. A dependent unit starts only when its predecessor's commit passes a script check, and one pilot runs before a fan-out.
+- **New: a retro before every push.** Once the review is clean, the main session reads only what the run recorded and writes at most 3 candidates, each with its cheapest home; a run with nothing recorded says so in one line. `orchestra:orchestra` finish.md also gains "Calls waiting on the owner" (the final message opens with them) and stricter worktree and branch removal.
+- **Changed: model families instead of pinned ids.** All 12 agent files use `opus`, `sonnet`, `haiku` or `fable`, so an agent follows the newest model of its family; a full id still pins one. The guard keys on the agent type and is unchanged.
+- **New: the e2e gate checks the filter.** `gate e2e` refuses a `--changed-since` run when the e2e config has no `filters` key (exit 3, with the fix), because without filters the flag scopes nothing. `--shard` and `--last-failed` no longer count as scoping on any runner.
+- **Changed: the pre-PR scan.** It reads CONTRIBUTING.md and CODING_STANDARDS.md as rules files and reports a new `skipped-test` finding for skips already in a touched test file.
+- **Changed: the references limit is 100 lines** (was 60). The layout test also checks strict frontmatter (no unquoted colon-space, no unclosed quote), descriptions of at most 90 words, and no repeated rule sentence of 70 characters or more across files.
+- **New: the full-read rule for upstream audits.** An audit of the sources reads every skill in full on both sides; `AGENTS.md` records it and `docs/COVERAGE.md` records the heads read. It is for improving Orchestra's own skills, not for a run in a user's project.
+- **Audit fixes, by area:**
+  - Coordinator: fetch a named issue or PR first; a `check:` field on every ask; ledger lines for hygiene, gate, cleanup and retro; bugs that change an interface, schema or a security or data invariant get a planner sketch and an independent review.
+  - Agents: no stash, amend, rebase or branch switch in a shared checkout; a worktree builder confirms its base; one test per behavior with the seam and the red failure text in the report; reviewers judge against the ledger's `check:` or say "no spec available"; the standards reviewer is handed the rules files.
+  - Build, test-quality, verify: Refactor and Docs modes, `references/boundaries.md` and `references/docs.md`, e2e rules (config changes force every test, `fetch-depth: 0` in CI, repro tests inside the config's glob), driver rules (never weaken a journey, driver updates in their own commit).
+  - Review, ship, diagnose: structural problems (a file over 1000 lines, ad-hoc branching, a duplicated helper, wrong-layer logic) block by default; check the target repo before `gh pr create`; triage conflicts, then review threads, then CI; classify red CI before retrigger; `references/review-bots.md`; a performance order for diagnose.
+  - Plan, decide, large-work, investigate, operate: the phase-boundary order (continue, clear, handoff, subagent, compact) in large-work, a Pause section in the handoff, prototype and ticket rules, a shared investigator notes file.
+- **Upstream check.** mattpocock/skills `5863806` and pstack-claude `2044f18` were read in full by ten agents; ideas only, no text used (see `docs/COVERAGE.md`).
+
 ## 3.5.1 — 2026-11-13
 
 ### Fixed
