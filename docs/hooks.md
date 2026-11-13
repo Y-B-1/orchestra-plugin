@@ -94,6 +94,10 @@ The Stop hook adds the gate to its conditions: when HEAD has commits beyond the 
 
 During a run (an open ask in the session ledger, or an active goal) the PreToolUse hook denies a `git push` that sends a branch, in any form it already reads (`git -C dir push`, `sudo`, `bash -c`, `git push origin HEAD`), while `gate status` would not exit 0. The deny lists the missing gate lines and the remedy: run the gate, or `lean.py gate skip KIND REASON` for a repo with no runner. The default-branch deny comes first. Deleting a branch, pushing only tags (also `git push origin NAME` when NAME is a tag and no local branch has that name), a push outside a run, a gate that holds and a gate read error all allow the push. `ORCHESTRA_GATE=off` turns this one check off; it is separate from `ORCHESTRA_MATRIX`. Known limit: the gate checked is the one of the branch checked out in the folder, not of the branch named in the push.
 
+## Unit file ownership
+
+`lean.py owns COMMIT -- PATH...` (code in `scripts/owns.py`) exits 0 when every file the commit changed matches one of the paths, else 1 with one line per file outside the unit. A path is an exact file, a folder prefix ending in `/`, or a glob where `**` crosses folders and `*` and `?` stay inside one. The files are the diff against the first parent with renames not collapsed, so both sides of a rename count. `COMMIT` may be a range `A..B`; every commit in it is checked. A bad commit, no paths or no Git repository exits 2 with a message. It is a CLI, not a hook: a hook cannot tell which agent runs a command. Limit: it reads commits, so an uncommitted edit outside the unit is not seen.
+
 ## Bounded commands
 
 `lean.py run SECONDS -- CMD` runs a command in its own process group and stops the group after SECONDS (exit 124), so a hanging test cannot hold a builder. A child that starts its own session or group is not reached. A command killed by signal N exits 128+N. SECONDS must be a positive number. When `lean.py` itself is stopped (SIGTERM, SIGINT or SIGHUP, as a Bash tool timeout does), it stops the command's group too. It is a CLI, not a hook.

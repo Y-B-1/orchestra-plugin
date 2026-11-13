@@ -134,9 +134,15 @@ class GateTest(unittest.TestCase):
 
     def test_owner_full_override_lifts_the_filters_refusal(self):
         (Path(self.cwd) / 'e2e.config.ts').write_text('export default {}')
-        cmd = ('e2e', 'run', '--changed-since', 'main')  # no e2e runner here: the run itself fails to start
+        cmd = ('e2e', 'run', '--changed-since', 'main')
         self.assertEqual(self.cli('e2e', '--', *cmd).returncode, 3)
-        self.assertNotEqual(self.cli('e2e', '--', *cmd, env={'ORCHESTRA_E2E_FULL': '1'}).returncode, 3)
+        bin_dir = Path(self.cwd).parent / 'bin'  # a stub runner that exits 0: the run is allowed and started
+        bin_dir.mkdir()
+        stub = bin_dir / 'e2e'
+        stub.write_text('#!/bin/sh\nexit 0\n')
+        stub.chmod(0o755)
+        path = os.pathsep.join([str(bin_dir), os.environ.get('PATH', '')])
+        self.assertEqual(self.cli('e2e', '--', *cmd, env={'ORCHESTRA_E2E_FULL': '1', 'PATH': path}).returncode, 0)
 
     def test_gate_e2e_refuses_changed_since_without_filters(self):
         (Path(self.cwd) / 'e2e.config.ts').write_text('export default {}')

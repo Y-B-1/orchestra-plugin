@@ -421,5 +421,57 @@ class ProcessTest(unittest.TestCase):
         self.assertTrue(wait_for(lambda: not self.alive(sleeper)))
 
 
+class Owns(RepoCase):
+    """`lean.py owns COMMIT -- PATH...` against a real repository."""
+
+    def owns(self, commit, *paths, cwd=None):
+        return subprocess.run([sys.executable, str(LEAN), 'owns', commit, '--', *paths], cwd=cwd or self.cwd,
+                              capture_output=True, text=True)
+
+    def commit(self, *files):
+        for f in files:
+            (self.repo / f).parent.mkdir(parents=True, exist_ok=True)
+            (self.repo / f).write_text(f)
+            git(self.repo, 'add', f)
+        git(self.repo, 'commit', '-q', '--allow-empty', '-m', 'c')
+        return git(self.repo, 'rev-parse', 'HEAD')
+
+    def test_a_commit_inside_the_unit_passes_and_one_outside_names_the_file(self):
+        inside = self.commit('a/x.py', 'b.txt')
+        self.assertEqual(self.owns(inside, 'a/', 'b.txt').returncode, 0)
+        outside = self.commit('a/y.py', 'c/z.py')
+        r = self.owns(outside, 'a/')
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['c/z.py']))
+
+    def test_a_glob_crosses_folders_only_with_two_stars(self):
+        deep = self.commit('t/a/b/test_x.py')
+        self.assertEqual(self.owns(deep, 't/**/*.py').returncode, 0)
+        self.assertEqual(self.owns(deep, 't/*.py').returncode, 1)
+
+    def test_a_rename_out_of_the_unit_fails_on_the_new_side(self):
+        self.commit('a/x.py')
+        (self.repo / 'c').mkdir()
+        git(self.repo, 'mv', 'a/x.py', 'c/x.py')
+        git(self.repo, 'commit', '-q', '-m', 'move')
+        moved = git(self.repo, 'rev-parse', 'HEAD')
+        r = self.owns(moved, 'a/')
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['c/x.py']))
+
+    def test_a_range_checks_every_commit_in_it(self):
+        base = self.commit('a/1.py')
+        self.commit('a/2.py')
+        self.commit('c/3.py')
+        r = self.owns(f'{base}..HEAD', 'a/')
+        self.assertEqual((r.returncode, r.stdout.splitlines()), (1, ['c/3.py']))
+        self.assertEqual(self.owns(f'{base}..HEAD', 'a/', 'c/').returncode, 0)
+
+    def test_bad_input_exits_2_with_a_message(self):
+        head = self.commit('a/1.py')
+        for args, cwd in [(('nope', 'a/'), None), ((head,), None), ((head, 'a/'), self.tmp.name)]:
+            r = self.owns(*args, cwd=cwd)
+            self.assertEqual(r.returncode, 2, args)
+            self.assertIn('owns:', r.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()
