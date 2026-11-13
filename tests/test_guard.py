@@ -228,7 +228,7 @@ class FableTest(RepoCase):
         old = time.time() - 31 * 60
         os.utime(lock, (old, old))
         self.assertIsNone(self.agent(self.CRITIC))
-        worker(self.transcript, self.CRITIC, 'end_turn')
+        worker(self.transcript, self.CRITIC, 'end_turn', age=-1)  # written after the lock: time.time() is coarser than a file time on Windows
         self.assertIsNone(self.agent(self.CRITIC))
 
     def test_a_fable_model_override_on_another_type_is_denied(self):
