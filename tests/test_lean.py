@@ -483,5 +483,12 @@ class Owns(RepoCase):
             self.assertIn('owns:', r.stderr)
 
 
+class E2eDoctorUsage(unittest.TestCase):
+    def test_help_lists_e2e_doctor_and_a_bad_flag_exits_2(self):
+        r = subprocess.run([sys.executable, str(LEAN), 'e2e-doctor', '--bogus'], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 2)
+        self.assertIn('lean.py e2e-doctor [--config PATH]', r.stderr)
+
+
 if __name__ == '__main__':
     unittest.main()
